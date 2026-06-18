@@ -1,68 +1,78 @@
 import { NextResponse } from "next/server";
+import { registerRoom } from "@/lib/call-registry";
 import { getRestClient, isRestConfigured, twilioConfig } from "@/lib/twilio";
 import { toE164 } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
 
+interface DialLeadInput {
+  leadId: string;
+  phone: string;
+}
+
 /**
- * Initiates outbound calls for parallel ("3X") dialing.
+ * Initiates the outbound legs for parallel ("3X") dialing.
  *
- * Production pattern: each lead is dialed into the agent's conference room. The
- * first homeowner to answer is bridged to the agent and the remaining legs are
- * canceled. This route places the outbound legs; the conference/bridge wiring
- * lives in the TwiML returned per call.
+ * Each homeowner is dialed into the agent's conference `room`. The agent's
+ * browser joins the same room via the Voice SDK; the first homeowner to answer
+ * is bridged, and `/api/twilio/status` releases the remaining legs. The browser
+ * polls `/api/twilio/answered` to learn which lead won.
  *
- * In demo mode it returns simulated call SIDs so the UI flow is exercised
- * without a Twilio account.
+ * Requires Twilio REST credentials. With none configured it returns 503 so the
+ * client can surface a clear "connect Twilio" state — it never simulates calls.
  */
 export async function POST(req: Request) {
-  const body = (await req.json().catch(() => ({}))) as {
-    numbers?: string[];
-    agentIdentity?: string;
-  };
-  const numbers = (body.numbers ?? []).map(toE164).filter(Boolean);
-
-  if (!numbers.length) {
-    return NextResponse.json({ error: "No numbers provided" }, { status: 400 });
+  if (!isRestConfigured()) {
+    return NextResponse.json(
+      { error: "Twilio is not configured", mode: "offline" },
+      { status: 503 },
+    );
   }
 
-  if (!isRestConfigured()) {
-    return NextResponse.json({
-      mode: "demo",
-      calls: numbers.map((to, i) => ({
-        to,
-        sid: `CA_demo_${Date.now().toString(36)}_${i}`,
-        status: "queued",
-      })),
-    });
+  const body = (await req.json().catch(() => ({}))) as {
+    leads?: DialLeadInput[];
+    room?: string;
+    agentIdentity?: string;
+  };
+
+  const room = body.room?.trim();
+  const leads = (body.leads ?? [])
+    .map((l) => ({ leadId: l.leadId, to: toE164(l.phone) }))
+    .filter((l) => l.to && l.leadId);
+
+  if (!room || !leads.length) {
+    return NextResponse.json(
+      { error: "room and at least one lead are required" },
+      { status: 400 },
+    );
   }
 
   const client = await getRestClient();
   if (!client) {
-    return NextResponse.json({ mode: "demo", calls: [] });
+    return NextResponse.json({ error: "Twilio unavailable" }, { status: 503 });
   }
 
-  const room = `agent-${body.agentIdentity ?? "floor"}-${Date.now().toString(36)}`;
   const base = twilioConfig.appUrl;
+  const conferenceTwiml = `<?xml version="1.0" encoding="UTF-8"?><Response><Dial answerOnBridge="true"><Conference startConferenceOnEnter="true" endConferenceOnExit="false" beep="false">${room}</Conference></Dial></Response>`;
 
-  const calls = await Promise.all(
-    numbers.map(async (to) => {
+  const placed = await Promise.all(
+    leads.map(async (leg) => {
       try {
         const call = await client.calls.create({
-          to,
+          to: leg.to,
           from: twilioConfig.callerId,
-          // Each answered lead joins the agent's conference; the app connects
-          // the first to answer and drops the rest.
-          twiml: `<Response><Dial answerOnBridge="true"><Conference startConferenceOnEnter="true" endConferenceOnExit="true" waitUrl="">${room}</Conference></Dial></Response>`,
-          statusCallback: `${base}/api/twilio/status`,
+          twiml: conferenceTwiml,
+          statusCallback: `${base}/api/twilio/status?room=${encodeURIComponent(room)}&leadId=${encodeURIComponent(leg.leadId)}`,
           statusCallbackEvent: ["initiated", "ringing", "answered", "completed"],
         });
-        return { to, sid: call.sid, status: call.status };
-      } catch (err) {
-        return { to, sid: null, status: "failed", error: String(err) };
+        return { leadId: leg.leadId, to: leg.to, sid: call.sid };
+      } catch {
+        return { leadId: leg.leadId, to: leg.to, sid: null };
       }
     }),
   );
 
-  return NextResponse.json({ mode: "live", room, calls });
+  registerRoom(room, placed);
+
+  return NextResponse.json({ room, calls: placed });
 }

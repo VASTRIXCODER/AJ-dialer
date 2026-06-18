@@ -24,10 +24,12 @@ export function DialPad({
   onCall,
   onDigit,
   compact = false,
+  callDisabled = false,
 }: {
   onCall?: (number: string) => void;
   onDigit?: (digit: string) => void;
   compact?: boolean;
+  callDisabled?: boolean;
 }) {
   const [value, setValue] = useState("");
 
@@ -88,7 +90,7 @@ export function DialPad({
           variant="success"
           size="lg"
           className="w-full gap-2"
-          disabled={!value}
+          disabled={!value || callDisabled}
           onClick={() => onCall(value)}
         >
           <Phone className="h-5 w-5" />

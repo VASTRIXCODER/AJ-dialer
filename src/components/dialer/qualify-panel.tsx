@@ -55,9 +55,11 @@ export function QualifyPanel({ lead }: { lead: Lead | null }) {
           <span className="text-sm font-semibold">AI assist</span>
         </div>
         <p className="mt-1.5 text-xs text-muted-foreground">
-          {lead
-            ? `${lead.firstName} is a strong fit — ${lead.aiScore ?? 80}% qualification confidence. Lead with the utility true-up overpayment and confirm recent lifestyle changes.`
-            : "Start a call to surface live qualification guidance for the homeowner."}
+          {!lead
+            ? "Select or dial a homeowner to begin qualification."
+            : lead.aiScore != null
+              ? `${lead.aiScore}% qualification confidence. Confirm the utility bill, solar payment, and any recent lifestyle changes.`
+              : "Run the solar resolution script: confirm the utility bill, solar payment, and any recent lifestyle changes."}
         </p>
       </div>
 

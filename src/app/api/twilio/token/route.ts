@@ -10,14 +10,14 @@ export const dynamic = "force-dynamic";
  */
 export async function GET() {
   if (!isVoiceConfigured()) {
-    return NextResponse.json({ mode: "demo" });
+    return NextResponse.json({ mode: "offline" });
   }
 
   const identity = `agent-${Date.now().toString(36)}`;
   const token = await createVoiceToken(identity);
 
   if (!token) {
-    return NextResponse.json({ mode: "demo" });
+    return NextResponse.json({ mode: "offline" });
   }
 
   return NextResponse.json({ mode: "live", identity, token });

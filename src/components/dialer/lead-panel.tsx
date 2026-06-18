@@ -57,7 +57,7 @@ export function LeadPanel({
               <Badge tone="primary" className="capitalize">
                 {lead.status.replace("_", " ")}
               </Badge>
-              <Badge tone="neutral">{lead.timezone}</Badge>
+              {lead.timezone && <Badge tone="neutral">{lead.timezone}</Badge>}
             </div>
           </div>
           {lead.aiScore != null && (
@@ -68,26 +68,33 @@ export function LeadPanel({
         </div>
 
         <div className="mt-4 space-y-2 text-sm">
-          <div className="flex items-start gap-2.5 text-muted-foreground">
-            <MapPin className="mt-0.5 h-4 w-4 shrink-0" />
-            <span>
-              {lead.address}, {lead.city}, {lead.state} {lead.zip}
-            </span>
-          </div>
+          {(lead.address || lead.city) && (
+            <div className="flex items-start gap-2.5 text-muted-foreground">
+              <MapPin className="mt-0.5 h-4 w-4 shrink-0" />
+              <span>
+                {[lead.address, lead.city, lead.state].filter(Boolean).join(", ")}{" "}
+                {lead.zip}
+              </span>
+            </div>
+          )}
           {lead.email && (
             <div className="flex items-center gap-2.5 text-muted-foreground">
               <Mail className="h-4 w-4 shrink-0" />
               <span className="truncate">{lead.email}</span>
             </div>
           )}
-          <div className="flex items-center gap-2.5 text-muted-foreground">
-            <Zap className="h-4 w-4 shrink-0" />
-            <span>{lead.utilityProvider}</span>
-          </div>
-          <div className="flex items-center gap-2.5 text-muted-foreground">
-            <Sun className="h-4 w-4 shrink-0" />
-            <span>{lead.solarProvider}</span>
-          </div>
+          {lead.utilityProvider && (
+            <div className="flex items-center gap-2.5 text-muted-foreground">
+              <Zap className="h-4 w-4 shrink-0" />
+              <span>{lead.utilityProvider}</span>
+            </div>
+          )}
+          {lead.solarProvider && (
+            <div className="flex items-center gap-2.5 text-muted-foreground">
+              <Sun className="h-4 w-4 shrink-0" />
+              <span>{lead.solarProvider}</span>
+            </div>
+          )}
         </div>
 
         <div className="mt-4 grid grid-cols-2 gap-2">
@@ -130,7 +137,7 @@ export function LeadPanel({
         )}
       </div>
 
-      <div className="flex-1 p-5">
+      <div className={upNext.length ? "flex-1 p-5" : "hidden"}>
         <p className="mb-2.5 text-xs font-bold uppercase tracking-wide text-muted-foreground">
           Up next in queue
         </p>
