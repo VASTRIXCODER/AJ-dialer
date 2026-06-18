@@ -1,0 +1,160 @@
+<div align="center">
+
+# ☀️ AIATWORK · Solar Resolution Dialer
+
+**An Apple-grade, Twilio-powered AI outbound calling platform for solar organizations.**
+
+Find homeowners still paying a utility bill *on top of* their solar payment, qualify them, and book account reviews — with high-volume parallel dialing, live team management, and an optional AI qualification agent.
+
+</div>
+
+---
+
+## ✨ Highlights
+
+- **Browser-based power dialer** — click-to-call, power, auto, and **3X parallel dialing**. No desk phones.
+- **3X parallel dialing** — rings up to three homeowners at once; the first to answer connects instantly and the rest are released.
+- **Solar resolution workflow** — capture billing, home profile (EV / pool / battery), and lifestyle changes inline while you talk.
+- **Live call monitoring** — watch the floor in real time, listen in, and whisper-coach.
+- **AI qualification agent** — an always-on agent that dials, qualifies, books appointments, and writes summaries.
+- **Real-time analytics** — calls, connect rate, appointments, utility-bill insights, and leaderboards.
+- **Gorgeous, accessible UI** — light & dark modes, fluid motion, fully responsive, WCAG-minded.
+
+Built to the **AIATWORK Solar Resolution** spec: dialer, smart lead distribution, call recording, callbacks, appointments, campaigns, reports, leaderboards, rep & manager dashboards, and admin controls.
+
+---
+
+## 🧰 Tech stack
+
+| Layer | Choice |
+| --- | --- |
+| Framework | **Next.js 15** (App Router) + **React 19** |
+| Language | **TypeScript** (strict) |
+| Styling | **Tailwind CSS v4** with a custom solar design-token system |
+| Motion | **Framer Motion** |
+| Charts | **Recharts** |
+| Icons | **Lucide** |
+| Telephony | **Twilio Voice JS SDK** (browser) + **Twilio Node SDK** (server) |
+| Theming | **next-themes** (light / dark / system) |
+
+---
+
+## 🚀 Getting started
+
+```bash
+# 1. Install dependencies
+npm install
+
+# 2. Run the dev server
+npm run dev
+
+# 3. Open the app
+open http://localhost:3000
+```
+
+The app runs in **Demo Mode** out of the box — every screen is interactive and the
+dialer *simulates* live calls (parallel ringing, connect, talk timer, disposition),
+so you can explore the entire product without any Twilio account.
+
+---
+
+## ☎️ Going live with Twilio
+
+Copy the environment template and fill in your credentials:
+
+```bash
+cp .env.example .env.local
+```
+
+| Variable | Where to find it |
+| --- | --- |
+| `TWILIO_ACCOUNT_SID` / `TWILIO_AUTH_TOKEN` | Twilio Console → Account |
+| `TWILIO_API_KEY_SID` / `TWILIO_API_KEY_SECRET` | Console → Account → API keys & tokens |
+| `TWILIO_TWIML_APP_SID` | Console → Voice → TwiML → TwiML Apps |
+| `TWILIO_CALLER_ID` | A verified Twilio phone number (E.164) |
+| `NEXT_PUBLIC_APP_URL` | A public URL Twilio can reach for webhooks (e.g. an ngrok tunnel in dev) |
+
+Point your **TwiML App's Voice Request URL** at `{NEXT_PUBLIC_APP_URL}/api/twilio/voice`.
+
+Once configured, the top bar flips from **Demo Mode** to **Twilio Live**, and the
+dialer places real outbound calls through the browser. If credentials are missing
+or incomplete, the platform automatically and gracefully falls back to simulation.
+
+### How calling works
+
+| Route | Purpose |
+| --- | --- |
+| `GET /api/twilio/token` | Mints a short-lived Voice access token for the browser SDK (or reports demo mode). |
+| `POST /api/twilio/voice` | TwiML that dials the requested number with your caller ID and optional dual-channel recording. |
+| `POST /api/twilio/call` | Initiates outbound legs for parallel dialing (conference-bridge pattern). |
+| `POST /api/twilio/status` | Receives call & recording status callbacks. |
+
+> **Note on parallel dialing:** single-line browser calling is fully wired end-to-end
+> via the Voice SDK. True 3X bridging (dial N leads → bridge the first answer → cancel
+> the rest) is orchestrated server-side via `/api/twilio/call` using a per-agent
+> conference; the UI drives the live ring/connect/release visualization in all modes.
+
+---
+
+## 🗂️ Project structure
+
+```
+src/
+├── app/
+│   ├── (app)/                 # Authenticated app shell (sidebar + topbar)
+│   │   ├── dashboard/         # Manager command center
+│   │   ├── dialer/            # ⭐ The power dialer
+│   │   ├── leads/             # Searchable, filterable lead table
+│   │   ├── appointments/      # Scheduled account reviews
+│   │   ├── callbacks/         # Due / overdue / upcoming callbacks
+│   │   ├── monitor/           # Live call monitoring (real-time)
+│   │   ├── leaderboard/       # Daily / weekly / monthly rankings
+│   │   ├── campaigns/         # Campaign performance
+│   │   ├── reports/           # Analytics + call records
+│   │   ├── ai-agent/          # AI qualification agent
+│   │   ├── admin/             # Users, CSV import, integrations, billing
+│   │   └── settings/          # Profile, appearance, preferences
+│   ├── api/twilio/            # Token, voice (TwiML), call, status routes
+│   ├── page.tsx               # Marketing landing page
+│   └── globals.css            # Solar design system (tokens, utilities, motion)
+├── components/
+│   ├── ui/                    # Primitives (button, card, badge, input, …)
+│   ├── dialer/                # Dial pad, parallel lines, call stage, panels
+│   ├── dashboard/             # Metric cards & charts
+│   ├── layout/                # Sidebar, topbar, app shell
+│   ├── marketing/             # Landing nav + animated dialing preview
+│   └── …
+└── lib/
+    ├── twilio.ts              # Server config + token/REST helpers
+    ├── use-dialer.ts          # Dialer state machine (live + simulation)
+    ├── data.ts                # Rich seed data
+    ├── types.ts               # Domain model
+    └── utils.ts               # Formatters & helpers
+```
+
+---
+
+## 🎨 Design system
+
+A warm **solar** identity (gold → ember) paired with a deep-space dark mode, built on
+semantic CSS variables in `globals.css`. Everything is token-driven (`--primary`,
+`--surface`, `--success`, …) so light/dark and re-theming are trivial. Glassmorphism,
+soft shadows, spring motion, and tabular numerics give it the Apple-grade feel.
+
+---
+
+## 💸 Pricing model (as built into the product)
+
+- **Dialer Platform** — $15 / active rep / month
+- **Solar Resolution AI Agent** — $175 / month + usage
+
+---
+
+## 📜 Scripts
+
+```bash
+npm run dev      # Start dev server
+npm run build    # Production build
+npm run start    # Run the production build
+npm run lint     # Lint
+```
