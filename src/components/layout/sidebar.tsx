@@ -1,7 +1,9 @@
 "use client";
 
+import { motion } from "framer-motion";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useId } from "react";
 import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Wordmark } from "@/components/brand/logo";
@@ -11,6 +13,9 @@ import { navGroups } from "./nav";
 
 export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
   const pathname = usePathname();
+  // Unique per instance so the desktop + mobile sidebars don't share a layout id.
+  const uid = useId();
+  let order = 0;
 
   return (
     <div className="glass flex h-full flex-col gap-6 border-r border-border/60">
@@ -31,32 +36,54 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
                 const active =
                   pathname === item.href || pathname.startsWith(`${item.href}/`);
                 const Icon = item.icon;
+                const delay = order++ * 0.035;
                 return (
-                  <li key={item.href}>
+                  <motion.li
+                    key={item.href}
+                    initial={{ opacity: 0, x: -10 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    transition={{
+                      delay,
+                      duration: 0.4,
+                      ease: [0.22, 1, 0.36, 1],
+                    }}
+                  >
                     <Link
                       href={item.href}
                       onClick={onNavigate}
                       aria-current={active ? "page" : undefined}
                       className={cn(
-                        "group relative flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-all duration-200",
+                        "group relative flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-colors duration-200",
                         active
-                          ? "bg-primary-soft text-primary shadow-[0_0_24px_-6px_hsl(var(--glow)/0.5)]"
+                          ? "text-primary"
                           : "text-muted-foreground hover:bg-muted/70 hover:text-foreground",
                       )}
                     >
                       {active && (
-                        <span className="absolute left-0 top-1/2 h-5 w-1 -translate-y-1/2 rounded-r-full bg-primary shadow-[0_0_10px_0_hsl(var(--glow)/0.8)]" />
+                        <>
+                          {/* Sliding active pill — glides between routes */}
+                          <motion.span
+                            layoutId={`nav-active-${uid}`}
+                            className="absolute inset-0 z-0 rounded-xl bg-primary-soft shadow-[0_0_24px_-6px_hsl(var(--glow)/0.5)]"
+                            transition={{ type: "spring", stiffness: 420, damping: 34 }}
+                          />
+                          <motion.span
+                            layoutId={`nav-bar-${uid}`}
+                            className="absolute left-0 top-1/2 z-10 h-5 w-1 -translate-y-1/2 rounded-r-full bg-primary shadow-[0_0_10px_0_hsl(var(--glow)/0.8)]"
+                            transition={{ type: "spring", stiffness: 420, damping: 34 }}
+                          />
+                        </>
                       )}
                       <Icon
                         className={cn(
-                          "h-[18px] w-[18px] shrink-0 transition-transform duration-200 group-hover:scale-110",
+                          "relative z-10 h-[18px] w-[18px] shrink-0 transition-transform duration-200 group-hover:scale-110 group-active:scale-95",
                           active && "drop-shadow-[0_0_6px_hsl(var(--glow)/0.7)]",
                         )}
                       />
-                      <span className="flex-1">{item.label}</span>
+                      <span className="relative z-10 flex-1">{item.label}</span>
                       {item.badge &&
                         (item.badge === "Live" ? (
-                          <span className="flex items-center gap-1.5 text-[10px] font-bold text-success">
+                          <span className="relative z-10 flex items-center gap-1.5 text-[10px] font-bold text-success">
                             <span className="relative flex h-2 w-2">
                               <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-success opacity-60" />
                               <span className="relative inline-flex h-2 w-2 rounded-full bg-success" />
@@ -64,12 +91,12 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
                             LIVE
                           </span>
                         ) : (
-                          <Badge tone="primary" className="px-1.5 py-0">
+                          <Badge tone="primary" className="relative z-10 px-1.5 py-0">
                             {item.badge}
                           </Badge>
                         ))}
                     </Link>
-                  </li>
+                  </motion.li>
                 );
               })}
             </ul>
@@ -81,7 +108,7 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
         <Link
           href="/settings"
           onClick={onNavigate}
-          className="flex items-center gap-3 rounded-2xl border border-border/60 bg-background/30 p-3 transition-colors hover:bg-muted/60"
+          className="group flex items-center gap-3 rounded-2xl border border-border/60 bg-background/30 p-3 transition-all duration-300 hover:-translate-y-0.5 hover:border-border hover:bg-muted/60 hover:shadow-soft"
         >
           <Avatar
             initials={currentRep.initials}

@@ -1,7 +1,9 @@
 "use client";
 
+import { motion } from "framer-motion";
 import { BatteryCharging, Car, Sparkles, Waves } from "lucide-react";
 import { useState } from "react";
+import { CountUp } from "@/components/motion";
 import { Input, Label, Textarea } from "@/components/ui/input";
 import type { Lead } from "@/lib/types";
 import { cn, formatCurrency } from "@/lib/utils";
@@ -18,19 +20,22 @@ function Toggle({
   onClick: () => void;
 }) {
   return (
-    <button
+    <motion.button
       type="button"
       onClick={onClick}
+      whileTap={{ scale: 0.93 }}
+      whileHover={{ y: -2 }}
+      transition={{ type: "spring", stiffness: 400, damping: 22 }}
       className={cn(
-        "flex items-center gap-2 rounded-xl border px-3 py-2.5 text-sm font-medium transition-all duration-150 active:scale-95",
+        "flex items-center gap-2 rounded-xl border px-3 py-2.5 text-sm font-medium transition-colors duration-200",
         active
-          ? "border-primary/50 bg-primary-soft text-primary"
+          ? "border-primary/50 bg-primary-soft text-primary shadow-[0_0_18px_-6px_hsl(var(--glow)/0.6)]"
           : "border-border bg-surface text-muted-foreground hover:bg-muted",
       )}
     >
       <Icon className="h-4 w-4" />
       {label}
-    </button>
+    </motion.button>
   );
 }
 
@@ -90,7 +95,11 @@ export function QualifyPanel({ lead }: { lead: Lead | null }) {
         <div className="mt-3 flex items-center justify-between rounded-xl bg-muted px-3.5 py-2.5">
           <span className="text-sm text-muted-foreground">Total energy cost</span>
           <span className="text-lg font-bold tabular text-primary">
-            {formatCurrency(total)}
+            <CountUp
+              value={total}
+              duration={0.5}
+              format={(n) => formatCurrency(Math.round(n))}
+            />
             <span className="text-xs font-normal text-muted-foreground">/mo</span>
           </span>
         </div>

@@ -23,6 +23,7 @@ import { cn, formatDuration, initials } from "@/lib/utils";
 import { DialPad } from "./dial-pad";
 import { OutcomeGrid } from "./outcome-grid";
 import { ParallelLines } from "./parallel-lines";
+import { Waveform } from "./waveform";
 
 function ControlButton({
   active,
@@ -286,9 +287,10 @@ export function CallStage({
           {state.status === "live" && focusLead && (
             <motion.div
               key="live"
-              initial={{ opacity: 0, scale: 0.96 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.96 }}
+              initial={{ opacity: 0, scale: 0.94, y: 8 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.96, y: -8 }}
+              transition={{ type: "spring", stiffness: 280, damping: 26 }}
               className="flex w-full max-w-sm flex-col items-center gap-5"
             >
               <span className="relative">
@@ -323,6 +325,13 @@ export function CallStage({
                   )}
                 </div>
               </div>
+
+              {/* Live audio waveform — reacts to the call, flattens on hold */}
+              <Waveform
+                active={!state.onHold}
+                muted={state.muted}
+                className="w-full max-w-[280px]"
+              />
 
               <AnimatePresence>
                 {showKeypad && (

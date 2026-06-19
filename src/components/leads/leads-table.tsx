@@ -1,5 +1,6 @@
 "use client";
 
+import { motion } from "framer-motion";
 import {
   BatteryCharging,
   Car,
@@ -56,21 +57,31 @@ export function LeadsTable({ leads }: { leads: Lead[] }) {
           />
         </div>
         <div className="flex flex-wrap gap-1.5">
-          {FILTERS.map((f) => (
-            <button
-              key={f.value}
-              type="button"
-              onClick={() => setFilter(f.value)}
-              className={cn(
-                "rounded-lg px-3 py-1.5 text-sm font-medium transition-colors",
-                filter === f.value
-                  ? "bg-foreground text-background"
-                  : "bg-muted text-muted-foreground hover:bg-secondary",
-              )}
-            >
-              {f.label}
-            </button>
-          ))}
+          {FILTERS.map((f) => {
+            const active = filter === f.value;
+            return (
+              <button
+                key={f.value}
+                type="button"
+                onClick={() => setFilter(f.value)}
+                className={cn(
+                  "relative rounded-lg px-3 py-1.5 text-sm font-medium transition-colors duration-200",
+                  active
+                    ? "text-background"
+                    : "bg-muted text-muted-foreground hover:bg-secondary",
+                )}
+              >
+                {active && (
+                  <motion.span
+                    layoutId="leads-filter"
+                    className="absolute inset-0 z-0 rounded-lg bg-foreground"
+                    transition={{ type: "spring", stiffness: 380, damping: 32 }}
+                  />
+                )}
+                <span className="relative z-10">{f.label}</span>
+              </button>
+            );
+          })}
         </div>
       </div>
 
@@ -91,11 +102,17 @@ export function LeadsTable({ leads }: { leads: Lead[] }) {
               </tr>
             </thead>
             <tbody className="divide-y divide-border">
-              {filtered.map((l) => {
+              {filtered.map((l, i) => {
                 const name = `${l.firstName} ${l.lastName}`;
                 const cfg = leadStatusConfig[l.status];
                 return (
-                  <tr key={l.id} className="group transition-colors hover:bg-muted/50">
+                  <motion.tr
+                    key={l.id}
+                    initial={{ opacity: 0, y: 6 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: Math.min(i, 14) * 0.025, duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
+                    className="group transition-colors hover:bg-muted/50"
+                  >
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-2.5">
                         <Avatar initials={initials(name)} color="#3B82F6" size="sm" />
@@ -157,7 +174,7 @@ export function LeadsTable({ leads }: { leads: Lead[] }) {
                         Call
                       </Link>
                     </td>
-                  </tr>
+                  </motion.tr>
                 );
               })}
             </tbody>

@@ -13,16 +13,16 @@ type Size = "sm" | "md" | "lg" | "icon";
 
 const variants: Record<Variant, string> = {
   primary:
-    "bg-solar text-white shadow-soft ring-1 ring-inset ring-white/10 hover:shadow-glow hover:brightness-[1.06] active:brightness-95",
-  secondary: "bg-foreground text-background hover:opacity-90 shadow-soft",
+    "sheen bg-solar text-white shadow-soft ring-1 ring-inset ring-white/10 hover:shadow-glow hover:brightness-[1.06] active:brightness-95",
+  secondary: "sheen bg-foreground text-background hover:opacity-90 shadow-soft",
   outline:
     "border border-border/70 bg-surface/50 backdrop-blur-md text-foreground hover:border-border hover:bg-surface-muted/80",
   ghost: "text-foreground hover:bg-muted/70",
   subtle: "bg-muted text-foreground hover:bg-secondary",
   danger:
-    "bg-danger text-danger-foreground shadow-soft hover:brightness-105 active:brightness-95",
+    "sheen bg-danger text-danger-foreground shadow-soft hover:brightness-105 active:brightness-95",
   success:
-    "bg-success text-success-foreground shadow-soft hover:brightness-105 active:brightness-95",
+    "sheen bg-success text-success-foreground shadow-soft hover:brightness-105 active:brightness-95",
 };
 
 const sizes: Record<Size, string> = {

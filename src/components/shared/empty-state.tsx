@@ -25,8 +25,8 @@ export function EmptyState({
       )}
     >
       <div className="relative">
-        <div className="glow-orb absolute -inset-4 opacity-50" />
-        <div className="relative flex h-16 w-16 items-center justify-center rounded-2xl bg-primary-soft text-primary ring-1 ring-inset ring-primary/20">
+        <div className="glow-orb animate-glow-pulse absolute -inset-4 opacity-50" />
+        <div className="animate-float relative flex h-16 w-16 items-center justify-center rounded-2xl bg-primary-soft text-primary ring-1 ring-inset ring-primary/20">
           <Icon className="h-7 w-7" />
         </div>
       </div>

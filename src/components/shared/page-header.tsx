@@ -45,7 +45,7 @@ export function PageContainer({
   return (
     <div
       className={cn(
-        "mx-auto w-full max-w-[1400px] space-y-6 p-4 sm:p-6 lg:p-8",
+        "page-reveal mx-auto w-full max-w-[1400px] space-y-6 p-4 sm:p-6 lg:p-8",
         className,
       )}
     >

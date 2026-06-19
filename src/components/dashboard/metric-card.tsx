@@ -1,8 +1,22 @@
 import { ArrowDownRight, ArrowUpRight, type LucideIcon } from "lucide-react";
-import { Card } from "@/components/ui/card";
+import { CountUp } from "@/components/motion";
+import { SpotlightCard } from "@/components/motion/spotlight-card";
 import { cn } from "@/lib/utils";
 
 type Accent = "primary" | "accent" | "success" | "warning" | "danger";
+
+/** Split a formatted metric ("$1,284", "73%", "4.8") into animatable parts. */
+function parseMetric(value: string) {
+  const prefix = value.match(/^[^\d-]*/)?.[0] ?? "";
+  const suffix = value.match(/[^\d.]*$/)?.[0] ?? "";
+  const core = value.slice(prefix.length, value.length - suffix.length);
+  if (!core) return null;
+  const num = Number(core.replace(/,/g, ""));
+  if (Number.isNaN(num)) return null;
+  const dot = core.indexOf(".");
+  const decimals = dot === -1 ? 0 : core.length - dot - 1;
+  return { prefix, suffix, num, decimals };
+}
 
 export function MetricCard({
   label,
@@ -36,13 +50,10 @@ export function MetricCard({
     danger: "bg-danger/25",
   };
 
+  const parsed = parseMetric(value);
+
   return (
-    <Card
-      className={cn(
-        "group relative overflow-hidden p-5 transition-all duration-300 ease-out hover:-translate-y-1 hover:shadow-lift",
-        className,
-      )}
-    >
+    <SpotlightCard className={cn("overflow-hidden p-5", className)}>
       {/* Ambient accent light that wakes on hover */}
       <div
         className={cn(
@@ -56,7 +67,18 @@ export function MetricCard({
           <p className="text-[11px] font-semibold uppercase tracking-[0.1em] text-muted-foreground">
             {label}
           </p>
-          <p className="text-4xl font-bold tracking-tight tabular">{value}</p>
+          <p className="text-4xl font-bold tracking-tight tabular">
+            {parsed ? (
+              <CountUp
+                value={parsed.num}
+                decimals={parsed.decimals}
+                prefix={parsed.prefix}
+                suffix={parsed.suffix}
+              />
+            ) : (
+              value
+            )}
+          </p>
           <div className="flex items-center gap-2">
             {delta && (
               <span
@@ -87,6 +109,6 @@ export function MetricCard({
           <Icon className="h-5 w-5" />
         </div>
       </div>
-    </Card>
+    </SpotlightCard>
   );
 }

@@ -2,10 +2,10 @@
 
 import { Ear, MessageSquare, Phone, Smile, Meh, Frown } from "lucide-react";
 import { useEffect, useState } from "react";
+import { SpotlightCard } from "@/components/motion";
 import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
 import type { ActiveCall } from "@/lib/types";
 import { cn, formatDuration, secondsSince } from "@/lib/utils";
 
@@ -24,16 +24,19 @@ export function MonitorGrid({ calls }: { calls: ActiveCall[] }) {
 
   return (
     <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
-      {calls.map((call) => {
+      {calls.map((call, i) => {
         const s = sentimentMeta[call.sentiment];
         const Sentiment = s.icon;
         const dur = secondsSince(call.startedAt, now);
         const connected = call.state === "connected";
         return (
-          <Card
+          <SpotlightCard
             key={call.id}
+            initial={{ opacity: 0, y: 16 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: i * 0.05, duration: 0.45, ease: [0.22, 1, 0.36, 1] }}
             className={cn(
-              "overflow-hidden p-5 transition-all duration-300 hover:shadow-lift",
+              "overflow-hidden p-5",
               connected && "ring-1 ring-success/20",
             )}
           >
@@ -95,7 +98,7 @@ export function MonitorGrid({ calls }: { calls: ActiveCall[] }) {
                 </Button>
               </div>
             </div>
-          </Card>
+          </SpotlightCard>
         );
       })}
     </div>

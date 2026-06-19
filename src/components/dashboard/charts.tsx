@@ -13,6 +13,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
+import { Reveal } from "@/components/motion";
 
 const axisProps = {
   stroke: "hsl(var(--muted-foreground))",
@@ -61,39 +62,48 @@ export function TrendAreaChart({
   data: Array<{ label: string; calls: number; conversations: number; appointments: number }>;
 }) {
   return (
-    <ResponsiveContainer width="100%" height={260}>
-      <AreaChart data={data} margin={{ top: 8, right: 8, left: -16, bottom: 0 }}>
-        <defs>
-          <linearGradient id="gCalls" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor="hsl(var(--chart-1))" stopOpacity={0.35} />
-            <stop offset="100%" stopColor="hsl(var(--chart-1))" stopOpacity={0} />
-          </linearGradient>
-          <linearGradient id="gConv" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor="hsl(var(--chart-2))" stopOpacity={0.3} />
-            <stop offset="100%" stopColor="hsl(var(--chart-2))" stopOpacity={0} />
-          </linearGradient>
-        </defs>
-        <XAxis dataKey="label" {...axisProps} />
-        <YAxis {...axisProps} width={42} />
-        <Tooltip content={<ChartTooltip />} cursor={{ stroke: "hsl(var(--border))" }} />
-        <Area
-          type="monotone"
-          dataKey="calls"
-          name="Calls"
-          stroke="hsl(var(--chart-1))"
-          strokeWidth={2.5}
-          fill="url(#gCalls)"
-        />
-        <Area
-          type="monotone"
-          dataKey="conversations"
-          name="Conversations"
-          stroke="hsl(var(--chart-2))"
-          strokeWidth={2.5}
-          fill="url(#gConv)"
-        />
-      </AreaChart>
-    </ResponsiveContainer>
+    <Reveal>
+      <ResponsiveContainer width="100%" height={260}>
+        <AreaChart data={data} margin={{ top: 8, right: 8, left: -16, bottom: 0 }}>
+          <defs>
+            <linearGradient id="gCalls" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="hsl(var(--chart-1))" stopOpacity={0.35} />
+              <stop offset="100%" stopColor="hsl(var(--chart-1))" stopOpacity={0} />
+            </linearGradient>
+            <linearGradient id="gConv" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="hsl(var(--chart-2))" stopOpacity={0.3} />
+              <stop offset="100%" stopColor="hsl(var(--chart-2))" stopOpacity={0} />
+            </linearGradient>
+          </defs>
+          <XAxis dataKey="label" {...axisProps} />
+          <YAxis {...axisProps} width={42} />
+          <Tooltip content={<ChartTooltip />} cursor={{ stroke: "hsl(var(--border))" }} />
+          <Area
+            type="monotone"
+            dataKey="calls"
+            name="Calls"
+            stroke="hsl(var(--chart-1))"
+            strokeWidth={2.5}
+            fill="url(#gCalls)"
+            isAnimationActive
+            animationDuration={1300}
+            animationEasing="ease-out"
+          />
+          <Area
+            type="monotone"
+            dataKey="conversations"
+            name="Conversations"
+            stroke="hsl(var(--chart-2))"
+            strokeWidth={2.5}
+            fill="url(#gConv)"
+            isAnimationActive
+            animationBegin={260}
+            animationDuration={1300}
+            animationEasing="ease-out"
+          />
+        </AreaChart>
+      </ResponsiveContainer>
+    </Reveal>
   );
 }
 
@@ -103,15 +113,36 @@ export function HourlyBarChart({
   data: Array<{ hour: string; calls: number; connects: number }>;
 }) {
   return (
-    <ResponsiveContainer width="100%" height={220}>
-      <BarChart data={data} margin={{ top: 8, right: 8, left: -18, bottom: 0 }} barGap={2}>
-        <XAxis dataKey="hour" {...axisProps} />
-        <YAxis {...axisProps} width={42} />
-        <Tooltip content={<ChartTooltip />} cursor={{ fill: "hsl(var(--muted))", opacity: 0.4 }} />
-        <Bar dataKey="calls" name="Dials" fill="hsl(var(--chart-1))" radius={[5, 5, 0, 0]} maxBarSize={26} />
-        <Bar dataKey="connects" name="Connects" fill="hsl(var(--chart-2))" radius={[5, 5, 0, 0]} maxBarSize={26} />
-      </BarChart>
-    </ResponsiveContainer>
+    <Reveal>
+      <ResponsiveContainer width="100%" height={220}>
+        <BarChart data={data} margin={{ top: 8, right: 8, left: -18, bottom: 0 }} barGap={2}>
+          <XAxis dataKey="hour" {...axisProps} />
+          <YAxis {...axisProps} width={42} />
+          <Tooltip content={<ChartTooltip />} cursor={{ fill: "hsl(var(--muted))", opacity: 0.4 }} />
+          <Bar
+            dataKey="calls"
+            name="Dials"
+            fill="hsl(var(--chart-1))"
+            radius={[5, 5, 0, 0]}
+            maxBarSize={26}
+            isAnimationActive
+            animationDuration={1100}
+            animationEasing="ease-out"
+          />
+          <Bar
+            dataKey="connects"
+            name="Connects"
+            fill="hsl(var(--chart-2))"
+            radius={[5, 5, 0, 0]}
+            maxBarSize={26}
+            isAnimationActive
+            animationBegin={160}
+            animationDuration={1100}
+            animationEasing="ease-out"
+          />
+        </BarChart>
+      </ResponsiveContainer>
+    </Reveal>
   );
 }
 
@@ -121,23 +152,28 @@ export function OutcomeDonut({
   data: Array<{ name: string; value: number; color: string }>;
 }) {
   return (
-    <ResponsiveContainer width="100%" height={220}>
-      <PieChart>
-        <Pie
-          data={data}
-          dataKey="value"
-          nameKey="name"
-          innerRadius={58}
-          outerRadius={86}
-          paddingAngle={3}
-          stroke="none"
-        >
-          {data.map((entry, i) => (
-            <Cell key={i} fill={entry.color} />
-          ))}
-        </Pie>
-        <Tooltip content={<ChartTooltip suffix="%" />} />
-      </PieChart>
-    </ResponsiveContainer>
+    <Reveal>
+      <ResponsiveContainer width="100%" height={220}>
+        <PieChart>
+          <Pie
+            data={data}
+            dataKey="value"
+            nameKey="name"
+            innerRadius={58}
+            outerRadius={86}
+            paddingAngle={3}
+            stroke="none"
+            isAnimationActive
+            animationDuration={1000}
+            animationEasing="ease-out"
+          >
+            {data.map((entry, i) => (
+              <Cell key={i} fill={entry.color} />
+            ))}
+          </Pie>
+          <Tooltip content={<ChartTooltip suffix="%" />} />
+        </PieChart>
+      </ResponsiveContainer>
+    </Reveal>
   );
 }

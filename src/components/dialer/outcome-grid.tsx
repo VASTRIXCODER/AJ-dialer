@@ -1,5 +1,6 @@
 "use client";
 
+import { motion } from "framer-motion";
 import {
   Ban,
   CalendarCheck,
@@ -40,19 +41,24 @@ export function OutcomeGrid({
 }) {
   return (
     <div className="grid grid-cols-2 gap-2.5">
-      {outcomeOptions.map((opt) => {
+      {outcomeOptions.map((opt, i) => {
         const Icon = icons[opt.value];
         return (
-          <button
+          <motion.button
             key={opt.value}
             type="button"
             onClick={() => onSelect(opt.value)}
+            initial={{ opacity: 0, y: 10, scale: 0.97 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            transition={{ delay: i * 0.04, duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
+            whileHover={{ y: -3 }}
+            whileTap={{ scale: 0.95 }}
             className={cn(
-              "group flex items-start gap-3 rounded-xl border border-border bg-surface p-3 text-left transition-all duration-150 active:scale-[0.98]",
+              "group flex items-start gap-3 rounded-xl border border-border bg-surface p-3 text-left transition-colors duration-200",
               toneRing[opt.tone],
             )}
           >
-            <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-muted transition-colors group-hover:bg-surface">
+            <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-muted transition-all duration-200 group-hover:scale-110 group-hover:bg-surface">
               <Icon className="h-4 w-4" />
             </span>
             <span className="min-w-0">
@@ -63,7 +69,7 @@ export function OutcomeGrid({
                 {opt.description}
               </span>
             </span>
-          </button>
+          </motion.button>
         );
       })}
     </div>

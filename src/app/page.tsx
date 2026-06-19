@@ -16,8 +16,10 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { LogoMark } from "@/components/brand/logo";
+import { AmbientBackground } from "@/components/layout/ambient-background";
 import { DialingPreview } from "@/components/marketing/dialing-preview";
 import { MarketingNav } from "@/components/marketing/marketing-nav";
+import { Reveal, RevealItem, Stagger } from "@/components/motion";
 import { Badge } from "@/components/ui/badge";
 import { buttonVariants } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -63,18 +65,8 @@ const aiIncludes = [
 export default function LandingPage() {
   return (
     <div className="relative min-h-screen">
-      {/* Cinematic ambient backdrop — consistent with the app shell */}
-      <div
-        aria-hidden
-        className="pointer-events-none fixed inset-0 -z-10 overflow-hidden bg-aurora"
-      >
-        <div className="glow-orb absolute -left-40 -top-48 h-[40rem] w-[40rem] animate-aurora opacity-60" />
-        <div
-          className="glow-orb absolute -right-48 top-1/3 h-[34rem] w-[34rem] animate-aurora opacity-40"
-          style={{ animationDelay: "-10s" }}
-        />
-        <div className="absolute inset-0 bg-noise opacity-[0.02] mix-blend-overlay dark:opacity-[0.035]" />
-      </div>
+      {/* Living ambient backdrop — consistent with the app shell */}
+      <AmbientBackground />
 
       <MarketingNav />
 
@@ -146,7 +138,7 @@ export default function LandingPage() {
 
       {/* Features */}
       <section id="platform" className="mx-auto max-w-7xl px-4 py-16 sm:px-6 lg:py-24">
-        <div className="mx-auto max-w-2xl text-center">
+        <Reveal className="mx-auto max-w-2xl text-center">
           <Badge tone="accent">One platform</Badge>
           <h2 className="mt-4 text-3xl font-bold tracking-tight sm:text-4xl">
             Everything your floor needs to scale outbound
@@ -155,28 +147,27 @@ export default function LandingPage() {
             High-volume dialing, live management, scheduling, and AI
             qualification — unified in one beautifully simple system.
           </p>
-        </div>
+        </Reveal>
 
-        <div className="mt-12 grid grid-cols-1 gap-5 md:grid-cols-2 lg:grid-cols-3">
+        <Stagger className="mt-12 grid grid-cols-1 gap-5 md:grid-cols-2 lg:grid-cols-3">
           {features.map((f) => (
-            <Card
-              key={f.title}
-              className="group p-6 transition-all duration-300 hover:-translate-y-1 hover:shadow-lift"
-            >
-              <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-primary-soft text-primary transition-transform duration-300 group-hover:scale-110">
-                <f.icon className="h-6 w-6" />
-              </div>
-              <h3 className="mt-4 text-lg font-semibold">{f.title}</h3>
-              <p className="mt-2 text-sm text-muted-foreground">{f.desc}</p>
-            </Card>
+            <RevealItem key={f.title}>
+              <Card className="group h-full p-6 hover-lift sheen">
+                <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-primary-soft text-primary transition-transform duration-300 group-hover:scale-110">
+                  <f.icon className="h-6 w-6" />
+                </div>
+                <h3 className="mt-4 text-lg font-semibold">{f.title}</h3>
+                <p className="mt-2 text-sm text-muted-foreground">{f.desc}</p>
+              </Card>
+            </RevealItem>
           ))}
-        </div>
+        </Stagger>
       </section>
 
       {/* Parallel dialing */}
       <section id="parallel" className="border-y border-border bg-surface-muted/50">
         <div className="mx-auto grid max-w-7xl items-center gap-12 px-4 py-16 sm:px-6 lg:grid-cols-2 lg:py-24">
-          <div>
+          <Reveal>
             <Badge tone="primary" className="gap-1.5">
               <Layers className="h-3.5 w-3.5" />
               3X Parallel Dialing
@@ -220,16 +211,17 @@ export default function LandingPage() {
                 </div>
               ))}
             </div>
-          </div>
-          <div className="flex justify-center">
+          </Reveal>
+          <Reveal delay={0.1} className="flex justify-center">
             <DialingPreview />
-          </div>
+          </Reveal>
         </div>
       </section>
 
       {/* AI agent */}
       <section id="ai" className="mx-auto max-w-7xl px-4 py-16 sm:px-6 lg:py-24">
-        <Card className="relative overflow-hidden border-0 bg-solar p-8 text-white shadow-glow sm:p-12">
+        <Reveal>
+          <Card className="relative overflow-hidden border-0 bg-solar p-8 text-white shadow-glow sm:p-12">
           <div className="pointer-events-none absolute -right-20 -top-20 h-72 w-72 rounded-full bg-white/20 blur-3xl" />
           <div className="pointer-events-none absolute -bottom-24 left-10 h-64 w-64 rounded-full bg-white/10 blur-3xl" />
           <div className="relative grid items-center gap-10 lg:grid-cols-2">
@@ -276,13 +268,14 @@ export default function LandingPage() {
               ))}
             </div>
           </div>
-        </Card>
+          </Card>
+        </Reveal>
       </section>
 
       {/* Pricing */}
       <section id="pricing" className="border-t border-border bg-surface-muted/50">
         <div className="mx-auto max-w-5xl px-4 py-16 sm:px-6 lg:py-24">
-          <div className="mx-auto max-w-2xl text-center">
+          <Reveal className="mx-auto max-w-2xl text-center">
             <Badge tone="primary">Pricing</Badge>
             <h2 className="mt-4 text-3xl font-bold tracking-tight sm:text-4xl">
               Simple, scale-friendly pricing
@@ -290,9 +283,9 @@ export default function LandingPage() {
             <p className="mt-3 text-muted-foreground">
               Pay for active reps. Add the AI agent whenever you’re ready.
             </p>
-          </div>
+          </Reveal>
 
-          <div className="mt-12 grid gap-6 lg:grid-cols-2">
+          <Reveal className="mt-12 grid gap-6 lg:grid-cols-2">
             <Card className="flex flex-col p-8">
               <div className="flex items-center gap-3">
                 <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-primary-soft text-primary">
@@ -356,13 +349,14 @@ export default function LandingPage() {
                 Add AI agent
               </Link>
             </Card>
-          </div>
+          </Reveal>
         </div>
       </section>
 
       {/* CTA */}
       <section className="mx-auto max-w-7xl px-4 py-20 sm:px-6">
-        <div className="relative overflow-hidden rounded-3xl bg-solar px-6 py-16 text-center text-white shadow-glow sm:px-12">
+        <Reveal>
+          <div className="relative overflow-hidden rounded-3xl bg-solar px-6 py-16 text-center text-white shadow-glow sm:px-12">
           <div className="pointer-events-none absolute inset-0 bg-dots opacity-20" />
           <div className="relative mx-auto max-w-2xl">
             <Trophy className="mx-auto h-10 w-10" />
@@ -385,7 +379,8 @@ export default function LandingPage() {
               <ArrowRight className="h-4 w-4" />
             </Link>
           </div>
-        </div>
+          </div>
+        </Reveal>
       </section>
 
       {/* Footer */}

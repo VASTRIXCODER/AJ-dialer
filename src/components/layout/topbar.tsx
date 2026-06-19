@@ -1,7 +1,9 @@
 "use client";
 
+import { motion } from "framer-motion";
 import Link from "next/link";
 import { Bell, Menu, PhoneCall, Search } from "lucide-react";
+import { Magnetic } from "@/components/motion";
 import { buttonVariants } from "@/components/ui/button";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { cn } from "@/lib/utils";
@@ -15,7 +17,12 @@ export function Topbar({
 }) {
   return (
     <div className="sticky top-0 z-30 px-3 pt-3 sm:px-5 sm:pt-4">
-      <header className="glass flex h-[60px] items-center gap-3 rounded-2xl border border-border/60 px-3 py-2.5 sm:px-4">
+      <motion.header
+        initial={{ opacity: 0, y: -14 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
+        className="glass flex h-[60px] items-center gap-3 rounded-2xl border border-border/60 px-3 py-2.5 sm:px-4"
+      >
         <button
           type="button"
           onClick={onMenuClick}
@@ -71,18 +78,20 @@ export function Topbar({
 
           <ThemeToggle />
 
-          <Link
-            href="/dialer"
-            className={buttonVariants({
-              size: "sm",
-              className: "hidden gap-2 sm:inline-flex",
-            })}
-          >
-            <PhoneCall className="h-4 w-4" />
-            Start Dialing
-          </Link>
+          <Magnetic className="hidden sm:inline-flex">
+            <Link
+              href="/dialer"
+              className={buttonVariants({
+                size: "sm",
+                className: "gap-2",
+              })}
+            >
+              <PhoneCall className="h-4 w-4" />
+              Start Dialing
+            </Link>
+          </Magnetic>
         </div>
-      </header>
+      </motion.header>
     </div>
   );
 }

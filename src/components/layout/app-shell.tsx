@@ -3,32 +3,9 @@
 import { AnimatePresence, motion } from "framer-motion";
 import { X } from "lucide-react";
 import { useState } from "react";
+import { AmbientBackground } from "./ambient-background";
 import { Sidebar } from "./sidebar";
 import { Topbar } from "./topbar";
-
-/** Fixed, cinematic ambient backdrop rendered behind the entire app. */
-function AmbientBackground() {
-  return (
-    <div
-      aria-hidden
-      className="pointer-events-none fixed inset-0 -z-10 overflow-hidden bg-aurora"
-    >
-      {/* Floating ambient light sources — barely perceptible, always present */}
-      <div className="glow-orb absolute -left-32 -top-40 h-[34rem] w-[34rem] animate-aurora opacity-70" />
-      <div
-        className="glow-orb absolute -right-40 top-1/4 h-[30rem] w-[30rem] animate-aurora opacity-50"
-        style={{ animationDelay: "-8s" }}
-      />
-      <div
-        className="glow-orb absolute bottom-[-12rem] left-1/3 h-[36rem] w-[36rem] animate-aurora opacity-40"
-        style={{ animationDelay: "-16s" }}
-      />
-      {/* Structural grid + grain for depth without flatness */}
-      <div className="absolute inset-0 bg-grid opacity-[0.5]" />
-      <div className="absolute inset-0 bg-noise opacity-[0.015] mix-blend-overlay dark:opacity-[0.03]" />
-    </div>
-  );
-}
 
 export function AppShell({
   children,
