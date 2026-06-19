@@ -6,7 +6,7 @@ import { Avatar } from "@/components/ui/avatar";
 import type { DialLine } from "@/lib/use-dialer";
 import { cn, formatPhone, initials } from "@/lib/utils";
 
-const colors = ["#F97316", "#0EA5E9", "#8B5CF6"];
+const colors = ["#3B82F6", "#0EA5E9", "#8B5CF6"];
 
 export function ParallelLines({ lines }: { lines: DialLine[] }) {
   return (
@@ -29,10 +29,10 @@ export function ParallelLines({ lines }: { lines: DialLine[] }) {
               className={cn(
                 "flex items-center gap-3 rounded-2xl border p-3 transition-colors",
                 line.status === "connected"
-                  ? "border-success/40 bg-success/10"
+                  ? "border-success/40 bg-success/10 shadow-[0_0_28px_-8px_hsl(var(--success)/0.55)]"
                   : line.status === "canceled"
-                    ? "border-border bg-muted/40"
-                    : "border-border bg-surface",
+                    ? "border-border/60 bg-muted/40"
+                    : "border-border/70 bg-surface/50 backdrop-blur",
               )}
             >
               <span className="relative">

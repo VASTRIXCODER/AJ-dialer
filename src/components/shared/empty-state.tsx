@@ -20,14 +20,17 @@ export function EmptyState({
   return (
     <Card
       className={cn(
-        "flex flex-col items-center justify-center px-6 py-16 text-center",
+        "animate-fade-up flex flex-col items-center justify-center overflow-hidden px-6 py-16 text-center",
         className,
       )}
     >
-      <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-primary-soft text-primary">
-        <Icon className="h-7 w-7" />
+      <div className="relative">
+        <div className="glow-orb absolute -inset-4 opacity-50" />
+        <div className="relative flex h-16 w-16 items-center justify-center rounded-2xl bg-primary-soft text-primary ring-1 ring-inset ring-primary/20">
+          <Icon className="h-7 w-7" />
+        </div>
       </div>
-      <h3 className="mt-5 text-lg font-semibold">{title}</h3>
+      <h3 className="mt-6 text-lg font-semibold">{title}</h3>
       <p className="mt-1.5 max-w-md text-sm text-muted-foreground">{description}</p>
       {action && (
         <Link

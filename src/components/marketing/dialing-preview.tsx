@@ -7,7 +7,7 @@ import { Avatar } from "@/components/ui/avatar";
 import { cn } from "@/lib/utils";
 
 const leads = [
-  { name: "Robert Hayes", city: "Fresno, CA", color: "#F97316" },
+  { name: "Robert Hayes", city: "Fresno, CA", color: "#3B82F6" },
   { name: "Linda Powell", city: "Bakersfield, CA", color: "#0EA5E9" },
   { name: "Carlos Mendez", city: "Riverside, CA", color: "#8B5CF6" },
 ];

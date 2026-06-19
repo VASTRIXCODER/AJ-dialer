@@ -47,7 +47,7 @@ export function LeadPanel({
     <div className="flex h-full flex-col">
       <div className="border-b border-border p-5">
         <div className="flex items-start gap-3">
-          <Avatar initials={initials(name)} color={lead.assignedRepId ? "#F97316" : "#0EA5E9"} size="lg" />
+          <Avatar initials={initials(name)} color={lead.assignedRepId ? "#3B82F6" : "#0EA5E9"} size="lg" />
           <div className="min-w-0 flex-1">
             <h3 className="truncate text-lg font-bold leading-tight">{name}</h3>
             <p className="truncate text-sm text-muted-foreground tabular">

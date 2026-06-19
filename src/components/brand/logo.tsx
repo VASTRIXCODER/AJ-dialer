@@ -11,26 +11,20 @@ export function LogoMark({ className }: { className?: string }) {
       <svg
         viewBox="0 0 24 24"
         fill="none"
-        className="h-[60%] w-[60%] text-white"
+        className="h-[62%] w-[62%] text-white"
         aria-hidden
       >
-        {/* Sun core */}
-        <circle cx="12" cy="12" r="4" fill="currentColor" />
-        {/* Rays / signal arcs */}
+        {/* Signal core */}
+        <circle cx="12" cy="13.5" r="2.4" fill="currentColor" />
+        {/* Broadcast arcs — command-center pulse */}
         <g
           stroke="currentColor"
-          strokeWidth="2"
+          strokeWidth="1.9"
           strokeLinecap="round"
-          opacity="0.95"
+          fill="none"
         >
-          <path d="M12 2.5v2.2" />
-          <path d="M12 19.3v2.2" />
-          <path d="M2.5 12h2.2" />
-          <path d="M19.3 12h2.2" />
-          <path d="M5.2 5.2l1.6 1.6" />
-          <path d="M17.2 17.2l1.6 1.6" />
-          <path d="M18.8 5.2l-1.6 1.6" />
-          <path d="M6.8 17.2l-1.6 1.6" />
+          <path d="M8.1 9.6a5.5 5.5 0 0 1 7.8 0" opacity="0.95" />
+          <path d="M5.5 6.9a9.2 9.2 0 0 1 13 0" opacity="0.55" />
         </g>
       </svg>
     </span>

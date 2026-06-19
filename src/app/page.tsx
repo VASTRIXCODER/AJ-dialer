@@ -62,7 +62,20 @@ const aiIncludes = [
 
 export default function LandingPage() {
   return (
-    <div className="min-h-screen">
+    <div className="relative min-h-screen">
+      {/* Cinematic ambient backdrop — consistent with the app shell */}
+      <div
+        aria-hidden
+        className="pointer-events-none fixed inset-0 -z-10 overflow-hidden bg-aurora"
+      >
+        <div className="glow-orb absolute -left-40 -top-48 h-[40rem] w-[40rem] animate-aurora opacity-60" />
+        <div
+          className="glow-orb absolute -right-48 top-1/3 h-[34rem] w-[34rem] animate-aurora opacity-40"
+          style={{ animationDelay: "-10s" }}
+        />
+        <div className="absolute inset-0 bg-noise opacity-[0.02] mix-blend-overlay dark:opacity-[0.035]" />
+      </div>
+
       <MarketingNav />
 
       {/* Hero */}
@@ -216,18 +229,19 @@ export default function LandingPage() {
 
       {/* AI agent */}
       <section id="ai" className="mx-auto max-w-7xl px-4 py-16 sm:px-6 lg:py-24">
-        <Card className="relative overflow-hidden border-0 bg-foreground p-8 text-background sm:p-12">
-          <div className="pointer-events-none absolute -right-20 -top-20 h-72 w-72 rounded-full bg-solar opacity-30 blur-3xl" />
+        <Card className="relative overflow-hidden border-0 bg-solar p-8 text-white shadow-glow sm:p-12">
+          <div className="pointer-events-none absolute -right-20 -top-20 h-72 w-72 rounded-full bg-white/20 blur-3xl" />
+          <div className="pointer-events-none absolute -bottom-24 left-10 h-64 w-64 rounded-full bg-white/10 blur-3xl" />
           <div className="relative grid items-center gap-10 lg:grid-cols-2">
             <div>
-              <span className="inline-flex items-center gap-2 rounded-full bg-background/10 px-3 py-1 text-xs font-bold uppercase tracking-wide">
+              <span className="inline-flex items-center gap-2 rounded-full bg-white/15 px-3 py-1 text-xs font-bold uppercase tracking-wide backdrop-blur">
                 <Sparkles className="h-3.5 w-3.5" />
                 Optional AI add-on
               </span>
               <h2 className="mt-4 text-3xl font-bold tracking-tight sm:text-4xl">
                 Let AI handle qualification
               </h2>
-              <p className="mt-3 max-w-lg text-background/70">
+              <p className="mt-3 max-w-lg text-white/80">
                 The Solar Resolution AI Agent makes outbound calls, asks
                 qualification questions, identifies utility-bill issues, books
                 appointments, and writes summaries — so your reps only talk to
@@ -237,6 +251,7 @@ export default function LandingPage() {
                 href="/ai-agent"
                 className={buttonVariants({
                   size: "lg",
+                  variant: "secondary",
                   className: "mt-7 gap-2",
                 })}
               >
@@ -253,7 +268,7 @@ export default function LandingPage() {
               ].map((it) => (
                 <div
                   key={it.label}
-                  className="rounded-2xl bg-background/10 p-5 backdrop-blur"
+                  className="rounded-2xl bg-white/10 p-5 ring-1 ring-inset ring-white/15 backdrop-blur"
                 >
                   <it.icon className="h-6 w-6" />
                   <p className="mt-3 text-sm font-semibold">{it.label}</p>

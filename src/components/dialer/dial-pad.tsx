@@ -47,7 +47,7 @@ export function DialPad({
             onChange={(e) => setValue(e.target.value.replace(/[^0-9*#+]/g, ""))}
             placeholder="Enter a number"
             inputMode="tel"
-            className="h-12 w-full rounded-xl border border-border bg-surface px-4 text-center text-lg font-semibold tracking-wider tabular focus-visible:border-ring focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30"
+            className="h-12 w-full rounded-xl border border-border bg-background/40 px-4 text-center text-lg font-semibold tracking-wider tabular focus-visible:border-primary/50 focus-visible:bg-background/70 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-primary/15"
           />
           {value && (
             <button

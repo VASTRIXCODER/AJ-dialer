@@ -52,7 +52,7 @@ export function LeadsTable({ leads }: { leads: Lead[] }) {
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Search name, city, phone…"
-            className="h-10 w-full rounded-xl border border-border bg-surface pl-9 pr-3 text-sm focus-visible:border-ring focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30"
+            className="h-10 w-full rounded-xl border border-border bg-background/40 pl-9 pr-3 text-sm transition-all focus-visible:border-primary/50 focus-visible:bg-background/70 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-primary/15"
           />
         </div>
         <div className="flex flex-wrap gap-1.5">
@@ -74,11 +74,11 @@ export function LeadsTable({ leads }: { leads: Lead[] }) {
         </div>
       </div>
 
-      <div className="overflow-hidden rounded-2xl border border-border bg-card">
+      <div className="overflow-hidden rounded-2xl border border-border/60 surface-glass">
         <div className="overflow-x-auto">
           <table className="w-full min-w-[820px] text-sm">
             <thead>
-              <tr className="border-b border-border text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+              <tr className="border-b border-border/70 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                 <th className="px-4 py-3">Homeowner</th>
                 <th className="px-4 py-3">Location</th>
                 <th className="px-4 py-3">Utility</th>
@@ -98,7 +98,7 @@ export function LeadsTable({ leads }: { leads: Lead[] }) {
                   <tr key={l.id} className="group transition-colors hover:bg-muted/50">
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-2.5">
-                        <Avatar initials={initials(name)} color="#F97316" size="sm" />
+                        <Avatar initials={initials(name)} color="#3B82F6" size="sm" />
                         <div className="min-w-0">
                           <p className="font-semibold">{name}</p>
                           <p className="text-xs text-muted-foreground tabular">

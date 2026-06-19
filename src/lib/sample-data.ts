@@ -18,7 +18,7 @@ const daysAgo = (d: number) => new Date(Date.now() - d * 86_400_000).toISOString
 
 export const reps: Rep[] = [
   {
-    id: "rep-1", name: "Maya Rodriguez", email: "maya@aiatwork.io", avatarColor: "#F97316",
+    id: "rep-1", name: "Maya Rodriguez", email: "maya@aiatwork.io", avatarColor: "#3B82F6",
     initials: "MR", role: "rep", status: "on_call", team: "Sunset Squad",
     callsToday: 142, conversationsToday: 38, appointmentsToday: 9, talkTimeMin: 184,
     connectRate: 31, score: 97, currentLeadId: "lead-1", callStartedAt: minsAgo(3),
@@ -73,7 +73,7 @@ export const campaigns: Campaign[] = [
   {
     id: "camp-1", name: "PG&E True-Up Recovery", utilityProvider: "PG&E", status: "active",
     totalLeads: 4820, activeLeads: 1840, completedLeads: 2980, appointments: 412,
-    contactRate: 34, color: "#F97316", startedAt: daysAgo(28),
+    contactRate: 34, color: "#3B82F6", startedAt: daysAgo(28),
   },
   {
     id: "camp-2", name: "SCE Bill Mismatch", utilityProvider: "Southern California Edison",
@@ -152,7 +152,7 @@ export const leads: Lead[] = leadSeeds.map((seed, i) => {
 
 export const activeCalls: ActiveCall[] = [
   {
-    id: "ac-1", repId: "rep-1", repName: "Maya Rodriguez", repInitials: "MR", repColor: "#F97316",
+    id: "ac-1", repId: "rep-1", repName: "Maya Rodriguez", repInitials: "MR", repColor: "#3B82F6",
     leadName: "Robert Hayes", leadCity: "Fresno, CA", phone: "+14155550100",
     startedAt: minsAgo(3), state: "connected", campaign: "PG&E True-Up Recovery", sentiment: "positive",
   },

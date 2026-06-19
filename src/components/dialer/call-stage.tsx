@@ -47,9 +47,9 @@ function ControlButton({
           "flex h-12 w-12 items-center justify-center rounded-full border transition-all duration-150 active:scale-90",
           active
             ? danger
-              ? "border-danger bg-danger text-danger-foreground"
-              : "border-primary bg-primary-soft text-primary"
-            : "border-border bg-surface text-foreground hover:bg-muted",
+              ? "border-danger bg-danger text-danger-foreground shadow-[0_0_20px_-4px_hsl(var(--danger)/0.6)]"
+              : "border-primary/60 bg-primary-soft text-primary shadow-[0_0_20px_-4px_hsl(var(--glow)/0.6)]"
+            : "border-border/70 bg-surface/60 text-foreground backdrop-blur hover:bg-muted",
         )}
       >
         <Display className="h-5 w-5" />
@@ -141,7 +141,7 @@ export function CallStage({
               className="flex w-full max-w-sm flex-col items-center gap-6"
             >
               <div className="text-center">
-                <div className="mx-auto mb-4 flex h-20 w-20 items-center justify-center rounded-3xl bg-solar shadow-glow">
+                <div className="mx-auto mb-4 flex h-20 w-20 animate-float items-center justify-center rounded-3xl bg-solar shadow-glow">
                   <Sparkles className="h-9 w-9 text-white" />
                 </div>
                 <h2 className="text-xl font-bold">
@@ -171,8 +171,8 @@ export function CallStage({
                           className={cn(
                             "rounded-xl border py-2.5 text-sm font-bold transition-all active:scale-95",
                             state.parallelCount === n
-                              ? "border-primary bg-primary-soft text-primary"
-                              : "border-border bg-surface text-muted-foreground hover:bg-muted",
+                              ? "border-primary/60 bg-primary-soft text-primary shadow-[0_0_20px_-6px_hsl(var(--glow)/0.7)]"
+                              : "border-border/70 bg-surface/50 text-muted-foreground backdrop-blur hover:bg-muted",
                           )}
                         >
                           {n}X
@@ -181,7 +181,7 @@ export function CallStage({
                     </div>
                   </div>
 
-                  <label className="flex w-full cursor-pointer items-center justify-between rounded-xl border border-border bg-surface px-4 py-3">
+                  <label className="flex w-full cursor-pointer items-center justify-between rounded-xl border border-border/70 bg-surface/50 px-4 py-3 backdrop-blur">
                     <span className="flex items-center gap-2 text-sm font-medium">
                       <SkipForward className="h-4 w-4 text-muted-foreground" />
                       Auto-dial next
@@ -292,8 +292,20 @@ export function CallStage({
               className="flex w-full max-w-sm flex-col items-center gap-5"
             >
               <span className="relative">
+                <span
+                  className="glow-orb absolute -inset-5 animate-glow-pulse"
+                  style={{
+                    background:
+                      "radial-gradient(circle at center, hsl(var(--success)/0.6), transparent 70%)",
+                  }}
+                />
                 <span className="absolute inset-0 animate-pulse-ring rounded-full" />
-                <Avatar initials={initials(name)} color="#16a34a" size="lg" className="h-24 w-24 text-3xl" />
+                <Avatar
+                  initials={initials(name)}
+                  color="#10B981"
+                  size="lg"
+                  className="relative h-24 w-24 text-3xl ring-4 ring-success/30"
+                />
               </span>
               <div className="text-center">
                 <h2 className="text-2xl font-bold">{name}</h2>

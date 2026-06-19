@@ -41,7 +41,7 @@ const SIGNED_IN_USER: Rep = {
   id: "me",
   name: "Your Account",
   email: "",
-  avatarColor: "#F97316",
+  avatarColor: "#3B82F6",
   initials: "·",
   role: "manager",
   status: "available",

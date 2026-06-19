@@ -1,104 +1,119 @@
 @import "tailwindcss";
 
 /* ───────────────────────────────────────────────────────────────────────────
-   AIATWORK Solar Resolution Dialer — Design System
-   Apple-grade restraint • Solar warmth • Data-dense where it counts
+   AIATWORK · Solar Resolution Dialer — Design System
+   "Midnight command center" — deep blue, glass-infused, cinematic enterprise.
+   One color language · one motion language · one elevation model.
    ─────────────────────────────────────────────────────────────────────────── */
 
 @custom-variant dark (&:is(.dark *));
 
 :root {
-  /* Surfaces — warm, paper-white light mode */
-  --background: 40 33% 99%;
+  color-scheme: light;
+
+  /* Surfaces — cool, icy light mode (blue-tinted, never warm/paper) */
+  --background: 213 40% 97.5%;
   --surface: 0 0% 100%;
-  --surface-muted: 40 20% 96.5%;
-  --foreground: 222 30% 11%;
-  --muted: 40 16% 94%;
-  --muted-foreground: 222 12% 42%;
+  --surface-muted: 214 38% 95.5%;
+  --foreground: 222 47% 11%;
+  --muted: 214 32% 93.5%;
+  --muted-foreground: 215 16% 42%;
 
   --card: 0 0% 100%;
-  --card-foreground: 222 30% 11%;
+  --card-foreground: 222 47% 11%;
 
   --popover: 0 0% 100%;
-  --popover-foreground: 222 30% 11%;
+  --popover-foreground: 222 47% 11%;
 
-  /* Brand — Solar gold → ember */
-  --primary: 30 96% 50%;
-  --primary-foreground: 30 100% 8%;
-  --primary-soft: 36 100% 95%;
+  /* Brand — electric azure (one dominant accent) */
+  --primary: 214 90% 52%;
+  --primary-foreground: 0 0% 100%;
+  --primary-soft: 214 100% 95.5%;
 
-  /* Secondary accent — clean energy sky */
-  --accent: 205 92% 47%;
+  /* Secondary accent — cyan highlight */
+  --accent: 190 90% 42%;
   --accent-foreground: 0 0% 100%;
-  --accent-soft: 205 95% 95%;
+  --accent-soft: 190 88% 94%;
 
-  --secondary: 40 16% 94%;
-  --secondary-foreground: 222 25% 18%;
+  --secondary: 214 32% 93.5%;
+  --secondary-foreground: 222 40% 18%;
 
   /* Semantic */
-  --success: 152 62% 40%;
+  --success: 158 64% 38%;
   --success-foreground: 0 0% 100%;
-  --warning: 38 95% 50%;
-  --warning-foreground: 38 100% 10%;
-  --danger: 0 78% 56%;
+  --warning: 36 95% 47%;
+  --warning-foreground: 36 100% 10%;
+  --danger: 352 78% 53%;
   --danger-foreground: 0 0% 100%;
 
-  --border: 40 14% 89%;
-  --input: 40 14% 89%;
-  --ring: 30 96% 50%;
+  --border: 214 28% 88%;
+  --input: 214 28% 88%;
+  --ring: 214 90% 52%;
 
-  --radius: 0.85rem;
+  --radius: 0.95rem;
 
-  /* Chart palette */
-  --chart-1: 30 96% 52%;
-  --chart-2: 205 90% 50%;
-  --chart-3: 152 60% 42%;
-  --chart-4: 265 70% 60%;
-  --chart-5: 340 75% 58%;
+  /* Ambient lighting + elevation reference colors */
+  --glow: 214 95% 56%;
+  --shadow-color: 222 60% 22%;
+
+  /* Chart palette — blue family with violet/teal support */
+  --chart-1: 214 92% 54%;
+  --chart-2: 190 90% 46%;
+  --chart-3: 234 84% 62%;
+  --chart-4: 270 78% 62%;
+  --chart-5: 162 68% 42%;
 }
 
 .dark {
-  /* Deep-space, warm-tinted dark mode */
-  --background: 224 33% 6%;
-  --surface: 224 28% 9%;
-  --surface-muted: 224 24% 12%;
-  --foreground: 40 30% 96%;
-  --muted: 224 22% 14%;
-  --muted-foreground: 220 14% 62%;
+  color-scheme: dark;
 
-  --card: 224 28% 9.5%;
-  --card-foreground: 40 30% 96%;
+  /* Deep midnight navy — illuminated from within */
+  --background: 222 48% 5%;
+  --surface: 220 42% 8.5%;
+  --surface-muted: 219 38% 12%;
+  --foreground: 210 40% 96%;
+  --muted: 219 32% 15%;
+  --muted-foreground: 215 22% 65%;
 
-  --popover: 224 30% 8%;
-  --popover-foreground: 40 30% 96%;
+  --card: 220 40% 9.5%;
+  --card-foreground: 210 40% 96%;
 
-  --primary: 32 97% 55%;
-  --primary-foreground: 30 100% 7%;
-  --primary-soft: 32 60% 16%;
+  --popover: 221 44% 8%;
+  --popover-foreground: 210 40% 96%;
 
-  --accent: 200 95% 55%;
-  --accent-foreground: 224 40% 6%;
-  --accent-soft: 205 70% 16%;
+  /* Brand — electric azure that glows on dark glass */
+  --primary: 212 100% 62%;
+  --primary-foreground: 222 60% 6%;
+  --primary-soft: 214 70% 17%;
 
-  --secondary: 224 22% 15%;
-  --secondary-foreground: 40 28% 92%;
+  /* Cyan accent */
+  --accent: 190 95% 55%;
+  --accent-foreground: 222 60% 6%;
+  --accent-soft: 192 70% 16%;
 
-  --success: 152 58% 46%;
-  --success-foreground: 224 40% 6%;
-  --warning: 38 95% 55%;
+  --secondary: 219 30% 16%;
+  --secondary-foreground: 210 36% 92%;
+
+  --success: 156 64% 46%;
+  --success-foreground: 222 60% 6%;
+  --warning: 38 95% 58%;
   --warning-foreground: 38 100% 8%;
-  --danger: 0 80% 62%;
+  --danger: 352 84% 62%;
   --danger-foreground: 0 0% 100%;
 
-  --border: 224 18% 18%;
-  --input: 224 18% 20%;
-  --ring: 32 97% 55%;
+  /* Borders are whispers — depth carries hierarchy, not boxes */
+  --border: 215 32% 20%;
+  --input: 216 30% 22%;
+  --ring: 212 100% 62%;
 
-  --chart-1: 32 97% 58%;
-  --chart-2: 200 95% 58%;
-  --chart-3: 152 58% 50%;
-  --chart-4: 265 80% 70%;
-  --chart-5: 340 80% 66%;
+  --glow: 212 100% 60%;
+  --shadow-color: 224 70% 2%;
+
+  --chart-1: 212 100% 64%;
+  --chart-2: 190 95% 56%;
+  --chart-3: 234 90% 72%;
+  --chart-4: 270 84% 74%;
+  --chart-5: 162 70% 52%;
 }
 
 @theme inline {
@@ -142,8 +157,8 @@
   --color-chart-4: hsl(var(--chart-4));
   --color-chart-5: hsl(var(--chart-5));
 
-  --radius-sm: calc(var(--radius) - 4px);
-  --radius-md: calc(var(--radius) - 2px);
+  --radius-sm: calc(var(--radius) - 5px);
+  --radius-md: calc(var(--radius) - 3px);
   --radius-lg: var(--radius);
   --radius-xl: calc(var(--radius) + 4px);
   --radius-2xl: calc(var(--radius) + 10px);
@@ -152,26 +167,29 @@
     sans-serif;
   --font-mono: var(--font-mono), "JetBrains Mono", "SF Mono", monospace;
 
-  --shadow-glow: 0 0 0 1px hsl(var(--primary) / 0.15),
-    0 8px 30px -8px hsl(var(--primary) / 0.45);
-  --shadow-soft: 0 1px 2px hsl(222 30% 11% / 0.04),
-    0 8px 24px -12px hsl(222 30% 11% / 0.12);
-  --shadow-lift: 0 1px 3px hsl(222 30% 11% / 0.06),
-    0 18px 40px -16px hsl(222 30% 11% / 0.22);
+  /* One elevation model — ambient, blue-tinted, layered */
+  --shadow-glow: 0 0 0 1px hsl(var(--glow) / 0.25),
+    0 10px 40px -10px hsl(var(--glow) / 0.55);
+  --shadow-soft: 0 1px 2px hsl(var(--shadow-color) / 0.28),
+    0 10px 30px -16px hsl(var(--shadow-color) / 0.45);
+  --shadow-lift: 0 2px 6px hsl(var(--shadow-color) / 0.32),
+    0 24px 60px -20px hsl(var(--shadow-color) / 0.6);
 
   --animate-pulse-ring: pulse-ring 1.8s cubic-bezier(0.4, 0, 0.6, 1) infinite;
   --animate-shimmer: shimmer 2.2s linear infinite;
-  --animate-fade-up: fade-up 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;
-  --animate-float: float 6s ease-in-out infinite;
+  --animate-fade-up: fade-up 0.55s cubic-bezier(0.16, 1, 0.3, 1) both;
+  --animate-float: float 7s ease-in-out infinite;
   --animate-marquee: marquee 32s linear infinite;
+  --animate-aurora: aurora 24s ease-in-out infinite;
+  --animate-glow-pulse: glow-pulse 4s ease-in-out infinite;
 }
 
 @keyframes pulse-ring {
   0% {
-    box-shadow: 0 0 0 0 hsl(var(--success) / 0.45);
+    box-shadow: 0 0 0 0 hsl(var(--success) / 0.5);
   }
   70% {
-    box-shadow: 0 0 0 18px hsl(var(--success) / 0);
+    box-shadow: 0 0 0 20px hsl(var(--success) / 0);
   }
   100% {
     box-shadow: 0 0 0 0 hsl(var(--success) / 0);
@@ -190,7 +208,7 @@
 @keyframes fade-up {
   from {
     opacity: 0;
-    transform: translateY(12px);
+    transform: translateY(14px);
   }
   to {
     opacity: 1;
@@ -204,7 +222,7 @@
     transform: translateY(0);
   }
   50% {
-    transform: translateY(-10px);
+    transform: translateY(-12px);
   }
 }
 
@@ -214,6 +232,29 @@
   }
   to {
     transform: translateX(-50%);
+  }
+}
+
+/* Slow, barely-perceptible atmospheric drift for the ambient background */
+@keyframes aurora {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0) scale(1);
+    opacity: 0.9;
+  }
+  50% {
+    transform: translate3d(2%, -3%, 0) scale(1.08);
+    opacity: 1;
+  }
+}
+
+@keyframes glow-pulse {
+  0%,
+  100% {
+    opacity: 0.6;
+  }
+  50% {
+    opacity: 1;
   }
 }
 
@@ -238,26 +279,35 @@
     text-rendering: optimizeLegibility;
   }
 
-  ::selection {
-    background-color: hsl(var(--primary) / 0.22);
+  /* Heading rhythm — typography is the primary design element */
+  h1,
+  h2,
+  h3,
+  h4 {
+    letter-spacing: -0.02em;
   }
 
-  /* Refined, Apple-like scrollbars */
+  ::selection {
+    background-color: hsl(var(--primary) / 0.28);
+    color: hsl(var(--foreground));
+  }
+
+  /* Refined, ambient scrollbars */
   ::-webkit-scrollbar {
-    width: 10px;
-    height: 10px;
+    width: 11px;
+    height: 11px;
   }
   ::-webkit-scrollbar-track {
     background: transparent;
   }
   ::-webkit-scrollbar-thumb {
-    background: hsl(var(--muted-foreground) / 0.28);
+    background: hsl(var(--muted-foreground) / 0.25);
     border-radius: 9999px;
-    border: 2px solid transparent;
+    border: 3px solid transparent;
     background-clip: padding-box;
   }
   ::-webkit-scrollbar-thumb:hover {
-    background: hsl(var(--muted-foreground) / 0.45);
+    background: hsl(var(--primary) / 0.45);
     background-clip: padding-box;
   }
 
@@ -274,55 +324,118 @@
 }
 
 @layer utilities {
-  /* Glassmorphism surface */
+  /* ── Glass philosophy — translucent surfaces suspended above depth ──────── */
   .glass {
-    background-color: hsl(var(--surface) / 0.72);
-    backdrop-filter: blur(20px) saturate(180%);
-    -webkit-backdrop-filter: blur(20px) saturate(180%);
+    background-color: hsl(var(--surface) / 0.55);
+    backdrop-filter: blur(22px) saturate(180%);
+    -webkit-backdrop-filter: blur(22px) saturate(180%);
+    box-shadow:
+      inset 0 1px 0 0 hsl(0 0% 100% / 0.06),
+      var(--shadow-soft);
   }
 
-  /* Solar gradient text */
-  .text-gradient-solar {
+  /* Premium card surface — translucent with an inner top highlight */
+  .surface-glass {
+    background-image: linear-gradient(
+      180deg,
+      hsl(var(--card) / 0.86),
+      hsl(var(--card) / 0.72)
+    );
+    backdrop-filter: blur(18px) saturate(160%);
+    -webkit-backdrop-filter: blur(18px) saturate(160%);
+    box-shadow:
+      inset 0 1px 0 0 hsl(0 0% 100% / 0.07),
+      var(--shadow-soft);
+  }
+
+  /* Hairline edge highlight without a hard border */
+  .hairline {
+    box-shadow: inset 0 0 0 1px hsl(var(--border) / 0.7);
+  }
+
+  /* ── Brand gradient (electric blue → azure → cyan) ─────────────────────── */
+  /* Named .bg-solar / .text-gradient-solar for backward-compat across the app */
+  .bg-solar,
+  .bg-brand {
+    background-image: linear-gradient(
+      135deg,
+      hsl(234 90% 60%),
+      hsl(212 100% 58%) 52%,
+      hsl(190 95% 56%)
+    );
+  }
+
+  .text-gradient-solar,
+  .text-gradient-brand {
     background-image: linear-gradient(
       100deg,
-      hsl(36 100% 58%),
-      hsl(22 95% 52%),
-      hsl(8 88% 56%)
+      hsl(224 92% 70%),
+      hsl(208 100% 64%) 45%,
+      hsl(188 95% 60%)
     );
     -webkit-background-clip: text;
     background-clip: text;
     color: transparent;
   }
 
-  .bg-solar {
-    background-image: linear-gradient(
-      135deg,
-      hsl(40 100% 56%),
-      hsl(26 96% 52%) 55%,
-      hsl(12 88% 54%)
+  /* ── Background system — environmental depth on every screen ────────────── */
+  /* Cinematic aurora field: layered radial light sources over the base. */
+  .bg-aurora {
+    background-color: hsl(var(--background));
+    background-image:
+      radial-gradient(
+        42rem 42rem at 12% -8%,
+        hsl(214 95% 50% / 0.18),
+        transparent 60%
+      ),
+      radial-gradient(
+        38rem 38rem at 98% 4%,
+        hsl(190 95% 52% / 0.14),
+        transparent 58%
+      ),
+      radial-gradient(
+        50rem 50rem at 78% 102%,
+        hsl(255 85% 58% / 0.16),
+        transparent 60%
+      );
+  }
+
+  /* Soft fractal noise — barely-perceptible film grain to kill banding */
+  .bg-noise {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  }
+
+  /* Floating ambient light orb — place absolutely, blurred, behind content */
+  .glow-orb {
+    border-radius: 9999px;
+    filter: blur(72px);
+    background: radial-gradient(
+      circle at center,
+      hsl(var(--glow) / 0.55),
+      transparent 70%
     );
   }
 
   .bg-grid {
     background-image: linear-gradient(
         to right,
-        hsl(var(--foreground) / 0.045) 1px,
+        hsl(var(--foreground) / 0.04) 1px,
         transparent 1px
       ),
       linear-gradient(
         to bottom,
-        hsl(var(--foreground) / 0.045) 1px,
+        hsl(var(--foreground) / 0.04) 1px,
         transparent 1px
       );
-    background-size: 56px 56px;
+    background-size: 60px 60px;
   }
 
   .bg-dots {
     background-image: radial-gradient(
-      hsl(var(--foreground) / 0.08) 1px,
+      hsl(var(--foreground) / 0.07) 1px,
       transparent 1px
     );
-    background-size: 22px 22px;
+    background-size: 24px 24px;
   }
 
   .shadow-soft {
@@ -343,6 +456,18 @@
   }
   .animate-pulse-ring {
     animation: var(--animate-pulse-ring);
+  }
+  .animate-aurora {
+    animation: var(--animate-aurora);
+  }
+  .animate-glow-pulse {
+    animation: var(--animate-glow-pulse);
+  }
+
+  /* Progressive list reveal — stagger children with --i */
+  .reveal-stagger > * {
+    animation: fade-up 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;
+    animation-delay: calc(var(--i, 0) * 60ms);
   }
 
   /* Numeric data — tabular figures for steady metrics */
