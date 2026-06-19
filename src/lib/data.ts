@@ -10,6 +10,7 @@
 
 import { DEMO_DATA } from "./demo";
 import * as sample from "./sample-data";
+import { realLeads } from "./real-leads";
 import type { MetricSummary, Rep } from "./types";
 
 const EMPTY_METRICS: MetricSummary = {
@@ -56,7 +57,7 @@ const SIGNED_IN_USER: Rep = {
 export const reps = DEMO_DATA ? sample.reps : [];
 export const currentRep = DEMO_DATA ? sample.currentRep : SIGNED_IN_USER;
 export const leaderboard = DEMO_DATA ? sample.leaderboard : [];
-export const leads = DEMO_DATA ? sample.leads : [];
+export const leads = DEMO_DATA ? sample.leads : realLeads;
 export const campaigns = DEMO_DATA ? sample.campaigns : [];
 export const activeCalls = DEMO_DATA ? sample.activeCalls : [];
 export const appointments = DEMO_DATA ? sample.appointments : [];
