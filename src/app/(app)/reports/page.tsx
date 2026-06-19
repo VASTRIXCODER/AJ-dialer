@@ -9,6 +9,7 @@ import {
   Waves,
   Zap,
 } from "lucide-react";
+import { AiExecReport } from "@/components/ai/exec-report";
 import { HourlyBarChart, OutcomeDonut, TrendAreaChart } from "@/components/dashboard/charts";
 import { MetricCard } from "@/components/dashboard/metric-card";
 import { EmptyState } from "@/components/shared/empty-state";
@@ -77,6 +78,8 @@ export default function ReportsPage() {
         <MetricCard label="Appt rate" value={formatPercent(metrics.appointmentRate, 1)} icon={PlayCircle} accent="success" />
         <MetricCard label="Avg talk time" value={formatDuration(metrics.avgCallLenSec)} icon={Clock} accent="warning" />
       </div>
+
+      <AiExecReport />
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         <SectionCard title="Volume trend" description="Calls vs conversations" className="lg:col-span-2">

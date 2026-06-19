@@ -20,6 +20,7 @@ import { Button } from "@/components/ui/button";
 import type { CallOutcome, Lead } from "@/lib/types";
 import type { DialerState } from "@/lib/use-dialer";
 import { cn, formatDuration, initials } from "@/lib/utils";
+import { AiCallSummary } from "@/components/ai/call-summary";
 import { DialPad } from "./dial-pad";
 import { OutcomeGrid } from "./outcome-grid";
 import { ParallelLines } from "./parallel-lines";
@@ -375,6 +376,7 @@ export function CallStage({
                   {name} · {formatDuration(state.durationSec)} talk time
                 </p>
               </div>
+              <AiCallSummary leadId={focusLead?.id ?? null} />
               <OutcomeGrid onSelect={onOutcome} />
               <Button variant="ghost" className="gap-2 text-muted-foreground" onClick={onSkip}>
                 <SkipForward className="h-4 w-4" />

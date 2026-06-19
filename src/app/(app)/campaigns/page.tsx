@@ -1,10 +1,10 @@
 import { CalendarCheck, Megaphone, Pause, Play, Plus, Users } from "lucide-react";
 import { MetricCard } from "@/components/dashboard/metric-card";
+import { SpotlightCard } from "@/components/motion";
 import { EmptyState } from "@/components/shared/empty-state";
 import { PageContainer, PageHeader } from "@/components/shared/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { campaigns } from "@/lib/data";
 import { formatNumber, formatPercent } from "@/lib/utils";
@@ -71,7 +71,7 @@ export default function CampaignsPage() {
           const progress = Math.round((c.completedLeads / c.totalLeads) * 100);
           const cfg = statusTone[c.status];
           return (
-            <Card key={c.id} className="group flex flex-col overflow-hidden transition-all duration-300 hover:-translate-y-0.5 hover:shadow-lift">
+            <SpotlightCard key={c.id} className="flex flex-col overflow-hidden">
               <div className="h-1.5 w-full" style={{ background: c.color }} />
               <div className="flex flex-1 flex-col p-5">
                 <div className="flex items-start justify-between gap-3">
@@ -130,7 +130,7 @@ export default function CampaignsPage() {
                   </Button>
                 </div>
               </div>
-            </Card>
+            </SpotlightCard>
           );
         })}
       </div>

@@ -2,7 +2,7 @@
 
 import { motion } from "framer-motion";
 import Link from "next/link";
-import { Bell, Menu, PhoneCall, Search } from "lucide-react";
+import { Bell, Menu, PhoneCall, Search, Sparkles } from "lucide-react";
 import { Magnetic } from "@/components/motion";
 import { buttonVariants } from "@/components/ui/button";
 import { ThemeToggle } from "@/components/theme-toggle";
@@ -11,9 +11,11 @@ import { cn } from "@/lib/utils";
 export function Topbar({
   onMenuClick,
   voiceConfigured,
+  aiConfigured,
 }: {
   onMenuClick: () => void;
   voiceConfigured: boolean;
+  aiConfigured: boolean;
 }) {
   return (
     <div className="sticky top-0 z-30 px-3 pt-3 sm:px-5 sm:pt-4">
@@ -32,19 +34,41 @@ export function Topbar({
           <Menu className="h-5 w-5" />
         </button>
 
-        {/* Universal search / command */}
-        <div className="group relative hidden max-w-md flex-1 sm:block">
-          <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground transition-colors group-focus-within:text-primary" />
-          <input
-            placeholder="Search leads, reps, campaigns…"
-            className="h-10 w-full rounded-xl border border-border/70 bg-background/40 pl-10 pr-16 text-sm transition-all placeholder:text-muted-foreground/70 focus-visible:border-primary/50 focus-visible:bg-background/70 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-primary/15"
-          />
+        {/* Universal search / command palette */}
+        <button
+          type="button"
+          onClick={() =>
+            window.dispatchEvent(new Event("open-command-palette"))
+          }
+          className="group relative hidden max-w-md flex-1 items-center sm:flex"
+        >
+          <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground transition-colors group-hover:text-primary" />
+          <span className="h-10 w-full rounded-xl border border-border/70 bg-background/40 pl-10 pr-16 text-left text-sm leading-10 text-muted-foreground/80 transition-all group-hover:border-primary/40 group-hover:bg-background/60">
+            Search or ask AI…
+          </span>
           <kbd className="pointer-events-none absolute right-2.5 top-1/2 hidden -translate-y-1/2 items-center gap-0.5 rounded-md border border-border/70 bg-muted/60 px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground md:inline-flex">
             ⌘K
           </kbd>
-        </div>
+        </button>
 
         <div className="flex flex-1 items-center justify-end gap-2 sm:flex-none">
+          <span
+            className={cn(
+              "hidden items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-semibold lg:inline-flex",
+              aiConfigured
+                ? "border-accent/30 bg-accent/10 text-accent"
+                : "border-border/70 bg-muted/50 text-muted-foreground",
+            )}
+            title={
+              aiConfigured
+                ? "Claude is powering live intelligence"
+                : "AI is running in demo mode — add ANTHROPIC_API_KEY for live Claude intelligence"
+            }
+          >
+            <Sparkles className="h-3 w-3" />
+            {aiConfigured ? "Claude" : "Demo AI"}
+          </span>
+
           <span
             className={cn(
               "hidden items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-semibold sm:inline-flex",

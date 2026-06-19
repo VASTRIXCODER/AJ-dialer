@@ -3,6 +3,7 @@
 import { AnimatePresence, motion } from "framer-motion";
 import { X } from "lucide-react";
 import { useState } from "react";
+import { CommandPalette } from "@/components/ai/command-palette";
 import { AmbientBackground } from "./ambient-background";
 import { Sidebar } from "./sidebar";
 import { Topbar } from "./topbar";
@@ -10,15 +11,18 @@ import { Topbar } from "./topbar";
 export function AppShell({
   children,
   voiceConfigured,
+  aiConfigured,
 }: {
   children: React.ReactNode;
   voiceConfigured: boolean;
+  aiConfigured: boolean;
 }) {
   const [mobileOpen, setMobileOpen] = useState(false);
 
   return (
     <div className="relative flex min-h-screen">
       <AmbientBackground />
+      <CommandPalette />
 
       {/* Desktop sidebar */}
       <aside className="fixed inset-y-0 left-0 z-30 hidden w-[268px] lg:block">
@@ -62,6 +66,7 @@ export function AppShell({
         <Topbar
           onMenuClick={() => setMobileOpen(true)}
           voiceConfigured={voiceConfigured}
+          aiConfigured={aiConfigured}
         />
         <main className="flex-1">{children}</main>
       </div>

@@ -1,8 +1,9 @@
 "use client";
 
 import { motion } from "framer-motion";
-import { BatteryCharging, Car, Sparkles, Waves } from "lucide-react";
+import { BatteryCharging, Car, Waves } from "lucide-react";
 import { useState } from "react";
+import { AiBriefing } from "@/components/ai/lead-briefing";
 import { CountUp } from "@/components/motion";
 import { Input, Label, Textarea } from "@/components/ui/input";
 import type { Lead } from "@/lib/types";
@@ -54,19 +55,7 @@ export function QualifyPanel({ lead }: { lead: Lead | null }) {
 
   return (
     <div className="space-y-5">
-      <div className="rounded-xl border border-accent/30 bg-accent-soft/60 p-3">
-        <div className="flex items-center gap-2 text-accent">
-          <Sparkles className="h-4 w-4" />
-          <span className="text-sm font-semibold">AI assist</span>
-        </div>
-        <p className="mt-1.5 text-xs text-muted-foreground">
-          {!lead
-            ? "Select or dial a homeowner to begin qualification."
-            : lead.aiScore != null
-              ? `${lead.aiScore}% qualification confidence. Confirm the utility bill, solar payment, and any recent lifestyle changes.`
-              : "Run the solar resolution script: confirm the utility bill, solar payment, and any recent lifestyle changes."}
-        </p>
-      </div>
+      <AiBriefing leadId={lead?.id ?? null} />
 
       <div>
         <p className="mb-2.5 text-xs font-bold uppercase tracking-wide text-muted-foreground">
