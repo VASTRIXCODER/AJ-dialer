@@ -1,4 +1,4 @@
-import { twilioConfig } from "@/lib/twilio";
+import { getPublicBaseUrl, twilioConfig } from "@/lib/twilio";
 
 export const dynamic = "force-dynamic";
 
@@ -27,8 +27,13 @@ export async function POST(req: Request) {
   if (conference) {
     body = `<Dial><Conference startConferenceOnEnter="true" endConferenceOnExit="true" beep="false">${escape(conference)}</Conference></Dial>`;
   } else if (to) {
+    // recordingStatusCallback must be an ABSOLUTE, publicly-reachable URL — a
+    // relative path triggers Twilio 21609. Omit it if we can't build one.
+    const base = getPublicBaseUrl(req);
     const recordAttr = record
-      ? ' record="record-from-answer-dual" recordingStatusCallback="/api/twilio/status"'
+      ? base
+        ? ` record="record-from-answer-dual" recordingStatusCallback="${escape(`${base}/api/twilio/status`)}"`
+        : ' record="record-from-answer-dual"'
       : "";
     body = `<Dial callerId="${escape(twilioConfig.callerId)}"${recordAttr} answerOnBridge="true"><Number>${escape(to)}</Number></Dial>`;
   } else {

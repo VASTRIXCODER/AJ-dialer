@@ -1,6 +1,11 @@
 import { NextResponse } from "next/server";
 import { registerRoom } from "@/lib/call-registry";
-import { getRestClient, isRestConfigured, twilioConfig } from "@/lib/twilio";
+import {
+  getPublicBaseUrl,
+  getRestClient,
+  isRestConfigured,
+  twilioConfig,
+} from "@/lib/twilio";
 import { toE164 } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
@@ -52,7 +57,11 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Twilio unavailable" }, { status: 503 });
   }
 
-  const base = twilioConfig.appUrl;
+  // Only attach a StatusCallback when we have a publicly-reachable origin —
+  // an unreachable/relative URL makes Twilio reject the request (21609 / 11200).
+  // The status callback drives parallel auto-release; without it the call still
+  // connects, it just won't auto-cancel the losing legs.
+  const base = getPublicBaseUrl(req);
   const conferenceTwiml = `<?xml version="1.0" encoding="UTF-8"?><Response><Dial answerOnBridge="true"><Conference startConferenceOnEnter="true" endConferenceOnExit="false" beep="false">${room}</Conference></Dial></Response>`;
 
   const placed = await Promise.all(
@@ -62,8 +71,12 @@ export async function POST(req: Request) {
           to: leg.to,
           from: twilioConfig.callerId,
           twiml: conferenceTwiml,
-          statusCallback: `${base}/api/twilio/status?room=${encodeURIComponent(room)}&leadId=${encodeURIComponent(leg.leadId)}`,
-          statusCallbackEvent: ["initiated", "ringing", "answered", "completed"],
+          ...(base
+            ? {
+                statusCallback: `${base}/api/twilio/status?room=${encodeURIComponent(room)}&leadId=${encodeURIComponent(leg.leadId)}`,
+                statusCallbackEvent: ["initiated", "ringing", "answered", "completed"],
+              }
+            : {}),
         });
         return { leadId: leg.leadId, to: leg.to, sid: call.sid };
       } catch {
