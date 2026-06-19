@@ -1,4 +1,5 @@
 import {
+  BarChart3,
   Battery,
   Car,
   Clock,
@@ -10,6 +11,7 @@ import {
 } from "lucide-react";
 import { HourlyBarChart, OutcomeDonut, TrendAreaChart } from "@/components/dashboard/charts";
 import { MetricCard } from "@/components/dashboard/metric-card";
+import { EmptyState } from "@/components/shared/empty-state";
 import { PageContainer, PageHeader } from "@/components/shared/page-header";
 import { SectionCard } from "@/components/shared/section-card";
 import { Avatar } from "@/components/ui/avatar";
@@ -35,6 +37,22 @@ import {
 export const metadata = { title: "Reports" };
 
 export default function ReportsPage() {
+  if (metrics.totalCalls === 0 && callRecords.length === 0) {
+    return (
+      <PageContainer>
+        <PageHeader
+          title="Reports"
+          description="Full visibility into calls, conversions, and the utility-bill patterns across your customer base."
+        />
+        <EmptyState
+          icon={BarChart3}
+          title="No report data yet"
+          description="Call volume, connect rates, outcomes, utility-bill insights, and recordings appear here once dialing begins."
+        />
+      </PageContainer>
+    );
+  }
+
   const homeStats = [
     { label: "EV ownership", value: metrics.evOwnership, icon: Car },
     { label: "Pool ownership", value: metrics.poolOwnership, icon: Waves },

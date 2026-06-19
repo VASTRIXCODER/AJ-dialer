@@ -150,7 +150,7 @@ export function SettingsView() {
             </div>
             <div>
               <Label>Caller ID</Label>
-              <Input defaultValue="+1 (415) 555-0142" />
+              <Input defaultValue="" placeholder="+1 (555) 000-0000" />
             </div>
           </div>
           <div className="mt-4 flex justify-end">

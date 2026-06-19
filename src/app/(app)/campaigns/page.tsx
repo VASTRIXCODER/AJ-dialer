@@ -1,5 +1,6 @@
 import { CalendarCheck, Megaphone, Pause, Play, Plus, Users } from "lucide-react";
 import { MetricCard } from "@/components/dashboard/metric-card";
+import { EmptyState } from "@/components/shared/empty-state";
 import { PageContainer, PageHeader } from "@/components/shared/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -20,6 +21,31 @@ export default function CampaignsPage() {
   const totalLeads = campaigns.reduce((a, c) => a + c.totalLeads, 0);
   const totalAppts = campaigns.reduce((a, c) => a + c.appointments, 0);
   const active = campaigns.filter((c) => c.status === "active").length;
+  const avgContactRate = campaigns.length
+    ? Math.round(campaigns.reduce((a, c) => a + c.contactRate, 0) / campaigns.length)
+    : 0;
+
+  if (campaigns.length === 0) {
+    return (
+      <PageContainer>
+        <PageHeader
+          title="Campaigns"
+          description="Organize outreach by utility provider, territory, and resolution play."
+        >
+          <Button size="sm" className="gap-2">
+            <Plus className="h-4 w-4" />
+            New campaign
+          </Button>
+        </PageHeader>
+        <EmptyState
+          icon={Megaphone}
+          title="No campaigns yet"
+          description="Create a campaign to organize outreach by utility provider, territory, and resolution play."
+          action={{ label: "New campaign", href: "/campaigns" }}
+        />
+      </PageContainer>
+    );
+  }
 
   return (
     <PageContainer>
@@ -37,7 +63,7 @@ export default function CampaignsPage() {
         <MetricCard label="Active campaigns" value={String(active)} icon={Megaphone} accent="primary" />
         <MetricCard label="Total leads" value={formatNumber(totalLeads)} icon={Users} accent="accent" />
         <MetricCard label="Appointments" value={formatNumber(totalAppts)} icon={CalendarCheck} accent="success" />
-        <MetricCard label="Avg contact rate" value="31%" icon={Play} accent="warning" />
+        <MetricCard label="Avg contact rate" value={`${avgContactRate}%`} icon={Play} accent="warning" />
       </div>
 
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">

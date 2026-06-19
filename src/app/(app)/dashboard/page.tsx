@@ -1,6 +1,7 @@
 import {
   CalendarCheck,
   Clock,
+  LayoutDashboard,
   PhoneCall,
   Sparkles,
   TrendingUp,
@@ -10,6 +11,7 @@ import {
 import Link from "next/link";
 import { HourlyBarChart, OutcomeDonut, TrendAreaChart } from "@/components/dashboard/charts";
 import { MetricCard } from "@/components/dashboard/metric-card";
+import { EmptyState } from "@/components/shared/empty-state";
 import { PageContainer, PageHeader } from "@/components/shared/page-header";
 import { SectionCard } from "@/components/shared/section-card";
 import { Avatar } from "@/components/ui/avatar";
@@ -33,7 +35,34 @@ import {
   formatPercent,
 } from "@/lib/utils";
 
+function greeting() {
+  const h = new Date().getHours();
+  if (h < 12) return "Good morning";
+  if (h < 18) return "Good afternoon";
+  return "Good evening";
+}
+
 export default function DashboardPage() {
+  const hasData =
+    metrics.totalCalls > 0 || kpiSeries.length > 0 || activeCalls.length > 0;
+
+  if (!hasData) {
+    return (
+      <PageContainer>
+        <PageHeader
+          title={greeting()}
+          description="Your floor analytics will appear here once calling begins."
+        />
+        <EmptyState
+          icon={LayoutDashboard}
+          title="No activity yet"
+          description="Connect your lead source and start dialing — calls, connect rates, appointments, and live monitoring will populate here in real time."
+          action={{ label: "Open the dialer", href: "/dialer" }}
+        />
+      </PageContainer>
+    );
+  }
+
   const upcoming = appointments
     .filter((a) => a.status === "scheduled")
     .sort((a, b) => +new Date(a.scheduledAt) - +new Date(b.scheduledAt))
@@ -50,7 +79,7 @@ export default function DashboardPage() {
   return (
     <PageContainer>
       <PageHeader
-        title="Good afternoon, Maya"
+        title={greeting()}
         description="Here's how the floor is performing today across every active campaign."
       >
         <Badge tone="success" dot>

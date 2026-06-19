@@ -1,6 +1,7 @@
 import { Activity, PhoneCall, Radio, Users } from "lucide-react";
 import { MonitorGrid } from "@/components/monitor/monitor-grid";
 import { MetricCard } from "@/components/dashboard/metric-card";
+import { EmptyState } from "@/components/shared/empty-state";
 import { PageContainer, PageHeader } from "@/components/shared/page-header";
 import { Badge } from "@/components/ui/badge";
 import { activeCalls, reps } from "@/lib/data";
@@ -11,6 +12,22 @@ export default function MonitorPage() {
   const connected = activeCalls.filter((c) => c.state === "connected").length;
   const onCall = reps.filter((r) => r.status === "on_call").length;
   const available = reps.filter((r) => r.status === "available").length;
+
+  if (activeCalls.length === 0) {
+    return (
+      <PageContainer>
+        <PageHeader
+          title="Live Monitor"
+          description="Watch the floor in real time — listen in, whisper coach, and track every active conversation."
+        />
+        <EmptyState
+          icon={Radio}
+          title="No active calls"
+          description="Live conversations appear here in real time when your reps are on calls — listen in or whisper-coach from this view."
+        />
+      </PageContainer>
+    );
+  }
 
   return (
     <PageContainer>

@@ -8,6 +8,7 @@ import {
   TrendingUp,
 } from "lucide-react";
 import { MetricCard } from "@/components/dashboard/metric-card";
+import { EmptyState } from "@/components/shared/empty-state";
 import { PageContainer, PageHeader } from "@/components/shared/page-header";
 import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
@@ -38,11 +39,10 @@ export default function AppointmentsPage() {
   );
   const upcoming = sorted.filter((a) => a.status === "scheduled");
   const past = sorted.filter((a) => a.status !== "scheduled");
-  const showRate = Math.round(
-    (metrics.appointmentsCompleted /
-      (metrics.appointmentsCompleted + metrics.noShows)) *
-      100,
-  );
+  const denom = metrics.appointmentsCompleted + metrics.noShows;
+  const showRate = denom
+    ? Math.round((metrics.appointmentsCompleted / denom) * 100)
+    : 0;
 
   const Row = ({ apt }: { apt: Appointment }) => {
     const cfg = statusTone[apt.status];
@@ -86,6 +86,23 @@ export default function AppointmentsPage() {
       </div>
     );
   };
+
+  if (appointments.length === 0) {
+    return (
+      <PageContainer>
+        <PageHeader
+          title="Appointments"
+          description="Account reviews scheduled across reps and the AI agent."
+        />
+        <EmptyState
+          icon={CalendarCheck}
+          title="No appointments scheduled"
+          description="Booked account reviews from your reps and the AI agent will appear here."
+          action={{ label: "Open the dialer", href: "/dialer" }}
+        />
+      </PageContainer>
+    );
+  }
 
   return (
     <PageContainer>

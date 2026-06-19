@@ -1,6 +1,7 @@
-import { AlarmClock, CheckCircle2, Clock, PhoneCall } from "lucide-react";
+import { AlarmClock, CheckCircle2, Clock, PhoneCall, PhoneIncoming } from "lucide-react";
 import Link from "next/link";
 import { MetricCard } from "@/components/dashboard/metric-card";
+import { EmptyState } from "@/components/shared/empty-state";
 import { PageContainer, PageHeader } from "@/components/shared/page-header";
 import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
@@ -26,6 +27,22 @@ const groups: Array<{
 export default function CallbacksPage() {
   const overdue = callbacks.filter((c) => c.status === "overdue").length;
 
+  if (callbacks.length === 0) {
+    return (
+      <PageContainer>
+        <PageHeader
+          title="Callbacks"
+          description="Every promised callback, tracked so nothing slips through the cracks."
+        />
+        <EmptyState
+          icon={PhoneIncoming}
+          title="No callbacks scheduled"
+          description="Promised callbacks are tracked here so nothing slips through the cracks."
+        />
+      </PageContainer>
+    );
+  }
+
   return (
     <PageContainer>
       <PageHeader
@@ -35,9 +52,9 @@ export default function CallbacksPage() {
 
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
         <MetricCard label="Overdue" value={String(overdue)} icon={AlarmClock} accent="danger" />
-        <MetricCard label="Due today" value={String(callbacks.filter((c) => c.status === "due").length + 7)} icon={Clock} accent="warning" />
-        <MetricCard label="Upcoming" value={String(callbacks.filter((c) => c.status === "upcoming").length + 14)} icon={CheckCircle2} accent="accent" />
-        <MetricCard label="Completion" value="92%" icon={PhoneCall} accent="success" delta={{ value: "3%", positive: true }} />
+        <MetricCard label="Due today" value={String(callbacks.filter((c) => c.status === "due").length)} icon={Clock} accent="warning" />
+        <MetricCard label="Upcoming" value={String(callbacks.filter((c) => c.status === "upcoming").length)} icon={CheckCircle2} accent="accent" />
+        <MetricCard label="Completion" value="—" icon={PhoneCall} accent="success" />
       </div>
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">

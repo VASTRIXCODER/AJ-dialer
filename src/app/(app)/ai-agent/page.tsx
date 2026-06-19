@@ -8,6 +8,7 @@ import {
   Workflow,
 } from "lucide-react";
 import { MetricCard } from "@/components/dashboard/metric-card";
+import { EmptyState } from "@/components/shared/empty-state";
 import { PageContainer, PageHeader } from "@/components/shared/page-header";
 import { SectionCard } from "@/components/shared/section-card";
 import { Avatar } from "@/components/ui/avatar";
@@ -85,12 +86,14 @@ export default function AiAgentPage() {
         </div>
       </Card>
 
-      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-        <MetricCard label="AI calls today" value="1,284" icon={PhoneCall} accent="accent" delta={{ value: "18%", positive: true }} />
-        <MetricCard label="AI appointments" value="46" icon={CalendarCheck} accent="success" delta={{ value: "22%", positive: true }} />
-        <MetricCard label="Summaries written" value="731" icon={FileText} accent="primary" />
-        <MetricCard label="Qualification rate" value="34%" icon={CheckCircle2} accent="warning" />
-      </div>
+      {aiSummaries.length > 0 && (
+        <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+          <MetricCard label="AI calls today" value="1,284" icon={PhoneCall} accent="accent" delta={{ value: "18%", positive: true }} />
+          <MetricCard label="AI appointments" value="46" icon={CalendarCheck} accent="success" delta={{ value: "22%", positive: true }} />
+          <MetricCard label="Summaries written" value="731" icon={FileText} accent="primary" />
+          <MetricCard label="Qualification rate" value="34%" icon={CheckCircle2} accent="warning" />
+        </div>
+      )}
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         <SectionCard
@@ -111,34 +114,43 @@ export default function AiAgentPage() {
           </div>
         </SectionCard>
 
-        <SectionCard
-          title="Recent AI summaries"
-          description="Auto-generated after each conversation"
-          className="lg:col-span-2"
-        >
-          <div className="space-y-3">
-            {aiSummaries.map((s) => (
-              <div key={s.id} className="rounded-xl border border-border p-4">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2.5">
-                    <Avatar initials={initials(s.leadName)} color="#8B5CF6" size="sm" />
-                    <div>
-                      <p className="text-sm font-semibold">{s.leadName}</p>
-                      <p className="text-xs text-muted-foreground tabular">
-                        {formatClock(s.startedAt)}
-                      </p>
+        {aiSummaries.length > 0 ? (
+          <SectionCard
+            title="Recent AI summaries"
+            description="Auto-generated after each conversation"
+            className="lg:col-span-2"
+          >
+            <div className="space-y-3">
+              {aiSummaries.map((s) => (
+                <div key={s.id} className="rounded-xl border border-border p-4">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2.5">
+                      <Avatar initials={initials(s.leadName)} color="#8B5CF6" size="sm" />
+                      <div>
+                        <p className="text-sm font-semibold">{s.leadName}</p>
+                        <p className="text-xs text-muted-foreground tabular">
+                          {formatClock(s.startedAt)}
+                        </p>
+                      </div>
                     </div>
+                    <Badge tone="accent" className="gap-1">
+                      <Sparkles className="h-3 w-3" />
+                      AI summary
+                    </Badge>
                   </div>
-                  <Badge tone="accent" className="gap-1">
-                    <Sparkles className="h-3 w-3" />
-                    AI summary
-                  </Badge>
+                  <p className="mt-2.5 text-sm text-muted-foreground">{s.summary}</p>
                 </div>
-                <p className="mt-2.5 text-sm text-muted-foreground">{s.summary}</p>
-              </div>
-            ))}
-          </div>
-        </SectionCard>
+              ))}
+            </div>
+          </SectionCard>
+        ) : (
+          <EmptyState
+            className="lg:col-span-2"
+            icon={Sparkles}
+            title="No AI activity yet"
+            description="When the AI agent starts calling, its appointments, summaries, and qualification stats will appear here."
+          />
+        )}
       </div>
     </PageContainer>
   );

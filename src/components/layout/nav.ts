@@ -12,6 +12,7 @@ import {
   Trophy,
   Users,
 } from "lucide-react";
+import { DEMO_DATA } from "@/lib/demo";
 
 export interface NavItem {
   label: string;
@@ -30,10 +31,15 @@ export const navGroups: NavGroup[] = [
     label: "Workspace",
     items: [
       { label: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
-      { label: "Power Dialer", href: "/dialer", icon: PhoneCall, badge: "Live" },
+      {
+        label: "Power Dialer",
+        href: "/dialer",
+        icon: PhoneCall,
+        ...(DEMO_DATA ? { badge: "Live" } : {}),
+      },
       { label: "Leads", href: "/leads", icon: Users },
       { label: "Appointments", href: "/appointments", icon: CalendarCheck },
-      { label: "Callbacks", href: "/callbacks", icon: PhoneIncoming, badge: "3" },
+      { label: "Callbacks", href: "/callbacks", icon: PhoneIncoming },
     ],
   },
   {

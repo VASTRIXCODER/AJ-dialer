@@ -127,6 +127,16 @@ export default function AdminPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-border">
+              {reps.length === 0 && (
+                <tr>
+                  <td
+                    colSpan={5}
+                    className="px-5 py-10 text-center text-sm text-muted-foreground"
+                  >
+                    No team members yet — invite your team to get started.
+                  </td>
+                </tr>
+              )}
               {reps.map((rep) => {
                 const cfg = repStatusConfig[rep.status];
                 return (
