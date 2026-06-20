@@ -9,6 +9,70 @@ const UUID =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const asUuid = (v?: string | null) => (v && UUID.test(v) ? v : null);
 
+// outcome → lead status (shared by every disposition path).
+const OUTCOME_TO_STATUS: Record<CallOutcome, string> = {
+  appointment_booked: "appointment",
+  callback_scheduled: "callback",
+  qualified: "qualified",
+  not_interested: "not_interested",
+  no_answer: "no_answer",
+  voicemail: "no_answer",
+  wrong_number: "no_answer",
+  do_not_call: "dnc",
+};
+
+/**
+ * Route a disposition to the right pipeline tab. appointment_booked → the
+ * Appointments tab, callback_scheduled → the Callbacks tab. "Latest disposition
+ * wins" per lead, so re-dispositioning a lead moves it cleanly between tabs
+ * instead of leaving stale rows. Works with the admin OR the session client.
+ */
+async function routeDisposition(
+  // Minimal shape shared by the admin + session Supabase clients (chainable
+  // query builder); typed loosely so both client flavors satisfy it.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  client: { from: (table: string) => any },
+  input: {
+    ownerId: string;
+    leadId: string | null;
+    leadName: string;
+    phone: string;
+    outcome: CallOutcome;
+    summary?: string;
+    appointment?: { when: string; notes: string } | null;
+    source: "ai" | "rep";
+  },
+): Promise<void> {
+  const { ownerId, leadId, outcome } = input;
+
+  // Clear this lead's pending pipeline items so the newest disposition wins.
+  if (leadId) {
+    await client.from("callbacks").delete().eq("lead_id", leadId).neq("status", "completed");
+    await client.from("appointments").delete().eq("lead_id", leadId).eq("status", "scheduled");
+  }
+
+  if (outcome === "appointment_booked" || input.appointment) {
+    await client.from("appointments").insert({
+      owner_id: ownerId,
+      lead_id: leadId,
+      lead_name: input.leadName,
+      scheduled_label: input.appointment?.when ?? "",
+      notes: input.appointment?.notes ?? input.summary ?? "",
+      source: input.source,
+      status: "scheduled",
+    });
+  } else if (outcome === "callback_scheduled") {
+    await client.from("callbacks").insert({
+      owner_id: ownerId,
+      lead_id: leadId,
+      lead_name: input.leadName,
+      phone: input.phone,
+      reason: input.summary || "Callback requested",
+      status: "due",
+    });
+  }
+}
+
 // ── Human call dispositions ──────────────────────────────────────────────────
 export async function insertCallRecord(input: {
   leadId?: string | null;
@@ -35,6 +99,29 @@ export async function insertCallRecord(input: {
       outcome: input.outcome ?? null,
       channel: input.channel ?? "human",
       summary: input.summary ?? null,
+    });
+
+    if (!input.outcome) return;
+
+    // Reflect the disposition on the lead + route it to the right pipeline tab.
+    const leadUuid = asUuid(input.leadId);
+    if (leadUuid) {
+      await supabase
+        .from("leads")
+        .update({
+          status: OUTCOME_TO_STATUS[input.outcome] ?? "contacted",
+          last_contacted_at: new Date().toISOString(),
+        })
+        .eq("id", leadUuid);
+    }
+    await routeDisposition(supabase, {
+      ownerId: user.id,
+      leadId: leadUuid,
+      leadName: input.leadName ?? "",
+      phone: input.phone ?? "",
+      outcome: input.outcome,
+      summary: input.summary,
+      source: input.channel === "ai" ? "ai" : "rep",
     });
   } catch {
     /* best-effort */
@@ -86,7 +173,7 @@ export async function completeAIConversation(input: {
     const admin = createAdminClient();
     const { data: existing } = await admin
       .from("ai_conversations")
-      .select("owner_id, lead_id, lead_name, state")
+      .select("owner_id, lead_id, lead_name, phone, state")
       .eq("conversation_id", input.conversationId)
       .maybeSingle();
 
@@ -133,34 +220,23 @@ export async function completeAIConversation(input: {
       });
     }
 
-    if (input.appointment) {
-      await admin.from("appointments").insert({
-        owner_id: ownerId,
-        lead_id: existing?.lead_id ?? null,
-        lead_name: existing?.lead_name ?? "",
-        scheduled_label: input.appointment.when,
-        notes: input.appointment.notes,
-        source: "ai",
-        status: "scheduled",
-      });
-    }
+    // Route the disposition to the right pipeline tab (Appointments / Callbacks).
+    await routeDisposition(admin, {
+      ownerId,
+      leadId: (existing?.lead_id as string) ?? null,
+      leadName: (existing?.lead_name as string) ?? "",
+      phone: (existing?.phone as string) ?? "",
+      outcome: input.outcome,
+      summary: input.summary,
+      appointment: input.appointment ?? null,
+      source: "ai",
+    });
   } catch {
     /* best-effort */
   }
 }
 
 // ── Lead enrichment from an AI call (admin; processes extracted data) ────────
-const OUTCOME_TO_STATUS: Record<CallOutcome, string> = {
-  appointment_booked: "appointment",
-  callback_scheduled: "callback",
-  qualified: "qualified",
-  not_interested: "not_interested",
-  no_answer: "no_answer",
-  voicemail: "no_answer",
-  wrong_number: "no_answer",
-  do_not_call: "dnc",
-};
-
 /**
  * Write the data the AI extracted from a call back onto the lead — utility bill,
  * solar payment, EV/pool/battery, an AI score, and a status derived from the
@@ -275,7 +351,7 @@ export async function setConversationDisposition(
 
     const { data: convo } = await supabase
       .from("ai_conversations")
-      .select("lead_id, lead_name, duration_sec")
+      .select("lead_id, lead_name, phone, duration_sec")
       .eq("conversation_id", conversationId)
       .maybeSingle();
 
@@ -304,6 +380,28 @@ export async function setConversationDisposition(
         summary: "Manually dispositioned by supervisor",
       });
     }
+
+    // Reflect the override on the lead + move it to the right pipeline tab.
+    const leadUuid = asUuid((convo?.lead_id as string) ?? null);
+    if (leadUuid) {
+      await supabase
+        .from("leads")
+        .update({
+          status: OUTCOME_TO_STATUS[outcome] ?? "contacted",
+          last_contacted_at: new Date().toISOString(),
+        })
+        .eq("id", leadUuid);
+    }
+    await routeDisposition(supabase, {
+      ownerId: user.id,
+      leadId: leadUuid,
+      leadName: (convo?.lead_name as string) ?? "",
+      phone: (convo?.phone as string) ?? "",
+      outcome,
+      summary: "Set by supervisor",
+      source: "ai",
+    });
+
     return { ok: true };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "Failed." };

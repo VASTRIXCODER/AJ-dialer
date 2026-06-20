@@ -147,6 +147,8 @@ export async function getCallbacks(): Promise<CallbackRow[]> {
   try {
     const c = await ctx();
     if (!c) return [];
+    // Finalize any stuck calls first so callback-dispositioned ones show up.
+    await reconcileOwnerActiveCalls();
     const { data } = await c.supabase
       .from("callbacks")
       .select("*")
