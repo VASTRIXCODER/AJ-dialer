@@ -153,8 +153,9 @@ export default async function ReportsPage() {
             <tbody className="divide-y divide-border">
               {recentCalls.map((rec) => {
                 const cfg = rec.outcome ? outcomeConfig[rec.outcome] : null;
-                const recordingHref =
-                  rec.channel === "ai" && rec.conversationId
+                const recordingHref = !rec.hasRecording
+                  ? null
+                  : rec.channel === "ai" && rec.conversationId
                     ? `/api/elevenlabs/audio/${encodeURIComponent(rec.conversationId)}`
                     : rec.recordingUrl || null;
                 return (

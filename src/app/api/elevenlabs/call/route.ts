@@ -7,14 +7,50 @@ import {
   isElevenLabsConfigured,
   placeOutboundCall,
 } from "@/lib/elevenlabs";
-import { toE164 } from "@/lib/utils";
+import type { Lead } from "@/lib/types";
+import { formatPhone, toE164 } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
 
+const s = (v: unknown) => (typeof v === "string" ? v.trim() : "");
+const n = (v: unknown) => {
+  const x = Number(v);
+  return Number.isFinite(x) && x > 0 ? x : undefined;
+};
+const b = (v: unknown) => v === true || v === "true";
+
+/** Build a Lead from whatever the user knows about an ad-hoc number. */
+function adHocLead(phone: string, k: Record<string, unknown>): Lead {
+  return {
+    id: `manual-${Date.now().toString(36)}`,
+    firstName: s(k.firstName),
+    lastName: s(k.lastName),
+    phone,
+    email: s(k.email) || undefined,
+    address: s(k.address),
+    city: s(k.city),
+    state: s(k.state),
+    zip: s(k.zip),
+    utilityProvider: s(k.utilityProvider),
+    solarProvider: s(k.solarProvider),
+    status: "new",
+    campaignId: "",
+    solarPayment: n(k.solarPayment),
+    utilityBill: n(k.utilityBill),
+    hasEV: b(k.hasEV),
+    hasPool: b(k.hasPool),
+    hasBattery: b(k.hasBattery),
+    multipleSystems: false,
+    notes: s(k.notes) || undefined,
+    createdAt: new Date().toISOString(),
+    timezone: "",
+  };
+}
+
 /**
- * Place an outbound AI call: ElevenLabs dials the homeowner through your Twilio
- * number, runs your agent script (personalized with the lead's data), records
- * it, and posts the transcript back to /api/elevenlabs/webhook.
+ * Place an outbound AI call. Accepts either a queued lead (`leadId`) or an
+ * ad-hoc number (`phone` + whatever the user knows in `lead`). The agent is
+ * personalized with whatever data is available and works with the rest.
  */
 export async function POST(req: Request) {
   if (!isElevenLabsConfigured()) {
@@ -24,15 +60,37 @@ export async function POST(req: Request) {
     );
   }
 
-  const { leadId } = await req
-    .json()
-    .catch(() => ({}) as { leadId?: string });
-  const lead = leadId ? await getLeadById(leadId) : null;
+  const body = (await req.json().catch(() => ({}))) as {
+    leadId?: string;
+    phone?: string;
+    lead?: Record<string, unknown>;
+  };
+
+  let lead: Lead | null = body.leadId ? await getLeadById(body.leadId) : null;
+  let leadId: string | null = lead ? body.leadId ?? null : null;
+
+  if (!lead && body.phone) {
+    lead = adHocLead(toE164(body.phone), body.lead ?? {});
+    leadId = null; // ad-hoc — not a stored lead
+  }
+
   if (!lead) {
-    return NextResponse.json({ error: "Lead not found" }, { status: 404 });
+    return NextResponse.json(
+      { error: body.leadId ? "Lead not found" : "A phone number is required" },
+      { status: 404 },
+    );
   }
 
   const toNumber = toE164(lead.phone);
+  if (toNumber.replace(/\D/g, "").length < 10) {
+    return NextResponse.json(
+      { error: "Enter a valid phone number." },
+      { status: 400 },
+    );
+  }
+
+  const leadName =
+    `${lead.firstName} ${lead.lastName}`.trim() || formatPhone(toNumber);
 
   try {
     const result = await placeOutboundCall({
@@ -50,19 +108,17 @@ export async function POST(req: Request) {
     registerAICall({
       conversationId: result.conversationId,
       callSid: result.callSid,
-      leadId: lead.id,
-      leadName: `${lead.firstName} ${lead.lastName}`,
+      leadId,
+      leadName,
       phone: toNumber,
-      city: `${lead.city}, ${lead.state}`,
+      city: [lead.city, lead.state].filter(Boolean).join(", "),
     });
 
-    // Persist an account-scoped row so the call survives refreshes and the
-    // post-call webhook can attribute results to this owner.
     await seedAIConversation({
       conversationId: result.conversationId,
       callSid: result.callSid,
-      leadId: lead.id,
-      leadName: `${lead.firstName} ${lead.lastName}`,
+      leadId,
+      leadName,
       phone: toNumber,
     });
 

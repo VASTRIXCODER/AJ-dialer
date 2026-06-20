@@ -24,10 +24,11 @@ import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import type { CallOutcome, Lead } from "@/lib/types";
-import type { AiLaunch, DialerState } from "@/lib/use-dialer";
+import type { AiLaunch, DialerState, KnownInfo } from "@/lib/use-dialer";
 import { cn, formatDuration, initials } from "@/lib/utils";
 import { AiCallSummary } from "@/components/ai/call-summary";
 import { DialPad } from "./dial-pad";
+import { KnownInfoDialog } from "./known-info-dialog";
 import { OutcomeGrid } from "./outcome-grid";
 import { ParallelLines } from "./parallel-lines";
 import { Waveform } from "./waveform";
@@ -74,6 +75,7 @@ export function CallStage({
   aiConfigured,
   onStart,
   onManualDial,
+  onAiDialNumber,
   onEnd,
   onSkip,
   onOutcome,
@@ -94,6 +96,7 @@ export function CallStage({
   aiConfigured: boolean;
   onStart: () => void;
   onManualDial: (number: string) => void;
+  onAiDialNumber: (phone: string, known: KnownInfo) => void;
   onEnd: () => void;
   onSkip: () => void;
   onOutcome: (o: CallOutcome) => void;
@@ -110,6 +113,7 @@ export function CallStage({
 }) {
   const [showKeypad, setShowKeypad] = useState(false);
   const [manualOpen, setManualOpen] = useState(!hasQueue);
+  const [pendingAiNumber, setPendingAiNumber] = useState<string | null>(null);
   const ai = state.aiMode && aiConfigured;
   const canCall = state.mode === "live";
   const canStart = ai ? hasQueue : canCall && Boolean(focusLead);
@@ -289,33 +293,35 @@ export function CallStage({
                 </>
               )}
 
-              {/* Manual dial — manual mode only */}
-              {!ai && (
-                <div className="w-full">
-                  {hasQueue && (
-                    <button
-                      type="button"
-                      onClick={() => setManualOpen((v) => !v)}
-                      className="mx-auto mb-3 flex items-center gap-1.5 text-sm font-medium text-muted-foreground hover:text-foreground"
+              {/* Dial a specific number — with AI or manually */}
+              <div className="w-full">
+                {hasQueue && (
+                  <button
+                    type="button"
+                    onClick={() => setManualOpen((v) => !v)}
+                    className="mx-auto mb-3 flex items-center gap-1.5 text-sm font-medium text-muted-foreground hover:text-foreground"
+                  >
+                    <Hash className="h-4 w-4" />
+                    {manualOpen ? "Hide number pad" : "Dial a specific number"}
+                  </button>
+                )}
+                <AnimatePresence initial={false}>
+                  {manualOpen && (
+                    <motion.div
+                      initial={{ opacity: 0, height: 0 }}
+                      animate={{ opacity: 1, height: "auto" }}
+                      exit={{ opacity: 0, height: 0 }}
+                      className="overflow-hidden"
                     >
-                      <Hash className="h-4 w-4" />
-                      {manualOpen ? "Hide manual dial" : "Dial a number manually"}
-                    </button>
+                      <DialPad
+                        onAiCall={aiConfigured ? (num) => setPendingAiNumber(num) : undefined}
+                        onCall={onManualDial}
+                        callDisabled={!canCall}
+                      />
+                    </motion.div>
                   )}
-                  <AnimatePresence initial={false}>
-                    {manualOpen && (
-                      <motion.div
-                        initial={{ opacity: 0, height: 0 }}
-                        animate={{ opacity: 1, height: "auto" }}
-                        exit={{ opacity: 0, height: 0 }}
-                        className="overflow-hidden"
-                      >
-                        <DialPad onCall={onManualDial} callDisabled={!canCall} />
-                      </motion.div>
-                    )}
-                  </AnimatePresence>
-                </div>
-              )}
+                </AnimatePresence>
+              </div>
 
               {!hasQueue && ai && (
                 <Link
@@ -483,6 +489,17 @@ export function CallStage({
           )}
         </AnimatePresence>
       </div>
+
+      {pendingAiNumber && (
+        <KnownInfoDialog
+          phone={pendingAiNumber}
+          onClose={() => setPendingAiNumber(null)}
+          onSubmit={(known) => {
+            onAiDialNumber(pendingAiNumber, known);
+            setPendingAiNumber(null);
+          }}
+        />
+      )}
     </div>
   );
 }

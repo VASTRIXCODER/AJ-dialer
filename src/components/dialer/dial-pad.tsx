@@ -1,7 +1,7 @@
 "use client";
 
 import { motion } from "framer-motion";
-import { Delete, Phone } from "lucide-react";
+import { Bot, Delete, Phone } from "lucide-react";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -23,11 +23,13 @@ const KEYS = [
 
 export function DialPad({
   onCall,
+  onAiCall,
   onDigit,
   compact = false,
   callDisabled = false,
 }: {
   onCall?: (number: string) => void;
+  onAiCall?: (number: string) => void;
   onDigit?: (digit: string) => void;
   compact?: boolean;
   callDisabled?: boolean;
@@ -89,17 +91,32 @@ export function DialPad({
         ))}
       </div>
 
-      {!compact && onCall && (
-        <Button
-          variant="success"
-          size="lg"
-          className="w-full gap-2"
-          disabled={!value || callDisabled}
-          onClick={() => onCall(value)}
-        >
-          <Phone className="h-5 w-5" />
-          Call
-        </Button>
+      {!compact && (onCall || onAiCall) && (
+        <div className="flex gap-2">
+          {onAiCall && (
+            <Button
+              size="lg"
+              className="flex-1 gap-2"
+              disabled={!value}
+              onClick={() => onAiCall(value)}
+            >
+              <Bot className="h-5 w-5" />
+              Call with AI
+            </Button>
+          )}
+          {onCall && (
+            <Button
+              variant={onAiCall ? "outline" : "success"}
+              size="lg"
+              className="flex-1 gap-2"
+              disabled={!value || callDisabled}
+              onClick={() => onCall(value)}
+            >
+              <Phone className="h-5 w-5" />
+              Manual
+            </Button>
+          )}
+        </div>
       )}
     </div>
   );

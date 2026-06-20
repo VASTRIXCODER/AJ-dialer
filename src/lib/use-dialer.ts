@@ -22,6 +22,21 @@ export interface AiLaunch {
   error?: string;
 }
 
+/** What the user knows about an ad-hoc number when there's no lead record. */
+export interface KnownInfo {
+  firstName?: string;
+  lastName?: string;
+  address?: string;
+  city?: string;
+  state?: string;
+  zip?: string;
+  utilityProvider?: string;
+  solarProvider?: string;
+  utilityBill?: number;
+  solarPayment?: number;
+  notes?: string;
+}
+
 export interface DialerState {
   status: DialerStatus;
   lines: DialLine[];
@@ -103,9 +118,36 @@ export function useDialer(queue: Lead[], aiConfigured = false) {
   const aiConfiguredRef = useRef(aiConfigured);
   const aiCursorRef = useRef(0);
   const aiTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const humanIdRef = useRef<string | null>(null);
 
   const patch = useCallback((p: Partial<DialerState>) => {
     setState((s) => ({ ...s, ...p }));
+  }, []);
+
+  // ── Human-call live presence (Live Monitor) ───────────────────────────────
+  const postHuman = useCallback(
+    (action: "connect", extra: Record<string, unknown> = {}) => {
+      const id = humanIdRef.current;
+      if (!id) return;
+      fetch("/api/calls/active", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ action, id, ...extra }),
+      }).catch(() => {});
+    },
+    [],
+  );
+
+  const clearHumanPresence = useCallback(() => {
+    const id = humanIdRef.current;
+    if (!id) return;
+    humanIdRef.current = null;
+    fetch("/api/calls/active", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ action: "end", id }),
+      keepalive: true,
+    }).catch(() => {});
   }, []);
 
   const stopTick = useCallback(() => {
@@ -176,8 +218,9 @@ export function useDialer(queue: Lead[], aiConfigured = false) {
       stopTick();
       stopPoll();
       stopAITimer();
+      clearHumanPresence();
     },
-    [stopTick, stopPoll, stopAITimer],
+    [stopTick, stopPoll, stopAITimer, clearHumanPresence],
   );
 
   const nextLeads = useCallback(
@@ -195,6 +238,7 @@ export function useDialer(queue: Lead[], aiConfigured = false) {
   const connectLine = useCallback(
     (lead: Lead) => {
       stopPoll();
+      postHuman("connect");
       setState((s) => ({
         ...s,
         status: "live",
@@ -209,19 +253,21 @@ export function useDialer(queue: Lead[], aiConfigured = false) {
       }));
       startTick();
     },
-    [startTick, stopPoll],
+    [postHuman, startTick, stopPoll],
   );
 
   const resetToIdle = useCallback(() => {
     stopTick();
     stopPoll();
+    clearHumanPresence();
     callRef.current = null;
     patch({ status: "idle", lines: [], connectedLead: null, durationSec: 0 });
-  }, [patch, stopTick, stopPoll]);
+  }, [clearHumanPresence, patch, stopTick, stopPoll]);
 
   const endCall = useCallback(() => {
     stopTick();
     stopPoll();
+    clearHumanPresence();
     try {
       callRef.current?.disconnect();
     } catch {
@@ -229,7 +275,7 @@ export function useDialer(queue: Lead[], aiConfigured = false) {
     }
     callRef.current = null;
     patch({ status: "wrapup" });
-  }, [patch, stopTick, stopPoll]);
+  }, [clearHumanPresence, patch, stopTick, stopPoll]);
 
   const attachCallHandlers = useCallback(
     (call: Call, onAccept?: () => void) => {
@@ -243,9 +289,32 @@ export function useDialer(queue: Lead[], aiConfigured = false) {
     [endCall, resetToIdle],
   );
 
+  // ── Lead navigation (browse the queue without calling) ────────────────────
+  const nextLead = useCallback(() => {
+    if (!queue.length) return;
+    queueIndexRef.current = (queueIndexRef.current + 1) % queue.length;
+    patch({ queueIndex: queueIndexRef.current });
+  }, [patch, queue.length]);
+
+  const prevLead = useCallback(() => {
+    if (!queue.length) return;
+    queueIndexRef.current =
+      (queueIndexRef.current - 1 + queue.length) % queue.length;
+    patch({ queueIndex: queueIndexRef.current });
+  }, [patch, queue.length]);
+
+  const selectLead = useCallback(
+    (leadId: string) => {
+      const idx = queue.findIndex((l) => l.id === leadId);
+      if (idx >= 0) {
+        queueIndexRef.current = idx;
+        patch({ queueIndex: idx });
+      }
+    },
+    [patch, queue],
+  );
+
   // ── AI calling (default) ──────────────────────────────────────────────────
-  // Places ElevenLabs AI calls for the next N queued leads. The human oversees,
-  // listens, and takes over from the Live Monitor. Auto-dial walks the queue.
   const launchAIBatch = useCallback(async () => {
     const start = aiCursorRef.current;
     const leads = queue.slice(start, start + parallelRef.current);
@@ -335,6 +404,61 @@ export function useDialer(queue: Lead[], aiConfigured = false) {
     void launchAIBatch();
   }, [launchAIBatch, stopAITimer]);
 
+  /** AI-dial an ad-hoc number with whatever the user knows about it. */
+  const aiDialNumber = useCallback(
+    async (phone: string, known: KnownInfo) => {
+      const e164 = toE164(phone);
+      if (e164.replace(/\D/g, "").length < 10) {
+        patch({ error: "Enter a valid phone number." });
+        return;
+      }
+      stopAITimer();
+      const tempId = `manual-${Date.now().toString(36)}`;
+      const name =
+        `${known.firstName ?? ""} ${known.lastName ?? ""}`.trim() ||
+        formatPhone(e164);
+      setState((s) => ({
+        ...s,
+        status: "ai",
+        error: null,
+        aiCampaign: "idle",
+        callsThisSession: s.callsThisSession + 1,
+        aiCalls: [{ conversationId: null, leadId: tempId, leadName: name }],
+      }));
+      try {
+        const res = await fetch("/api/elevenlabs/call", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ phone: e164, lead: known }),
+        });
+        const json = (await res.json().catch(() => ({}))) as {
+          conversationId?: string;
+          error?: string;
+        };
+        setState((s) => ({
+          ...s,
+          aiCalls: s.aiCalls.map((c) =>
+            c.leadId === tempId
+              ? {
+                  ...c,
+                  conversationId: json.conversationId ?? null,
+                  error: res.ok ? undefined : json.error ?? "Call failed",
+                }
+              : c,
+          ),
+        }));
+      } catch {
+        setState((s) => ({
+          ...s,
+          aiCalls: s.aiCalls.map((c) =>
+            c.leadId === tempId ? { ...c, error: "Network error" } : c,
+          ),
+        }));
+      }
+    },
+    [patch, stopAITimer],
+  );
+
   // ── Human (Twilio) call attempt ───────────────────────────────────────────
   const startHumanCall = useCallback(
     async (override?: Lead[]) => {
@@ -367,6 +491,27 @@ export function useDialer(queue: Lead[], aiConfigured = false) {
       });
       setState((s) => ({ ...s, callsThisSession: s.callsThisSession + 1 }));
 
+      // Register live presence for the Live Monitor.
+      const lead0 = leads[0];
+      humanIdRef.current = `h-${Date.now().toString(36)}-${Math.random()
+        .toString(36)
+        .slice(2, 7)}`;
+      fetch("/api/calls/active", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          action: "start",
+          id: humanIdRef.current,
+          leadName:
+            leads.length > 1
+              ? `${leads.length}× parallel dial`
+              : `${lead0.firstName} ${lead0.lastName}`.trim() ||
+                formatPhone(lead0.phone),
+          city: [lead0.city, lead0.state].filter(Boolean).join(", "),
+          phone: lead0.phone,
+        }),
+      }).catch(() => {});
+
       try {
         if (leads.length === 1) {
           const call = await deviceRef.current.connect({
@@ -385,6 +530,7 @@ export function useDialer(queue: Lead[], aiConfigured = false) {
             }),
           });
           if (!res.ok) {
+            clearHumanPresence();
             patch({ error: "Unable to start parallel dial.", status: "idle", lines: [] });
             return;
           }
@@ -412,11 +558,12 @@ export function useDialer(queue: Lead[], aiConfigured = false) {
           }, 1200);
         }
       } catch {
+        clearHumanPresence();
         patch({ error: "Call failed to start.", status: "idle", lines: [] });
         resetToIdle();
       }
     },
-    [attachCallHandlers, connectLine, nextLeads, patch, resetToIdle, stopPoll],
+    [attachCallHandlers, clearHumanPresence, connectLine, nextLeads, patch, resetToIdle, stopPoll],
   );
 
   // The Start button + auto-dial route through here, honoring the current mode.
@@ -452,18 +599,20 @@ export function useDialer(queue: Lead[], aiConfigured = false) {
 
   const selectOutcome = useCallback(
     (outcome: CallOutcome) => {
+      clearHumanPresence();
       patch({ lastOutcome: outcome, status: "idle", lines: [], connectedLead: null });
       advanceQueue();
       if (autoDialRef.current && queue.length) {
         setTimeout(() => startCall(), 900);
       }
     },
-    [advanceQueue, patch, queue.length, startCall],
+    [advanceQueue, clearHumanPresence, patch, queue.length, startCall],
   );
 
   const skip = useCallback(() => {
     stopTick();
     stopPoll();
+    clearHumanPresence();
     try {
       callRef.current?.disconnect();
     } catch {
@@ -476,7 +625,7 @@ export function useDialer(queue: Lead[], aiConfigured = false) {
     } else {
       patch({ status: "idle", lines: [], connectedLead: null, durationSec: 0 });
     }
-  }, [advanceQueue, patch, queue.length, startCall, stopPoll, stopTick]);
+  }, [advanceQueue, clearHumanPresence, patch, queue.length, startCall, stopPoll, stopTick]);
 
   const launchNextAI = useCallback(() => {
     void launchAIBatch();
@@ -545,15 +694,17 @@ export function useDialer(queue: Lead[], aiConfigured = false) {
     (value: boolean) => {
       aiModeRef.current = value;
       stopAITimer();
+      clearHumanPresence();
       patch({ aiMode: value, status: "idle", aiCalls: [], aiCampaign: "idle" });
     },
-    [patch, stopAITimer],
+    [clearHumanPresence, patch, stopAITimer],
   );
 
   return {
     state,
     startCall,
     dialNumber,
+    aiDialNumber,
     endCall,
     selectOutcome,
     skip,
@@ -567,5 +718,8 @@ export function useDialer(queue: Lead[], aiConfigured = false) {
     launchNextAI,
     stopAICampaign,
     endAISession,
+    nextLead,
+    prevLead,
+    selectLead,
   };
 }

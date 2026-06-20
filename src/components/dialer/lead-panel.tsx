@@ -1,15 +1,22 @@
 "use client";
 
+import { AnimatePresence, motion } from "framer-motion";
 import {
   BatteryCharging,
   Car,
+  ChevronLeft,
+  ChevronRight,
   Mail,
   MapPin,
   Phone,
+  Search,
+  Users,
   Sun,
   Waves,
+  X,
   Zap,
 } from "lucide-react";
+import { useMemo, useState } from "react";
 import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Ring } from "@/components/ui/progress";
@@ -19,23 +26,94 @@ import { formatCurrency, formatPhone, initials } from "@/lib/utils";
 export function LeadPanel({
   lead,
   upNext,
+  queue = [],
+  index = 0,
+  total = 0,
+  onPrev,
+  onNext,
+  onSelect,
+  navDisabled = false,
 }: {
   lead: Lead | null;
   upNext: Lead[];
+  queue?: Lead[];
+  index?: number;
+  total?: number;
+  onPrev?: () => void;
+  onNext?: () => void;
+  onSelect?: (leadId: string) => void;
+  navDisabled?: boolean;
 }) {
-  if (!lead) {
-    return (
-      <div className="flex h-full flex-col items-center justify-center gap-3 p-8 text-center">
-        <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-muted">
-          <Phone className="h-6 w-6 text-muted-foreground" />
-        </div>
-        <p className="text-sm text-muted-foreground">
-          No lead selected. Start a session to load your queue.
-        </p>
-      </div>
-    );
-  }
+  const [browseOpen, setBrowseOpen] = useState(false);
 
+  const hasNav = total > 0 && Boolean(onPrev && onNext);
+
+  return (
+    <div className="flex h-full flex-col">
+      {/* Lead navigation — browse / pick any lead, not just chronological */}
+      {hasNav && (
+        <div className="flex items-center gap-2 border-b border-border px-3 py-2.5">
+          <button
+            type="button"
+            onClick={onPrev}
+            disabled={navDisabled}
+            aria-label="Previous lead"
+            className="flex h-8 w-8 items-center justify-center rounded-lg border border-border/70 text-muted-foreground transition-colors hover:bg-muted disabled:opacity-40"
+          >
+            <ChevronLeft className="h-4 w-4" />
+          </button>
+          <button
+            type="button"
+            onClick={() => setBrowseOpen(true)}
+            disabled={navDisabled}
+            className="flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-border/70 px-2 py-1.5 text-xs font-semibold transition-colors hover:bg-muted disabled:opacity-40"
+          >
+            <Users className="h-3.5 w-3.5" />
+            Lead {Math.min(index + 1, total)} of {total}
+          </button>
+          <button
+            type="button"
+            onClick={onNext}
+            disabled={navDisabled}
+            aria-label="Next lead"
+            className="flex h-8 w-8 items-center justify-center rounded-lg border border-border/70 text-muted-foreground transition-colors hover:bg-muted disabled:opacity-40"
+          >
+            <ChevronRight className="h-4 w-4" />
+          </button>
+        </div>
+      )}
+
+      {!lead ? (
+        <div className="flex flex-1 flex-col items-center justify-center gap-3 p-8 text-center">
+          <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-muted">
+            <Phone className="h-6 w-6 text-muted-foreground" />
+          </div>
+          <p className="text-sm text-muted-foreground">
+            No lead selected. Import leads or dial a specific number.
+          </p>
+        </div>
+      ) : (
+        <LeadDetail lead={lead} upNext={upNext} />
+      )}
+
+      <AnimatePresence>
+        {browseOpen && (
+          <LeadBrowser
+            queue={queue}
+            currentId={lead?.id ?? null}
+            onPick={(id) => {
+              onSelect?.(id);
+              setBrowseOpen(false);
+            }}
+            onClose={() => setBrowseOpen(false)}
+          />
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
+function LeadDetail({ lead, upNext }: { lead: Lead; upNext: Lead[] }) {
   const name = `${lead.firstName} ${lead.lastName}`;
   const flags = [
     { on: lead.hasEV, icon: Car, label: "EV" },
@@ -44,7 +122,7 @@ export function LeadPanel({
   ].filter((f) => f.on);
 
   return (
-    <div className="flex h-full flex-col">
+    <>
       <div className="border-b border-border p-5">
         <div className="flex items-start gap-3">
           <Avatar initials={initials(name)} color={lead.assignedRepId ? "#3B82F6" : "#0EA5E9"} size="lg" />
@@ -166,6 +244,109 @@ export function LeadPanel({
           ))}
         </ul>
       </div>
-    </div>
+    </>
+  );
+}
+
+// ── Browse / pick any lead ──────────────────────────────────────────────────
+function LeadBrowser({
+  queue,
+  currentId,
+  onPick,
+  onClose,
+}: {
+  queue: Lead[];
+  currentId: string | null;
+  onPick: (id: string) => void;
+  onClose: () => void;
+}) {
+  const [q, setQ] = useState("");
+  const results = useMemo(() => {
+    const needle = q.trim().toLowerCase();
+    if (!needle) return queue;
+    return queue.filter((l) =>
+      `${l.firstName} ${l.lastName} ${l.city} ${l.state} ${l.phone} ${l.utilityProvider}`
+        .toLowerCase()
+        .includes(needle),
+    );
+  }, [q, queue]);
+
+  return (
+    <motion.div
+      className="fixed inset-0 z-[100] flex items-end justify-center sm:items-center sm:p-4"
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+    >
+      <motion.div
+        className="absolute inset-0 bg-background/70 backdrop-blur-xl"
+        onClick={onClose}
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+      />
+      <motion.div
+        initial={{ opacity: 0, y: 20, scale: 0.98 }}
+        animate={{ opacity: 1, y: 0, scale: 1 }}
+        exit={{ opacity: 0, y: 16, scale: 0.98 }}
+        transition={{ type: "spring", stiffness: 320, damping: 30 }}
+        className="glass relative flex max-h-[80vh] w-full max-w-md flex-col overflow-hidden rounded-t-2xl border border-border/60 shadow-lift sm:max-h-[70vh] sm:rounded-2xl"
+      >
+        <div className="flex items-center gap-2 border-b border-border/60 px-4">
+          <Search className="h-4 w-4 shrink-0 text-muted-foreground" />
+          <input
+            autoFocus
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder="Search leads by name, city, phone…"
+            className="h-12 w-full bg-transparent text-sm outline-none placeholder:text-muted-foreground/70"
+          />
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close"
+            className="flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground hover:bg-muted"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+        <div className="overflow-y-auto p-2">
+          {results.length === 0 ? (
+            <p className="px-3 py-8 text-center text-sm text-muted-foreground">
+              No leads match “{q.trim()}”.
+            </p>
+          ) : (
+            results.slice(0, 200).map((l) => (
+              <button
+                key={l.id}
+                type="button"
+                onClick={() => onPick(l.id)}
+                className={`flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left transition-colors hover:bg-muted/60 ${
+                  l.id === currentId ? "bg-primary-soft" : ""
+                }`}
+              >
+                <Avatar
+                  initials={initials(`${l.firstName} ${l.lastName}`)}
+                  color="#0EA5E9"
+                  size="sm"
+                />
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-semibold">
+                    {l.firstName} {l.lastName}
+                  </p>
+                  <p className="truncate text-xs text-muted-foreground tabular">
+                    {formatPhone(l.phone)} · {[l.city, l.state].filter(Boolean).join(", ")}
+                  </p>
+                </div>
+                {l.aiScore != null && (
+                  <span className="shrink-0 text-xs font-bold text-muted-foreground tabular">
+                    {l.aiScore}
+                  </span>
+                )}
+              </button>
+            ))
+          )}
+        </div>
+      </motion.div>
+    </motion.div>
   );
 }

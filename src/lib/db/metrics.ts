@@ -37,6 +37,7 @@ export interface RecentCall {
   recordingUrl?: string | null;
   conversationId?: string | null;
   hasSummary: boolean;
+  hasRecording: boolean;
 }
 
 export interface LiveCall {
@@ -258,17 +259,30 @@ export async function getReportingData(): Promise<ReportingData> {
       .sort((a, b) => b.value - a.value);
 
     // ── Recent calls ────────────────────────────────────────────────────────────
-    const recentCalls: RecentCall[] = calls.slice(0, 12).map((r, i) => ({
-      id: String(r.id ?? r.conversation_id ?? i),
-      leadName: String(r.lead_name ?? "Homeowner"),
-      channel: r.channel === "human" ? "human" : "ai",
-      outcome: outcomeOf(r),
-      durationSec: Number(r.duration_sec ?? 0),
-      startedAt: String(r.started_at ?? new Date().toISOString()),
-      recordingUrl: (r.recording_url as string) ?? null,
-      conversationId: (r.conversation_id as string) ?? null,
-      hasSummary: Boolean(r.summary),
-    }));
+    const recentCalls: RecentCall[] = calls.slice(0, 12).map((r, i) => {
+      const outcome = outcomeOf(r);
+      const channel = r.channel === "human" ? "human" : "ai";
+      const recordingUrl = (r.recording_url as string) ?? null;
+      const conversationId = (r.conversation_id as string) ?? null;
+      // A recording only exists when the call actually connected — no-answer /
+      // voicemail / failed calls have none, so don't offer a dead "Play" link.
+      const hasRecording =
+        channel === "human"
+          ? Boolean(recordingUrl)
+          : Boolean(conversationId && outcome && CONNECTED.has(outcome));
+      return {
+        id: String(r.id ?? conversationId ?? i),
+        leadName: String(r.lead_name ?? "Homeowner"),
+        channel,
+        outcome,
+        durationSec: Number(r.duration_sec ?? 0),
+        startedAt: String(r.started_at ?? new Date().toISOString()),
+        recordingUrl,
+        conversationId,
+        hasSummary: Boolean(r.summary),
+        hasRecording,
+      };
+    });
 
     // ── Pipeline + live ─────────────────────────────────────────────────────────
     const appointments: ApptLite[] = appts.slice(0, 30).map((a, i) => ({
@@ -345,6 +359,7 @@ function fallbackReporting(): ReportingData {
       recordingUrl: r.recordingUrl ?? null,
       conversationId: null,
       hasSummary: r.hasSummary,
+      hasRecording: Boolean(r.recordingUrl),
     })),
     liveCalls: sampleActive.map((c) => ({
       id: c.id,

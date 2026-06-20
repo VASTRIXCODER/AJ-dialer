@@ -62,7 +62,17 @@ export function DialerClient({
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-12">
         <Card className="overflow-hidden lg:col-span-3">
-          <LeadPanel lead={focusLead} upNext={upNext} />
+          <LeadPanel
+            lead={focusLead}
+            upNext={upNext}
+            queue={queue}
+            index={queue.length ? state.queueIndex % queue.length : 0}
+            total={queue.length}
+            onPrev={dialer.prevLead}
+            onNext={dialer.nextLead}
+            onSelect={dialer.selectLead}
+            navDisabled={state.status !== "idle"}
+          />
         </Card>
 
         <Card className="overflow-hidden lg:col-span-5 lg:min-h-[640px]">
@@ -73,6 +83,7 @@ export function DialerClient({
             aiConfigured={aiAgentConfigured}
             onStart={() => dialer.startCall()}
             onManualDial={dialer.dialNumber}
+            onAiDialNumber={dialer.aiDialNumber}
             onEnd={dialer.endCall}
             onSkip={dialer.skip}
             onOutcome={(o) => {

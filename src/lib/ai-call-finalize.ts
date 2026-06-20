@@ -4,7 +4,7 @@ import { getAICall, updateAICall } from "./ai-call-store";
 import { analyzeConversation } from "./ai/services";
 import { dispositionBlurb, unconnectedOutcome } from "./call-disposition";
 import { getLeadById } from "./db/leads";
-import { completeAIConversation } from "./db/records";
+import { completeAIConversation, enrichLeadFromAI } from "./db/records";
 import type { CallOutcome, Lead } from "./types";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -30,6 +30,13 @@ export interface FinalizeResult {
   summary: string;
   sentiment: "positive" | "neutral" | "negative";
   appointment: { when: string; notes: string } | null;
+  qualification?: {
+    utilityBill: number | null;
+    solarPayment: number | null;
+    hasEV: boolean;
+    hasPool: boolean;
+    hasBattery: boolean;
+  };
 }
 
 /** Did a real two-way conversation happen (the homeowner actually spoke)? */
@@ -68,6 +75,8 @@ export async function finalizeAIConversation(input: {
   let outcome: CallOutcome;
   let sentiment: "positive" | "neutral" | "negative";
   let appointment: { when: string; notes: string } | null = null;
+  let qualification: FinalizeResult["qualification"];
+  let score: number | undefined;
 
   if (connected) {
     const { data: analysis } = await analyzeConversation({ transcript, lead });
@@ -77,6 +86,8 @@ export async function finalizeAIConversation(input: {
     appointment = analysis.appointment.requested
       ? { when: analysis.appointment.when, notes: analysis.appointment.notes }
       : null;
+    qualification = analysis.qualification;
+    score = analysis.confidence;
   } else {
     outcome = unconnectedOutcome(
       input.terminationReason ?? input.status ?? "",
@@ -108,6 +119,12 @@ export async function finalizeAIConversation(input: {
     appointment,
     state: connected ? "completed" : "failed",
   });
+
+  // Process the extracted data back onto the lead (bill, solar, EV/pool/battery,
+  // score, status) so the CRM reflects what the AI learned on the call.
+  if (connected) {
+    await enrichLeadFromAI({ conversationId, outcome, score, qualification });
+  }
 
   return { connected, outcome, summary, sentiment, appointment };
 }

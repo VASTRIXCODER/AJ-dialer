@@ -149,6 +149,66 @@ export async function completeAIConversation(input: {
   }
 }
 
+// ── Lead enrichment from an AI call (admin; processes extracted data) ────────
+const OUTCOME_TO_STATUS: Record<CallOutcome, string> = {
+  appointment_booked: "appointment",
+  callback_scheduled: "callback",
+  qualified: "qualified",
+  not_interested: "not_interested",
+  no_answer: "no_answer",
+  voicemail: "no_answer",
+  wrong_number: "no_answer",
+  do_not_call: "dnc",
+};
+
+/**
+ * Write the data the AI extracted from a call back onto the lead — utility bill,
+ * solar payment, EV/pool/battery, an AI score, and a status derived from the
+ * disposition. Resolves the lead from the conversation so it works without a
+ * session (webhook path). Best-effort; never throws.
+ */
+export async function enrichLeadFromAI(input: {
+  conversationId: string;
+  outcome: CallOutcome;
+  score?: number | null;
+  qualification?: {
+    utilityBill: number | null;
+    solarPayment: number | null;
+    hasEV: boolean;
+    hasPool: boolean;
+    hasBattery: boolean;
+  };
+}): Promise<void> {
+  if (!isAdminConfigured()) return;
+  try {
+    const admin = createAdminClient();
+    const { data: convo } = await admin
+      .from("ai_conversations")
+      .select("lead_id")
+      .eq("conversation_id", input.conversationId)
+      .maybeSingle();
+    const leadId = convo?.lead_id as string | undefined;
+    if (!leadId) return;
+
+    const patch: Record<string, unknown> = {
+      status: OUTCOME_TO_STATUS[input.outcome] ?? "contacted",
+      last_contacted_at: new Date().toISOString(),
+    };
+    if (input.score != null) patch.ai_score = Math.round(input.score);
+    const q = input.qualification;
+    if (q) {
+      if (q.utilityBill != null && q.utilityBill > 0) patch.utility_bill = q.utilityBill;
+      if (q.solarPayment != null && q.solarPayment > 0) patch.solar_payment = q.solarPayment;
+      if (q.hasEV) patch.has_ev = true;
+      if (q.hasPool) patch.has_pool = true;
+      if (q.hasBattery) patch.has_battery = true;
+    }
+    await admin.from("leads").update(patch).eq("id", leadId);
+  } catch {
+    /* best-effort */
+  }
+}
+
 // ── Single conversation read (account-scoped) ────────────────────────────────
 export interface AIConversationRow {
   conversationId: string;
