@@ -2,7 +2,6 @@
 
 import { AlertTriangle, Settings } from "lucide-react";
 import Link from "next/link";
-import { AiAgentLauncher } from "@/components/ai/ai-agent-launcher";
 import { Card } from "@/components/ui/card";
 import { buttonVariants } from "@/components/ui/button";
 import type { Lead } from "@/lib/types";
@@ -20,7 +19,7 @@ export function DialerClient({
   voiceConfigured: boolean;
   aiAgentConfigured: boolean;
 }) {
-  const dialer = useDialer(queue);
+  const dialer = useDialer(queue, aiAgentConfigured);
   const { state } = dialer;
 
   // Which lead the side panels describe right now (null when the queue is empty
@@ -38,7 +37,8 @@ export function DialerClient({
 
   return (
     <div className="space-y-4">
-      {!voiceConfigured && (
+      {/* Manual mode needs Twilio; AI mode places calls server-side without it. */}
+      {!voiceConfigured && !state.aiMode && (
         <Card className="flex flex-col items-start gap-3 border-warning/30 bg-warning/5 p-4 sm:flex-row sm:items-center">
           <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-warning/15 text-warning">
             <AlertTriangle className="h-5 w-5" />
@@ -46,8 +46,8 @@ export function DialerClient({
           <div className="flex-1">
             <p className="text-sm font-semibold">Twilio isn’t connected yet</p>
             <p className="text-sm text-muted-foreground">
-              Add your Twilio credentials to place live calls. Calling is disabled
-              until then — no calls are simulated.
+              Manual dialing needs your Twilio credentials. Switch to AI calling, or
+              connect Twilio to dial manually.
             </p>
           </div>
           <Link
@@ -60,14 +60,6 @@ export function DialerClient({
         </Card>
       )}
 
-      <AiAgentLauncher
-        leadId={focusLead?.id ?? null}
-        leadName={
-          focusLead ? `${focusLead.firstName} ${focusLead.lastName}` : "lead"
-        }
-        configured={aiAgentConfigured}
-      />
-
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-12">
         <Card className="overflow-hidden lg:col-span-3">
           <LeadPanel lead={focusLead} upNext={upNext} />
@@ -78,6 +70,7 @@ export function DialerClient({
             state={state}
             focusLead={focusLead}
             hasQueue={queue.length > 0}
+            aiConfigured={aiAgentConfigured}
             onStart={() => dialer.startCall()}
             onManualDial={dialer.dialNumber}
             onEnd={dialer.endCall}
@@ -104,6 +97,10 @@ export function DialerClient({
             onDigit={dialer.sendDigit}
             onSetParallel={dialer.setParallelCount}
             onSetAutoDial={dialer.setAutoDial}
+            onSetAiMode={dialer.setAiMode}
+            onLaunchNextAI={dialer.launchNextAI}
+            onStopAICampaign={dialer.stopAICampaign}
+            onEndAISession={dialer.endAISession}
           />
         </Card>
 

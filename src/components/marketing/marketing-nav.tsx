@@ -33,13 +33,13 @@ export function MarketingNav() {
         <div className="flex items-center gap-2">
           <ThemeToggle />
           <Link
-            href="/dashboard"
+            href="/login"
             className={buttonVariants({ size: "sm", variant: "ghost", className: "hidden sm:inline-flex" })}
           >
             Sign in
           </Link>
-          <Link href="/dashboard" className={buttonVariants({ size: "sm" })}>
-            Launch app
+          <Link href="/signup" className={buttonVariants({ size: "sm" })}>
+            Get started
           </Link>
         </div>
       </div>

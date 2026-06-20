@@ -3,6 +3,7 @@ import { PageContainer, PageHeader } from "@/components/shared/page-header";
 import { getUser, userDisplay } from "@/lib/auth";
 
 export const metadata = { title: "Settings" };
+export const dynamic = "force-dynamic";
 
 export default async function SettingsPage() {
   const user = await getUser();

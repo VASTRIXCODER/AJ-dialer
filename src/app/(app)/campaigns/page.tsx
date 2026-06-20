@@ -3,6 +3,7 @@ import { PageContainer, PageHeader } from "@/components/shared/page-header";
 import { getCampaigns } from "@/lib/db/pipeline";
 
 export const metadata = { title: "Campaigns" };
+export const dynamic = "force-dynamic";
 
 export default async function CampaignsPage() {
   const campaigns = await getCampaigns();

@@ -1,11 +1,13 @@
 import {
   BarChart3,
   Battery,
+  Bot,
   Car,
   Clock,
   Download,
   PhoneCall,
   PlayCircle,
+  User,
   Waves,
   Zap,
 } from "lucide-react";
@@ -18,14 +20,8 @@ import { SectionCard } from "@/components/shared/section-card";
 import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { getReportingData } from "@/lib/db/metrics";
 import { outcomeConfig } from "@/lib/status";
-import {
-  callRecords,
-  hourlyCalls,
-  kpiSeries,
-  metrics,
-  outcomeBreakdown,
-} from "@/lib/data";
 import {
   formatClock,
   formatCurrency,
@@ -36,9 +32,13 @@ import {
 } from "@/lib/utils";
 
 export const metadata = { title: "Reports" };
+export const dynamic = "force-dynamic";
 
-export default function ReportsPage() {
-  if (metrics.totalCalls === 0 && callRecords.length === 0) {
+export default async function ReportsPage() {
+  const { metrics, kpiSeries, hourlyCalls, outcomeBreakdown, recentCalls } =
+    await getReportingData();
+
+  if (metrics.totalCalls === 0 && recentCalls.length === 0) {
     return (
       <PageContainer>
         <PageHeader
@@ -49,6 +49,7 @@ export default function ReportsPage() {
           icon={BarChart3}
           title="No report data yet"
           description="Call volume, connect rates, outcomes, utility-bill insights, and recordings appear here once dialing begins."
+          action={{ label: "Open the dialer", href: "/dialer" }}
         />
       </PageContainer>
     );
@@ -86,7 +87,13 @@ export default function ReportsPage() {
           <TrendAreaChart data={kpiSeries} />
         </SectionCard>
         <SectionCard title="Outcome mix" description="Disposition share">
-          <OutcomeDonut data={outcomeBreakdown} />
+          {outcomeBreakdown.length > 0 ? (
+            <OutcomeDonut data={outcomeBreakdown} />
+          ) : (
+            <p className="py-10 text-center text-sm text-muted-foreground">
+              No dispositions yet.
+            </p>
+          )}
         </SectionCard>
       </div>
 
@@ -129,14 +136,13 @@ export default function ReportsPage() {
       <SectionCard
         title="Recent calls"
         description="Latest dispositions with recordings"
-        action={{ label: "View all", href: "/reports" }}
         bodyClassName="p-0"
       >
         <div className="overflow-x-auto">
           <table className="w-full min-w-[760px] text-sm">
             <thead>
               <tr className="border-b border-border text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                <th className="px-5 py-3">Rep</th>
+                <th className="px-5 py-3">Source</th>
                 <th className="px-5 py-3">Homeowner</th>
                 <th className="px-5 py-3">Time</th>
                 <th className="px-5 py-3 text-right">Duration</th>
@@ -145,15 +151,30 @@ export default function ReportsPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-border">
-              {callRecords.slice(0, 8).map((rec) => {
-                const cfg = outcomeConfig[rec.outcome];
+              {recentCalls.map((rec) => {
+                const cfg = rec.outcome ? outcomeConfig[rec.outcome] : null;
+                const recordingHref =
+                  rec.channel === "ai" && rec.conversationId
+                    ? `/api/elevenlabs/audio/${encodeURIComponent(rec.conversationId)}`
+                    : rec.recordingUrl || null;
                 return (
                   <tr key={rec.id} className="transition-colors hover:bg-muted/40">
                     <td className="px-5 py-3">
-                      <div className="flex items-center gap-2">
-                        <Avatar initials={initials(rec.repName)} color="#0EA5E9" size="xs" />
-                        <span className="font-medium">{rec.repName}</span>
-                      </div>
+                      {rec.repName ? (
+                        <div className="flex items-center gap-2">
+                          <Avatar initials={initials(rec.repName)} color="#0EA5E9" size="xs" />
+                          <span className="font-medium">{rec.repName}</span>
+                        </div>
+                      ) : (
+                        <Badge tone={rec.channel === "ai" ? "accent" : "neutral"} className="gap-1">
+                          {rec.channel === "ai" ? (
+                            <Bot className="h-3 w-3" />
+                          ) : (
+                            <User className="h-3 w-3" />
+                          )}
+                          {rec.channel === "ai" ? "AI agent" : "Manual"}
+                        </Badge>
+                      )}
                     </td>
                     <td className="px-5 py-3 text-muted-foreground">{rec.leadName}</td>
                     <td className="px-5 py-3 text-muted-foreground tabular">
@@ -163,14 +184,19 @@ export default function ReportsPage() {
                       {rec.durationSec ? formatDuration(rec.durationSec) : "—"}
                     </td>
                     <td className="px-5 py-3">
-                      <Badge tone={cfg.tone}>{cfg.label}</Badge>
+                      {cfg ? <Badge tone={cfg.tone}>{cfg.label}</Badge> : <span className="text-xs text-muted-foreground">—</span>}
                     </td>
                     <td className="px-5 py-3 text-right">
-                      {rec.recordingUrl ? (
-                        <button className="inline-flex items-center gap-1 text-sm font-medium text-primary hover:underline">
+                      {recordingHref ? (
+                        <a
+                          href={recordingHref}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1 text-sm font-medium text-primary hover:underline"
+                        >
                           <PlayCircle className="h-4 w-4" />
                           Play
-                        </button>
+                        </a>
                       ) : (
                         <span className="text-xs text-muted-foreground">—</span>
                       )}

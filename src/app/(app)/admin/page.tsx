@@ -15,6 +15,7 @@ import { isRestConfigured, isVoiceConfigured } from "@/lib/twilio";
 import { initials } from "@/lib/utils";
 
 export const metadata = { title: "Admin" };
+export const dynamic = "force-dynamic";
 
 export default async function AdminPage() {
   const [team, leadStats] = await Promise.all([getTeam(), getLeadStats()]);

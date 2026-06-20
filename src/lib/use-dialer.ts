@@ -5,13 +5,21 @@ import type { Call, Device } from "@twilio/voice-sdk";
 import type { CallOutcome, Lead } from "./types";
 import { formatPhone, toE164 } from "./utils";
 
-export type DialerStatus = "idle" | "dialing" | "live" | "wrapup";
+export type DialerStatus = "idle" | "dialing" | "live" | "wrapup" | "ai";
 export type DialerMode = "connecting" | "live" | "offline";
 
 export interface DialLine {
   id: string;
   lead: Lead;
   status: "ringing" | "connected" | "canceled" | "no_answer";
+}
+
+/** One AI call launched in the current dialer session. */
+export interface AiLaunch {
+  conversationId: string | null;
+  leadId: string;
+  leadName: string;
+  error?: string;
 }
 
 export interface DialerState {
@@ -30,6 +38,10 @@ export interface DialerState {
   connectsThisSession: number;
   queueIndex: number;
   error: string | null;
+  /** AI calling is the default; flip off for manual (human Twilio) dialing. */
+  aiMode: boolean;
+  aiCalls: AiLaunch[];
+  aiCampaign: "idle" | "running" | "done";
 }
 
 /** Build a lightweight Lead for an ad-hoc manual dial (not a queued lead). */
@@ -56,7 +68,7 @@ function manualLead(e164: string): Lead {
   };
 }
 
-export function useDialer(queue: Lead[]) {
+export function useDialer(queue: Lead[], aiConfigured = false) {
   const [state, setState] = useState<DialerState>({
     status: "idle",
     lines: [],
@@ -73,6 +85,9 @@ export function useDialer(queue: Lead[]) {
     connectsThisSession: 0,
     queueIndex: 0,
     error: null,
+    aiMode: aiConfigured,
+    aiCalls: [],
+    aiCampaign: "idle",
   });
 
   const queueIndexRef = useRef(0);
@@ -84,6 +99,10 @@ export function useDialer(queue: Lead[]) {
   const autoDialRef = useRef(false);
   const parallelRef = useRef(1);
   const modeRef = useRef<DialerMode>("connecting");
+  const aiModeRef = useRef(aiConfigured);
+  const aiConfiguredRef = useRef(aiConfigured);
+  const aiCursorRef = useRef(0);
+  const aiTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const patch = useCallback((p: Partial<DialerState>) => {
     setState((s) => ({ ...s, ...p }));
@@ -104,6 +123,11 @@ export function useDialer(queue: Lead[]) {
   const stopPoll = useCallback(() => {
     if (pollRef.current) clearInterval(pollRef.current);
     pollRef.current = null;
+  }, []);
+
+  const stopAITimer = useCallback(() => {
+    if (aiTimerRef.current) clearTimeout(aiTimerRef.current);
+    aiTimerRef.current = null;
   }, []);
 
   // ── Initialize Twilio device, or go offline (no simulation) ───────────────
@@ -151,8 +175,9 @@ export function useDialer(queue: Lead[]) {
     () => () => {
       stopTick();
       stopPoll();
+      stopAITimer();
     },
-    [stopTick, stopPoll],
+    [stopTick, stopPoll, stopAITimer],
   );
 
   const nextLeads = useCallback(
@@ -218,8 +243,100 @@ export function useDialer(queue: Lead[]) {
     [endCall, resetToIdle],
   );
 
-  // ── Start a call attempt (real Twilio only) ───────────────────────────────
-  const startCall = useCallback(
+  // ── AI calling (default) ──────────────────────────────────────────────────
+  // Places ElevenLabs AI calls for the next N queued leads. The human oversees,
+  // listens, and takes over from the Live Monitor. Auto-dial walks the queue.
+  const launchAIBatch = useCallback(async () => {
+    const start = aiCursorRef.current;
+    const leads = queue.slice(start, start + parallelRef.current);
+    if (!leads.length) {
+      stopAITimer();
+      patch({ status: "ai", aiCampaign: "done" });
+      return;
+    }
+    aiCursorRef.current = start + leads.length;
+    queueIndexRef.current = Math.min(
+      aiCursorRef.current,
+      Math.max(0, queue.length - 1),
+    );
+
+    const pending: AiLaunch[] = leads.map((l) => ({
+      conversationId: null,
+      leadId: l.id,
+      leadName: `${l.firstName} ${l.lastName}`.trim() || formatPhone(l.phone),
+    }));
+
+    setState((s) => ({
+      ...s,
+      status: "ai",
+      error: null,
+      queueIndex: queueIndexRef.current,
+      callsThisSession: s.callsThisSession + leads.length,
+      aiCampaign: autoDialRef.current ? "running" : "idle",
+      aiCalls: [...pending, ...s.aiCalls].slice(0, 40),
+    }));
+
+    await Promise.all(
+      leads.map(async (l) => {
+        try {
+          const res = await fetch("/api/elevenlabs/call", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ leadId: l.id }),
+          });
+          const json = (await res.json().catch(() => ({}))) as {
+            conversationId?: string;
+            error?: string;
+          };
+          setState((s) => ({
+            ...s,
+            aiCalls: s.aiCalls.map((c) =>
+              c.leadId === l.id && c.conversationId === null && !c.error
+                ? {
+                    ...c,
+                    conversationId: json.conversationId ?? null,
+                    error: res.ok ? undefined : json.error ?? "Call failed",
+                  }
+                : c,
+            ),
+          }));
+        } catch {
+          setState((s) => ({
+            ...s,
+            aiCalls: s.aiCalls.map((c) =>
+              c.leadId === l.id && c.conversationId === null && !c.error
+                ? { ...c, error: "Network error" }
+                : c,
+            ),
+          }));
+        }
+      }),
+    );
+
+    if (autoDialRef.current && aiCursorRef.current < queue.length) {
+      aiTimerRef.current = setTimeout(() => {
+        void launchAIBatch();
+      }, 8000);
+    } else if (aiCursorRef.current >= queue.length) {
+      patch({ aiCampaign: "done" });
+    }
+  }, [patch, queue, stopAITimer]);
+
+  const startAISession = useCallback(() => {
+    stopAITimer();
+    aiCursorRef.current = queueIndexRef.current;
+    setState((s) => ({
+      ...s,
+      status: "ai",
+      aiCalls: [],
+      aiCampaign: autoDialRef.current ? "running" : "idle",
+      error: null,
+    }));
+    void launchAIBatch();
+  }, [launchAIBatch, stopAITimer]);
+
+  // ── Human (Twilio) call attempt ───────────────────────────────────────────
+  const startHumanCall = useCallback(
     async (override?: Lead[]) => {
       if (modeRef.current !== "live" || !deviceRef.current) {
         patch({
@@ -252,13 +369,11 @@ export function useDialer(queue: Lead[]) {
 
       try {
         if (leads.length === 1) {
-          // Single-line / manual: bridge the agent directly to the homeowner.
           const call = await deviceRef.current.connect({
             params: { To: toE164(leads[0].phone), record: "true" },
           });
           attachCallHandlers(call, () => connectLine(leads[0]));
         } else {
-          // Parallel: place the outbound legs into a conference, then join it.
           const room = `room-${identityRef.current}-${Date.now().toString(36)}`;
           const res = await fetch("/api/twilio/call", {
             method: "POST",
@@ -276,8 +391,7 @@ export function useDialer(queue: Lead[]) {
           const call = await deviceRef.current.connect({
             params: { Conference: room },
           });
-          attachCallHandlers(call); // connection happens when a homeowner answers
-          // Poll for the winning leg, then bridge that homeowner in the UI.
+          attachCallHandlers(call);
           stopPoll();
           pollRef.current = setInterval(async () => {
             try {
@@ -305,6 +419,18 @@ export function useDialer(queue: Lead[]) {
     [attachCallHandlers, connectLine, nextLeads, patch, resetToIdle, stopPoll],
   );
 
+  // The Start button + auto-dial route through here, honoring the current mode.
+  const startCall = useCallback(
+    (override?: Lead[]) => {
+      if (aiModeRef.current && aiConfiguredRef.current && !override) {
+        startAISession();
+        return;
+      }
+      void startHumanCall(override);
+    },
+    [startAISession, startHumanCall],
+  );
+
   const dialNumber = useCallback(
     (raw: string) => {
       const e164 = toE164(raw);
@@ -312,9 +438,9 @@ export function useDialer(queue: Lead[]) {
         patch({ error: "Enter a valid phone number." });
         return;
       }
-      startCall([manualLead(e164)]);
+      void startHumanCall([manualLead(e164)]); // manual dial is always human
     },
-    [patch, startCall],
+    [patch, startHumanCall],
   );
 
   const advanceQueue = useCallback(() => {
@@ -352,6 +478,20 @@ export function useDialer(queue: Lead[]) {
     }
   }, [advanceQueue, patch, queue.length, startCall, stopPoll, stopTick]);
 
+  const launchNextAI = useCallback(() => {
+    void launchAIBatch();
+  }, [launchAIBatch]);
+
+  const stopAICampaign = useCallback(() => {
+    stopAITimer();
+    patch({ aiCampaign: "idle" });
+  }, [patch, stopAITimer]);
+
+  const endAISession = useCallback(() => {
+    stopAITimer();
+    patch({ status: "idle", aiCalls: [], aiCampaign: "idle" });
+  }, [patch, stopAITimer]);
+
   const toggleMute = useCallback(() => {
     setState((s) => {
       const next = !s.muted;
@@ -384,8 +524,12 @@ export function useDialer(queue: Lead[]) {
     (value: boolean) => {
       autoDialRef.current = value;
       patch({ autoDial: value });
+      if (!value) {
+        stopAITimer();
+        setState((s) => (s.aiCampaign === "running" ? { ...s, aiCampaign: "idle" } : s));
+      }
     },
-    [patch],
+    [patch, stopAITimer],
   );
 
   const setParallelCount = useCallback(
@@ -395,6 +539,15 @@ export function useDialer(queue: Lead[]) {
       patch({ parallelCount: clamped });
     },
     [patch],
+  );
+
+  const setAiMode = useCallback(
+    (value: boolean) => {
+      aiModeRef.current = value;
+      stopAITimer();
+      patch({ aiMode: value, status: "idle", aiCalls: [], aiCampaign: "idle" });
+    },
+    [patch, stopAITimer],
   );
 
   return {
@@ -410,5 +563,9 @@ export function useDialer(queue: Lead[]) {
     sendDigit,
     setAutoDial,
     setParallelCount,
+    setAiMode,
+    launchNextAI,
+    stopAICampaign,
+    endAISession,
   };
 }

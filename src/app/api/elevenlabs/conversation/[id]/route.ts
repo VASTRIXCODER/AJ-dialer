@@ -1,11 +1,10 @@
 import { NextResponse } from "next/server";
+import { finalizeAIConversation, type Turn } from "@/lib/ai-call-finalize";
 import {
   getAICall,
   updateAICall,
-  type AICall,
   type AICallState,
 } from "@/lib/ai-call-store";
-import { unconnectedOutcome, dispositionBlurb } from "@/lib/call-disposition";
 import { getAIConversation } from "@/lib/db/records";
 import { getConversation, isElevenLabsConfigured } from "@/lib/elevenlabs";
 import type { CallOutcome } from "@/lib/types";
@@ -53,9 +52,9 @@ function mapStatus(status: string | undefined): AICallState | null {
   }
 }
 
-function asSentiment(v: unknown): Sentiment {
-  return v === "positive" || v === "negative" ? v : "neutral";
-}
+const isTerminal = (s: string | undefined) => s === "completed" || s === "failed";
+const asSentiment = (v: unknown): Sentiment =>
+  v === "positive" || v === "negative" ? v : "neutral";
 
 function parseTranscript(raw: unknown): TranscriptTurn[] {
   if (!Array.isArray(raw)) return [];
@@ -76,9 +75,9 @@ function parseTranscript(raw: unknown): TranscriptTurn[] {
  * Live detail for a single AI conversation — powers the per-call mini dashboard.
  * Layers three sources, freshest first: the in-memory store (live state), the
  * ElevenLabs conversation API (transcript + status + recording), and Supabase
- * (durable, account-scoped fallback that survives restarts / serverless).
- * Also reconciles a call that "didn't go through" so the UI ends + categorizes
- * it automatically even if the post-call webhook hasn't landed yet.
+ * (durable, account-scoped fallback). If the call has reached a terminal state
+ * and hasn't been finalized yet, it ends + categorizes it here too — so a
+ * watched call is captured even if the post-call webhook never lands.
  */
 export async function GET(
   _req: Request,
@@ -88,6 +87,7 @@ export async function GET(
   const conversationId = decodeURIComponent(id);
 
   // ── Live ElevenLabs read (best-effort; a still-ringing call may 404) ────────
+  let rawTurns: Turn[] = [];
   let transcript: TranscriptTurn[] = [];
   let liveState: AICallState | null = null;
   let liveDuration: number | null = null;
@@ -95,6 +95,7 @@ export async function GET(
   let liveSentiment: Sentiment | null = null;
   let hasAudio = false;
   let terminationReason = "";
+  let liveStatusRaw = "";
 
   if (isElevenLabsConfigured()) {
     try {
@@ -103,8 +104,10 @@ export async function GET(
         unknown
       >;
       const data = (convo.data ?? convo) as Record<string, unknown>;
+      rawTurns = Array.isArray(data.transcript) ? (data.transcript as Turn[]) : [];
       transcript = parseTranscript(data.transcript);
-      liveState = mapStatus(data.status as string | undefined);
+      liveStatusRaw = String(data.status ?? "");
+      liveState = mapStatus(liveStatusRaw);
       hasAudio = Boolean(data.has_audio);
       const metadata = (data.metadata ?? {}) as Record<string, unknown>;
       const dur = Number(
@@ -122,30 +125,31 @@ export async function GET(
     }
   }
 
-  // ── Reconcile the in-memory store from the live state (best-effort) ─────────
-  const tracked = getAICall(conversationId);
-  if (tracked && liveState && liveState !== tracked.state) {
-    const ended = liveState === "completed" || liveState === "failed";
-    const patch: Partial<AICall> = { state: liveState };
-    if (ended) {
-      patch.endedAt = tracked.endedAt ?? Date.now();
-      if (liveDuration != null) patch.durationSec = liveDuration;
-      if (hasAudio) patch.recordingAvailable = true;
-      // Call ended without the homeowner speaking → it didn't go through.
-      if (transcript.length === 0 && !tracked.outcome) {
-        const auto = unconnectedOutcome(terminationReason, liveDuration ?? 0);
-        patch.state = "failed";
-        patch.outcome = auto;
-        patch.summary = tracked.summary || dispositionBlurb(auto);
-        patch.recordingAvailable = false;
-      }
-    }
-    updateAICall(conversationId, patch);
-  }
+  let store = getAICall(conversationId);
+  let db = await getAIConversation(conversationId);
 
-  // ── Assemble the response: store → live → DB ────────────────────────────────
-  const store = getAICall(conversationId);
-  const db = store ? null : await getAIConversation(conversationId);
+  // ── Finalize a watched call that just reached a terminal state (once) ───────
+  const alreadyFinal = isTerminal(store?.state) || isTerminal(db?.state);
+  if (liveState && isTerminal(liveState) && !alreadyFinal) {
+    await finalizeAIConversation({
+      conversationId,
+      turns: rawTurns,
+      status: liveStatusRaw,
+      durationSec: liveDuration ?? undefined,
+      terminationReason,
+    });
+    store = getAICall(conversationId);
+    db = await getAIConversation(conversationId);
+  } else if (
+    store &&
+    liveState &&
+    liveState !== store.state &&
+    !isTerminal(liveState)
+  ) {
+    // Live, non-terminal transition (e.g. initiated → in_progress).
+    updateAICall(conversationId, { state: liveState });
+    store = getAICall(conversationId);
+  }
 
   if (!store && !db && transcript.length === 0 && !liveState) {
     return NextResponse.json(

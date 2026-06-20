@@ -11,6 +11,7 @@ import { getCallbacks } from "@/lib/db/pipeline";
 import { formatPhone, initials, relativeTime } from "@/lib/utils";
 
 export const metadata = { title: "Callbacks" };
+export const dynamic = "force-dynamic";
 
 const groups: Array<{
   key: string;

@@ -7,6 +7,7 @@ import { Card } from "@/components/ui/card";
 import { getAppointments, type AppointmentRow } from "@/lib/db/pipeline";
 
 export const metadata = { title: "Appointments" };
+export const dynamic = "force-dynamic";
 
 const statusTone: Record<
   string,

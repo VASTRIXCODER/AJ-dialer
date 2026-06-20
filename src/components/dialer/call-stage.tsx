@@ -3,8 +3,11 @@
 import { AnimatePresence, motion } from "framer-motion";
 import {
   AlertCircle,
+  Bot,
+  ExternalLink,
   Grid3x3,
   Hash,
+  Loader2,
   Mic,
   MicOff,
   Pause,
@@ -13,12 +16,15 @@ import {
   Radio,
   SkipForward,
   Sparkles,
+  StopCircle,
 } from "lucide-react";
+import Link from "next/link";
 import { useState } from "react";
 import { Avatar } from "@/components/ui/avatar";
-import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Button, buttonVariants } from "@/components/ui/button";
 import type { CallOutcome, Lead } from "@/lib/types";
-import type { DialerState } from "@/lib/use-dialer";
+import type { AiLaunch, DialerState } from "@/lib/use-dialer";
 import { cn, formatDuration, initials } from "@/lib/utils";
 import { AiCallSummary } from "@/components/ai/call-summary";
 import { DialPad } from "./dial-pad";
@@ -65,6 +71,7 @@ export function CallStage({
   state,
   focusLead,
   hasQueue,
+  aiConfigured,
   onStart,
   onManualDial,
   onEnd,
@@ -76,10 +83,15 @@ export function CallStage({
   onDigit,
   onSetParallel,
   onSetAutoDial,
+  onSetAiMode,
+  onLaunchNextAI,
+  onStopAICampaign,
+  onEndAISession,
 }: {
   state: DialerState;
   focusLead: Lead | null;
   hasQueue: boolean;
+  aiConfigured: boolean;
   onStart: () => void;
   onManualDial: (number: string) => void;
   onEnd: () => void;
@@ -91,14 +103,21 @@ export function CallStage({
   onDigit: (d: string) => void;
   onSetParallel: (n: number) => void;
   onSetAutoDial: (b: boolean) => void;
+  onSetAiMode: (b: boolean) => void;
+  onLaunchNextAI: () => void;
+  onStopAICampaign: () => void;
+  onEndAISession: () => void;
 }) {
   const [showKeypad, setShowKeypad] = useState(false);
   const [manualOpen, setManualOpen] = useState(!hasQueue);
+  const ai = state.aiMode && aiConfigured;
   const canCall = state.mode === "live";
+  const canStart = ai ? hasQueue : canCall && Boolean(focusLead);
   const name = focusLead ? `${focusLead.firstName} ${focusLead.lastName}` : "No lead";
 
-  const modeBadge =
-    state.mode === "live"
+  const modeBadge = ai
+    ? { label: "AI agent ready", cls: "bg-accent-soft text-accent" }
+    : state.mode === "live"
       ? { label: "Twilio Live", cls: "bg-success/10 text-success" }
       : state.mode === "offline"
         ? { label: "Twilio offline", cls: "bg-danger/10 text-danger" }
@@ -142,19 +161,66 @@ export function CallStage({
               exit={{ opacity: 0, y: -10 }}
               className="flex w-full max-w-sm flex-col items-center gap-6"
             >
+              {/* AI / Manual toggle */}
+              {aiConfigured && (
+                <div className="inline-flex rounded-xl border border-border bg-card p-1">
+                  <button
+                    type="button"
+                    onClick={() => onSetAiMode(true)}
+                    className={cn(
+                      "flex items-center gap-1.5 rounded-lg px-4 py-1.5 text-sm font-semibold transition-colors",
+                      ai ? "bg-solar text-white shadow-soft" : "text-muted-foreground hover:text-foreground",
+                    )}
+                  >
+                    <Bot className="h-4 w-4" />
+                    AI calling
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onSetAiMode(false)}
+                    className={cn(
+                      "flex items-center gap-1.5 rounded-lg px-4 py-1.5 text-sm font-semibold transition-colors",
+                      !ai ? "bg-foreground text-background shadow-soft" : "text-muted-foreground hover:text-foreground",
+                    )}
+                  >
+                    <Hash className="h-4 w-4" />
+                    Manual
+                  </button>
+                </div>
+              )}
+
               <div className="text-center">
-                <div className="mx-auto mb-4 flex h-20 w-20 animate-float items-center justify-center rounded-3xl bg-solar shadow-glow">
-                  <Sparkles className="h-9 w-9 text-white" />
+                <div
+                  className={cn(
+                    "mx-auto mb-4 flex h-20 w-20 animate-float items-center justify-center rounded-3xl shadow-glow",
+                    ai ? "bg-solar" : "bg-solar",
+                  )}
+                >
+                  {ai ? (
+                    <Bot className="h-9 w-9 text-white" />
+                  ) : (
+                    <Sparkles className="h-9 w-9 text-white" />
+                  )}
                 </div>
                 <h2 className="text-xl font-bold">
-                  {hasQueue ? "Ready to dial" : "Your queue is empty"}
+                  {hasQueue
+                    ? ai
+                      ? "Ready — AI will dial"
+                      : "Ready to dial"
+                    : "Your queue is empty"}
                 </h2>
                 <p className="mt-1 text-sm text-muted-foreground">
                   {!hasQueue
-                    ? "Connect your lead source to power-dial, or place a manual call below."
-                    : state.parallelCount > 1
-                      ? `${state.parallelCount} lines will ring at once. First answer connects instantly.`
-                      : "Single-line power dialing through your queue."}
+                    ? ai
+                      ? "Import leads to let the AI agent start calling your list."
+                      : "Connect your lead source to power-dial, or place a manual call below."
+                    : ai
+                      ? state.parallelCount > 1
+                        ? `The AI agent will call ${state.parallelCount} homeowners at once. Oversee them in the Live Monitor.`
+                        : "The AI agent dials, qualifies & books — you oversee from the Live Monitor."
+                      : state.parallelCount > 1
+                        ? `${state.parallelCount} lines will ring at once. First answer connects instantly.`
+                        : "Single-line power dialing through your queue."}
                 </p>
               </div>
 
@@ -162,7 +228,7 @@ export function CallStage({
                 <>
                   <div className="w-full">
                     <p className="mb-2 text-center text-xs font-bold uppercase tracking-wide text-muted-foreground">
-                      Parallel lines
+                      {ai ? "Calls at once" : "Parallel lines"}
                     </p>
                     <div className="grid grid-cols-3 gap-2">
                       {[1, 2, 3].map((n) => (
@@ -186,7 +252,7 @@ export function CallStage({
                   <label className="flex w-full cursor-pointer items-center justify-between rounded-xl border border-border/70 bg-surface/50 px-4 py-3 backdrop-blur">
                     <span className="flex items-center gap-2 text-sm font-medium">
                       <SkipForward className="h-4 w-4 text-muted-foreground" />
-                      Auto-dial next
+                      {ai ? "Auto-dial the whole list" : "Auto-dial next"}
                     </span>
                     <input
                       type="checkbox"
@@ -208,39 +274,58 @@ export function CallStage({
                     size="lg"
                     className="w-full gap-2"
                     onClick={onStart}
-                    disabled={!canCall || !focusLead}
+                    disabled={!canStart}
                   >
-                    <Radio className="h-5 w-5" />
-                    Start {state.parallelCount > 1 ? `${state.parallelCount}X ` : ""}session
+                    {ai ? <Bot className="h-5 w-5" /> : <Radio className="h-5 w-5" />}
+                    {ai
+                      ? `Start AI ${state.parallelCount > 1 ? `${state.parallelCount}X ` : ""}session`
+                      : `Start ${state.parallelCount > 1 ? `${state.parallelCount}X ` : ""}session`}
                   </Button>
+                  {ai && !canCall && (
+                    <p className="-mt-2 text-center text-[11px] text-muted-foreground">
+                      No Twilio needed — the AI agent places the calls.
+                    </p>
+                  )}
                 </>
               )}
 
-              {/* Manual dial */}
-              <div className="w-full">
-                {hasQueue && (
-                  <button
-                    type="button"
-                    onClick={() => setManualOpen((v) => !v)}
-                    className="mx-auto mb-3 flex items-center gap-1.5 text-sm font-medium text-muted-foreground hover:text-foreground"
-                  >
-                    <Hash className="h-4 w-4" />
-                    {manualOpen ? "Hide manual dial" : "Dial a number manually"}
-                  </button>
-                )}
-                <AnimatePresence initial={false}>
-                  {manualOpen && (
-                    <motion.div
-                      initial={{ opacity: 0, height: 0 }}
-                      animate={{ opacity: 1, height: "auto" }}
-                      exit={{ opacity: 0, height: 0 }}
-                      className="overflow-hidden"
+              {/* Manual dial — manual mode only */}
+              {!ai && (
+                <div className="w-full">
+                  {hasQueue && (
+                    <button
+                      type="button"
+                      onClick={() => setManualOpen((v) => !v)}
+                      className="mx-auto mb-3 flex items-center gap-1.5 text-sm font-medium text-muted-foreground hover:text-foreground"
                     >
-                      <DialPad onCall={onManualDial} callDisabled={!canCall} />
-                    </motion.div>
+                      <Hash className="h-4 w-4" />
+                      {manualOpen ? "Hide manual dial" : "Dial a number manually"}
+                    </button>
                   )}
-                </AnimatePresence>
-              </div>
+                  <AnimatePresence initial={false}>
+                    {manualOpen && (
+                      <motion.div
+                        initial={{ opacity: 0, height: 0 }}
+                        animate={{ opacity: 1, height: "auto" }}
+                        exit={{ opacity: 0, height: 0 }}
+                        className="overflow-hidden"
+                      >
+                        <DialPad onCall={onManualDial} callDisabled={!canCall} />
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+                </div>
+              )}
+
+              {!hasQueue && ai && (
+                <Link
+                  href="/leads"
+                  className={buttonVariants({ variant: "outline", className: "gap-2" })}
+                >
+                  <Sparkles className="h-4 w-4" />
+                  Import leads
+                </Link>
+              )}
 
               {state.error && (
                 <p className="flex items-center gap-1.5 text-xs font-medium text-danger">
@@ -257,6 +342,19 @@ export function CallStage({
                 </p>
               )}
             </motion.div>
+          )}
+
+          {/* ── AI SESSION ───────────────────────────────────────── */}
+          {state.status === "ai" && (
+            <AiSession
+              calls={state.aiCalls}
+              campaign={state.aiCampaign}
+              parallelCount={state.parallelCount}
+              hasMore={hasQueue}
+              onLaunchNext={onLaunchNextAI}
+              onStop={onStopAICampaign}
+              onEnd={onEndAISession}
+            />
           )}
 
           {/* ── DIALING ──────────────────────────────────────────── */}
@@ -327,7 +425,6 @@ export function CallStage({
                 </div>
               </div>
 
-              {/* Live audio waveform — reacts to the call, flattens on hold */}
               <Waveform
                 active={!state.onHold}
                 muted={state.muted}
@@ -387,5 +484,110 @@ export function CallStage({
         </AnimatePresence>
       </div>
     </div>
+  );
+}
+
+// ── AI session panel ──────────────────────────────────────────────────────────
+function AiSession({
+  calls,
+  campaign,
+  parallelCount,
+  hasMore,
+  onLaunchNext,
+  onStop,
+  onEnd,
+}: {
+  calls: AiLaunch[];
+  campaign: "idle" | "running" | "done";
+  parallelCount: number;
+  hasMore: boolean;
+  onLaunchNext: () => void;
+  onStop: () => void;
+  onEnd: () => void;
+}) {
+  const active = calls.filter((c) => c.conversationId && !c.error).length;
+  const firstConv = calls.find((c) => c.conversationId)?.conversationId ?? null;
+
+  return (
+    <motion.div
+      key="ai"
+      initial={{ opacity: 0, y: 10 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, y: -10 }}
+      className="flex w-full max-w-sm flex-col gap-4"
+    >
+      <div className="text-center">
+        <div className="mx-auto mb-3 flex h-16 w-16 items-center justify-center rounded-2xl bg-solar shadow-glow">
+          <Bot className="h-8 w-8 text-white" />
+        </div>
+        <h2 className="text-lg font-bold">
+          {campaign === "done" ? "Campaign complete" : "AI agent is calling"}
+        </h2>
+        <p className="mt-1 text-sm text-muted-foreground">
+          {campaign === "running"
+            ? "Auto-dialing your list. Oversee, listen & take over in the Live Monitor."
+            : `${active} live · oversee & take over in the Live Monitor.`}
+        </p>
+      </div>
+
+      <div className="max-h-52 space-y-2 overflow-y-auto">
+        {calls.slice(0, 12).map((c, i) => (
+          <div
+            key={`${c.leadId}-${i}`}
+            className="flex items-center gap-3 rounded-xl border border-border/60 bg-surface/50 px-3 py-2"
+          >
+            <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-solar/90 text-white">
+              <Bot className="h-3.5 w-3.5" />
+            </span>
+            <span className="min-w-0 flex-1 truncate text-sm font-medium">{c.leadName}</span>
+            {c.error ? (
+              <Badge tone="danger" className="shrink-0">Failed</Badge>
+            ) : c.conversationId ? (
+              <span className="flex shrink-0 items-center gap-1.5 text-xs font-medium text-success">
+                <span className="relative flex h-2 w-2">
+                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-success opacity-60" />
+                  <span className="relative inline-flex h-2 w-2 rounded-full bg-success" />
+                </span>
+                Calling
+              </span>
+            ) : (
+              <span className="flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground">
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                Placing
+              </span>
+            )}
+          </div>
+        ))}
+      </div>
+
+      <Link
+        href={firstConv ? `/monitor?call=${encodeURIComponent(firstConv)}` : "/monitor"}
+        className={buttonVariants({ size: "lg", className: "w-full gap-2" })}
+      >
+        <ExternalLink className="h-5 w-5" />
+        Open Live Monitor
+      </Link>
+
+      <div className="flex gap-2">
+        {campaign === "running" ? (
+          <Button variant="outline" className="flex-1 gap-2" onClick={onStop}>
+            <StopCircle className="h-4 w-4" />
+            Stop auto-dial
+          </Button>
+        ) : (
+          campaign !== "done" &&
+          hasMore && (
+            <Button variant="outline" className="flex-1 gap-2" onClick={onLaunchNext}>
+              <Bot className="h-4 w-4" />
+              Call next {parallelCount > 1 ? parallelCount : ""}
+            </Button>
+          )
+        )}
+        <Button variant="ghost" className="flex-1 gap-2 text-muted-foreground" onClick={onEnd}>
+          <PhoneOff className="h-4 w-4" />
+          End session
+        </Button>
+      </div>
+    </motion.div>
   );
 }

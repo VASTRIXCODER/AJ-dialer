@@ -93,26 +93,26 @@ export default function LandingPage() {
             </p>
             <div className="mt-8 flex flex-wrap items-center gap-3">
               <Link
-                href="/dialer"
+                href="/signup"
                 className={buttonVariants({ size: "lg", className: "gap-2" })}
               >
                 <PhoneCall className="h-5 w-5" />
-                Open the dialer
+                Get started
               </Link>
               <Link
-                href="/dashboard"
+                href="/login"
                 className={buttonVariants({
                   size: "lg",
                   variant: "outline",
                   className: "gap-2",
                 })}
               >
-                View dashboard
+                Sign in
                 <ArrowRight className="h-4 w-4" />
               </Link>
             </div>
             <p className="mt-4 text-sm text-muted-foreground">
-              Runs in full demo mode out of the box — add Twilio keys to go live.
+              Create your account to start dialing — AI calling built in.
             </p>
           </div>
 
@@ -240,7 +240,7 @@ export default function LandingPage() {
                 warm, qualified homeowners.
               </p>
               <Link
-                href="/ai-agent"
+                href="/signup"
                 className={buttonVariants({
                   size: "lg",
                   variant: "secondary",
@@ -248,7 +248,7 @@ export default function LandingPage() {
                 })}
               >
                 <Bot className="h-5 w-5" />
-                Explore the AI agent
+                Get started
               </Link>
             </div>
             <div className="grid grid-cols-2 gap-3">
@@ -309,7 +309,7 @@ export default function LandingPage() {
                 ))}
               </ul>
               <Link
-                href="/dashboard"
+                href="/signup"
                 className={buttonVariants({ className: "mt-8 w-full" })}
               >
                 Get started
@@ -342,7 +342,7 @@ export default function LandingPage() {
                 ))}
               </ul>
               <Link
-                href="/ai-agent"
+                href="/signup"
                 className={buttonVariants({ className: "mt-8 w-full gap-2" })}
               >
                 <Sparkles className="h-4 w-4" />
@@ -368,14 +368,14 @@ export default function LandingPage() {
               them with the right account manager.
             </p>
             <Link
-              href="/dashboard"
+              href="/signup"
               className={buttonVariants({
                 size: "lg",
                 variant: "secondary",
                 className: "mt-8 gap-2",
               })}
             >
-              Launch the platform
+              Get started
               <ArrowRight className="h-4 w-4" />
             </Link>
           </div>

@@ -10,6 +10,7 @@ import { getLeads } from "@/lib/db/leads";
 import { formatNumber } from "@/lib/utils";
 
 export const metadata = { title: "Leads" };
+export const dynamic = "force-dynamic";
 
 export default async function LeadsPage() {
   const leads = await getLeads();

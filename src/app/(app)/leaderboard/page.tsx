@@ -2,11 +2,14 @@ import { Trophy } from "lucide-react";
 import { LeaderboardView } from "@/components/leaderboard/leaderboard-view";
 import { EmptyState } from "@/components/shared/empty-state";
 import { PageContainer, PageHeader } from "@/components/shared/page-header";
-import { leaderboard } from "@/lib/data";
+import { getReportingData } from "@/lib/db/metrics";
 
 export const metadata = { title: "Leaderboard" };
+export const dynamic = "force-dynamic";
 
-export default function LeaderboardPage() {
+export default async function LeaderboardPage() {
+  const { leaderboard } = await getReportingData();
+
   if (leaderboard.length === 0) {
     return (
       <PageContainer>
@@ -17,7 +20,7 @@ export default function LeaderboardPage() {
         <EmptyState
           icon={Trophy}
           title="No ranking yet"
-          description="Rep rankings appear here as your team logs calls and books appointments."
+          description="Rankings appear here as you log calls and book appointments."
         />
       </PageContainer>
     );
