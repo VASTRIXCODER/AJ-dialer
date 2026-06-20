@@ -86,6 +86,52 @@ export interface OutboundCallResult {
   success: boolean;
 }
 
+export interface ElevenLabsPhoneNumber {
+  phone_number_id?: string;
+  id?: string;
+  phone_number?: string;
+  label?: string;
+}
+
+/** List the phone numbers imported into the ElevenLabs account. */
+export async function listPhoneNumbers(): Promise<ElevenLabsPhoneNumber[]> {
+  const res = await el("/v1/convai/phone-numbers", { method: "GET" });
+  const json = (await res.json().catch(() => [])) as unknown;
+  if (Array.isArray(json)) return json as ElevenLabsPhoneNumber[];
+  return ((json as { phone_numbers?: ElevenLabsPhoneNumber[] })?.phone_numbers ??
+    []) as ElevenLabsPhoneNumber[];
+}
+
+let _cachedPhoneNumberId: string | null = null;
+
+/**
+ * Resolve the agent phone-number ID. Accepts EITHER the ElevenLabs phone number
+ * ID (used as-is) OR a raw E.164 number — which we look up against the account's
+ * imported numbers. This makes outbound calls work regardless of which value was
+ * pasted into ELEVENLABS_AGENT_PHONE_NUMBER_ID (a common 404 source).
+ */
+export async function resolveAgentPhoneNumberId(): Promise<string> {
+  const configured = elevenLabsConfig.agentPhoneNumberId.trim();
+  const looksLikeNumber = /^\+?[\d\s().-]{7,}$/.test(configured);
+  if (!looksLikeNumber) return configured; // already an ID (e.g. phnum_…)
+  if (_cachedPhoneNumberId) return _cachedPhoneNumberId;
+  try {
+    const numbers = await listPhoneNumbers();
+    const want = configured.replace(/\D/g, "");
+    const match = numbers.find(
+      (p) => (p.phone_number ?? "").replace(/\D/g, "") === want,
+    );
+    const id = match?.phone_number_id ?? match?.id;
+    if (id) {
+      _cachedPhoneNumberId = id;
+      return id;
+    }
+  } catch {
+    /* fall through to the configured value */
+  }
+  return configured;
+}
+
 /**
  * Place an outbound AI call via Twilio. `dynamicVariables` are injected into the
  * agent's prompt/script (e.g. first_name, utility_bill); `firstMessage` overrides
@@ -108,7 +154,7 @@ export async function placeOutboundCall(opts: {
     method: "POST",
     body: JSON.stringify({
       agent_id: elevenLabsConfig.agentId,
-      agent_phone_number_id: elevenLabsConfig.agentPhoneNumberId,
+      agent_phone_number_id: await resolveAgentPhoneNumberId(),
       to_number: opts.toNumber,
       ...(Object.keys(initData).length
         ? { conversation_initiation_client_data: initData }

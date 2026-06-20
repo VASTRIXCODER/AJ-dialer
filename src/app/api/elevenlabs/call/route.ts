@@ -71,9 +71,10 @@ export async function POST(req: Request) {
       callSid: result.callSid,
     });
   } catch (err) {
-    return NextResponse.json(
-      { error: err instanceof Error ? err.message : String(err) },
-      { status: 502 },
-    );
+    const message = err instanceof Error ? err.message : String(err);
+    const hint = /document_not_found|not[_ ]found/i.test(message)
+      ? " — Check ELEVENLABS_AGENT_PHONE_NUMBER_ID: it must be the ElevenLabs phone number ID (Conversational AI → Phone Numbers → the imported number), not the phone number itself. Visit /api/elevenlabs/phone-numbers to see the IDs."
+      : "";
+    return NextResponse.json({ error: message + hint }, { status: 502 });
   }
 }
