@@ -82,3 +82,21 @@ export interface ExecutiveReport {
   opportunities: string[];
   recommendations: ReportRecommendation[];
 }
+
+/** Claude's structured read of a completed AI (ElevenLabs) conversation. */
+export interface ConversationAnalysis {
+  summary: string;
+  detailedSummary: string;
+  outcome: CallOutcome;
+  sentiment: "positive" | "neutral" | "negative";
+  qualification: {
+    utilityBill: number | null;
+    solarPayment: number | null;
+    hasEV: boolean;
+    hasPool: boolean;
+    hasBattery: boolean;
+  };
+  appointment: { requested: boolean; when: string; notes: string };
+  followUps: string[];
+  confidence: number;
+}

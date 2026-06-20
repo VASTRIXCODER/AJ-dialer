@@ -4,6 +4,7 @@ import type { CallOutcome, Lead, MetricSummary } from "@/lib/types";
 import { generateJSON, runAI } from "./claude";
 import {
   simulateBriefing,
+  simulateConversationAnalysis,
   simulateCopilot,
   simulateReport,
   simulateSearch,
@@ -13,10 +14,25 @@ import type {
   AIResult,
   CallCopilot,
   CallSummary,
+  ConversationAnalysis,
   ExecutiveReport,
   LeadBriefing,
   SemanticSearch,
 } from "./types";
+
+const OUTCOME_ENUM = {
+  type: "string",
+  enum: [
+    "appointment_booked",
+    "callback_scheduled",
+    "qualified",
+    "not_interested",
+    "no_answer",
+    "voicemail",
+    "wrong_number",
+    "do_not_call",
+  ],
+} as const;
 
 // ── schema helpers ───────────────────────────────────────────────────────────
 const str = { type: "string" } as const;
@@ -210,6 +226,49 @@ export function getSemanticSearch(
         }),
       }),
     () => simulateSearch(query, leads),
+  );
+}
+
+// ── Conversation analysis (ElevenLabs transcript → disposition + data) ───────
+export function analyzeConversation(input: {
+  transcript: string;
+  lead?: Lead | null;
+}): Promise<AIResult<ConversationAnalysis>> {
+  return runAI(
+    () =>
+      generateJSON<ConversationAnalysis>({
+        system: SYSTEM,
+        prompt:
+          "Analyze this completed AI sales call transcript. Extract the disposition, sentiment, " +
+          "qualification data (USD/month; use 0 when not stated), whether an appointment was agreed " +
+          "(and when), and follow-ups.\n\n" +
+          (input.lead ? `Lead context: ${leadContext(input.lead)}\n\n` : "") +
+          `Transcript:\n${input.transcript.slice(0, 8000)}`,
+        schemaName: "conversation_analysis",
+        effort: "medium",
+        maxTokens: 1500,
+        schema: obj({
+          summary: str,
+          detailedSummary: str,
+          outcome: OUTCOME_ENUM,
+          sentiment: { type: "string", enum: ["positive", "neutral", "negative"] },
+          qualification: obj({
+            utilityBill: num,
+            solarPayment: num,
+            hasEV: { type: "boolean" },
+            hasPool: { type: "boolean" },
+            hasBattery: { type: "boolean" },
+          }),
+          appointment: obj({
+            requested: { type: "boolean" },
+            when: str,
+            notes: str,
+          }),
+          followUps: strArr,
+          confidence: num,
+        }),
+      }),
+    () => simulateConversationAnalysis(input),
   );
 }
 

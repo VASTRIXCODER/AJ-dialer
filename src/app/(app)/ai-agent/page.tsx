@@ -26,6 +26,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { isAIConfigured } from "@/lib/ai/claude";
 import { callRecords } from "@/lib/data";
+import { isElevenLabsConfigured } from "@/lib/elevenlabs";
 import { cn, formatClock, initials } from "@/lib/utils";
 
 export const metadata = { title: "AI Agent" };
@@ -67,6 +68,7 @@ const aiSummaries = callRecords
 
 export default function AiAgentPage() {
   const aiLive = isAIConfigured();
+  const voiceLive = isElevenLabsConfigured();
 
   return (
     <PageContainer>
@@ -76,6 +78,9 @@ export default function AiAgentPage() {
       >
         <Badge tone={aiLive ? "success" : "warning"} dot>
           {aiLive ? "Claude connected" : "Demo intelligence"}
+        </Badge>
+        <Badge tone={voiceLive ? "success" : "neutral"} dot>
+          {voiceLive ? "Voice agent live" : "Voice agent off"}
         </Badge>
         <Button size="sm" className="gap-2">
           <Sparkles className="h-4 w-4" />

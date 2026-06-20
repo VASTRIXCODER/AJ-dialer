@@ -1,0 +1,144 @@
+import "server-only";
+
+import crypto from "node:crypto";
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ElevenLabs Conversational AI integration (server-side).
+//
+// The AI agent places + conducts outbound calls through your Twilio number,
+// records them, and posts transcripts/results back. Every value is read from the
+// environment; when unconfigured, isElevenLabsConfigured() is false and the UI
+// shows a connect prompt instead of attempting calls — nothing crashes.
+//
+// All HTTP shapes are centralized here so they're trivial to adjust if the
+// ElevenLabs API evolves. Verify against https://elevenlabs.io/docs.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const API = "https://api.elevenlabs.io";
+
+export const elevenLabsConfig = {
+  apiKey: process.env.ELEVENLABS_API_KEY ?? "",
+  agentId: process.env.ELEVENLABS_AGENT_ID ?? "",
+  agentPhoneNumberId: process.env.ELEVENLABS_AGENT_PHONE_NUMBER_ID ?? "",
+  webhookSecret: process.env.ELEVENLABS_WEBHOOK_SECRET ?? "",
+  /** E.164 rep number a supervisor "take over" transfers the live call to. */
+  transferNumber: process.env.ELEVENLABS_TRANSFER_NUMBER ?? "",
+};
+
+/** True when the AI agent can place outbound calls. */
+export function isElevenLabsConfigured() {
+  const c = elevenLabsConfig;
+  return Boolean(c.apiKey && c.agentId && c.agentPhoneNumberId);
+}
+
+async function el(path: string, init?: RequestInit): Promise<Response> {
+  const res = await fetch(`${API}${path}`, {
+    ...init,
+    headers: {
+      "xi-api-key": elevenLabsConfig.apiKey,
+      "content-type": "application/json",
+      ...(init?.headers ?? {}),
+    },
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`ElevenLabs ${path} → ${res.status}: ${text.slice(0, 300)}`);
+  }
+  return res;
+}
+
+export interface OutboundCallResult {
+  conversationId: string | null;
+  callSid: string | null;
+  success: boolean;
+}
+
+/**
+ * Place an outbound AI call via Twilio. `dynamicVariables` are injected into the
+ * agent's prompt/script (e.g. first_name, utility_bill); `firstMessage` overrides
+ * the agent's opening line for this call.
+ */
+export async function placeOutboundCall(opts: {
+  toNumber: string;
+  dynamicVariables?: Record<string, string | number | boolean>;
+  firstMessage?: string;
+}): Promise<OutboundCallResult> {
+  const initData: Record<string, unknown> = {};
+  if (opts.dynamicVariables) initData.dynamic_variables = opts.dynamicVariables;
+  if (opts.firstMessage) {
+    initData.conversation_config_override = {
+      agent: { first_message: opts.firstMessage },
+    };
+  }
+
+  const res = await el("/v1/convai/twilio/outbound-call", {
+    method: "POST",
+    body: JSON.stringify({
+      agent_id: elevenLabsConfig.agentId,
+      agent_phone_number_id: elevenLabsConfig.agentPhoneNumberId,
+      to_number: opts.toNumber,
+      ...(Object.keys(initData).length
+        ? { conversation_initiation_client_data: initData }
+        : {}),
+    }),
+  });
+
+  const json = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+  return {
+    conversationId:
+      (json.conversation_id as string) ?? (json.conversationId as string) ?? null,
+    callSid: (json.callSid as string) ?? (json.call_sid as string) ?? null,
+    success: json.success !== false,
+  };
+}
+
+export async function getConversation(id: string): Promise<unknown> {
+  const res = await el(`/v1/convai/conversations/${encodeURIComponent(id)}`, {
+    method: "GET",
+  });
+  return res.json();
+}
+
+/** Streams the recording audio for a completed conversation. */
+export async function getConversationAudio(id: string): Promise<Response> {
+  return el(`/v1/convai/conversations/${encodeURIComponent(id)}/audio`, {
+    method: "GET",
+    headers: { accept: "audio/mpeg" },
+  });
+}
+
+/**
+ * Verify the HMAC signature on a post-call webhook.
+ * Header `elevenlabs-signature` looks like `t=<unix>,v0=<hex hmac>`, where the
+ * HMAC is SHA-256 of `${t}.${rawBody}` keyed by the webhook secret.
+ * When no secret is configured we accept (dev) but log nothing sensitive.
+ */
+export function verifyWebhookSignature(
+  rawBody: string,
+  signatureHeader: string | null,
+): boolean {
+  if (!elevenLabsConfig.webhookSecret) return true;
+  if (!signatureHeader) return false;
+
+  const parts: Record<string, string> = {};
+  for (const segment of signatureHeader.split(",")) {
+    const idx = segment.indexOf("=");
+    if (idx > -1) {
+      parts[segment.slice(0, idx).trim()] = segment.slice(idx + 1).trim();
+    }
+  }
+  const t = parts.t;
+  const v0 = parts.v0;
+  if (!t || !v0) return false;
+
+  const expected = crypto
+    .createHmac("sha256", elevenLabsConfig.webhookSecret)
+    .update(`${t}.${rawBody}`)
+    .digest("hex");
+
+  try {
+    return crypto.timingSafeEqual(Buffer.from(v0), Buffer.from(expected));
+  } catch {
+    return false;
+  }
+}

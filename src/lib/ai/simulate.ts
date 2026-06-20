@@ -2,6 +2,7 @@ import type { CallOutcome, Lead, MetricSummary } from "@/lib/types";
 import type {
   CallCopilot,
   CallSummary,
+  ConversationAnalysis,
   ExecutiveReport,
   LeadBriefing,
   SemanticSearch,
@@ -324,5 +325,58 @@ export function simulateSearch(query: string, leads: Lead[]): SemanticSearch {
       id: s.l.id,
       reason: s.reason || `${s.l.city}, ${s.l.state}`,
     })),
+  };
+}
+
+export function simulateConversationAnalysis(input: {
+  transcript?: string;
+  lead?: Lead | null;
+}): ConversationAnalysis {
+  const lead = input.lead ?? null;
+  const t = (input.transcript ?? "").toLowerCase();
+  const seed = hash((lead?.id ?? "conv") + t.slice(0, 48));
+  const billMatch = t.match(/\$?\s?(\d{2,4})/);
+  const bill = lead?.utilityBill ?? (billMatch ? Number(billMatch[1]) : 0);
+  const solar = lead?.solarPayment ?? 0;
+
+  const wantsAppt =
+    /appointment|book|schedule|review|works for me|sounds good|set.{0,6}up/.test(t) ||
+    (!t && seed % 2 === 0);
+  const sentiment: ConversationAnalysis["sentiment"] = /not interested|stop|remove|busy/.test(t)
+    ? "negative"
+    : /great|interested|sounds good|yes|perfect/.test(t) || wantsAppt
+      ? "positive"
+      : "neutral";
+  const outcome: CallOutcome = wantsAppt
+    ? "appointment_booked"
+    : pick<CallOutcome>(["callback_scheduled", "qualified", "not_interested", "no_answer"], seed);
+
+  return {
+    summary: lead
+      ? `${lead.firstName} discussed a combined ~$${bill + solar}/mo energy spend. ${
+          wantsAppt ? "Booked a no-cost account review." : "Warm — follow-up recommended."
+        }`
+      : "The AI agent qualified the homeowner against the solar resolution script.",
+    detailedSummary: input.transcript
+      ? input.transcript.slice(0, 320)
+      : "The AI agent confirmed the utility bill and solar payment, checked for EV / pool / battery, and captured any recent usage changes per the solar resolution script.",
+    outcome,
+    sentiment,
+    qualification: {
+      utilityBill: bill || null,
+      solarPayment: solar || null,
+      hasEV: lead?.hasEV ?? /\bev\b|electric vehicle|tesla/.test(t),
+      hasPool: lead?.hasPool ?? /pool/.test(t),
+      hasBattery: lead?.hasBattery ?? /battery|powerwall|storage/.test(t),
+    },
+    appointment: {
+      requested: wantsAppt,
+      when: wantsAppt ? pick(["Tomorrow 2:00pm", "Thursday 11:00am", "Saturday 10:00am"], seed) : "",
+      notes: wantsAppt ? "Homeowner agreed to a no-cost account review." : "",
+    },
+    followUps: wantsAppt
+      ? ["Send calendar invite + confirmation"]
+      : ["Re-attempt during the early-evening window"],
+    confidence: clamp(70 + (seed % 22)),
   };
 }

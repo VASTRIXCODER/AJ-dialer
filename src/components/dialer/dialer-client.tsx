@@ -2,6 +2,7 @@
 
 import { AlertTriangle, Settings } from "lucide-react";
 import Link from "next/link";
+import { AiAgentLauncher } from "@/components/ai/ai-agent-launcher";
 import { Card } from "@/components/ui/card";
 import { buttonVariants } from "@/components/ui/button";
 import type { Lead } from "@/lib/types";
@@ -13,9 +14,11 @@ import { QualifyPanel } from "./qualify-panel";
 export function DialerClient({
   queue,
   voiceConfigured,
+  aiAgentConfigured,
 }: {
   queue: Lead[];
   voiceConfigured: boolean;
+  aiAgentConfigured: boolean;
 }) {
   const dialer = useDialer(queue);
   const { state } = dialer;
@@ -56,6 +59,14 @@ export function DialerClient({
           </Link>
         </Card>
       )}
+
+      <AiAgentLauncher
+        leadId={focusLead?.id ?? null}
+        leadName={
+          focusLead ? `${focusLead.firstName} ${focusLead.lastName}` : "lead"
+        }
+        configured={aiAgentConfigured}
+      />
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-12">
         <Card className="overflow-hidden lg:col-span-3">

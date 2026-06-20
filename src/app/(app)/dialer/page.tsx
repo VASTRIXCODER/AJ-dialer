@@ -2,6 +2,7 @@ import { Headphones, Users } from "lucide-react";
 import { DialerClient } from "@/components/dialer/dialer-client";
 import { PageContainer, PageHeader } from "@/components/shared/page-header";
 import { Badge } from "@/components/ui/badge";
+import { isElevenLabsConfigured } from "@/lib/elevenlabs";
 import { getDialQueue } from "@/lib/leads-source";
 import { isVoiceConfigured } from "@/lib/twilio";
 
@@ -10,6 +11,7 @@ export const metadata = { title: "Power Dialer" };
 export default async function DialerPage() {
   const queue = await getDialQueue();
   const voiceConfigured = isVoiceConfigured();
+  const aiAgentConfigured = isElevenLabsConfigured();
 
   return (
     <PageContainer>
@@ -30,7 +32,11 @@ export default async function DialerPage() {
         )}
       </PageHeader>
 
-      <DialerClient queue={queue} voiceConfigured={voiceConfigured} />
+      <DialerClient
+        queue={queue}
+        voiceConfigured={voiceConfigured}
+        aiAgentConfigured={aiAgentConfigured}
+      />
     </PageContainer>
   );
 }
