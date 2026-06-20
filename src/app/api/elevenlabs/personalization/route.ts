@@ -6,6 +6,7 @@ import {
   updateAICall,
 } from "@/lib/ai-call-store";
 import { leads } from "@/lib/data";
+import { agentVariablesForLead } from "@/lib/elevenlabs";
 
 export const dynamic = "force-dynamic";
 
@@ -47,18 +48,7 @@ export async function POST(req: Request) {
     updateAICall(conversationId, { state: "in_progress" });
   }
 
-  const dynamic_variables = lead
-    ? {
-        first_name: lead.firstName,
-        full_name: `${lead.firstName} ${lead.lastName}`,
-        city: lead.city,
-        state: lead.state,
-        utility_provider: lead.utilityProvider ?? "",
-        utility_bill: lead.utilityBill ?? "",
-        solar_provider: lead.solarProvider ?? "",
-        solar_payment: lead.solarPayment ?? "",
-      }
-    : {};
+  const dynamic_variables = lead ? agentVariablesForLead(lead) : {};
 
   return NextResponse.json({
     type: "conversation_initiation_client_data",

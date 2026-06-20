@@ -1,7 +1,11 @@
 import { NextResponse } from "next/server";
 import { registerAICall } from "@/lib/ai-call-store";
 import { getLeadById } from "@/lib/data";
-import { isElevenLabsConfigured, placeOutboundCall } from "@/lib/elevenlabs";
+import {
+  agentVariablesForLead,
+  isElevenLabsConfigured,
+  placeOutboundCall,
+} from "@/lib/elevenlabs";
 import { toE164 } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
@@ -32,17 +36,7 @@ export async function POST(req: Request) {
   try {
     const result = await placeOutboundCall({
       toNumber,
-      dynamicVariables: {
-        first_name: lead.firstName,
-        last_name: lead.lastName,
-        full_name: `${lead.firstName} ${lead.lastName}`,
-        city: lead.city,
-        state: lead.state,
-        utility_provider: lead.utilityProvider ?? "",
-        utility_bill: lead.utilityBill ?? "",
-        solar_provider: lead.solarProvider ?? "",
-        solar_payment: lead.solarPayment ?? "",
-      },
+      dynamicVariables: agentVariablesForLead(lead),
     });
 
     if (!result.conversationId) {

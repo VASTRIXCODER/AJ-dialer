@@ -1,6 +1,7 @@
 import "server-only";
 
 import crypto from "node:crypto";
+import type { Lead } from "./types";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ElevenLabs Conversational AI integration (server-side).
@@ -29,6 +30,38 @@ export const elevenLabsConfig = {
 export function isElevenLabsConfigured() {
   const c = elevenLabsConfig;
   return Boolean(c.apiKey && c.agentId && c.agentPhoneNumberId);
+}
+
+/**
+ * The single source of truth for the dynamic variables sent to the agent on
+ * every call. The agent's prompt/first-message reference these with {{name}}
+ * syntax so each conversation is personalized to the homeowner and matches the
+ * Sunrun resolution script (name + address opener, EV/pool question, etc.).
+ * Used by both the outbound-call route and the personalization webhook so the
+ * agent gets identical context regardless of which path fires.
+ */
+export function agentVariablesForLead(
+  lead: Lead,
+): Record<string, string | number | boolean> {
+  const homeAddress =
+    [lead.address, lead.city, lead.state].filter(Boolean).join(", ") +
+    (lead.zip ? ` ${lead.zip}` : "");
+  return {
+    customer_name: `${lead.firstName} ${lead.lastName}`.trim(),
+    first_name: lead.firstName,
+    last_name: lead.lastName,
+    address: lead.address || lead.city || "your home",
+    home_address: homeAddress || lead.city || "your home",
+    city: lead.city,
+    state: lead.state,
+    solar_provider: lead.solarProvider || "Sunrun",
+    utility_provider: lead.utilityProvider || "your utility",
+    utility_bill: lead.utilityBill ?? "",
+    solar_payment: lead.solarPayment ?? "",
+    has_ev: lead.hasEV,
+    has_pool: lead.hasPool,
+    has_battery: lead.hasBattery,
+  };
 }
 
 async function el(path: string, init?: RequestInit): Promise<Response> {
