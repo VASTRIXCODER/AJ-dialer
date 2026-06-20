@@ -7,14 +7,13 @@ import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { buttonVariants } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { callbacks } from "@/lib/data";
-import type { Callback } from "@/lib/types";
+import { getCallbacks } from "@/lib/db/pipeline";
 import { formatPhone, initials, relativeTime } from "@/lib/utils";
 
 export const metadata = { title: "Callbacks" };
 
 const groups: Array<{
-  key: Callback["status"];
+  key: string;
   title: string;
   tone: "danger" | "warning" | "accent";
   icon: typeof AlarmClock;
@@ -24,8 +23,8 @@ const groups: Array<{
   { key: "upcoming", title: "Upcoming", tone: "accent", icon: CheckCircle2 },
 ];
 
-export default function CallbacksPage() {
-  const overdue = callbacks.filter((c) => c.status === "overdue").length;
+export default async function CallbacksPage() {
+  const callbacks = await getCallbacks();
 
   if (callbacks.length === 0) {
     return (
@@ -37,11 +36,13 @@ export default function CallbacksPage() {
         <EmptyState
           icon={PhoneIncoming}
           title="No callbacks scheduled"
-          description="Promised callbacks are tracked here so nothing slips through the cracks."
+          description="Promised callbacks from your reps and the AI agent are tracked here automatically."
         />
       </PageContainer>
     );
   }
+
+  const count = (k: string) => callbacks.filter((c) => c.status === k).length;
 
   return (
     <PageContainer>
@@ -51,10 +52,10 @@ export default function CallbacksPage() {
       />
 
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-        <MetricCard label="Overdue" value={String(overdue)} icon={AlarmClock} accent="danger" />
-        <MetricCard label="Due today" value={String(callbacks.filter((c) => c.status === "due").length)} icon={Clock} accent="warning" />
-        <MetricCard label="Upcoming" value={String(callbacks.filter((c) => c.status === "upcoming").length)} icon={CheckCircle2} accent="accent" />
-        <MetricCard label="Completion" value="—" icon={PhoneCall} accent="success" />
+        <MetricCard label="Overdue" value={String(count("overdue"))} icon={AlarmClock} accent="danger" />
+        <MetricCard label="Due now" value={String(count("due"))} icon={Clock} accent="warning" />
+        <MetricCard label="Upcoming" value={String(count("upcoming"))} icon={CheckCircle2} accent="accent" />
+        <MetricCard label="Total" value={String(callbacks.length)} icon={PhoneCall} accent="success" />
       </div>
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
@@ -91,22 +92,20 @@ export default function CallbacksPage() {
                       <div className="min-w-0 flex-1">
                         <p className="truncate text-sm font-semibold">{cb.leadName}</p>
                         <p className="truncate text-xs text-muted-foreground tabular">
-                          {formatPhone(cb.phone)}
+                          {cb.phone ? formatPhone(cb.phone) : "—"}
                         </p>
                       </div>
-                      <span
-                        className={
-                          group.tone === "danger"
-                            ? "text-xs font-semibold text-danger"
-                            : "text-xs font-medium text-muted-foreground"
-                        }
-                      >
-                        {relativeTime(cb.dueAt)}
-                      </span>
+                      {cb.dueAt && (
+                        <span className="text-xs font-medium text-muted-foreground">
+                          {relativeTime(cb.dueAt)}
+                        </span>
+                      )}
                     </div>
-                    <p className="mt-2 rounded-lg bg-muted px-2.5 py-1.5 text-xs text-muted-foreground">
-                      {cb.reason}
-                    </p>
+                    {cb.reason && (
+                      <p className="mt-2 rounded-lg bg-muted px-2.5 py-1.5 text-xs text-muted-foreground">
+                        {cb.reason}
+                      </p>
+                    )}
                     <Link
                       href="/dialer"
                       className={buttonVariants({

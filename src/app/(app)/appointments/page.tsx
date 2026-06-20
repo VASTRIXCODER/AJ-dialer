@@ -1,31 +1,17 @@
-import {
-  CalendarCheck,
-  CalendarX,
-  Clock,
-  MapPin,
-  RefreshCw,
-  Sparkles,
-  TrendingUp,
-} from "lucide-react";
+import { CalendarCheck, CalendarX, Clock, Sparkles } from "lucide-react";
 import { MetricCard } from "@/components/dashboard/metric-card";
 import { EmptyState } from "@/components/shared/empty-state";
 import { PageContainer, PageHeader } from "@/components/shared/page-header";
-import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
-import { appointments, metrics } from "@/lib/data";
-import type { Appointment } from "@/lib/types";
-import {
-  cn,
-  formatClock,
-  formatCurrency,
-  formatDay,
-  initials,
-} from "@/lib/utils";
+import { getAppointments, type AppointmentRow } from "@/lib/db/pipeline";
 
 export const metadata = { title: "Appointments" };
 
-const statusTone: Record<Appointment["status"], { tone: "success" | "warning" | "danger" | "neutral" | "accent"; label: string }> = {
+const statusTone: Record<
+  string,
+  { tone: "success" | "warning" | "danger" | "neutral" | "accent"; label: string }
+> = {
   scheduled: { tone: "accent", label: "Scheduled" },
   completed: { tone: "success", label: "Completed" },
   no_show: { tone: "danger", label: "No-show" },
@@ -33,61 +19,24 @@ const statusTone: Record<Appointment["status"], { tone: "success" | "warning" | 
   cancelled: { tone: "neutral", label: "Cancelled" },
 };
 
-export default function AppointmentsPage() {
-  const sorted = [...appointments].sort(
-    (a, b) => +new Date(b.scheduledAt) - +new Date(a.scheduledAt),
-  );
-  const upcoming = sorted.filter((a) => a.status === "scheduled");
-  const past = sorted.filter((a) => a.status !== "scheduled");
-  const denom = metrics.appointmentsCompleted + metrics.noShows;
-  const showRate = denom
-    ? Math.round((metrics.appointmentsCompleted / denom) * 100)
-    : 0;
+function whenLabel(a: AppointmentRow): string {
+  if (a.scheduledLabel) return a.scheduledLabel;
+  if (a.scheduledAt) {
+    return new Date(a.scheduledAt).toLocaleString("en-US", {
+      weekday: "short",
+      month: "short",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+    });
+  }
+  return new Date(a.createdAt).toLocaleDateString();
+}
 
-  const Row = ({ apt }: { apt: Appointment }) => {
-    const cfg = statusTone[apt.status];
-    return (
-      <div className="flex items-center gap-4 p-4 transition-colors hover:bg-muted/40">
-        <div className="flex h-14 w-16 shrink-0 flex-col items-center justify-center rounded-2xl bg-muted text-center">
-          <span className="text-base font-bold leading-none tabular">
-            {formatClock(apt.scheduledAt).split(" ")[0]}
-          </span>
-          <span className="text-[10px] font-bold uppercase text-muted-foreground">
-            {formatClock(apt.scheduledAt).split(" ")[1]}
-          </span>
-        </div>
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
-            <p className="truncate font-semibold">{apt.leadName}</p>
-            {apt.source === "ai" && (
-              <Badge tone="accent" className="gap-1">
-                <Sparkles className="h-3 w-3" /> AI
-              </Badge>
-            )}
-          </div>
-          <p className="flex items-center gap-1.5 truncate text-xs text-muted-foreground">
-            <MapPin className="h-3 w-3 shrink-0" />
-            {apt.address}
-          </p>
-        </div>
-        <div className="hidden text-right sm:block">
-          <p className="text-sm font-bold tabular text-primary">
-            {formatCurrency(apt.utilityBill)}
-          </p>
-          <p className="text-[11px] text-muted-foreground">utility / mo</p>
-        </div>
-        <div className="hidden items-center gap-2 md:flex">
-          <Avatar initials={initials(apt.repName)} color="#0EA5E9" size="xs" />
-          <span className="text-xs text-muted-foreground">{apt.repName}</span>
-        </div>
-        <Badge tone={cfg.tone} className="shrink-0">
-          {cfg.label}
-        </Badge>
-      </div>
-    );
-  };
+export default async function AppointmentsPage() {
+  const appts = await getAppointments();
 
-  if (appointments.length === 0) {
+  if (appts.length === 0) {
     return (
       <PageContainer>
         <PageHeader
@@ -97,12 +46,47 @@ export default function AppointmentsPage() {
         <EmptyState
           icon={CalendarCheck}
           title="No appointments scheduled"
-          description="Booked account reviews from your reps and the AI agent will appear here."
+          description="Booked account reviews from your reps and the AI agent appear here automatically."
           action={{ label: "Open the dialer", href: "/dialer" }}
         />
       </PageContainer>
     );
   }
+
+  const scheduled = appts.filter((a) => a.status === "scheduled");
+  const completed = appts.filter((a) => a.status === "completed").length;
+  const noShows = appts.filter((a) => a.status === "no_show").length;
+  const showRate = completed + noShows
+    ? Math.round((completed / (completed + noShows)) * 100)
+    : 0;
+
+  const Row = ({ a }: { a: AppointmentRow }) => {
+    const cfg = statusTone[a.status] ?? statusTone.scheduled;
+    return (
+      <div className="flex items-center gap-4 p-4 transition-colors hover:bg-muted/40">
+        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-accent-soft text-accent">
+          <CalendarCheck className="h-4 w-4" />
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <p className="truncate font-semibold">{a.leadName}</p>
+            {a.source === "ai" && (
+              <Badge tone="accent" className="gap-1">
+                <Sparkles className="h-3 w-3" /> AI
+              </Badge>
+            )}
+          </div>
+          <p className="flex items-center gap-1.5 truncate text-xs text-muted-foreground">
+            <Clock className="h-3 w-3 shrink-0" />
+            {whenLabel(a)}
+          </p>
+        </div>
+        <Badge tone={cfg.tone} className="shrink-0">
+          {cfg.label}
+        </Badge>
+      </div>
+    );
+  };
 
   return (
     <PageContainer>
@@ -112,63 +96,35 @@ export default function AppointmentsPage() {
       />
 
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-        <MetricCard label="Booked today" value={String(metrics.appointmentsBooked)} icon={CalendarCheck} accent="primary" delta={{ value: "9%", positive: true }} />
-        <MetricCard label="Completed" value={String(metrics.appointmentsCompleted)} icon={TrendingUp} accent="success" />
-        <MetricCard label="No-shows" value={String(metrics.noShows)} icon={CalendarX} accent="danger" />
-        <MetricCard label="Show rate" value={`${showRate}%`} icon={RefreshCw} accent="accent" />
+        <MetricCard label="Total booked" value={String(appts.length)} icon={CalendarCheck} accent="primary" />
+        <MetricCard label="Scheduled" value={String(scheduled.length)} icon={Clock} accent="accent" />
+        <MetricCard label="Completed" value={String(completed)} icon={CalendarCheck} accent="success" />
+        <MetricCard label="Show rate" value={`${showRate}%`} icon={CalendarX} accent="warning" />
       </div>
 
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-        <Card className="overflow-hidden lg:col-span-2">
-          <div className="flex items-center justify-between border-b border-border p-5">
-            <div>
-              <h3 className="font-semibold">Upcoming</h3>
-              <p className="text-xs text-muted-foreground">{upcoming.length} scheduled</p>
-            </div>
-            <Badge tone="success" dot>
-              Next: {formatClock(upcoming[0]?.scheduledAt ?? new Date().toISOString())}
-            </Badge>
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+        <Card className="overflow-hidden">
+          <div className="border-b border-border p-5">
+            <h3 className="font-semibold">Upcoming</h3>
+            <p className="text-xs text-muted-foreground">{scheduled.length} scheduled</p>
           </div>
           <div className="divide-y divide-border">
-            {upcoming.map((apt) => (
-              <Row key={apt.id} apt={apt} />
-            ))}
+            {scheduled.length === 0 ? (
+              <p className="p-6 text-center text-sm text-muted-foreground">Nothing upcoming.</p>
+            ) : (
+              scheduled.map((a) => <Row key={a.id} a={a} />)
+            )}
           </div>
         </Card>
 
         <Card className="overflow-hidden">
           <div className="border-b border-border p-5">
-            <h3 className="font-semibold">Recent history</h3>
-            <p className="text-xs text-muted-foreground">Completed & missed</p>
+            <h3 className="font-semibold">All appointments</h3>
+            <p className="text-xs text-muted-foreground">Most recent first</p>
           </div>
           <div className="divide-y divide-border">
-            {past.map((apt) => (
-              <div key={apt.id} className="flex items-center gap-3 p-4">
-                <div
-                  className={cn(
-                    "flex h-9 w-9 shrink-0 items-center justify-center rounded-xl",
-                    apt.status === "completed"
-                      ? "bg-success/12 text-success"
-                      : "bg-danger/12 text-danger",
-                  )}
-                >
-                  {apt.status === "completed" ? (
-                    <CalendarCheck className="h-4 w-4" />
-                  ) : (
-                    <CalendarX className="h-4 w-4" />
-                  )}
-                </div>
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-semibold">{apt.leadName}</p>
-                  <p className="flex items-center gap-1 truncate text-xs text-muted-foreground">
-                    <Clock className="h-3 w-3" />
-                    {formatDay(apt.scheduledAt)}
-                  </p>
-                </div>
-                <Badge tone={statusTone[apt.status].tone}>
-                  {statusTone[apt.status].label}
-                </Badge>
-              </div>
+            {appts.slice(0, 12).map((a) => (
+              <Row key={a.id} a={a} />
             ))}
           </div>
         </Card>

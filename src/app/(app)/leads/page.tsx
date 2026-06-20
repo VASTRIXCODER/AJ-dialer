@@ -1,5 +1,6 @@
-import { Download, Upload, Users } from "lucide-react";
+import { Download, Users } from "lucide-react";
 import { LeadsTable } from "@/components/leads/leads-table";
+import { CsvImport } from "@/components/leads/csv-import";
 import { MetricCard } from "@/components/dashboard/metric-card";
 import { EmptyState } from "@/components/shared/empty-state";
 import { PageContainer, PageHeader } from "@/components/shared/page-header";
@@ -27,10 +28,7 @@ export default async function LeadsPage() {
       title="Leads"
       description="Every homeowner in your pipeline, scored and ready to dial."
     >
-      <Button variant="outline" size="sm" className="gap-2">
-        <Upload className="h-4 w-4" />
-        Import CSV
-      </Button>
+      <CsvImport variant="button" />
       <Button variant="outline" size="sm" className="gap-2">
         <Download className="h-4 w-4" />
         Export

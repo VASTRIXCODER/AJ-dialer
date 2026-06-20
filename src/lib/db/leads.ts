@@ -86,3 +86,82 @@ export async function getDialQueue(): Promise<Lead[]> {
     .filter((l) => DIALABLE.includes(l.status) && l.phone)
     .sort((a, b) => (b.aiScore ?? 0) - (a.aiScore ?? 0));
 }
+
+export interface LeadInput {
+  firstName: string;
+  lastName: string;
+  phone: string;
+  email?: string;
+  address?: string;
+  city?: string;
+  state?: string;
+  zip?: string;
+  utilityProvider?: string;
+  solarProvider?: string;
+  status?: string;
+  utilityBill?: number;
+  solarPayment?: number;
+  campaignId?: string;
+}
+
+/** Bulk-insert leads for the signed-in account (CSV import). */
+export async function insertLeads(
+  rows: LeadInput[],
+): Promise<{ inserted: number; error?: string }> {
+  if (!isSupabaseConfigured())
+    return { inserted: 0, error: "Connect Supabase to save leads." };
+  try {
+    const supabase = await createClient();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) return { inserted: 0, error: "You must be signed in." };
+
+    const payload = rows
+      .filter((r) => (r.phone && r.phone.trim()) || r.firstName)
+      .map((r) => ({
+        owner_id: user.id,
+        first_name: r.firstName ?? "",
+        last_name: r.lastName ?? "",
+        phone: r.phone ?? "",
+        email: r.email || null,
+        address: r.address ?? "",
+        city: r.city ?? "",
+        state: r.state ?? "",
+        zip: r.zip ?? "",
+        utility_provider: r.utilityProvider ?? "",
+        solar_provider: r.solarProvider ?? "",
+        status: r.status ?? "new",
+        utility_bill: r.utilityBill ?? null,
+        solar_payment: r.solarPayment ?? null,
+        campaign_id: r.campaignId ?? null,
+      }));
+
+    if (!payload.length) return { inserted: 0, error: "No valid rows found." };
+
+    const { error, count } = await supabase
+      .from("leads")
+      .insert(payload, { count: "exact" });
+    if (error) return { inserted: 0, error: error.message };
+    return { inserted: count ?? payload.length };
+  } catch (e) {
+    return {
+      inserted: 0,
+      error: e instanceof Error ? e.message : "Import failed.",
+    };
+  }
+}
+
+export async function getLeadStats() {
+  const all = await getLeads();
+  return {
+    total: all.length,
+    qualified: all.filter(
+      (l) => l.status === "qualified" || l.status === "appointment",
+    ).length,
+    appointments: all.filter((l) => l.status === "appointment").length,
+    avgScore: all.length
+      ? Math.round(all.reduce((a, l) => a + (l.aiScore ?? 0), 0) / all.length)
+      : 0,
+  };
+}

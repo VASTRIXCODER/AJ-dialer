@@ -167,3 +167,21 @@ create policy "callbacks owner" on public.callbacks
 drop policy if exists "ai_conversations owner" on public.ai_conversations;
 create policy "ai_conversations owner" on public.ai_conversations
   for all using (auth.uid() = owner_id) with check (auth.uid() = owner_id);
+
+-- ── Campaigns ────────────────────────────────────────────────────────────────
+create table if not exists public.campaigns (
+  id               uuid primary key default gen_random_uuid(),
+  owner_id         uuid not null references auth.users (id) on delete cascade,
+  name             text not null,
+  utility_provider text default '',
+  status           text not null default 'active', -- active | paused | completed
+  color            text default '#3B82F6',
+  created_at       timestamptz not null default now()
+);
+create index if not exists campaigns_owner_idx on public.campaigns (owner_id, created_at desc);
+
+alter table public.campaigns enable row level security;
+drop policy if exists "campaigns owner" on public.campaigns;
+create policy "campaigns owner" on public.campaigns
+  for all using (auth.uid() = owner_id) with check (auth.uid() = owner_id);
+

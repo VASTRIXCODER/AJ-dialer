@@ -73,10 +73,45 @@ function PrefRow({
   );
 }
 
-export function SettingsView() {
+export function SettingsView({
+  account,
+}: {
+  account?: { name: string; email: string } | null;
+}) {
   const { theme, setTheme } = useTheme();
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
+
+  const displayName = account?.name ?? currentRep.name;
+  const displayEmail = account?.email ?? currentRep.email;
+  const displayInitials =
+    displayName
+      .split(/\s+/)
+      .filter(Boolean)
+      .map((p) => p[0])
+      .slice(0, 2)
+      .join("")
+      .toUpperCase() || currentRep.initials;
+
+  const [name, setName] = useState(displayName);
+  const [team, setTeam] = useState(currentRep.team);
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+
+  async function saveProfile() {
+    setSaving(true);
+    setSaved(false);
+    try {
+      const res = await fetch("/api/profile", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ fullName: name, team }),
+      });
+      if (res.ok) setSaved(true);
+    } finally {
+      setSaving(false);
+    }
+  }
 
   const [prefs, setPrefs] = useState({
     autoDial: true,
@@ -108,13 +143,13 @@ export function SettingsView() {
       <Card className="p-6 lg:col-span-1">
         <div className="flex flex-col items-center text-center">
           <Avatar
-            initials={currentRep.initials}
+            initials={displayInitials}
             color={currentRep.avatarColor}
             size="lg"
             className="h-20 w-20 text-2xl"
           />
-          <h3 className="mt-3 text-lg font-bold">{currentRep.name}</h3>
-          <p className="text-sm text-muted-foreground">{currentRep.email}</p>
+          <h3 className="mt-3 text-lg font-bold">{displayName}</h3>
+          <p className="text-sm text-muted-foreground">{displayEmail}</p>
           <Badge tone="primary" className="mt-2 capitalize">
             {currentRep.role} · {currentRep.team}
           </Badge>
@@ -138,23 +173,26 @@ export function SettingsView() {
           <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div>
               <Label>Full name</Label>
-              <Input defaultValue={currentRep.name} />
+              <Input value={name} onChange={(e) => setName(e.target.value)} />
             </div>
             <div>
               <Label>Email</Label>
-              <Input defaultValue={currentRep.email} />
+              <Input value={displayEmail} readOnly disabled />
             </div>
             <div>
               <Label>Team</Label>
-              <Input defaultValue={currentRep.team} />
+              <Input value={team} onChange={(e) => setTeam(e.target.value)} />
             </div>
             <div>
               <Label>Caller ID</Label>
               <Input defaultValue="" placeholder="+1 (555) 000-0000" />
             </div>
           </div>
-          <div className="mt-4 flex justify-end">
-            <Button size="sm">Save changes</Button>
+          <div className="mt-4 flex items-center justify-end gap-3">
+            {saved && <span className="text-xs font-medium text-success">Saved ✓</span>}
+            <Button size="sm" onClick={saveProfile} disabled={saving}>
+              {saving ? "Saving…" : "Save changes"}
+            </Button>
           </div>
         </Card>
 
