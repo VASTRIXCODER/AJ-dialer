@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { reconcileActiveCalls } from "@/lib/ai-call-reconcile";
 import {
   listActiveAICalls,
   listRecentAICalls,
@@ -22,20 +23,35 @@ function merge(memory: Loose[], db: Loose[]): Loose[] {
 }
 
 /**
- * Feeds the Live Monitor + dialer with active and recent AI calls. Reads from
- * the in-memory store (instant, live) merged with Supabase (durable across
- * refreshes and serverless instances) so calls never silently disappear.
+ * Feeds the Live Monitor with active + recent AI calls. Reads the in-memory
+ * store merged with Supabase (durable across refreshes / serverless instances),
+ * and — critically — reconciles every active call against ElevenLabs first, so
+ * connected/failed/no-answer calls end and get categorized automatically
+ * instead of hanging "live" forever.
  */
 export async function GET() {
-  const { active: dbActive, recent: dbRecent } =
-    await getAIConversationsForMonitor();
+  const first = await getAIConversationsForMonitor();
+  const activeForCheck = merge(listActiveAICalls(), first.active);
 
-  const active = merge(listActiveAICalls(), dbActive).sort(
+  // Reconcile only when something is actually live; re-read so just-ended calls
+  // move to "recent" in the same response.
+  let fresh = first;
+  if (activeForCheck.length > 0) {
+    await reconcileActiveCalls(
+      activeForCheck.map((c) => ({
+        conversationId: c.conversationId,
+        startedAt: c.startedAt,
+      })),
+    );
+    fresh = await getAIConversationsForMonitor();
+  }
+
+  const active = merge(listActiveAICalls(), fresh.active).sort(
     (a, b) => b.startedAt - a.startedAt,
   );
-  const recent = merge(listRecentAICalls(), dbRecent)
+  const recent = merge(listRecentAICalls(), fresh.recent)
     .sort((a, b) => (b.endedAt ?? 0) - (a.endedAt ?? 0))
-    .slice(0, 8);
+    .slice(0, 12);
 
   return NextResponse.json({
     configured: isElevenLabsConfigured(),

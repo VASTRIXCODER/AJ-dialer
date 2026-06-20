@@ -160,6 +160,7 @@ export interface AIConversationRow {
   summary: string;
   durationSec: number | null;
   recordingAvailable: boolean;
+  callSid: string | null;
 }
 
 export async function getAIConversation(
@@ -188,6 +189,7 @@ export async function getAIConversation(
       summary: (data.summary as string) ?? "",
       durationSec: (data.duration_sec as number) ?? null,
       recordingAvailable: data.state === "completed",
+      callSid: (data.call_sid as string) ?? null,
     };
   } catch {
     return null;

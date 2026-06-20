@@ -178,6 +178,74 @@ export async function getConversation(id: string): Promise<unknown> {
   return res.json();
 }
 
+export interface ParsedConversation {
+  status: string;
+  callSid: string | null;
+  durationSec: number | null;
+  terminationReason: string;
+  hasAudio: boolean;
+  summary: string;
+  turns: { role: string; message: string; secs: number | null }[];
+}
+
+/**
+ * Fetch + normalize a conversation. One place to read the bits the monitor and
+ * intervention logic need — status, the underlying Twilio CallSid (so a
+ * supervisor can take over / hang up), duration, transcript, recording. Returns
+ * null when the conversation can't be read yet (still ringing). Never throws.
+ */
+export async function fetchConversation(
+  id: string,
+): Promise<ParsedConversation | null> {
+  try {
+    const convo = (await getConversation(id)) as Record<string, unknown>;
+    const data = (convo.data ?? convo) as Record<string, unknown>;
+    const metadata = (data.metadata ?? {}) as Record<string, unknown>;
+    const phone = (metadata.phone_call ??
+      metadata.phone ??
+      data.phone_call ??
+      {}) as Record<string, unknown>;
+    const callSid =
+      String(
+        phone.call_sid ??
+          phone.callSid ??
+          metadata.twilio_call_sid ??
+          metadata.call_sid ??
+          data.twilio_call_sid ??
+          data.call_sid ??
+          "",
+      ) || null;
+    const dur = Number(
+      metadata.call_duration_secs ?? metadata.call_duration ?? NaN,
+    );
+    const analysis = (data.analysis ?? {}) as Record<string, unknown>;
+    const turns = (Array.isArray(data.transcript) ? data.transcript : []).map(
+      (t) => {
+        const turn = t as Record<string, unknown>;
+        const secs = Number(turn.time_in_call_secs ?? turn.time_in_call ?? NaN);
+        return {
+          role: String(turn.role ?? turn.speaker ?? "agent"),
+          message: String(turn.message ?? turn.text ?? "").trim(),
+          secs: Number.isFinite(secs) ? secs : null,
+        };
+      },
+    );
+    return {
+      status: String(data.status ?? ""),
+      callSid,
+      durationSec: Number.isFinite(dur) ? dur : null,
+      terminationReason: String(
+        metadata.termination_reason ?? metadata.call_termination_reason ?? "",
+      ),
+      hasAudio: Boolean(data.has_audio),
+      summary: String(analysis.transcript_summary ?? ""),
+      turns,
+    };
+  } catch {
+    return null;
+  }
+}
+
 /** Streams the recording audio for a completed conversation. */
 export async function getConversationAudio(id: string): Promise<Response> {
   return el(`/v1/convai/conversations/${encodeURIComponent(id)}/audio`, {

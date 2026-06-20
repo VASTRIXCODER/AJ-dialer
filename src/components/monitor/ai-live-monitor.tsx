@@ -3,6 +3,8 @@
 import { AnimatePresence, motion } from "framer-motion";
 import {
   Bot,
+  CalendarCheck,
+  CheckCircle2,
   ClipboardList,
   Frown,
   Headphones,
@@ -12,10 +14,13 @@ import {
   PhoneForwarded,
   PhoneOff,
   Play,
+  Radio,
   Settings2,
   Smile,
   Sparkles,
   X,
+  Zap,
+  type LucideIcon,
 } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -76,6 +81,54 @@ const stateMeta: Record<AICallState, { label: string; tone: "primary" | "success
   completed: { label: "Completed", tone: "success" },
   failed: { label: "Didn't connect", tone: "danger" },
 };
+
+// Outcomes where a real conversation took place (for the connect-rate KPI).
+const CONNECTED = new Set<CallOutcome>([
+  "appointment_booked",
+  "callback_scheduled",
+  "qualified",
+  "not_interested",
+  "do_not_call",
+]);
+
+const statTones = {
+  primary: "bg-primary-soft text-primary",
+  success: "bg-success/12 text-success",
+  accent: "bg-accent-soft text-accent",
+  warning: "bg-warning/15 text-warning",
+} as const;
+
+function StatCard({
+  icon: Icon,
+  label,
+  value,
+  tone,
+  pulse,
+}: {
+  icon: LucideIcon;
+  label: string;
+  value: string | number;
+  tone: keyof typeof statTones;
+  pulse?: boolean;
+}) {
+  return (
+    <Card className="flex items-center gap-3 p-4">
+      <span className={cn("relative flex h-10 w-10 shrink-0 items-center justify-center rounded-xl", statTones[tone])}>
+        <Icon className="h-5 w-5" />
+        {pulse && (
+          <span className="absolute -right-0.5 -top-0.5 flex h-2.5 w-2.5">
+            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-success opacity-70" />
+            <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-success" />
+          </span>
+        )}
+      </span>
+      <div className="min-w-0">
+        <p className="text-2xl font-bold leading-none tabular">{value}</p>
+        <p className="mt-1 truncate text-xs text-muted-foreground">{label}</p>
+      </div>
+    </Card>
+  );
+}
 
 export function AiLiveMonitor({
   configured,
@@ -154,36 +207,65 @@ export function AiLiveMonitor({
     );
   }
 
+  const connectedCount = recent.filter((c) => c.outcome && CONNECTED.has(c.outcome)).length;
+  const kpis = {
+    live: active.length,
+    completed: recent.length,
+    booked: recent.filter((c) => c.outcome === "appointment_booked").length,
+    connectRate: recent.length ? Math.round((connectedCount / recent.length) * 100) : 0,
+  };
+
   return (
-    <div className="space-y-4">
-      <div className="flex items-center gap-2">
-        <h3 className="text-lg font-semibold tracking-tight">AI agent calls</h3>
-        <span className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wide text-success">
-          <span className="relative flex h-2 w-2">
-            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-success opacity-60" />
-            <span className="relative inline-flex h-2 w-2 rounded-full bg-success" />
-          </span>
-          {active.length} live
-        </span>
+    <div className="space-y-5">
+      {/* KPI strip */}
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <StatCard icon={Radio} label="Live now" value={kpis.live} tone="primary" pulse={kpis.live > 0} />
+        <StatCard icon={CheckCircle2} label="Recently completed" value={kpis.completed} tone="success" />
+        <StatCard icon={CalendarCheck} label="Appointments" value={kpis.booked} tone="accent" />
+        <StatCard icon={Zap} label="Connect rate" value={`${kpis.connectRate}%`} tone="warning" />
       </div>
 
-      {error && <p className="text-xs font-medium text-danger">{error}</p>}
+      {error && (
+        <p className="rounded-lg bg-danger/10 px-3 py-2 text-xs font-medium text-danger">
+          {error}
+        </p>
+      )}
 
-      {active.length === 0 ? (
-        <Card className="p-6 text-center text-sm text-muted-foreground">
-          No active AI calls. Launch one from the{" "}
-          <Link href="/dialer" className="font-semibold text-primary hover:underline">
-            Power Dialer
-          </Link>
-          .
-        </Card>
-      ) : (
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
-          {active.map((c, i) => {
-            const s = sentimentMeta[c.sentiment];
-            const Sentiment = s.icon;
-            const dur = Math.max(0, Math.floor((now - c.startedAt) / 1000));
-            return (
+      {/* Live calls */}
+      <section className="space-y-3">
+        <div className="flex items-center gap-2">
+          <h3 className="text-lg font-semibold tracking-tight">Live AI calls</h3>
+          <span className="flex items-center gap-1.5 rounded-full bg-success/10 px-2 py-0.5 text-[11px] font-bold uppercase tracking-wide text-success">
+            <span className="relative flex h-2 w-2">
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-success opacity-60" />
+              <span className="relative inline-flex h-2 w-2 rounded-full bg-success" />
+            </span>
+            {active.length} live
+          </span>
+        </div>
+
+        {active.length === 0 ? (
+          <Card className="flex flex-col items-center gap-1 p-8 text-center">
+            <Bot className="mb-1 h-8 w-8 text-muted-foreground/50" />
+            <p className="text-sm font-medium">No live AI calls right now</p>
+            <p className="text-sm text-muted-foreground">
+              Start an AI session from the{" "}
+              <Link href="/dialer" className="font-semibold text-primary hover:underline">
+                Power Dialer
+              </Link>{" "}
+              and watch it here in real time.
+            </p>
+          </Card>
+        ) : (
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+            {active.map((c, i) => {
+              const s = sentimentMeta[c.sentiment];
+              const Sentiment = s.icon;
+              const dur = Math.min(
+                Math.max(0, Math.floor((now - c.startedAt) / 1000)),
+                60 * 60,
+              );
+              return (
               <SpotlightCard
                 key={c.conversationId}
                 initial={{ opacity: 0, y: 14 }}
@@ -261,15 +343,16 @@ export function AiLiveMonitor({
               </SpotlightCard>
             );
           })}
-        </div>
-      )}
-
-      {recent.length > 0 && (
-        <Card className="overflow-hidden">
-          <div className="border-b border-border p-4">
-            <h4 className="text-sm font-semibold">Recent AI calls</h4>
           </div>
-          <div className="divide-y divide-border">
+        )}
+      </section>
+
+      {/* Recent calls */}
+      {recent.length > 0 && (
+        <section className="space-y-3">
+          <h3 className="text-lg font-semibold tracking-tight">Recent AI calls</h3>
+          <Card className="overflow-hidden">
+            <div className="divide-y divide-border">
             {recent.map((c) => {
               const cfg = c.outcome ? outcomeConfig[c.outcome] : null;
               return (
@@ -303,8 +386,9 @@ export function AiLiveMonitor({
                 </button>
               );
             })}
-          </div>
-        </Card>
+            </div>
+          </Card>
+        </section>
       )}
 
       <AnimatePresence>
