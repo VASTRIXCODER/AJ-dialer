@@ -2,8 +2,9 @@
 
 import { motion } from "framer-motion";
 import Link from "next/link";
-import { Bell, Menu, PhoneCall, Search, Sparkles } from "lucide-react";
+import { Menu, PhoneCall, Search, Sparkles } from "lucide-react";
 import { Magnetic } from "@/components/motion";
+import { NotificationsBell } from "@/components/layout/notifications-bell";
 import { buttonVariants } from "@/components/ui/button";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { cn } from "@/lib/utils";
@@ -91,14 +92,7 @@ export function Topbar({
             {voiceConfigured ? "Twilio Live" : "Offline"}
           </span>
 
-          <button
-            type="button"
-            className="relative inline-flex h-9 w-9 items-center justify-center rounded-xl border border-border/70 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-            aria-label="Notifications"
-          >
-            <Bell className="h-[18px] w-[18px]" />
-            <span className="absolute right-2 top-2 h-1.5 w-1.5 rounded-full bg-danger ring-2 ring-background" />
-          </button>
+          <NotificationsBell />
 
           <ThemeToggle />
 

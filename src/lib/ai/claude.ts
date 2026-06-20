@@ -90,4 +90,22 @@ export async function runAI<T>(
   }
 }
 
+/** A free-form chat turn (powers the AI command-center assistant). */
+export async function chatComplete(opts: {
+  system: string;
+  messages: { role: "user" | "assistant"; content: string }[];
+  maxTokens?: number;
+}): Promise<string> {
+  const res = await client().messages.create({
+    model: AI_MODEL,
+    max_tokens: opts.maxTokens ?? 1024,
+    system: opts.system,
+    messages: opts.messages.map((m) => ({ role: m.role, content: m.content })),
+  });
+  const block = res.content.find(
+    (b): b is Anthropic.TextBlock => b.type === "text",
+  );
+  return block?.text ?? "";
+}
+
 export type { AISource };

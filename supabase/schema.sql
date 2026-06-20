@@ -185,3 +185,22 @@ drop policy if exists "campaigns owner" on public.campaigns;
 create policy "campaigns owner" on public.campaigns
   for all using (auth.uid() = owner_id) with check (auth.uid() = owner_id);
 
+-- ── Team members (User Management — roster, roles, access & permissions) ──────
+create table if not exists public.team_members (
+  id           uuid primary key default gen_random_uuid(),
+  owner_id     uuid not null references auth.users (id) on delete cascade,
+  email        text not null,
+  name         text default '',
+  role         text not null default 'rep',       -- admin | manager | rep
+  access_level text not null default 'standard',  -- full | standard | limited
+  permissions  jsonb not null default '{}'::jsonb,
+  status       text not null default 'invited',   -- invited | active | disabled
+  created_at   timestamptz not null default now()
+);
+create index if not exists team_members_owner_idx on public.team_members (owner_id, created_at desc);
+
+alter table public.team_members enable row level security;
+drop policy if exists "team_members owner" on public.team_members;
+create policy "team_members owner" on public.team_members
+  for all using (auth.uid() = owner_id) with check (auth.uid() = owner_id);
+

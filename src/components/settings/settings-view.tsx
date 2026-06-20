@@ -1,15 +1,6 @@
 "use client";
 
-import {
-  Bell,
-  CalendarCheck,
-  Monitor,
-  Moon,
-  PhoneCall,
-  Radio,
-  Sun,
-  TrendingUp,
-} from "lucide-react";
+import { Bell, CalendarCheck, Monitor, Moon, PhoneCall, Radio, Sun } from "lucide-react";
 import { useTheme } from "next-themes";
 import { useEffect, useState } from "react";
 import { Avatar } from "@/components/ui/avatar";
@@ -17,7 +8,6 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input, Label } from "@/components/ui/input";
-import { currentRep } from "@/lib/data";
 import { cn } from "@/lib/utils";
 
 function Switch({
@@ -82,8 +72,8 @@ export function SettingsView({
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
 
-  const displayName = account?.name ?? currentRep.name;
-  const displayEmail = account?.email ?? currentRep.email;
+  const displayName = account?.name ?? "Your account";
+  const displayEmail = account?.email ?? "";
   const displayInitials =
     displayName
       .split(/\s+/)
@@ -91,10 +81,10 @@ export function SettingsView({
       .map((p) => p[0])
       .slice(0, 2)
       .join("")
-      .toUpperCase() || currentRep.initials;
+      .toUpperCase() || "·";
 
   const [name, setName] = useState(displayName);
-  const [team, setTeam] = useState(currentRep.team);
+  const [team, setTeam] = useState("AIATWORK");
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
 
@@ -124,13 +114,6 @@ export function SettingsView({
   const set = (k: keyof typeof prefs) => (v: boolean) =>
     setPrefs((p) => ({ ...p, [k]: v }));
 
-  const stats = [
-    { label: "Calls today", value: currentRep.callsToday, icon: PhoneCall },
-    { label: "Conversations", value: currentRep.conversationsToday, icon: Radio },
-    { label: "Appointments", value: currentRep.appointmentsToday, icon: CalendarCheck },
-    { label: "Score", value: currentRep.score, icon: TrendingUp },
-  ];
-
   const themes = [
     { key: "light", label: "Light", icon: Sun },
     { key: "dark", label: "Dark", icon: Moon },
@@ -144,25 +127,17 @@ export function SettingsView({
         <div className="flex flex-col items-center text-center">
           <Avatar
             initials={displayInitials}
-            color={currentRep.avatarColor}
+            color="#3B82F6"
             size="lg"
             className="h-20 w-20 text-2xl"
           />
           <h3 className="mt-3 text-lg font-bold">{displayName}</h3>
-          <p className="text-sm text-muted-foreground">{displayEmail}</p>
-          <Badge tone="primary" className="mt-2 capitalize">
-            {currentRep.role} · {currentRep.team}
+          {displayEmail && (
+            <p className="text-sm text-muted-foreground">{displayEmail}</p>
+          )}
+          <Badge tone="primary" className="mt-2">
+            {team}
           </Badge>
-        </div>
-
-        <div className="mt-6 grid grid-cols-2 gap-3">
-          {stats.map((s) => (
-            <div key={s.label} className="rounded-xl bg-muted p-3 text-center">
-              <s.icon className="mx-auto h-4 w-4 text-muted-foreground" />
-              <p className="mt-1.5 text-xl font-bold tabular">{s.value}</p>
-              <p className="text-[11px] text-muted-foreground">{s.label}</p>
-            </div>
-          ))}
         </div>
       </Card>
 
