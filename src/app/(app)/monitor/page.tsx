@@ -10,7 +10,12 @@ import { isElevenLabsConfigured } from "@/lib/elevenlabs";
 
 export const metadata = { title: "Live Monitor" };
 
-export default function MonitorPage() {
+export default async function MonitorPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ call?: string }>;
+}) {
+  const { call } = await searchParams;
   const connected = activeCalls.filter((c) => c.state === "connected").length;
   const onCall = reps.filter((r) => r.status === "on_call").length;
   const available = reps.filter((r) => r.status === "available").length;
@@ -28,7 +33,7 @@ export default function MonitorPage() {
       </PageHeader>
 
       {/* AI agent calls — always present; intervene in real time */}
-      <AiLiveMonitor configured={aiConfigured} />
+      <AiLiveMonitor configured={aiConfigured} initialCall={call ?? null} />
 
       {/* Human rep calls */}
       {activeCalls.length > 0 ? (

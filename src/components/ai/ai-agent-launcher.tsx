@@ -6,6 +6,7 @@ import {
   CheckCircle2,
   Loader2,
   PhoneOutgoing,
+  Radio,
   Sparkles,
 } from "lucide-react";
 import Link from "next/link";
@@ -32,11 +33,13 @@ export function AiAgentLauncher({
     "idle",
   );
   const [message, setMessage] = useState("");
+  const [conversationId, setConversationId] = useState<string | null>(null);
 
   async function placeCall() {
     if (!leadId) return;
     setStatus("placing");
     setMessage("");
+    setConversationId(null);
     try {
       const res = await fetch("/api/elevenlabs/call", {
         method: "POST",
@@ -50,7 +53,8 @@ export function AiAgentLauncher({
         return;
       }
       setStatus("placed");
-      setMessage(`AI agent is calling ${leadName}. Track it in Live Monitor.`);
+      setConversationId(json.conversationId ?? null);
+      setMessage(`AI agent is calling ${leadName}.`);
     } catch {
       setStatus("error");
       setMessage("Network error placing the AI call.");
@@ -111,19 +115,39 @@ export function AiAgentLauncher({
       </div>
 
       {message && (
-        <p
-          className={cn(
-            "mt-3 flex items-center gap-1.5 text-xs",
-            status === "error" ? "text-danger" : "text-success",
+        <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <p
+            className={cn(
+              "flex items-center gap-1.5 text-xs",
+              status === "error" ? "text-danger" : "text-success",
+            )}
+          >
+            {status === "error" ? (
+              <AlertTriangle className="h-3.5 w-3.5" />
+            ) : (
+              <CheckCircle2 className="h-3.5 w-3.5" />
+            )}
+            {message}
+          </p>
+
+          {status === "placed" && (
+            <Link
+              href={
+                conversationId
+                  ? `/monitor?call=${encodeURIComponent(conversationId)}`
+                  : "/monitor"
+              }
+              className={buttonVariants({
+                size: "sm",
+                variant: "outline",
+                className: "shrink-0 gap-1.5",
+              })}
+            >
+              <Radio className="h-3.5 w-3.5" />
+              View in Live Monitor
+            </Link>
           )}
-        >
-          {status === "error" ? (
-            <AlertTriangle className="h-3.5 w-3.5" />
-          ) : (
-            <CheckCircle2 className="h-3.5 w-3.5" />
-          )}
-          {message}
-        </p>
+        </div>
       )}
     </SpotlightCard>
   );

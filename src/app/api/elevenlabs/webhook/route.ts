@@ -1,9 +1,11 @@
 import { NextResponse } from "next/server";
 import { getAICall, updateAICall } from "@/lib/ai-call-store";
 import { analyzeConversation } from "@/lib/ai/services";
+import { dispositionBlurb, unconnectedOutcome } from "@/lib/call-disposition";
 import { completeAIConversation } from "@/lib/db/records";
 import { getLeadById } from "@/lib/db/leads";
 import { verifyWebhookSignature } from "@/lib/elevenlabs";
+import type { CallOutcome } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
@@ -11,9 +13,12 @@ type Turn = { role?: string; speaker?: string; message?: string; text?: string }
 
 /**
  * Post-call webhook — the "data back" leg of the chain. ElevenLabs posts the
- * full transcript + metadata when a call ends; we verify the HMAC signature,
- * run Claude to extract a summary / disposition / qualification / appointment,
- * and update the live store. This is where you'd also persist to your CRM/DB.
+ * full transcript + metadata when a call ends; we verify the HMAC signature and
+ * then either:
+ *   • run Claude to extract a summary / disposition / appointment (real talk), or
+ *   • auto-categorize deterministically when the call never connected (no answer,
+ *     voicemail, dead number) — no transcript to reason over, so no Claude spend.
+ * Either way the live monitor + Supabase are updated and attributed to the owner.
  */
 export async function POST(req: Request) {
   const raw = await req.text();
@@ -48,24 +53,56 @@ export async function POST(req: Request) {
   const durationSec =
     Number(metadata.call_duration_secs ?? metadata.call_duration ?? 0) ||
     undefined;
+  const terminationReason = String(
+    metadata.termination_reason ??
+      metadata.call_termination_reason ??
+      data.status ??
+      "",
+  );
+
+  // Did a real two-way conversation happen? We need the homeowner (not just the
+  // agent) to have said something. If not, the call "didn't go through".
+  const humanSaidSomething = turns.some(
+    (t) =>
+      (t.role ?? t.speaker) !== "agent" &&
+      (t.message ?? t.text ?? "").trim().length > 1,
+  );
+  const status = String(data.status ?? "").toLowerCase();
+  const connected =
+    humanSaidSomething && status !== "failed" && status !== "error";
 
   const tracked = getAICall(conversationId);
   const lead = tracked?.leadId ? await getLeadById(tracked.leadId) : null;
 
-  const { data: analysis } = await analyzeConversation({ transcript, lead });
-  const appointment = analysis.appointment.requested
-    ? { when: analysis.appointment.when, notes: analysis.appointment.notes }
-    : null;
+  let summary: string;
+  let outcome: CallOutcome;
+  let sentiment: "positive" | "neutral" | "negative";
+  let appointment: { when: string; notes: string } | null = null;
+
+  if (connected) {
+    const { data: analysis } = await analyzeConversation({ transcript, lead });
+    summary = analysis.summary;
+    outcome = analysis.outcome;
+    sentiment = analysis.sentiment;
+    appointment = analysis.appointment.requested
+      ? { when: analysis.appointment.when, notes: analysis.appointment.notes }
+      : null;
+  } else {
+    // Auto-end + auto-categorize a call that never connected.
+    outcome = unconnectedOutcome(terminationReason, durationSec ?? 0);
+    sentiment = "neutral";
+    summary = dispositionBlurb(outcome);
+  }
 
   // Live monitor (in-memory)
   updateAICall(conversationId, {
-    state: "completed",
+    state: connected ? "completed" : "failed",
     endedAt: Date.now(),
     durationSec,
-    summary: analysis.summary,
-    outcome: analysis.outcome,
-    sentiment: analysis.sentiment,
-    recordingAvailable: true,
+    summary,
+    outcome,
+    sentiment,
+    recordingAvailable: connected,
     appointment,
   });
 
@@ -73,11 +110,12 @@ export async function POST(req: Request) {
   // the call record + appointment, attributed to the lead's owner account.
   await completeAIConversation({
     conversationId,
-    summary: analysis.summary,
-    outcome: analysis.outcome,
-    sentiment: analysis.sentiment,
+    summary,
+    outcome,
+    sentiment,
     durationSec,
     appointment,
+    state: connected ? "completed" : "failed",
   });
 
   return NextResponse.json({ received: true });

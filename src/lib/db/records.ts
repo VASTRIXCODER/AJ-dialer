@@ -78,6 +78,8 @@ export async function completeAIConversation(input: {
   sentiment: string;
   durationSec?: number;
   appointment?: { when: string; notes: string } | null;
+  /** "failed" for calls that never connected; defaults to "completed". */
+  state?: "completed" | "failed";
 }): Promise<void> {
   if (!isAdminConfigured()) return;
   try {
@@ -91,7 +93,7 @@ export async function completeAIConversation(input: {
     await admin
       .from("ai_conversations")
       .update({
-        state: "completed",
+        state: input.state ?? "completed",
         summary: input.summary,
         outcome: input.outcome,
         sentiment: input.sentiment,
@@ -129,5 +131,101 @@ export async function completeAIConversation(input: {
     }
   } catch {
     /* best-effort */
+  }
+}
+
+// ── Single conversation read (account-scoped) ────────────────────────────────
+export interface AIConversationRow {
+  conversationId: string;
+  leadName: string;
+  phone: string;
+  state: string;
+  sentiment: string;
+  outcome: string | null;
+  summary: string;
+  durationSec: number | null;
+  recordingAvailable: boolean;
+}
+
+export async function getAIConversation(
+  conversationId: string,
+): Promise<AIConversationRow | null> {
+  if (!isSupabaseConfigured()) return null;
+  try {
+    const supabase = await createClient();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) return null;
+    const { data } = await supabase
+      .from("ai_conversations")
+      .select("*")
+      .eq("conversation_id", conversationId)
+      .maybeSingle();
+    if (!data) return null;
+    return {
+      conversationId,
+      leadName: (data.lead_name as string) ?? "",
+      phone: (data.phone as string) ?? "",
+      state: (data.state as string) ?? "completed",
+      sentiment: (data.sentiment as string) ?? "neutral",
+      outcome: (data.outcome as string) ?? null,
+      summary: (data.summary as string) ?? "",
+      durationSec: (data.duration_sec as number) ?? null,
+      recordingAvailable: data.state === "completed",
+    };
+  } catch {
+    return null;
+  }
+}
+
+// ── Manual disposition override (from the monitor mini-dashboard) ─────────────
+export async function setConversationDisposition(
+  conversationId: string,
+  outcome: CallOutcome,
+): Promise<{ ok: boolean; error?: string }> {
+  if (!isSupabaseConfigured())
+    return { ok: false, error: "Connect Supabase to save dispositions." };
+  try {
+    const supabase = await createClient();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) return { ok: false, error: "You must be signed in." };
+
+    const { data: convo } = await supabase
+      .from("ai_conversations")
+      .select("lead_id, lead_name, duration_sec")
+      .eq("conversation_id", conversationId)
+      .maybeSingle();
+
+    await supabase
+      .from("ai_conversations")
+      .update({ outcome, state: "completed", ended_at: new Date().toISOString() })
+      .eq("conversation_id", conversationId);
+
+    const { data: rec } = await supabase
+      .from("call_records")
+      .select("id")
+      .eq("conversation_id", conversationId)
+      .maybeSingle();
+
+    if (rec) {
+      await supabase.from("call_records").update({ outcome }).eq("id", rec.id);
+    } else {
+      await supabase.from("call_records").insert({
+        owner_id: user.id,
+        lead_id: convo?.lead_id ?? null,
+        lead_name: convo?.lead_name ?? "",
+        duration_sec: convo?.duration_sec ?? 0,
+        outcome,
+        channel: "ai",
+        conversation_id: conversationId,
+        summary: "Manually dispositioned by supervisor",
+      });
+    }
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Failed." };
   }
 }
