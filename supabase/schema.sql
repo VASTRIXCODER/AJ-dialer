@@ -1,0 +1,169 @@
+-- ─────────────────────────────────────────────────────────────────────────────
+-- AIATWORK Solar Resolution Dialer — Supabase schema
+--
+-- Run this in the Supabase SQL editor (or `supabase db push`). It creates the
+-- account-scoped tables behind the power dialer and locks them down with
+-- row-level security so every account only ever sees its own data.
+-- Safe to re-run (idempotent).
+-- ─────────────────────────────────────────────────────────────────────────────
+
+create extension if not exists "pgcrypto";
+
+-- ── Profiles (1:1 with auth.users) ───────────────────────────────────────────
+create table if not exists public.profiles (
+  id          uuid primary key references auth.users (id) on delete cascade,
+  full_name   text,
+  team        text default 'AIATWORK',
+  role        text default 'manager',
+  avatar_color text default '#3B82F6',
+  created_at  timestamptz not null default now()
+);
+
+-- Auto-create a profile row whenever a new auth user signs up.
+create or replace function public.handle_new_user()
+returns trigger language plpgsql security definer set search_path = public as $$
+begin
+  insert into public.profiles (id, full_name)
+  values (new.id, coalesce(new.raw_user_meta_data ->> 'full_name', split_part(new.email, '@', 1)))
+  on conflict (id) do nothing;
+  return new;
+end;
+$$;
+
+drop trigger if exists on_auth_user_created on auth.users;
+create trigger on_auth_user_created
+  after insert on auth.users
+  for each row execute function public.handle_new_user();
+
+-- ── Leads ────────────────────────────────────────────────────────────────────
+create table if not exists public.leads (
+  id               uuid primary key default gen_random_uuid(),
+  owner_id         uuid not null references auth.users (id) on delete cascade,
+  first_name       text not null default '',
+  last_name        text not null default '',
+  phone            text not null default '',
+  email            text,
+  address          text default '',
+  city             text default '',
+  state            text default '',
+  zip              text default '',
+  utility_provider text default '',
+  solar_provider   text default '',
+  status           text not null default 'new',
+  campaign_id      text,
+  assigned_rep_id  text,
+  solar_payment    numeric,
+  utility_bill     numeric,
+  has_ev           boolean not null default false,
+  has_pool         boolean not null default false,
+  has_battery      boolean not null default false,
+  multiple_systems boolean not null default false,
+  notes            text,
+  ai_score         int,
+  timezone         text default 'America/Los_Angeles',
+  last_contacted_at timestamptz,
+  created_at       timestamptz not null default now()
+);
+create index if not exists leads_owner_idx on public.leads (owner_id);
+create index if not exists leads_owner_status_idx on public.leads (owner_id, status);
+
+-- ── Call records ─────────────────────────────────────────────────────────────
+create table if not exists public.call_records (
+  id              uuid primary key default gen_random_uuid(),
+  owner_id        uuid not null references auth.users (id) on delete cascade,
+  lead_id         uuid references public.leads (id) on delete set null,
+  lead_name       text default '',
+  phone           text default '',
+  duration_sec    int not null default 0,
+  outcome         text,
+  disposition     text,
+  channel         text not null default 'human', -- 'human' | 'ai'
+  conversation_id text,                            -- ElevenLabs conversation id
+  recording_url   text,
+  summary         text,
+  sentiment       text,
+  started_at      timestamptz not null default now()
+);
+create index if not exists call_records_owner_idx on public.call_records (owner_id, started_at desc);
+
+-- ── Appointments ─────────────────────────────────────────────────────────────
+create table if not exists public.appointments (
+  id            uuid primary key default gen_random_uuid(),
+  owner_id      uuid not null references auth.users (id) on delete cascade,
+  lead_id       uuid references public.leads (id) on delete set null,
+  lead_name     text default '',
+  scheduled_at  timestamptz,
+  scheduled_label text,                -- e.g. "Tomorrow 2:00pm" when no exact ts
+  status        text not null default 'scheduled',
+  notes         text,
+  source        text not null default 'ai', -- 'ai' | 'rep'
+  created_at    timestamptz not null default now()
+);
+create index if not exists appointments_owner_idx on public.appointments (owner_id, created_at desc);
+
+-- ── Callbacks ────────────────────────────────────────────────────────────────
+create table if not exists public.callbacks (
+  id          uuid primary key default gen_random_uuid(),
+  owner_id    uuid not null references auth.users (id) on delete cascade,
+  lead_id     uuid references public.leads (id) on delete set null,
+  lead_name   text default '',
+  phone       text default '',
+  due_at      timestamptz,
+  reason      text,
+  status      text not null default 'due',
+  created_at  timestamptz not null default now()
+);
+create index if not exists callbacks_owner_idx on public.callbacks (owner_id, due_at);
+
+-- ── AI conversations (ElevenLabs) ────────────────────────────────────────────
+create table if not exists public.ai_conversations (
+  conversation_id text primary key,
+  owner_id        uuid references auth.users (id) on delete cascade,
+  lead_id         uuid references public.leads (id) on delete set null,
+  lead_name       text default '',
+  phone           text default '',
+  call_sid        text,
+  state           text not null default 'initiated',
+  sentiment       text default 'neutral',
+  outcome         text,
+  summary         text,
+  duration_sec    int,
+  appointment     jsonb,
+  started_at      timestamptz not null default now(),
+  ended_at        timestamptz
+);
+create index if not exists ai_conversations_owner_idx on public.ai_conversations (owner_id, started_at desc);
+
+-- ── Row-level security ───────────────────────────────────────────────────────
+alter table public.profiles         enable row level security;
+alter table public.leads            enable row level security;
+alter table public.call_records     enable row level security;
+alter table public.appointments     enable row level security;
+alter table public.callbacks        enable row level security;
+alter table public.ai_conversations enable row level security;
+
+-- Profiles: a user can read/update only their own profile.
+drop policy if exists "profiles self" on public.profiles;
+create policy "profiles self" on public.profiles
+  for all using (auth.uid() = id) with check (auth.uid() = id);
+
+-- Helper: one owner_id policy per data table.
+drop policy if exists "leads owner" on public.leads;
+create policy "leads owner" on public.leads
+  for all using (auth.uid() = owner_id) with check (auth.uid() = owner_id);
+
+drop policy if exists "call_records owner" on public.call_records;
+create policy "call_records owner" on public.call_records
+  for all using (auth.uid() = owner_id) with check (auth.uid() = owner_id);
+
+drop policy if exists "appointments owner" on public.appointments;
+create policy "appointments owner" on public.appointments
+  for all using (auth.uid() = owner_id) with check (auth.uid() = owner_id);
+
+drop policy if exists "callbacks owner" on public.callbacks;
+create policy "callbacks owner" on public.callbacks
+  for all using (auth.uid() = owner_id) with check (auth.uid() = owner_id);
+
+drop policy if exists "ai_conversations owner" on public.ai_conversations;
+create policy "ai_conversations owner" on public.ai_conversations
+  for all using (auth.uid() = owner_id) with check (auth.uid() = owner_id);

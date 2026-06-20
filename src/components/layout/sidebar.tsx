@@ -1,6 +1,7 @@
 "use client";
 
 import { motion } from "framer-motion";
+import { LogOut } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useId } from "react";
@@ -11,7 +12,15 @@ import { currentRep } from "@/lib/data";
 import { cn } from "@/lib/utils";
 import { navGroups } from "./nav";
 
-export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
+type Account = { name: string; email: string; initials: string };
+
+export function Sidebar({
+  account,
+  onNavigate,
+}: {
+  account?: Account | null;
+  onNavigate?: () => void;
+}) {
   const pathname = usePathname();
   // Unique per instance so the desktop + mobile sidebars don't share a layout id.
   const uid = useId();
@@ -104,26 +113,40 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
         ))}
       </nav>
 
-      <div className="px-3 pb-5">
+      <div className="space-y-2 px-3 pb-5">
         <Link
           href="/settings"
           onClick={onNavigate}
           className="group flex items-center gap-3 rounded-2xl border border-border/60 bg-background/30 p-3 transition-all duration-300 hover:-translate-y-0.5 hover:border-border hover:bg-muted/60 hover:shadow-soft"
         >
           <Avatar
-            initials={currentRep.initials}
+            initials={account?.initials ?? currentRep.initials}
             color={currentRep.avatarColor}
             size="sm"
             ring
           />
           <div className="min-w-0 flex-1">
-            <p className="truncate text-sm font-semibold">{currentRep.name}</p>
-            <p className="truncate text-xs capitalize text-muted-foreground">
-              {currentRep.team}
+            <p className="truncate text-sm font-semibold">
+              {account?.name ?? currentRep.name}
+            </p>
+            <p className="truncate text-xs text-muted-foreground">
+              {account?.email || (account ? "Signed in" : currentRep.team)}
             </p>
           </div>
           <span className="h-2 w-2 rounded-full bg-success shadow-[0_0_8px_0_hsl(var(--success)/0.9)]" />
         </Link>
+
+        {account && (
+          <form action="/auth/signout" method="post">
+            <button
+              type="submit"
+              className="flex w-full items-center justify-center gap-2 rounded-xl border border-border/60 px-3 py-2 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
+            >
+              <LogOut className="h-3.5 w-3.5" />
+              Sign out
+            </button>
+          </form>
+        )}
       </div>
     </div>
   );

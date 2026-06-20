@@ -71,6 +71,7 @@ export const metrics = DEMO_DATA ? sample.metrics : EMPTY_METRICS;
 // Disposition options are app configuration (not placeholder data) — always on.
 export const outcomeOptions = sample.outcomeOptions;
 
+/** Look a lead up in the in-memory source (DB-backed lookups live in lib/db). */
 export function getLeadById(id: string) {
-  return DEMO_DATA ? sample.getLeadById(id) : undefined;
+  return leads.find((l) => l.id === id);
 }

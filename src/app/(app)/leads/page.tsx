@@ -5,12 +5,13 @@ import { EmptyState } from "@/components/shared/empty-state";
 import { PageContainer, PageHeader } from "@/components/shared/page-header";
 import { Button } from "@/components/ui/button";
 import { CalendarCheck, Sparkles, Zap } from "lucide-react";
-import { leads } from "@/lib/data";
+import { getLeads } from "@/lib/db/leads";
 import { formatNumber } from "@/lib/utils";
 
 export const metadata = { title: "Leads" };
 
-export default function LeadsPage() {
+export default async function LeadsPage() {
+  const leads = await getLeads();
   const qualified = leads.filter(
     (l) => l.status === "qualified" || l.status === "appointment",
   ).length;

@@ -8,14 +8,18 @@ import { AmbientBackground } from "./ambient-background";
 import { Sidebar } from "./sidebar";
 import { Topbar } from "./topbar";
 
+type Account = { name: string; email: string; initials: string };
+
 export function AppShell({
   children,
   voiceConfigured,
   aiConfigured,
+  account,
 }: {
   children: React.ReactNode;
   voiceConfigured: boolean;
   aiConfigured: boolean;
+  account: Account | null;
 }) {
   const [mobileOpen, setMobileOpen] = useState(false);
 
@@ -26,7 +30,7 @@ export function AppShell({
 
       {/* Desktop sidebar */}
       <aside className="fixed inset-y-0 left-0 z-30 hidden w-[268px] lg:block">
-        <Sidebar />
+        <Sidebar account={account} />
       </aside>
 
       {/* Mobile drawer */}
@@ -55,7 +59,7 @@ export function AppShell({
               >
                 <X className="h-5 w-5" />
               </button>
-              <Sidebar onNavigate={() => setMobileOpen(false)} />
+              <Sidebar account={account} onNavigate={() => setMobileOpen(false)} />
             </motion.aside>
           </>
         )}

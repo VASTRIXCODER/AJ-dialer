@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { registerAICall } from "@/lib/ai-call-store";
-import { getLeadById } from "@/lib/data";
+import { getLeadById } from "@/lib/db/leads";
+import { seedAIConversation } from "@/lib/db/records";
 import {
   agentVariablesForLead,
   isElevenLabsConfigured,
@@ -26,7 +27,7 @@ export async function POST(req: Request) {
   const { leadId } = await req
     .json()
     .catch(() => ({}) as { leadId?: string });
-  const lead = leadId ? getLeadById(leadId) : null;
+  const lead = leadId ? await getLeadById(leadId) : null;
   if (!lead) {
     return NextResponse.json({ error: "Lead not found" }, { status: 404 });
   }
@@ -53,6 +54,16 @@ export async function POST(req: Request) {
       leadName: `${lead.firstName} ${lead.lastName}`,
       phone: toNumber,
       city: `${lead.city}, ${lead.state}`,
+    });
+
+    // Persist an account-scoped row so the call survives refreshes and the
+    // post-call webhook can attribute results to this owner.
+    await seedAIConversation({
+      conversationId: result.conversationId,
+      callSid: result.callSid,
+      leadId: lead.id,
+      leadName: `${lead.firstName} ${lead.lastName}`,
+      phone: toNumber,
     });
 
     return NextResponse.json({

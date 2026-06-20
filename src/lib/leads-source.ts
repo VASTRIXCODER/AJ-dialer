@@ -1,18 +1,15 @@
 import "server-only";
 import type { Lead } from "./types";
-import { realLeads } from "./real-leads";
+import { getDialQueue as dbDialQueue } from "./db/leads";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Lead source for the dialer queue.
 //
-// Returns the next batch of leads ready to dial, ordered by priority.
-// Replace with a DB query once your backend is wired up.
+// Delegates to the account-scoped DB layer (Supabase when configured, in-memory
+// fallback otherwise), so the queue and every getLeadById lookup read from the
+// exact same source — no more "lead not found".
 // ─────────────────────────────────────────────────────────────────────────────
 
-const DIALABLE: Lead["status"][] = ["new", "no_answer", "callback"];
-
-export async function getDialQueue(): Promise<Lead[]> {
-  return realLeads
-    .filter((l) => DIALABLE.includes(l.status) && l.phone)
-    .sort((a, b) => (b.aiScore ?? 0) - (a.aiScore ?? 0));
+export function getDialQueue(): Promise<Lead[]> {
+  return dbDialQueue();
 }

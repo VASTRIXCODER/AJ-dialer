@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 import { getAICall, updateAICall } from "@/lib/ai-call-store";
 import { analyzeConversation } from "@/lib/ai/services";
-import { getLeadById } from "@/lib/data";
+import { completeAIConversation } from "@/lib/db/records";
+import { getLeadById } from "@/lib/db/leads";
 import { verifyWebhookSignature } from "@/lib/elevenlabs";
 
 export const dynamic = "force-dynamic";
@@ -49,10 +50,14 @@ export async function POST(req: Request) {
     undefined;
 
   const tracked = getAICall(conversationId);
-  const lead = tracked?.leadId ? (getLeadById(tracked.leadId) ?? null) : null;
+  const lead = tracked?.leadId ? await getLeadById(tracked.leadId) : null;
 
   const { data: analysis } = await analyzeConversation({ transcript, lead });
+  const appointment = analysis.appointment.requested
+    ? { when: analysis.appointment.when, notes: analysis.appointment.notes }
+    : null;
 
+  // Live monitor (in-memory)
   updateAICall(conversationId, {
     state: "completed",
     endedAt: Date.now(),
@@ -61,14 +66,19 @@ export async function POST(req: Request) {
     outcome: analysis.outcome,
     sentiment: analysis.sentiment,
     recordingAvailable: true,
-    appointment: analysis.appointment.requested
-      ? { when: analysis.appointment.when, notes: analysis.appointment.notes }
-      : null,
+    appointment,
   });
 
-  // Production hook: persist analysis.qualification onto the lead, create an
-  // Appointment / Callback record, and update CRM. The store update above is the
-  // demo-friendly seam — swap for your datastore.
+  // Durable persistence (Supabase) — completes the conversation row and creates
+  // the call record + appointment, attributed to the lead's owner account.
+  await completeAIConversation({
+    conversationId,
+    summary: analysis.summary,
+    outcome: analysis.outcome,
+    sentiment: analysis.sentiment,
+    durationSec,
+    appointment,
+  });
 
   return NextResponse.json({ received: true });
 }

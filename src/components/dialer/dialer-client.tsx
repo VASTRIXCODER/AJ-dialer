@@ -82,7 +82,22 @@ export function DialerClient({
             onManualDial={dialer.dialNumber}
             onEnd={dialer.endCall}
             onSkip={dialer.skip}
-            onOutcome={dialer.selectOutcome}
+            onOutcome={(o) => {
+              if (focusLead) {
+                void fetch("/api/calls", {
+                  method: "POST",
+                  headers: { "content-type": "application/json" },
+                  body: JSON.stringify({
+                    leadId: focusLead.id,
+                    leadName: `${focusLead.firstName} ${focusLead.lastName}`,
+                    phone: focusLead.phone,
+                    durationSec: state.durationSec,
+                    outcome: o,
+                  }),
+                }).catch(() => {});
+              }
+              dialer.selectOutcome(o);
+            }}
             onToggleMute={dialer.toggleMute}
             onToggleHold={dialer.toggleHold}
             onToggleRecording={dialer.toggleRecording}
