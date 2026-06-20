@@ -28,6 +28,7 @@ interface DetailResponse {
   startedAt: number | null;
   recordingAvailable: boolean;
   transcript: TranscriptTurn[];
+  appointment: { when: string; notes: string } | null;
   configured: boolean;
 }
 
@@ -181,6 +182,7 @@ export async function GET(
       (store?.recordingAvailable ?? db?.recordingAvailable ?? hasAudio) &&
       state === "completed",
     transcript,
+    appointment: store?.appointment ?? db?.appointment ?? null,
     configured: isElevenLabsConfigured(),
   };
 

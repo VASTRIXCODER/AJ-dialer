@@ -1,5 +1,6 @@
 import "server-only";
 
+import { reconcileOwnerActiveCalls } from "../ai-call-reconcile";
 import { isSupabaseConfigured } from "../supabase/config";
 import { createClient } from "../supabase/server";
 
@@ -108,6 +109,8 @@ export async function getAppointments(): Promise<AppointmentRow[]> {
   try {
     const c = await ctx();
     if (!c) return [];
+    // Finalize any stuck calls first so freshly-booked reviews show immediately.
+    await reconcileOwnerActiveCalls();
     const { data } = await c.supabase
       .from("appointments")
       .select("*")

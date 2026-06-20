@@ -11,6 +11,7 @@ import {
   outcomeBreakdown as sampleOutcomes,
   callRecords as sampleRecords,
 } from "../data";
+import { reconcileOwnerActiveCalls } from "../ai-call-reconcile";
 import { isSupabaseConfigured } from "../supabase/config";
 import { createClient } from "../supabase/server";
 import type { CallOutcome, KpiPoint, MetricSummary, Rep } from "../types";
@@ -123,6 +124,10 @@ export async function getReportingData(): Promise<ReportingData> {
       data: { user },
     } = await supabase.auth.getUser();
     if (!user) return fallbackReporting();
+
+    // End + categorize any stuck calls first, so live counts and dispositions
+    // are accurate the moment the dashboard / reports load.
+    await reconcileOwnerActiveCalls();
 
     const [callsRes, apptsRes, leadsRes, profileRes, monitor] = await Promise.all([
       supabase
@@ -293,12 +298,15 @@ export async function getReportingData(): Promise<ReportingData> {
       status: String(a.status ?? "scheduled"),
     }));
 
-    const liveCalls: LiveCall[] = monitor.active.map((c) => ({
-      id: c.conversationId,
-      leadName: c.leadName || "Homeowner",
-      city: c.city,
-      state: c.state,
-    }));
+    const liveCutoff = Date.now() - 20 * 60_000;
+    const liveCalls: LiveCall[] = monitor.active
+      .filter((c) => c.startedAt >= liveCutoff)
+      .map((c) => ({
+        id: c.conversationId,
+        leadName: c.leadName || "Homeowner",
+        city: c.city,
+        state: c.state,
+      }));
 
     // ── Leaderboard (single-account → you, with real stats) ────────────────────
     const disp = userDisplay(user);

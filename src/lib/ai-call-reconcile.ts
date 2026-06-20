@@ -1,6 +1,7 @@
 import "server-only";
 
 import { finalizeAIConversation } from "./ai-call-finalize";
+import { getAIConversationsForMonitor } from "./db/records";
 import { fetchConversation, isElevenLabsConfigured } from "./elevenlabs";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -65,4 +66,26 @@ export async function reconcileActiveCalls(active: ActiveRef[]): Promise<void> {
       }
     }),
   );
+}
+
+/**
+ * Convenience: reconcile the signed-in account's own active calls. Called
+ * wherever live/derived data is read (monitor feed, dashboard, reports,
+ * appointments) so a call that connected, failed, or never answered is ended +
+ * categorized even if no one is watching the monitor and the webhook is silent.
+ */
+export async function reconcileOwnerActiveCalls(): Promise<void> {
+  if (!isElevenLabsConfigured()) return;
+  try {
+    const { active } = await getAIConversationsForMonitor();
+    if (active.length === 0) return;
+    await reconcileActiveCalls(
+      active.map((c) => ({
+        conversationId: c.conversationId,
+        startedAt: c.startedAt,
+      })),
+    );
+  } catch {
+    /* best-effort */
+  }
 }

@@ -221,6 +221,7 @@ export interface AIConversationRow {
   durationSec: number | null;
   recordingAvailable: boolean;
   callSid: string | null;
+  appointment: { when: string; notes: string } | null;
 }
 
 export async function getAIConversation(
@@ -250,6 +251,8 @@ export async function getAIConversation(
       durationSec: (data.duration_sec as number) ?? null,
       recordingAvailable: data.state === "completed",
       callSid: (data.call_sid as string) ?? null,
+      appointment:
+        (data.appointment as { when: string; notes: string } | null) ?? null,
     };
   } catch {
     return null;
