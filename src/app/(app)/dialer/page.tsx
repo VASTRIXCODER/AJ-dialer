@@ -7,6 +7,7 @@ import { getDialQueue } from "@/lib/leads-source";
 import { isVoiceConfigured } from "@/lib/twilio";
 
 export const metadata = { title: "Power Dialer" };
+export const dynamic = "force-dynamic";
 
 export default async function DialerPage() {
   const queue = await getDialQueue();
