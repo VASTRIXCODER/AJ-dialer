@@ -85,8 +85,9 @@ export async function updateSession(request: NextRequest) {
   }
 
   if (user && onAuthPage) {
+    // Land signed-in users on the Hub (the org gateway), not straight in the app.
     const url = request.nextUrl.clone();
-    url.pathname = "/dashboard";
+    url.pathname = "/hub";
     url.search = "";
     return NextResponse.redirect(url);
   }

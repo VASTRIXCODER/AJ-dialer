@@ -13,6 +13,16 @@ import {
 import { createAdminClient, isAdminConfigured } from "../supabase/admin";
 import { isSupabaseConfigured } from "../supabase/config";
 import { createClient } from "../supabase/server";
+import {
+  type OrgBlueprint,
+  type OrgSettings,
+  DEFAULT_ORG_SETTINGS,
+  mergeSettings,
+} from "./settings";
+
+// Re-exported so existing importers keep working from "@/lib/org/membership".
+export type { OrgSettings, OrgBlueprint } from "./settings";
+export { DEFAULT_ORG_SETTINGS } from "./settings";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Organization membership engine. Reads scoped to the caller use the RLS client;
@@ -25,75 +35,6 @@ const NEEDS_SERVICE =
   "Add SUPABASE_SERVICE_ROLE_KEY to enable organization management.";
 
 export type MemberStatus = "pending" | "active" | "rejected" | "removed";
-
-export interface OrgSettings {
-  dialing: {
-    mode: "preview" | "progressive" | "predictive";
-    maxLines: number;
-    ringTimeoutSec: number;
-    recording: boolean;
-    voicemailDrop: boolean;
-    retryAttempts: number;
-    retryDelayMin: number;
-    respectDnc: boolean;
-    callerId: string;
-  };
-  hours: {
-    startHour: number; // 0–23 local to the org timezone
-    endHour: number;
-    days: number[]; // 0 (Sun) – 6 (Sat)
-  };
-  ai: {
-    agentName: string;
-    persona: string;
-    voice: string;
-    transferNumber: string;
-    aiFirst: boolean;
-    maxTalkMin: number;
-    language: string;
-  };
-  compliance: {
-    dncEnforced: boolean;
-    recordingDisclosure: string;
-    consentRequired: boolean;
-  };
-  dispositions: { label: string; tone: "success" | "warning" | "danger" | "neutral" }[];
-}
-
-export const DEFAULT_ORG_SETTINGS: OrgSettings = {
-  dialing: {
-    mode: "progressive",
-    maxLines: 3,
-    ringTimeoutSec: 25,
-    recording: true,
-    voicemailDrop: true,
-    retryAttempts: 3,
-    retryDelayMin: 60,
-    respectDnc: true,
-    callerId: "",
-  },
-  hours: { startHour: 8, endHour: 20, days: [1, 2, 3, 4, 5] },
-  ai: {
-    agentName: "Aria",
-    persona: "Friendly, concise, and consultative.",
-    voice: "default",
-    transferNumber: "+14693018199",
-    aiFirst: true,
-    maxTalkMin: 8,
-    language: "en",
-  },
-  compliance: {
-    dncEnforced: true,
-    recordingDisclosure: "This call may be recorded for quality and training.",
-    consentRequired: false,
-  },
-  dispositions: [
-    { label: "Appointment booked", tone: "success" },
-    { label: "Callback scheduled", tone: "warning" },
-    { label: "Not interested", tone: "danger" },
-    { label: "No answer", tone: "neutral" },
-  ],
-};
 
 export interface OrgSummary {
   id: string;
@@ -158,19 +99,6 @@ const genJoinCode = () =>
   Array.from({ length: 7 }, () =>
     "ABCDEFGHJKLMNPQRSTUVWXYZ23456789".charAt(Math.floor(Math.random() * 32)),
   ).join("");
-
-function mergeSettings(raw: unknown): OrgSettings {
-  const s = (raw ?? {}) as Partial<OrgSettings>;
-  return {
-    dialing: { ...DEFAULT_ORG_SETTINGS.dialing, ...(s.dialing ?? {}) },
-    hours: { ...DEFAULT_ORG_SETTINGS.hours, ...(s.hours ?? {}) },
-    ai: { ...DEFAULT_ORG_SETTINGS.ai, ...(s.ai ?? {}) },
-    compliance: { ...DEFAULT_ORG_SETTINGS.compliance, ...(s.compliance ?? {}) },
-    dispositions: Array.isArray(s.dispositions)
-      ? s.dispositions
-      : DEFAULT_ORG_SETTINGS.dispositions,
-  };
-}
 
 function mapOrg(o: Row): OrgFull {
   const role = String(o.default_role ?? "rep");
@@ -306,44 +234,168 @@ export async function getViewer(): Promise<Viewer> {
 }
 
 // ── Reads (RLS-scoped to the caller) ─────────────────────────────────────────
+/**
+ * The caller's *active* membership — the org they've entered. The active org is
+ * tracked on profiles.org_id (set when they enter/switch from the Hub), so a
+ * user can belong to many orgs but work in one at a time.
+ */
 export async function getActiveMembership(userId: string): Promise<Member | null> {
+  try {
+    const supabase = await createClient();
+    const { data: prof } = await supabase
+      .from("profiles")
+      .select("id, full_name, role, org_id")
+      .eq("id", userId)
+      .maybeSingle();
+    const activeOrgId = prof?.org_id ? String(prof.org_id) : null;
+    if (!activeOrgId) return null; // no org entered → the Hub will prompt them
+
+    const { data } = await supabase
+      .from("organization_members")
+      .select("*")
+      .eq("user_id", userId)
+      .eq("org_id", activeOrgId)
+      .eq("status", "active")
+      .maybeSingle();
+    if (data) return mapMember(data as Row);
+
+    // Resilience bridge: a profile assigned to an org (by the superadmin console,
+    // or by the schema backfill before the members table existed) still counts.
+    const role = isOrgRole(prof?.role) ? prof.role : "rep";
+    return {
+      id: `profile-${userId}`,
+      orgId: activeOrgId,
+      userId,
+      email: "",
+      name: String(prof?.full_name ?? ""),
+      role,
+      permissions: {},
+      status: "active",
+      requestedAt: "",
+      decidedAt: null,
+      createdAt: "",
+    };
+  } catch {
+    return null;
+  }
+}
+
+/** Every active org the caller belongs to (powers the Hub workspace switcher). */
+export async function getMyMemberships(
+  userId: string,
+): Promise<{ org: OrgSummary; role: OrgRole; isActive: boolean }[]> {
+  try {
+    const supabase = await createClient();
+    const [{ data: rows }, { data: prof }] = await Promise.all([
+      supabase
+        .from("organization_members")
+        .select("*")
+        .eq("user_id", userId)
+        .eq("status", "active")
+        .order("created_at", { ascending: true }),
+      supabase.from("profiles").select("org_id").eq("id", userId).maybeSingle(),
+    ]);
+    const activeOrgId = prof?.org_id ? String(prof.org_id) : null;
+    const members = ((rows ?? []) as Row[]).map(mapMember);
+
+    // Bridge: ensure the profile's active org appears even without a member row.
+    if (activeOrgId && !members.some((m) => m.orgId === activeOrgId)) {
+      members.push({
+        id: `profile-${userId}`,
+        orgId: activeOrgId,
+        userId,
+        email: "",
+        name: "",
+        role: "rep",
+        permissions: {},
+        status: "active",
+        requestedAt: "",
+        decidedAt: null,
+        createdAt: "",
+      });
+    }
+
+    const orgs = await Promise.all(members.map((m) => getOrgById(m.orgId)));
+    const out: { org: OrgSummary; role: OrgRole; isActive: boolean }[] = [];
+    members.forEach((m, i) => {
+      const org = orgs[i];
+      if (org) out.push({ org, role: m.role, isActive: m.orgId === activeOrgId });
+    });
+    return out;
+  } catch {
+    return [];
+  }
+}
+
+/** Every pending join request the caller has made (with org names). */
+export async function getMyPendingRequests(
+  userId: string,
+): Promise<{ orgName: string; orgId: string; requireApproval: boolean }[]> {
   try {
     const supabase = await createClient();
     const { data } = await supabase
       .from("organization_members")
       .select("*")
       .eq("user_id", userId)
+      .eq("status", "pending")
+      .order("requested_at", { ascending: false });
+    const members = ((data ?? []) as Row[]).map(mapMember);
+    const orgs = await Promise.all(members.map((m) => getOrgById(m.orgId)));
+    return members.map((m, i) => ({
+      orgId: m.orgId,
+      orgName: orgs[i]?.name ?? "Organization",
+      requireApproval: orgs[i]?.requireApproval ?? true,
+    }));
+  } catch {
+    return [];
+  }
+}
+
+/** Enter / switch to an org the caller is an active member of. */
+export async function switchActiveOrg(orgId: string): Promise<Result> {
+  const user = await getUser();
+  if (!user) return { ok: false, error: "Sign in first." };
+  try {
+    const supabase = await createClient();
+    // Confirm an active membership (or the resilience bridge) before entering.
+    const { data: member } = await supabase
+      .from("organization_members")
+      .select("id")
+      .eq("user_id", user.id)
+      .eq("org_id", orgId)
       .eq("status", "active")
       .maybeSingle();
-    if (data) return mapMember(data as Row);
-
-    // Resilience bridge: a profile assigned to an org (by the superadmin console,
-    // or by the schema backfill before the members table existed) counts as an
-    // active membership even without an explicit member row.
-    const { data: prof } = await supabase
-      .from("profiles")
-      .select("id, full_name, role, org_id")
-      .eq("id", userId)
-      .maybeSingle();
-    if (prof?.org_id) {
-      const role = isOrgRole(prof.role) ? prof.role : "rep";
-      return {
-        id: `profile-${userId}`,
-        orgId: String(prof.org_id),
-        userId,
-        email: "",
-        name: String(prof.full_name ?? ""),
-        role,
-        permissions: {},
-        status: "active",
-        requestedAt: "",
-        decidedAt: null,
-        createdAt: "",
-      };
+    if (!member) {
+      const { data: prof } = await supabase
+        .from("profiles")
+        .select("org_id")
+        .eq("id", user.id)
+        .maybeSingle();
+      if (!prof || String(prof.org_id) !== orgId)
+        return { ok: false, error: "You’re not a member of that organization." };
     }
-    return null;
-  } catch {
-    return null;
+    const writer = isAdminConfigured() ? createAdminClient() : supabase;
+    const { error } = await writer
+      .from("profiles")
+      .update({ org_id: orgId })
+      .eq("id", user.id);
+    return error ? { ok: false, error: error.message } : { ok: true };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Failed." };
+  }
+}
+
+/** Leave the active org (or clear the active selection back to the Hub). */
+export async function leaveActiveOrg(): Promise<Result> {
+  const user = await getUser();
+  if (!user) return { ok: false, error: "Sign in first." };
+  if (!isAdminConfigured()) return { ok: false, error: NEEDS_SERVICE };
+  try {
+    const admin = createAdminClient();
+    await admin.from("profiles").update({ org_id: null }).eq("id", user.id);
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Failed." };
   }
 }
 
@@ -488,11 +540,13 @@ export async function createOrganization(input: {
   name: string;
   industry?: string;
   template?: string;
+  blueprint?: OrgBlueprint;
 }): Promise<{ ok: boolean; error?: string; orgId?: string }> {
   const user = await getUser();
   if (!user) return { ok: false, error: "Sign in first." };
   if (!isAdminConfigured()) return { ok: false, error: NEEDS_SERVICE };
-  const name = input.name.trim();
+  const bp = input.blueprint;
+  const name = (bp?.name || input.name).trim();
   if (!name) return { ok: false, error: "Organization name is required." };
   try {
     const admin = createAdminClient();
@@ -505,18 +559,30 @@ export async function createOrganization(input: {
       .maybeSingle();
     if (clash) slug = `${slug}-${Math.random().toString(36).slice(2, 6)}`;
 
+    const insert: Record<string, unknown> = {
+      name,
+      slug,
+      industry: (bp?.industry ?? input.industry ?? "").trim(),
+      dialer_template: bp?.template || input.template || "general",
+      join_code: genJoinCode(),
+      owner_id: user.id,
+      require_approval: bp ? bp.requireApproval : true,
+      allow_join: true,
+    };
+    if (bp) {
+      // Apply the full white-label blueprint the AI produced.
+      insert.product_name = bp.productName ?? "";
+      insert.tagline = bp.tagline ?? "";
+      insert.description = bp.description ?? "";
+      insert.brand_color = bp.brandColor ?? "";
+      insert.accent_color = bp.accentColor ?? "";
+      insert.default_role = bp.defaultRole ?? "rep";
+      insert.settings = mergeSettings(bp.settings);
+    }
+
     const { data: org, error } = await admin
       .from("organizations")
-      .insert({
-        name,
-        slug,
-        industry: input.industry?.trim() ?? "",
-        dialer_template: input.template?.trim() || "general",
-        join_code: genJoinCode(),
-        owner_id: user.id,
-        require_approval: true,
-        allow_join: true,
-      })
+      .insert(insert)
       .select("id")
       .single();
     if (error || !org) {

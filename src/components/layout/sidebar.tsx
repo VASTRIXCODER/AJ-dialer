@@ -1,13 +1,14 @@
 "use client";
 
 import { motion } from "framer-motion";
-import { Building2, LogOut } from "lucide-react";
+import { ArrowLeftRight, Building2, LogOut } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useId } from "react";
 import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Wordmark } from "@/components/brand/logo";
+import type { OrgFeatures } from "@/lib/org/settings";
 import { ROLE_LABEL, type OrgRole, isOrgRole } from "@/lib/permissions";
 import { cn } from "@/lib/utils";
 import { navGroups } from "./nav";
@@ -17,6 +18,7 @@ type Account = { name: string; email: string; initials: string };
 export function Sidebar({
   account,
   permissions = [],
+  features = null,
   orgName = null,
   productName = null,
   brandColor = null,
@@ -25,6 +27,7 @@ export function Sidebar({
 }: {
   account?: Account | null;
   permissions?: string[];
+  features?: OrgFeatures | null;
   orgName?: string | null;
   productName?: string | null;
   brandColor?: string | null;
@@ -37,12 +40,15 @@ export function Sidebar({
   let order = 0;
 
   const orgRole: OrgRole | null = isOrgRole(role) ? role : null;
-  // Only show nav items the viewer is permitted to see (e.g. reps don't see Admin).
+  // Show only nav items the viewer may see (reps don't see Admin) and that the
+  // org has enabled (a tenant can switch whole areas of the dialer off).
   const groups = navGroups
     .map((g) => ({
       ...g,
       items: g.items.filter(
-        (it) => !it.permission || permissions.includes(it.permission),
+        (it) =>
+          (!it.permission || permissions.includes(it.permission)) &&
+          (!it.feature || !features || features[it.feature] !== false),
       ),
     }))
     .filter((g) => g.items.length > 0);
@@ -55,31 +61,41 @@ export function Sidebar({
         </Link>
       </div>
 
-      {/* Organization identity */}
+      {/* Organization identity + workspace switcher */}
       {orgName && (
         <div className="px-3">
-          <div className="flex items-center gap-2.5 rounded-xl border border-border/60 bg-surface/40 p-2.5">
-            <span
-              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-white shadow-soft"
-              style={{
-                background: brandColor
-                  ? `linear-gradient(135deg, ${brandColor}, ${brandColor}cc)`
-                  : "linear-gradient(135deg, hsl(var(--primary)), hsl(var(--accent)))",
-              }}
-            >
-              <Building2 className="h-4 w-4" />
-            </span>
-            <div className="min-w-0 flex-1">
-              <p className="truncate text-sm font-semibold leading-tight">{orgName}</p>
-              <p className="truncate text-[11px] text-muted-foreground">
-                {productName || "AI Auto-Dialer"}
-              </p>
+          <div className="rounded-xl border border-border/60 bg-surface/40 p-2.5">
+            <div className="flex items-center gap-2.5">
+              <span
+                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-white shadow-soft"
+                style={{
+                  background: brandColor
+                    ? `linear-gradient(135deg, ${brandColor}, ${brandColor}cc)`
+                    : "linear-gradient(135deg, hsl(var(--primary)), hsl(var(--accent)))",
+                }}
+              >
+                <Building2 className="h-4 w-4" />
+              </span>
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-sm font-semibold leading-tight">{orgName}</p>
+                <p className="truncate text-[11px] text-muted-foreground">
+                  {productName || "AI Auto-Dialer"}
+                </p>
+              </div>
+              {orgRole && (
+                <Badge tone={orgRole === "rep" ? "neutral" : "primary"} className="shrink-0">
+                  {ROLE_LABEL[orgRole]}
+                </Badge>
+              )}
             </div>
-            {orgRole && (
-              <Badge tone={orgRole === "rep" ? "neutral" : "primary"} className="shrink-0">
-                {ROLE_LABEL[orgRole]}
-              </Badge>
-            )}
+            <Link
+              href="/hub"
+              onClick={onNavigate}
+              className="mt-2 flex items-center justify-center gap-1.5 rounded-lg border border-border/60 py-1.5 text-[11px] font-semibold text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
+            >
+              <ArrowLeftRight className="h-3.5 w-3.5" />
+              Switch organization
+            </Link>
           </div>
         </div>
       )}

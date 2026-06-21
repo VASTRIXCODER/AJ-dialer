@@ -4,6 +4,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import { X } from "lucide-react";
 import { useState } from "react";
 import { CommandPalette } from "@/components/ai/command-palette";
+import type { OrgFeatures } from "@/lib/org/settings";
 import { AmbientBackground } from "./ambient-background";
 import { Sidebar } from "./sidebar";
 import { Topbar } from "./topbar";
@@ -16,6 +17,7 @@ export function AppShell({
   aiConfigured,
   account,
   permissions = [],
+  features = null,
   orgName = null,
   productName = null,
   brandColor = null,
@@ -26,13 +28,14 @@ export function AppShell({
   aiConfigured: boolean;
   account: Account | null;
   permissions?: string[];
+  features?: OrgFeatures | null;
   orgName?: string | null;
   productName?: string | null;
   brandColor?: string | null;
   role?: string | null;
 }) {
   const [mobileOpen, setMobileOpen] = useState(false);
-  const sidebarProps = { permissions, orgName, productName, brandColor, role };
+  const sidebarProps = { permissions, features, orgName, productName, brandColor, role };
 
   return (
     <div className="relative flex min-h-screen">

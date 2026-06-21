@@ -18,9 +18,9 @@ export default async function AppGroupLayout({
 
   const viewer = await getViewer();
 
-  // Signed out (and not demo) → sign in. Signed in but in no org → onboarding.
+  // Signed out (and not demo) → sign in. Signed in but no active org → the Hub.
   if (!viewer.isDemo && !viewer.user) redirect("/login");
-  if (!viewer.isDemo && !viewer.org) redirect("/onboarding");
+  if (!viewer.isDemo && !viewer.org) redirect("/hub");
 
   // The global kill switch and per-account suspension gate every real user.
   if (viewer.user) {
@@ -45,6 +45,7 @@ export default async function AppGroupLayout({
       aiConfigured={isAIConfigured()}
       account={account}
       permissions={viewer.permissions}
+      features={viewer.org?.settings.features ?? null}
       orgName={viewer.org?.name ?? null}
       productName={viewer.org?.productName || null}
       brandColor={viewer.org?.brandColor || null}

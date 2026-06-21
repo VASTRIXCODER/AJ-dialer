@@ -57,7 +57,7 @@ export function AuthForm({ mode }: { mode: "login" | "signup" }) {
     setNotice("");
     const supabase = createClient();
     const next =
-      new URLSearchParams(window.location.search).get("redirect") || "/dashboard";
+      new URLSearchParams(window.location.search).get("redirect") || "/hub";
     const { error } = await supabase.auth.signInWithOAuth({
       provider: "google",
       options: {
@@ -112,7 +112,7 @@ export function AuthForm({ mode }: { mode: "login" | "signup" }) {
           return;
         }
         const redirect =
-          new URLSearchParams(window.location.search).get("redirect") || "/dashboard";
+          new URLSearchParams(window.location.search).get("redirect") || "/hub";
         router.push(redirect);
         router.refresh();
       } else {
@@ -126,7 +126,7 @@ export function AuthForm({ mode }: { mode: "login" | "signup" }) {
           return;
         }
         if (data.session) {
-          router.push("/dashboard");
+          router.push("/hub");
           router.refresh();
         } else {
           setNotice("Check your email to confirm your account, then sign in.");

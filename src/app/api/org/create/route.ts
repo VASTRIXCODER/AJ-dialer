@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createOrganization } from "@/lib/org/membership";
+import type { OrgBlueprint } from "@/lib/org/settings";
 
 export const dynamic = "force-dynamic";
 
@@ -8,16 +9,19 @@ export async function POST(req: Request) {
     name?: string;
     industry?: string;
     template?: string;
+    blueprint?: OrgBlueprint;
   };
-  if (!body.name?.trim())
+  const name = body.blueprint?.name || body.name;
+  if (!name?.trim())
     return NextResponse.json(
       { ok: false, error: "Organization name is required." },
       { status: 400 },
     );
   const r = await createOrganization({
-    name: body.name,
+    name: name,
     industry: body.industry,
     template: body.template,
+    blueprint: body.blueprint,
   });
   return NextResponse.json(r, { status: r.ok ? 200 : 400 });
 }

@@ -25,6 +25,18 @@ import { cn } from "@/lib/utils";
 
 const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
+const FEATURE_FLAGS: { key: keyof OrgSettings["features"]; label: string }[] = [
+  { key: "aiDialer", label: "Power dialer" },
+  { key: "leads", label: "Leads" },
+  { key: "appointments", label: "Appointments" },
+  { key: "callbacks", label: "Callbacks" },
+  { key: "liveMonitor", label: "Live monitor" },
+  { key: "leaderboard", label: "Leaderboard" },
+  { key: "campaigns", label: "Campaigns" },
+  { key: "reports", label: "Reports" },
+  { key: "aiAgent", label: "AI agent" },
+];
+
 export function OrgSettingsForm({
   org,
   canDelete,
@@ -65,6 +77,13 @@ export function OrgSettingsForm({
   const [dispositions, setDispositions] = useState<OrgSettings["dispositions"]>(
     org.settings.dispositions,
   );
+  const [features, setFeatures] = useState<OrgSettings["features"]>(
+    org.settings.features,
+  );
+  const [terms, setTerms] = useState({
+    leadNoun: org.settings.leadNoun,
+    leadNounPlural: org.settings.leadNounPlural,
+  });
 
   async function save(patch: OrgUpdate, key: string) {
     setBusy(key);
@@ -120,7 +139,7 @@ export function OrgSettingsForm({
       const res = await fetch("/api/org/settings", { method: "DELETE" });
       const j = await res.json().catch(() => ({}));
       if (j.ok) {
-        router.push("/onboarding");
+        router.push("/hub");
         router.refresh();
       } else setErr(j.error ?? "Could not delete.");
     } catch {
@@ -475,6 +494,13 @@ export function OrgSettingsForm({
           <Field label="Persona / instructions" className="sm:col-span-2">
             <Textarea value={ai.persona} onChange={(e) => setAi({ ...ai, persona: e.target.value })} />
           </Field>
+          <Field label="Opening greeting" className="sm:col-span-2">
+            <Textarea
+              value={ai.greeting}
+              onChange={(e) => setAi({ ...ai, greeting: e.target.value })}
+              placeholder="Use {agent} and {org} as placeholders."
+            />
+          </Field>
         </div>
         <div className="mt-3">
           <Toggle
@@ -579,6 +605,56 @@ export function OrgSettingsForm({
         </div>
       </SectionCard>
 
+      {/* Features & terminology */}
+      <SectionCard
+        title="Features & terminology"
+        description="Turn whole areas of the dialer on or off, and tailor the wording."
+      >
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <Field label="Contact noun (singular)">
+            <Input
+              value={terms.leadNoun}
+              placeholder="lead"
+              onChange={(e) => setTerms({ ...terms, leadNoun: e.target.value })}
+            />
+          </Field>
+          <Field label="Contact noun (plural)">
+            <Input
+              value={terms.leadNounPlural}
+              placeholder="leads"
+              onChange={(e) => setTerms({ ...terms, leadNounPlural: e.target.value })}
+            />
+          </Field>
+        </div>
+        <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
+          {FEATURE_FLAGS.map(({ key, label }) => (
+            <Toggle
+              key={key}
+              label={label}
+              checked={features[key]}
+              onChange={(v) => setFeatures({ ...features, [key]: v })}
+            />
+          ))}
+        </div>
+        <div className="mt-4 flex justify-end">
+          <SaveBtn
+            k="features"
+            onClick={() =>
+              save(
+                {
+                  settings: {
+                    features,
+                    leadNoun: terms.leadNoun,
+                    leadNounPlural: terms.leadNounPlural,
+                  },
+                },
+                "features",
+              )
+            }
+          />
+        </div>
+      </SectionCard>
+
       {/* Danger zone */}
       {canDelete && (
         <SectionCard
@@ -591,7 +667,7 @@ export function OrgSettingsForm({
               <div>
                 <p className="text-sm font-semibold">Delete this organization</p>
                 <p className="text-xs text-muted-foreground">
-                  Members are unassigned and sent back to onboarding.
+                  Members are unassigned and sent back to the Hub.
                 </p>
               </div>
             </div>
