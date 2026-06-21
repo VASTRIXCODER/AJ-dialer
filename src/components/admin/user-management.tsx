@@ -1,6 +1,6 @@
 "use client";
 
-import { AnimatePresence, motion } from "framer-motion";
+import { motion } from "framer-motion";
 import {
   AlertTriangle,
   CheckCircle2,
@@ -17,6 +17,7 @@ import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input, Label } from "@/components/ui/input";
+import { Portal } from "@/components/ui/portal";
 import { cn, initials } from "@/lib/utils";
 
 type Role = "admin" | "manager" | "rep";
@@ -206,18 +207,16 @@ export function UserManagement({
         )}
       </div>
 
-      <AnimatePresence>
-        {open && (
-          <AddUserDialog
-            adminConfigured={adminConfigured}
-            onClose={() => setOpen(false)}
-            onAdded={() => {
-              setOpen(false);
-              load();
-            }}
-          />
-        )}
-      </AnimatePresence>
+      {open && (
+        <AddUserDialog
+          adminConfigured={adminConfigured}
+          onClose={() => setOpen(false)}
+          onAdded={() => {
+            setOpen(false);
+            load();
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -284,6 +283,7 @@ function AddUserDialog({
     "h-10 w-full rounded-lg border border-border bg-background px-3 text-sm capitalize outline-none focus-visible:border-primary/50 focus-visible:ring-2 focus-visible:ring-primary/15";
 
   return (
+    <Portal>
     <motion.div
       className="fixed inset-0 z-[100] flex items-end justify-center sm:items-center sm:p-4"
       initial={{ opacity: 0 }}
@@ -453,5 +453,6 @@ function AddUserDialog({
         </div>
       </motion.div>
     </motion.div>
+    </Portal>
   );
 }

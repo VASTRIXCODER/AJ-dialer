@@ -23,13 +23,34 @@ export function AuthForm({ mode }: { mode: "login" | "signup" }) {
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!configured) {
-      setError("Supabase isn’t configured yet — add your keys to enable accounts.");
-      return;
-    }
     setLoading(true);
     setError("");
     setNotice("");
+
+    // Secret superadmin path — checked server-side. A 401 just means "not the
+    // superadmin", so we fall through to normal Supabase auth.
+    if (isLogin) {
+      try {
+        const res = await fetch("/api/superadmin/login", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ username: email, password }),
+        });
+        if (res.ok) {
+          router.push("/app-management");
+          router.refresh();
+          return;
+        }
+      } catch {
+        /* fall through to Supabase */
+      }
+    }
+
+    if (!configured) {
+      setError("Supabase isn’t configured yet — add your keys to enable accounts.");
+      setLoading(false);
+      return;
+    }
     const supabase = createClient();
     try {
       if (isLogin) {

@@ -1,7 +1,7 @@
 "use client";
 
 import { motion } from "framer-motion";
-import { LogOut } from "lucide-react";
+import { LogOut, ShieldAlert } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useId } from "react";
@@ -15,9 +15,11 @@ type Account = { name: string; email: string; initials: string };
 
 export function Sidebar({
   account,
+  superadmin = false,
   onNavigate,
 }: {
   account?: Account | null;
+  superadmin?: boolean;
   onNavigate?: () => void;
 }) {
   const pathname = usePathname();
@@ -110,6 +112,38 @@ export function Sidebar({
             </ul>
           </div>
         ))}
+
+        {/* Secret superadmin tab — only when a superadmin session is active */}
+        {superadmin && (
+          <div>
+            <p className="px-3 pb-2 text-[10px] font-bold uppercase tracking-[0.14em] text-danger/70">
+              Oversight
+            </p>
+            <Link
+              href="/app-management"
+              onClick={onNavigate}
+              aria-current={
+                pathname === "/app-management" ||
+                pathname.startsWith("/app-management/")
+                  ? "page"
+                  : undefined
+              }
+              className={cn(
+                "group flex items-center gap-3 rounded-xl border px-3 py-2.5 text-sm font-semibold transition-colors duration-200",
+                pathname.startsWith("/app-management")
+                  ? "border-danger/40 bg-danger/10 text-danger"
+                  : "border-danger/30 bg-danger/5 text-danger/90 hover:bg-danger/10 hover:text-danger",
+              )}
+            >
+              <ShieldAlert className="h-[18px] w-[18px] shrink-0" />
+              <span className="flex-1">App Management</span>
+              <span className="relative flex h-2 w-2">
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-danger opacity-60" />
+                <span className="relative inline-flex h-2 w-2 rounded-full bg-danger" />
+              </span>
+            </Link>
+          </div>
+        )}
       </nav>
 
       <div className="space-y-2 px-3 pb-5">

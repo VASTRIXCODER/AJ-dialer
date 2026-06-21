@@ -1,6 +1,6 @@
 "use client";
 
-import { AnimatePresence, motion } from "framer-motion";
+import { motion } from "framer-motion";
 import {
   BatteryCharging,
   Car,
@@ -19,6 +19,7 @@ import {
 import { useMemo, useState } from "react";
 import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
+import { Portal } from "@/components/ui/portal";
 import { Ring } from "@/components/ui/progress";
 import type { Lead } from "@/lib/types";
 import { formatCurrency, formatPhone, initials } from "@/lib/utils";
@@ -96,19 +97,17 @@ export function LeadPanel({
         <LeadDetail lead={lead} upNext={upNext} />
       )}
 
-      <AnimatePresence>
-        {browseOpen && (
-          <LeadBrowser
-            queue={queue}
-            currentId={lead?.id ?? null}
-            onPick={(id) => {
-              onSelect?.(id);
-              setBrowseOpen(false);
-            }}
-            onClose={() => setBrowseOpen(false)}
-          />
-        )}
-      </AnimatePresence>
+      {browseOpen && (
+        <LeadBrowser
+          queue={queue}
+          currentId={lead?.id ?? null}
+          onPick={(id) => {
+            onSelect?.(id);
+            setBrowseOpen(false);
+          }}
+          onClose={() => setBrowseOpen(false)}
+        />
+      )}
     </div>
   );
 }
@@ -272,6 +271,7 @@ function LeadBrowser({
   }, [q, queue]);
 
   return (
+    <Portal>
     <motion.div
       className="fixed inset-0 z-[100] flex items-end justify-center sm:items-center sm:p-4"
       initial={{ opacity: 0 }}
@@ -348,5 +348,6 @@ function LeadBrowser({
         </div>
       </motion.div>
     </motion.div>
+    </Portal>
   );
 }

@@ -20,6 +20,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { OutcomeGrid } from "@/components/dialer/outcome-grid";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Portal } from "@/components/ui/portal";
 import { outcomeConfig } from "@/lib/status";
 import type { CallOutcome } from "@/lib/types";
 import { cn, formatDuration } from "@/lib/utils";
@@ -196,6 +197,7 @@ export function CallDashboard({
   const firstName = (detail?.leadName ?? "").split(" ")[0] || "Homeowner";
 
   return (
+    <Portal>
     <motion.div
       className="fixed inset-0 z-[100] flex items-end justify-center sm:items-center sm:p-4"
       initial={{ opacity: 0 }}
@@ -436,5 +438,6 @@ export function CallDashboard({
         </div>
       </motion.div>
     </motion.div>
+    </Portal>
   );
 }

@@ -1,6 +1,5 @@
 "use client";
 
-import { AnimatePresence } from "framer-motion";
 import {
   Bot,
   CalendarCheck,
@@ -361,16 +360,14 @@ export function AiLiveMonitor({
         </section>
       )}
 
-      <AnimatePresence>
-        {openId && (
-          <CallDashboard
-            key={openId}
-            conversationId={openId}
-            onClose={() => setOpenId(null)}
-            onChanged={load}
-          />
-        )}
-      </AnimatePresence>
+      {openId && (
+        <CallDashboard
+          key={openId}
+          conversationId={openId}
+          onClose={() => setOpenId(null)}
+          onChanged={load}
+        />
+      )}
     </div>
   );
 }

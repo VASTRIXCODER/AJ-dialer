@@ -1,9 +1,10 @@
 "use client";
 
-import { AnimatePresence, motion } from "framer-motion";
+import { motion } from "framer-motion";
 import { Bot, X } from "lucide-react";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
+import { Portal } from "@/components/ui/portal";
 import type { KnownInfo } from "@/lib/use-dialer";
 import { formatPhone } from "@/lib/utils";
 
@@ -37,7 +38,7 @@ export function KnownInfoDialog({
     "h-10 w-full rounded-lg border border-border bg-background/50 px-3 text-sm focus-visible:border-primary/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/15";
 
   return (
-    <AnimatePresence>
+    <Portal>
       <motion.div
         className="fixed inset-0 z-[100] flex items-end justify-center sm:items-center sm:p-4"
         initial={{ opacity: 0 }}
@@ -139,6 +140,6 @@ export function KnownInfoDialog({
           </div>
         </motion.div>
       </motion.div>
-    </AnimatePresence>
+    </Portal>
   );
 }

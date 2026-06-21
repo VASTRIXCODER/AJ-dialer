@@ -204,3 +204,18 @@ drop policy if exists "team_members owner" on public.team_members;
 create policy "team_members owner" on public.team_members
   for all using (auth.uid() = owner_id) with check (auth.uid() = owner_id);
 
+-- ── Superadmin: account suspension + app-wide controls ───────────────────────
+-- A disabled account is blocked from the app shell by the (app) layout.
+alter table public.profiles add column if not exists disabled boolean not null default false;
+
+-- Global app settings (maintenance / kill switch). Single 'global' row. RLS on
+-- with no policies → only the service-role (superadmin) client can touch it.
+create table if not exists public.app_settings (
+  id          text primary key default 'global',
+  maintenance boolean not null default false,
+  message     text default '',
+  updated_at  timestamptz not null default now()
+);
+alter table public.app_settings enable row level security;
+insert into public.app_settings (id) values ('global') on conflict (id) do nothing;
+

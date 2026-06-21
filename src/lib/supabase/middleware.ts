@@ -15,6 +15,7 @@ const PROTECTED = [
   "/ai-agent",
   "/admin",
   "/settings",
+  "/app-management",
 ];
 
 /**
@@ -49,7 +50,15 @@ export async function updateSession(request: NextRequest) {
   const path = request.nextUrl.pathname;
   const onAuthPage = path === "/login" || path === "/signup";
 
-  if (!user && PROTECTED.some((p) => path === p || path.startsWith(`${p}/`))) {
+  // Superadmin sessions (a signed httpOnly cookie) bypass the Supabase guard —
+  // their access is HMAC-verified by the server components/routes they hit.
+  const hasSuperadmin = Boolean(request.cookies.get("sa_session")?.value);
+
+  if (
+    !user &&
+    !hasSuperadmin &&
+    PROTECTED.some((p) => path === p || path.startsWith(`${p}/`))
+  ) {
     const url = request.nextUrl.clone();
     url.pathname = "/login";
     url.searchParams.set("redirect", path);

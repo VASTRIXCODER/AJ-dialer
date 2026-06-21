@@ -1,6 +1,5 @@
 "use client";
 
-import { AnimatePresence } from "framer-motion";
 import { Bot, PlayCircle, User } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
@@ -114,16 +113,14 @@ export function RecentCalls({ calls }: { calls: RecentCall[] }) {
         </table>
       </div>
 
-      <AnimatePresence>
-        {openId && (
-          <CallDashboard
-            key={openId}
-            conversationId={openId}
-            onClose={() => setOpenId(null)}
-            onChanged={() => router.refresh()}
-          />
-        )}
-      </AnimatePresence>
+      {openId && (
+        <CallDashboard
+          key={openId}
+          conversationId={openId}
+          onClose={() => setOpenId(null)}
+          onChanged={() => router.refresh()}
+        />
+      )}
     </>
   );
 }
