@@ -1,14 +1,18 @@
 "use client";
 
+import type { Call, Device } from "@twilio/voice-sdk";
 import { motion } from "framer-motion";
 import {
   Bot,
   CalendarCheck,
   ClipboardList,
   Frown,
+  Headphones,
   Loader2,
   Meh,
   MessageSquare,
+  Mic,
+  MicOff,
   PhoneForwarded,
   PhoneOff,
   Play,
@@ -23,7 +27,7 @@ import { Button } from "@/components/ui/button";
 import { Portal } from "@/components/ui/portal";
 import { outcomeConfig } from "@/lib/status";
 import type { CallOutcome } from "@/lib/types";
-import { cn, formatDuration } from "@/lib/utils";
+import { cn, formatDuration, formatPhone } from "@/lib/utils";
 
 type AICallState = "initiated" | "in_progress" | "completed" | "failed";
 type Sentiment = "positive" | "neutral" | "negative";
@@ -43,6 +47,7 @@ export type CallDetail = {
   recordingAvailable: boolean;
   transcript: { role: string; message: string; secs: number | null }[];
   appointment: { when: string; notes: string } | null;
+  transferNumber: string;
   configured: boolean;
 };
 
@@ -80,7 +85,11 @@ export function CallDashboard({
   const [note, setNote] = useState("");
   const [showDispo, setShowDispo] = useState(false);
   const [now, setNow] = useState(() => Date.now());
+  const [takeover, setTakeover] = useState<"idle" | "joining" | "live">("idle");
+  const [takeMuted, setTakeMuted] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const deviceRef = useRef<Device | null>(null);
+  const taCallRef = useRef<Call | null>(null);
 
   const fetchDetail = useCallback(async () => {
     try {
@@ -189,6 +198,132 @@ export function CallDashboard({
       setBusy(null);
     }
   }
+
+  // ── Take over: hand the live call from the AI to you (in the browser) ────────
+  const ensureDevice = useCallback(async (): Promise<Device> => {
+    if (deviceRef.current) return deviceRef.current;
+    const res = await fetch("/api/twilio/token");
+    const data = (await res.json().catch(() => ({}))) as { token?: string };
+    if (!data.token)
+      throw new Error("Twilio isn't connected — add credentials to take over calls.");
+    const { Device } = await import("@twilio/voice-sdk");
+    const device = new Device(data.token, { logLevel: "error" });
+    await device.register();
+    deviceRef.current = device;
+    return device;
+  }, []);
+
+  function hangUpTakeover() {
+    try {
+      taCallRef.current?.disconnect();
+    } catch {
+      /* noop */
+    }
+    taCallRef.current = null;
+    setTakeover("idle");
+    setTakeMuted(false);
+  }
+
+  async function doTakeover() {
+    setBusy("takeover");
+    setError("");
+    setTakeover("joining");
+    try {
+      const device = await ensureDevice();
+      const room = `to-${conversationId}-${Date.now().toString(36)}`
+        .replace(/[^a-zA-Z0-9_-]/g, "")
+        .slice(0, 100);
+      // Join the conference first so the homeowner is never left stranded.
+      const call = await device.connect({ params: { Conference: room } });
+      taCallRef.current = call;
+      call.on("disconnect", () => {
+        taCallRef.current = null;
+        setTakeover("idle");
+        setTakeMuted(false);
+      });
+      call.on("error", () => {
+        setError("Call audio error.");
+        setTakeover("idle");
+      });
+      // Move the homeowner off the AI and into the conference with you.
+      const res = await fetch("/api/elevenlabs/intervene", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ conversationId, action: "takeover", room }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setError(json.error ?? "Take over failed.");
+        try {
+          call.disconnect();
+        } catch {
+          /* noop */
+        }
+        setTakeover("idle");
+        return;
+      }
+      setTakeover("live");
+      onChanged();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not take over the call.");
+      setTakeover("idle");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  function toggleTakeMute() {
+    setTakeMuted((m) => {
+      const next = !m;
+      try {
+        taCallRef.current?.mute(next);
+      } catch {
+        /* noop */
+      }
+      return next;
+    });
+  }
+
+  async function doTransfer() {
+    setBusy("transfer");
+    setError("");
+    setNote("");
+    try {
+      const res = await fetch("/api/elevenlabs/intervene", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ conversationId, action: "transfer" }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) setError(json.error ?? "Transfer failed.");
+      else {
+        setNote(`Transferred to ${formatPhone(json.target ?? "")}.`);
+        await fetchDetail();
+        onChanged();
+      }
+    } catch {
+      setError("Network error.");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  // Tear down the take-over device when the dashboard closes.
+  useEffect(
+    () => () => {
+      try {
+        taCallRef.current?.disconnect();
+      } catch {
+        /* noop */
+      }
+      try {
+        deviceRef.current?.destroy();
+      } catch {
+        /* noop */
+      }
+    },
+    [],
+  );
 
   const st = detail ? stateMeta[detail.state] : stateMeta.initiated;
   const sent = sentimentMeta[detail?.sentiment ?? "neutral"];
@@ -373,24 +508,67 @@ export function CallDashboard({
           {error && <p className="text-xs font-medium text-danger">{error}</p>}
           {note && <p className="text-xs font-medium text-warning">{note}</p>}
 
-          {live && (
-            <div className="flex gap-2">
+          {/* You're live on the call (AI handed off) */}
+          {takeover !== "idle" && (
+            <div className="rounded-xl border border-success/40 bg-success/5 p-3">
+              <p className="flex items-center gap-2 text-sm font-semibold text-success">
+                <span className="relative flex h-2 w-2">
+                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-success opacity-60" />
+                  <span className="relative inline-flex h-2 w-2 rounded-full bg-success" />
+                </span>
+                {takeover === "joining"
+                  ? "Connecting you to the homeowner…"
+                  : "You're on the call — the AI has handed off to you"}
+              </p>
+              {takeover === "live" && (
+                <div className="mt-2.5 flex gap-2">
+                  <Button variant="outline" className="flex-1 gap-1.5" onClick={toggleTakeMute}>
+                    {takeMuted ? <MicOff className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
+                    {takeMuted ? "Unmute" : "Mute"}
+                  </Button>
+                  <Button variant="danger" className="flex-1 gap-1.5" onClick={hangUpTakeover}>
+                    <PhoneOff className="h-4 w-4" />
+                    Hang up
+                  </Button>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Live-call controls: take over (AI → you), transfer, or end */}
+          {live && takeover === "idle" && (
+            <div className="flex flex-wrap gap-2">
               <Button
-                variant="outline"
+                variant="primary"
                 className="flex-1 gap-1.5"
                 disabled={busy === "takeover"}
-                onClick={() => intervene("takeover")}
+                onClick={doTakeover}
               >
                 {busy === "takeover" ? (
                   <Loader2 className="h-4 w-4 animate-spin" />
                 ) : (
-                  <PhoneForwarded className="h-4 w-4" />
+                  <Headphones className="h-4 w-4" />
                 )}
                 Take over
               </Button>
               <Button
-                variant="danger"
+                variant="outline"
                 className="flex-1 gap-1.5"
+                disabled={busy === "transfer"}
+                onClick={doTransfer}
+              >
+                {busy === "transfer" ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <PhoneForwarded className="h-4 w-4" />
+                )}
+                {detail?.transferNumber
+                  ? `Transfer to ${formatPhone(detail.transferNumber)}`
+                  : "Transfer"}
+              </Button>
+              <Button
+                variant="danger"
+                className="gap-1.5"
                 disabled={busy === "end"}
                 onClick={() => intervene("end")}
               >
@@ -399,7 +577,7 @@ export function CallDashboard({
                 ) : (
                   <PhoneOff className="h-4 w-4" />
                 )}
-                End call
+                End
               </Button>
             </div>
           )}

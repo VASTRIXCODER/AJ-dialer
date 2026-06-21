@@ -22,8 +22,8 @@ export const elevenLabsConfig = {
   agentId: process.env.ELEVENLABS_AGENT_ID ?? "",
   agentPhoneNumberId: process.env.ELEVENLABS_AGENT_PHONE_NUMBER_ID ?? "",
   webhookSecret: process.env.ELEVENLABS_WEBHOOK_SECRET ?? "",
-  /** E.164 rep number a supervisor "take over" transfers the live call to. */
-  transferNumber: process.env.ELEVENLABS_TRANSFER_NUMBER ?? "",
+  /** E.164 rep number the "Transfer" button reroutes a live call to. */
+  transferNumber: process.env.ELEVENLABS_TRANSFER_NUMBER || "+14693018199",
 };
 
 /** True when the AI agent can place outbound calls. */

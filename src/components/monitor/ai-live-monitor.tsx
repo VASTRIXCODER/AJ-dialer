@@ -7,7 +7,6 @@ import {
   Frown,
   Headphones,
   Meh,
-  PhoneForwarded,
   PhoneOff,
   Radio,
   Smile,
@@ -280,20 +279,7 @@ export function AiLiveMonitor({
                       }}
                     >
                       <Headphones className="h-3.5 w-3.5" />
-                      Manage
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className="gap-1.5"
-                      disabled={busy === c.conversationId + "takeover"}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        intervene(c.conversationId, "takeover");
-                      }}
-                    >
-                      <PhoneForwarded className="h-3.5 w-3.5" />
-                      Take over
+                      Manage &amp; take over
                     </Button>
                     <Button
                       size="sm"

@@ -6,7 +6,11 @@ import {
   type AICallState,
 } from "@/lib/ai-call-store";
 import { getAIConversation } from "@/lib/db/records";
-import { getConversation, isElevenLabsConfigured } from "@/lib/elevenlabs";
+import {
+  elevenLabsConfig,
+  getConversation,
+  isElevenLabsConfigured,
+} from "@/lib/elevenlabs";
 import type { CallOutcome } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -29,6 +33,7 @@ interface DetailResponse {
   recordingAvailable: boolean;
   transcript: TranscriptTurn[];
   appointment: { when: string; notes: string } | null;
+  transferNumber: string;
   configured: boolean;
 }
 
@@ -183,6 +188,7 @@ export async function GET(
       state === "completed",
     transcript,
     appointment: store?.appointment ?? db?.appointment ?? null,
+    transferNumber: elevenLabsConfig.transferNumber,
     configured: isElevenLabsConfigured(),
   };
 

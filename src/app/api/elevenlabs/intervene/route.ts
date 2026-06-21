@@ -11,22 +11,28 @@ import { getRestClient, isRestConfigured } from "@/lib/twilio";
 
 export const dynamic = "force-dynamic";
 
+const xml = (body: string) =>
+  `<?xml version="1.0" encoding="UTF-8"?><Response>${body}</Response>`;
+
 /**
  * Supervisor intervention on an AI call. ElevenLabs dials through the imported
  * Twilio number, so we act on the underlying Twilio CallSid — resolved from the
- * live store, then Supabase, then the ElevenLabs conversation itself (so it
- * works on any serverless instance, not just the one that placed the call).
- *   • "end"      → hang up the Twilio leg AND finalize + categorize the session,
- *                  so a call never hangs "live" forever.
- *   • "takeover" → redirect the homeowner to a human rep (drops the AI).
+ * live store, then Supabase, then the ElevenLabs conversation (works on any
+ * serverless instance).
+ *   • "takeover" → drop the AI and move the homeowner into a conference room the
+ *                  rep's browser joins → the human takes the call live.
+ *   • "transfer" → reroute the homeowner to the rep phone line (ELEVENLABS_
+ *                  TRANSFER_NUMBER, default +1 469-301-8199).
+ *   • "end"      → hang up the leg AND finalize + categorize the session.
  */
 export async function POST(req: Request) {
-  const { conversationId, action, to } = (await req
+  const { conversationId, action, to, room } = (await req
     .json()
     .catch(() => ({}))) as {
     conversationId?: string;
-    action?: "takeover" | "end";
+    action?: "takeover" | "transfer" | "end";
     to?: string;
+    room?: string;
   };
 
   if (!conversationId || !action) {
@@ -58,10 +64,9 @@ export async function POST(req: Request) {
         await client.calls(callSid).update({ status: "completed" });
         hungUp = true;
       } catch {
-        /* leg may already be over — fall through and finalize anyway */
+        /* leg may already be over — finalize anyway */
       }
     }
-
     if (!convo && isElevenLabsConfigured()) {
       convo = await fetchConversation(conversationId);
     }
@@ -72,7 +77,6 @@ export async function POST(req: Request) {
       durationSec: convo?.durationSec ?? undefined,
       terminationReason: convo?.terminationReason || "ended_by_supervisor",
     });
-
     return NextResponse.json({
       ok: true,
       action,
@@ -83,13 +87,10 @@ export async function POST(req: Request) {
     });
   }
 
-  // ── Take over: redirect the live Twilio leg to a human rep ──────────────────
+  // takeover + transfer both need the live Twilio leg + REST.
   if (!callSid) {
     return NextResponse.json(
-      {
-        error:
-          "No live Twilio leg found for this call (it may have already ended).",
-      },
+      { error: "No live Twilio leg found for this call (it may have already ended)." },
       { status: 404 },
     );
   }
@@ -100,20 +101,32 @@ export async function POST(req: Request) {
     );
   }
 
-  const target = (to || elevenLabsConfig.transferNumber || "").trim();
-  if (!target) {
-    return NextResponse.json(
-      {
-        error:
-          "No transfer target. Set ELEVENLABS_TRANSFER_NUMBER or pass `to` (E.164).",
-      },
-      { status: 400 },
-    );
-  }
-
   try {
-    const twiml = `<?xml version="1.0" encoding="UTF-8"?><Response><Dial>${target.replace(/[<>&]/g, "")}</Dial></Response>`;
-    await client.calls(callSid).update({ twiml });
+    // ── Take over: AI → human. Move the homeowner into the rep's conference. ──
+    if (action === "takeover") {
+      const conf = (room || `to-${conversationId}`)
+        .replace(/[^a-zA-Z0-9_-]/g, "")
+        .slice(0, 100);
+      await client.calls(callSid).update({
+        twiml: xml(
+          `<Dial answerOnBridge="true"><Conference startConferenceOnEnter="true" endConferenceOnExit="true" beep="false">${conf}</Conference></Dial>`,
+        ),
+      });
+      updateAICall(conversationId, { summary: "Taken over by a human rep" });
+      return NextResponse.json({ ok: true, action, room: conf });
+    }
+
+    // ── Transfer: reroute the homeowner to the rep phone line. ────────────────
+    const target = (to || elevenLabsConfig.transferNumber || "").trim();
+    if (!target) {
+      return NextResponse.json(
+        { error: "No transfer number set. Configure ELEVENLABS_TRANSFER_NUMBER." },
+        { status: 400 },
+      );
+    }
+    await client.calls(callSid).update({
+      twiml: xml(`<Dial>${target.replace(/[<>&]/g, "")}</Dial>`),
+    });
     updateAICall(conversationId, { summary: `Transferred to ${target}` });
     return NextResponse.json({ ok: true, action, target });
   } catch (err) {
