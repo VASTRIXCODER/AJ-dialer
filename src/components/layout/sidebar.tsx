@@ -1,13 +1,14 @@
 "use client";
 
 import { motion } from "framer-motion";
-import { LogOut } from "lucide-react";
+import { Building2, LogOut } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useId } from "react";
 import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Wordmark } from "@/components/brand/logo";
+import { ROLE_LABEL, type OrgRole, isOrgRole } from "@/lib/permissions";
 import { cn } from "@/lib/utils";
 import { navGroups } from "./nav";
 
@@ -15,15 +16,36 @@ type Account = { name: string; email: string; initials: string };
 
 export function Sidebar({
   account,
+  permissions = [],
+  orgName = null,
+  productName = null,
+  brandColor = null,
+  role = null,
   onNavigate,
 }: {
   account?: Account | null;
+  permissions?: string[];
+  orgName?: string | null;
+  productName?: string | null;
+  brandColor?: string | null;
+  role?: string | null;
   onNavigate?: () => void;
 }) {
   const pathname = usePathname();
   // Unique per instance so the desktop + mobile sidebars don't share a layout id.
   const uid = useId();
   let order = 0;
+
+  const orgRole: OrgRole | null = isOrgRole(role) ? role : null;
+  // Only show nav items the viewer is permitted to see (e.g. reps don't see Admin).
+  const groups = navGroups
+    .map((g) => ({
+      ...g,
+      items: g.items.filter(
+        (it) => !it.permission || permissions.includes(it.permission),
+      ),
+    }))
+    .filter((g) => g.items.length > 0);
 
   return (
     <div className="glass flex h-full flex-col gap-6 border-r border-border/60">
@@ -33,8 +55,37 @@ export function Sidebar({
         </Link>
       </div>
 
+      {/* Organization identity */}
+      {orgName && (
+        <div className="px-3">
+          <div className="flex items-center gap-2.5 rounded-xl border border-border/60 bg-surface/40 p-2.5">
+            <span
+              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-white shadow-soft"
+              style={{
+                background: brandColor
+                  ? `linear-gradient(135deg, ${brandColor}, ${brandColor}cc)`
+                  : "linear-gradient(135deg, hsl(var(--primary)), hsl(var(--accent)))",
+              }}
+            >
+              <Building2 className="h-4 w-4" />
+            </span>
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-sm font-semibold leading-tight">{orgName}</p>
+              <p className="truncate text-[11px] text-muted-foreground">
+                {productName || "AI Auto-Dialer"}
+              </p>
+            </div>
+            {orgRole && (
+              <Badge tone={orgRole === "rep" ? "neutral" : "primary"} className="shrink-0">
+                {ROLE_LABEL[orgRole]}
+              </Badge>
+            )}
+          </div>
+        </div>
+      )}
+
       <nav className="flex-1 space-y-6 overflow-y-auto px-3">
-        {navGroups.map((group) => (
+        {groups.map((group) => (
           <div key={group.label}>
             <p className="px-3 pb-2 text-[10px] font-bold uppercase tracking-[0.14em] text-muted-foreground/60">
               {group.label}

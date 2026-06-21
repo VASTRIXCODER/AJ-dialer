@@ -262,3 +262,91 @@ update public.profiles
   set org_id = (select id from public.organizations where slug = 'sunrun')
   where org_id is null;
 
+-- ── Organization customization, membership & approvals ───────────────────────
+-- The dialer is a general AI auto-dialer; each organization specializes it.
+-- These columns + the settings JSONB make an org deeply customizable by its
+-- managers, and organization_members drives join-codes, roles & approvals.
+alter table public.organizations add column if not exists join_code       text;
+alter table public.organizations add column if not exists require_approval boolean not null default true;
+alter table public.organizations add column if not exists allow_join      boolean not null default true;
+alter table public.organizations add column if not exists description     text default '';
+alter table public.organizations add column if not exists product_name    text default '';
+alter table public.organizations add column if not exists tagline         text default '';
+alter table public.organizations add column if not exists website         text default '';
+alter table public.organizations add column if not exists logo_url        text default '';
+alter table public.organizations add column if not exists brand_color     text default '';
+alter table public.organizations add column if not exists accent_color    text default '';
+alter table public.organizations add column if not exists timezone        text default 'America/Los_Angeles';
+alter table public.organizations add column if not exists dialer_template text not null default 'general';
+alter table public.organizations add column if not exists default_role    text not null default 'rep';
+alter table public.organizations add column if not exists owner_id        uuid references auth.users (id) on delete set null;
+alter table public.organizations add column if not exists settings        jsonb not null default '{}'::jsonb;
+
+create unique index if not exists organizations_join_code_idx
+  on public.organizations (join_code) where join_code is not null;
+
+-- Give every existing org a join code, and specialize Sunrun for solar.
+update public.organizations
+  set join_code = upper(substr(md5(random()::text || id::text), 1, 7))
+  where join_code is null;
+update public.organizations set
+  dialer_template = 'solar',
+  product_name = coalesce(nullif(product_name, ''), 'Sunrun Resolution Dialer'),
+  tagline      = coalesce(nullif(tagline, ''), 'AI-powered solar resolution calling')
+  where slug = 'sunrun';
+
+-- Membership = who is in an org, their role, their approval status, and any
+-- per-member permission overrides. One active membership per user per org.
+create table if not exists public.organization_members (
+  id           uuid primary key default gen_random_uuid(),
+  org_id       uuid not null references public.organizations (id) on delete cascade,
+  user_id      uuid not null references auth.users (id) on delete cascade,
+  email        text default '',
+  name         text default '',
+  role         text not null default 'rep',      -- owner | admin | manager | rep
+  permissions  jsonb not null default '{}'::jsonb, -- granular per-member overrides
+  status       text not null default 'pending',  -- pending | active | rejected | removed
+  requested_at timestamptz not null default now(),
+  decided_at   timestamptz,
+  decided_by   uuid references auth.users (id) on delete set null,
+  created_at   timestamptz not null default now(),
+  unique (org_id, user_id)
+);
+create index if not exists org_members_org_idx  on public.organization_members (org_id, status);
+create index if not exists org_members_user_idx on public.organization_members (user_id);
+
+-- A user may read only their own membership rows; all cross-member reads and all
+-- writes (approvals, role changes) go through the service-role server engine,
+-- which enforces the role hierarchy in application code.
+alter table public.organization_members enable row level security;
+drop policy if exists "org_members self read" on public.organization_members;
+create policy "org_members self read" on public.organization_members
+  for select using (auth.uid() = user_id);
+
+-- Backfill: everyone already assigned to an org becomes an active member with
+-- their current profile role; the earliest member of each org becomes its owner.
+insert into public.organization_members (org_id, user_id, name, role, status, decided_at)
+  select p.org_id, p.id, coalesce(p.full_name, ''),
+         coalesce(nullif(p.role, ''), 'manager'), 'active', now()
+  from public.profiles p
+  where p.org_id is not null
+  on conflict (org_id, user_id) do nothing;
+
+update public.organization_members m set role = 'owner', decided_at = now()
+  where m.id in (
+    select distinct on (o.id) mm.id
+    from public.organizations o
+    join public.organization_members mm on mm.org_id = o.id and mm.status = 'active'
+    order by o.id, mm.created_at asc
+  );
+
+update public.organizations o set owner_id = (
+    select m.user_id from public.organization_members m
+    where m.org_id = o.id and m.role = 'owner' order by m.created_at asc limit 1
+  ) where o.owner_id is null;
+
+-- Keep the denormalized profile role in sync with the owner backfill.
+update public.profiles p set role = 'owner'
+  from public.organization_members m
+  where m.user_id = p.id and m.role = 'owner' and m.status = 'active';
+

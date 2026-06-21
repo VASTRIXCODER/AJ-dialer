@@ -2,10 +2,11 @@ import { redirect } from "next/navigation";
 import { AppShell } from "@/components/layout/app-shell";
 import { MaintenanceScreen } from "@/components/layout/maintenance-screen";
 import { isAIConfigured } from "@/lib/ai/claude";
-import { getUser, userDisplay } from "@/lib/auth";
 import { getAppSettings, isAccountDisabled } from "@/lib/db/app-control";
+import { getViewer } from "@/lib/org/membership";
 import { isSuperadmin } from "@/lib/superadmin";
 import { isVoiceConfigured } from "@/lib/twilio";
+import { initials } from "@/lib/utils";
 
 export default async function AppGroupLayout({
   children,
@@ -15,23 +16,39 @@ export default async function AppGroupLayout({
   // Superadmins never enter the dialer — they live in the standalone console.
   if (await isSuperadmin()) redirect("/console");
 
-  const user = await getUser();
-  const account = user ? userDisplay(user) : null;
+  const viewer = await getViewer();
 
-  // The global kill switch and per-account suspension gate every normal user.
-  const settings = await getAppSettings();
-  if (settings.maintenance) {
-    return <MaintenanceScreen message={settings.message} />;
+  // Signed out (and not demo) → sign in. Signed in but in no org → onboarding.
+  if (!viewer.isDemo && !viewer.user) redirect("/login");
+  if (!viewer.isDemo && !viewer.org) redirect("/onboarding");
+
+  // The global kill switch and per-account suspension gate every real user.
+  if (viewer.user) {
+    const settings = await getAppSettings();
+    if (settings.maintenance) {
+      return <MaintenanceScreen message={settings.message} />;
+    }
+    if (await isAccountDisabled(viewer.user.id)) {
+      return <MaintenanceScreen suspended />;
+    }
   }
-  if (user && (await isAccountDisabled(user.id))) {
-    return <MaintenanceScreen suspended />;
-  }
+
+  const account = {
+    name: viewer.displayName,
+    email: viewer.email,
+    initials: initials(viewer.displayName) || "·",
+  };
 
   return (
     <AppShell
       voiceConfigured={isVoiceConfigured()}
       aiConfigured={isAIConfigured()}
       account={account}
+      permissions={viewer.permissions}
+      orgName={viewer.org?.name ?? null}
+      productName={viewer.org?.productName || null}
+      brandColor={viewer.org?.brandColor || null}
+      role={viewer.role}
     >
       {children}
     </AppShell>

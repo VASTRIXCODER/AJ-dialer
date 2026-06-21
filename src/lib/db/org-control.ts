@@ -31,6 +31,10 @@ type Row = Record<string, unknown>;
 const slugify = (s: string) =>
   s.toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 48) ||
   `org-${Date.now().toString(36)}`;
+const genJoinCode = () =>
+  Array.from({ length: 7 }, () =>
+    "ABCDEFGHJKLMNPQRSTUVWXYZ23456789".charAt(Math.floor(Math.random() * 32)),
+  ).join("");
 
 export async function listOrganizations(): Promise<OrganizationRow[]> {
   if (!isAdminConfigured()) return [];
@@ -81,6 +85,7 @@ export async function createOrganization(input: {
         name: input.name.trim(),
         slug: slugify(input.name),
         industry: input.industry?.trim() ?? "",
+        join_code: genJoinCode(),
       })
       .select("id")
       .single();

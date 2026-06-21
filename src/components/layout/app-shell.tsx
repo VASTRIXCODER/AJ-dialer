@@ -15,13 +15,24 @@ export function AppShell({
   voiceConfigured,
   aiConfigured,
   account,
+  permissions = [],
+  orgName = null,
+  productName = null,
+  brandColor = null,
+  role = null,
 }: {
   children: React.ReactNode;
   voiceConfigured: boolean;
   aiConfigured: boolean;
   account: Account | null;
+  permissions?: string[];
+  orgName?: string | null;
+  productName?: string | null;
+  brandColor?: string | null;
+  role?: string | null;
 }) {
   const [mobileOpen, setMobileOpen] = useState(false);
+  const sidebarProps = { permissions, orgName, productName, brandColor, role };
 
   return (
     <div className="relative flex min-h-screen">
@@ -30,7 +41,7 @@ export function AppShell({
 
       {/* Desktop sidebar */}
       <aside className="fixed inset-y-0 left-0 z-30 hidden w-[268px] lg:block">
-        <Sidebar account={account} />
+        <Sidebar account={account} {...sidebarProps} />
       </aside>
 
       {/* Mobile drawer */}
@@ -61,6 +72,7 @@ export function AppShell({
               </button>
               <Sidebar
                 account={account}
+                {...sidebarProps}
                 onNavigate={() => setMobileOpen(false)}
               />
             </motion.aside>

@@ -20,6 +20,7 @@ import { Badge } from "@/components/ui/badge";
 import { buttonVariants } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { getReportingData } from "@/lib/db/metrics";
+import { getViewer } from "@/lib/org/membership";
 import {
   formatCurrency,
   formatDuration,
@@ -42,15 +43,22 @@ const liveLabel = (s: string) =>
   s === "in_progress" ? "On call" : s === "initiated" ? "Dialing" : s.replace("_", " ");
 
 export default async function DashboardPage() {
-  const {
-    metrics,
-    kpiSeries,
-    outcomeBreakdown,
-    hourlyCalls,
-    liveCalls,
-    appointments,
-    leaderboard,
-  } = await getReportingData();
+  const [
+    {
+      metrics,
+      kpiSeries,
+      outcomeBreakdown,
+      hourlyCalls,
+      liveCalls,
+      appointments,
+      leaderboard,
+    },
+    viewer,
+  ] = await Promise.all([getReportingData(), getViewer()]);
+
+  const org = viewer.org;
+  const isSolar = org?.dialerTemplate === "solar";
+  const floorName = org?.productName || org?.name || "your floor";
 
   const hasData =
     metrics.totalCalls > 0 || liveCalls.length > 0 || appointments.length > 0;
@@ -84,11 +92,21 @@ export default async function DashboardPage() {
     { label: "Battery storage", value: formatPercent(metrics.batteryOwnership), pct: metrics.batteryOwnership },
   ];
 
+  // Generalized funnel insights for any (non-solar) organization.
+  const pipelineInsights = [
+    { label: "Connect rate", value: formatPercent(metrics.connectRate, 1), pct: metrics.connectRate },
+    { label: "Appointment rate", value: formatPercent(metrics.appointmentRate, 1), pct: metrics.appointmentRate },
+    { label: "Callback rate", value: formatPercent(metrics.callbackRate, 1), pct: metrics.callbackRate },
+    { label: "No-answer rate", value: formatPercent(metrics.noAnswerRate, 1), pct: metrics.noAnswerRate },
+  ];
+
+  const insights = isSolar ? utilityInsights : pipelineInsights;
+
   return (
     <PageContainer>
       <PageHeader
         title={greeting()}
-        description="Here's how the floor is performing across every active campaign."
+        description={`Here's how ${floorName} is performing across every active campaign.`}
       >
         <Badge tone="success" dot>
           {liveCalls.length} live calls
@@ -174,12 +192,12 @@ export default async function DashboardPage() {
         </SectionCard>
 
         <SectionCard
-          title="Utility insights"
-          description="Across qualified homeowners"
+          title={isSolar ? "Utility insights" : "Pipeline insights"}
+          description={isSolar ? "Across qualified homeowners" : "Conversion across the funnel"}
           action={{ label: "Details", href: "/reports" }}
         >
           <div className="space-y-4">
-            {utilityInsights.map((it) => (
+            {insights.map((it) => (
               <div key={it.label} className="space-y-1.5">
                 <div className="flex items-center justify-between text-sm">
                   <span className="text-muted-foreground">{it.label}</span>

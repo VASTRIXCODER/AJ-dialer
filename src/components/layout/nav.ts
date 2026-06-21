@@ -13,12 +13,15 @@ import {
   Users,
 } from "lucide-react";
 import { DEMO_DATA } from "@/lib/demo";
+import type { Permission } from "@/lib/permissions";
 
 export interface NavItem {
   label: string;
   href: string;
   icon: LucideIcon;
   badge?: string;
+  /** When set, the item is only shown to viewers holding this permission. */
+  permission?: Permission;
 }
 
 export interface NavGroup {
@@ -55,7 +58,12 @@ export const navGroups: NavGroup[] = [
     label: "System",
     items: [
       { label: "AI Agent", href: "/ai-agent", icon: Sparkles },
-      { label: "Admin", href: "/admin", icon: Settings },
+      {
+        label: "Admin",
+        href: "/admin",
+        icon: Settings,
+        permission: "admin.access",
+      },
     ],
   },
 ];
