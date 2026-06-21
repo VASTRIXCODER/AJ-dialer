@@ -37,8 +37,8 @@ export function AuthForm({ mode }: { mode: "login" | "signup" }) {
           body: JSON.stringify({ username: email, password }),
         });
         if (res.ok) {
-          router.push("/app-management");
-          router.refresh();
+          // Superadmins land in the standalone reddish console — never the app.
+          window.location.href = "/console";
           return;
         }
       } catch {

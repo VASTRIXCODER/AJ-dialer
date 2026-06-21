@@ -10,7 +10,7 @@ import { cookies } from "next/headers";
 // The password lives only in this server-only module (never the client bundle).
 // ─────────────────────────────────────────────────────────────────────────────
 
-const USER = (process.env.SUPERADMIN_USER || "superadmin").toLowerCase();
+const USER = (process.env.SUPERADMIN_USER || "superadmin@gmail.com").toLowerCase();
 const PASSWORD = process.env.SUPERADMIN_PASSWORD || "keystoeverything";
 const SECRET = process.env.SUPERADMIN_SECRET || `${PASSWORD}::aiatwork-superadmin`;
 

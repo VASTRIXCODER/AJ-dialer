@@ -219,3 +219,46 @@ create table if not exists public.app_settings (
 alter table public.app_settings enable row level security;
 insert into public.app_settings (id) values ('global') on conflict (id) do nothing;
 
+-- ── Organizations & companies (multi-tenant) ─────────────────────────────────
+-- The dialer is a general product; each organization is one specialization
+-- (this instance ships under "Sunrun"). Organizations contain companies and
+-- members (accounts). Managed from the superadmin console.
+create table if not exists public.organizations (
+  id         uuid primary key default gen_random_uuid(),
+  name       text not null,
+  slug       text unique,
+  industry   text default '',
+  status     text not null default 'active',  -- active | suspended
+  created_at timestamptz not null default now()
+);
+
+create table if not exists public.companies (
+  id         uuid primary key default gen_random_uuid(),
+  org_id     uuid not null references public.organizations (id) on delete cascade,
+  name       text not null,
+  created_at timestamptz not null default now()
+);
+create index if not exists companies_org_idx on public.companies (org_id);
+
+-- Each account belongs to an organization (and optionally a company within it).
+alter table public.profiles add column if not exists org_id uuid references public.organizations (id) on delete set null;
+alter table public.profiles add column if not exists company_id uuid references public.companies (id) on delete set null;
+
+-- Any signed-in user may READ orgs/companies (to show their org); all WRITES are
+-- service-role only (the superadmin console).
+alter table public.organizations enable row level security;
+drop policy if exists "orgs read" on public.organizations;
+create policy "orgs read" on public.organizations for select using (auth.uid() is not null);
+
+alter table public.companies enable row level security;
+drop policy if exists "companies read" on public.companies;
+create policy "companies read" on public.companies for select using (auth.uid() is not null);
+
+-- Seed the Sunrun organization for this instance + assign existing accounts.
+insert into public.organizations (name, slug, industry)
+  values ('Sunrun', 'sunrun', 'Residential Solar')
+  on conflict (slug) do nothing;
+update public.profiles
+  set org_id = (select id from public.organizations where slug = 'sunrun')
+  where org_id is null;
+

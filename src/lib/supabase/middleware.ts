@@ -15,7 +15,6 @@ const PROTECTED = [
   "/ai-agent",
   "/admin",
   "/settings",
-  "/app-management",
 ];
 
 /**
@@ -23,6 +22,35 @@ const PROTECTED = [
  * routes. No-ops entirely when Supabase isn't configured (demo mode).
  */
 export async function updateSession(request: NextRequest) {
+  const path = request.nextUrl.pathname;
+  const onAuthPage = path === "/login" || path === "/signup";
+  const onConsole = path === "/console" || path.startsWith("/console/");
+  const isProtected = PROTECTED.some(
+    (p) => path === p || path.startsWith(`${p}/`),
+  );
+
+  // Superadmin sessions are a signed httpOnly cookie, separate from Supabase.
+  // The Edge runtime can't run Node crypto, so here we only check presence and
+  // route accordingly — the cookie's HMAC is verified server-side by the page
+  // and API routes it reaches (a forged cookie is bounced back to /login there).
+  const hasSuperadmin = Boolean(request.cookies.get("sa_session")?.value);
+
+  // ── Superadmin routing (works even in demo mode, before Supabase loads) ──
+  // The console demands a superadmin session; everyone else is sent to sign in.
+  if (onConsole && !hasSuperadmin) {
+    const url = request.nextUrl.clone();
+    url.pathname = "/login";
+    url.search = "";
+    return NextResponse.redirect(url);
+  }
+  // A superadmin belongs in the standalone console — never the dialer app.
+  if (hasSuperadmin && isProtected) {
+    const url = request.nextUrl.clone();
+    url.pathname = "/console";
+    url.search = "";
+    return NextResponse.redirect(url);
+  }
+
   let response = NextResponse.next({ request });
   if (!isSupabaseConfigured()) return response;
 
@@ -47,18 +75,9 @@ export async function updateSession(request: NextRequest) {
     data: { user },
   } = await supabase.auth.getUser();
 
-  const path = request.nextUrl.pathname;
-  const onAuthPage = path === "/login" || path === "/signup";
-
-  // Superadmin sessions (a signed httpOnly cookie) bypass the Supabase guard —
-  // their access is HMAC-verified by the server components/routes they hit.
-  const hasSuperadmin = Boolean(request.cookies.get("sa_session")?.value);
-
-  if (
-    !user &&
-    !hasSuperadmin &&
-    PROTECTED.some((p) => path === p || path.startsWith(`${p}/`))
-  ) {
+  // A superadmin reaching here was already routed above, so a protected route
+  // without a Supabase user means an unauthenticated visitor → sign in.
+  if (!user && isProtected) {
     const url = request.nextUrl.clone();
     url.pathname = "/login";
     url.searchParams.set("redirect", path);

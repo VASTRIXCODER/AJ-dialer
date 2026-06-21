@@ -61,6 +61,8 @@ export interface AccountRow {
   disabled: boolean;
   createdAt: string;
   lastSignInAt: string | null;
+  orgId: string | null;
+  companyId: string | null;
 }
 
 export async function listAccounts(): Promise<AccountRow[]> {
@@ -71,7 +73,7 @@ export async function listAccounts(): Promise<AccountRow[]> {
     const users = usersData?.users ?? [];
     const { data: profiles } = await admin
       .from("profiles")
-      .select("id, full_name, role, disabled");
+      .select("id, full_name, role, disabled, org_id, company_id");
     const pmap = new Map(
       (profiles ?? []).map((p: Record<string, unknown>) => [String(p.id), p]),
     );
@@ -85,6 +87,8 @@ export async function listAccounts(): Promise<AccountRow[]> {
         disabled: Boolean(p.disabled),
         createdAt: u.created_at ?? "",
         lastSignInAt: u.last_sign_in_at ?? null,
+        orgId: (p.org_id as string) ?? null,
+        companyId: (p.company_id as string) ?? null,
       };
     });
   } catch {

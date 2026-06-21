@@ -15,13 +15,11 @@ export function AppShell({
   voiceConfigured,
   aiConfigured,
   account,
-  superadmin = false,
 }: {
   children: React.ReactNode;
   voiceConfigured: boolean;
   aiConfigured: boolean;
   account: Account | null;
-  superadmin?: boolean;
 }) {
   const [mobileOpen, setMobileOpen] = useState(false);
 
@@ -32,7 +30,7 @@ export function AppShell({
 
       {/* Desktop sidebar */}
       <aside className="fixed inset-y-0 left-0 z-30 hidden w-[268px] lg:block">
-        <Sidebar account={account} superadmin={superadmin} />
+        <Sidebar account={account} />
       </aside>
 
       {/* Mobile drawer */}
@@ -63,7 +61,6 @@ export function AppShell({
               </button>
               <Sidebar
                 account={account}
-                superadmin={superadmin}
                 onNavigate={() => setMobileOpen(false)}
               />
             </motion.aside>
