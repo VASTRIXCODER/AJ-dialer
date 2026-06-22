@@ -347,9 +347,15 @@ export function simulateConversationAnalysis(input: {
     : /great|interested|sounds good|yes|perfect/.test(t) || wantsAppt
       ? "positive"
       : "neutral";
+  // This analysis only runs when a real conversation happened, so the outcome is
+  // always a "connected" one — never no_answer / voicemail / wrong_number.
   const outcome: CallOutcome = wantsAppt
     ? "appointment_booked"
-    : pick<CallOutcome>(["callback_scheduled", "qualified", "not_interested", "no_answer"], seed);
+    : /not interested|no thanks|stop calling|remove me|don'?t call|not right now/.test(t)
+      ? "not_interested"
+      : /call.{0,6}back|later|another time|busy right now|reschedule/.test(t)
+        ? "callback_scheduled"
+        : "qualified";
 
   return {
     summary: lead

@@ -9,6 +9,17 @@ const UUID =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const asUuid = (v?: string | null) => (v && UUID.test(v) ? v : null);
 
+// Outcomes that mean a real two-way conversation took place (vs. no-answer /
+// voicemail / wrong-number). Used to decide when a later, better disposition is
+// allowed to upgrade an earlier "didn't connect" one.
+const CONNECTED_OUTCOMES: CallOutcome[] = [
+  "appointment_booked",
+  "callback_scheduled",
+  "qualified",
+  "not_interested",
+  "do_not_call",
+];
+
 // outcome → lead status (shared by every disposition path).
 const OUTCOME_TO_STATUS: Record<CallOutcome, string> = {
   appointment_booked: "appointment",
@@ -173,15 +184,25 @@ export async function completeAIConversation(input: {
     const admin = createAdminClient();
     const { data: existing } = await admin
       .from("ai_conversations")
-      .select("owner_id, lead_id, lead_name, phone, state")
+      .select("owner_id, lead_id, lead_name, phone, state, outcome")
       .eq("conversation_id", input.conversationId)
       .maybeSingle();
 
-    // Idempotent: if this conversation is already finalized, do nothing. This
-    // makes it safe to call from both the post-call webhook and the live detail
-    // route without duplicating call records or appointments.
+    // Idempotent — EXCEPT we always allow upgrading a not-connected/failed record
+    // to a real (connected) outcome. This is the safety net for the race where
+    // the live detail route files "no answer" before the transcript has loaded:
+    // the post-call webhook (full transcript) then corrects it here.
     const prevState = existing?.state as string | undefined;
-    if (prevState === "completed" || prevState === "failed") return;
+    const prevOutcome = (existing?.outcome as CallOutcome | null) ?? null;
+    const isFinal = prevState === "completed" || prevState === "failed";
+    const prevConnected =
+      prevState === "completed" &&
+      prevOutcome != null &&
+      CONNECTED_OUTCOMES.includes(prevOutcome);
+    const newConnected =
+      input.state !== "failed" && CONNECTED_OUTCOMES.includes(input.outcome);
+    if (isFinal && !(newConnected && !prevConnected)) return;
+    const upgrading = isFinal;
 
     await admin
       .from("ai_conversations")
@@ -218,6 +239,17 @@ export async function completeAIConversation(input: {
         summary: input.summary,
         sentiment: input.sentiment,
       });
+    } else if (upgrading) {
+      // Correct the previously-filed (e.g. no-answer) record with the real result.
+      await admin
+        .from("call_records")
+        .update({
+          outcome: input.outcome,
+          summary: input.summary,
+          sentiment: input.sentiment,
+          duration_sec: input.durationSec ?? 0,
+        })
+        .eq("id", existingRec.id);
     }
 
     // Route the disposition to the right pipeline tab (Appointments / Callbacks).
@@ -231,6 +263,28 @@ export async function completeAIConversation(input: {
       appointment: input.appointment ?? null,
       source: "ai",
     });
+  } catch {
+    /* best-effort */
+  }
+}
+
+/**
+ * Advance a conversation to "in_progress" the moment it connects, durably (admin
+ * client, no session needed). Keeps the row truthful across serverless instances
+ * so a connected call never looks like it "hasn't started" in the monitor. Only
+ * advances from "initiated" — never downgrades a terminal/active row.
+ */
+export async function markAIConversationActive(
+  conversationId: string,
+): Promise<void> {
+  if (!isAdminConfigured()) return;
+  try {
+    const admin = createAdminClient();
+    await admin
+      .from("ai_conversations")
+      .update({ state: "in_progress" })
+      .eq("conversation_id", conversationId)
+      .eq("state", "initiated");
   } catch {
     /* best-effort */
   }

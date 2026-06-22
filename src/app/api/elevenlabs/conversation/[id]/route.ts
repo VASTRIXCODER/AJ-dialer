@@ -5,7 +5,7 @@ import {
   updateAICall,
   type AICallState,
 } from "@/lib/ai-call-store";
-import { getAIConversation } from "@/lib/db/records";
+import { getAIConversation, markAIConversationActive } from "@/lib/db/records";
 import {
   elevenLabsConfig,
   getConversation,
@@ -47,6 +47,9 @@ function mapStatus(status: string | undefined): AICallState | null {
     case "ongoing":
       return "in_progress";
     case "processing":
+      // Call ended but ElevenLabs is still building the transcript/analysis —
+      // treat as live so we don't finalize before the transcript exists.
+      return "in_progress";
     case "done":
     case "completed":
       return "completed";
@@ -136,7 +139,25 @@ export async function GET(
 
   // ── Finalize a watched call that just reached a terminal state (once) ───────
   const alreadyFinal = isTerminal(store?.state) || isTerminal(db?.state);
-  if (liveState && isTerminal(liveState) && !alreadyFinal) {
+  const looksUnconnected =
+    /no[\s_-]?answer|voicemail|machine|answphone|answering|busy|invalid|not[\s_-]?in[\s_-]?service|unallocated|disconnected|timed?[\s_-]?out|timeout|cancel|no[\s_-]?response/i.test(
+      terminationReason,
+    ) ||
+    liveStatusRaw.toLowerCase() === "failed" ||
+    liveStatusRaw.toLowerCase() === "error";
+
+  // Only finalize when the call is truly terminal AND we have something to file
+  // on: a transcript (a real conversation) or a clear "didn't connect" signal.
+  // This stops a connected call from being mis-filed as "no answer" before its
+  // transcript loads. The post-call webhook is the other (authoritative) path,
+  // and completeAIConversation() upgrades a premature filing if needed.
+  const finalizable =
+    liveState !== null &&
+    isTerminal(liveState) &&
+    !alreadyFinal &&
+    (transcript.length > 0 || looksUnconnected);
+
+  if (finalizable) {
     await finalizeAIConversation({
       conversationId,
       turns: rawTurns,
@@ -146,15 +167,14 @@ export async function GET(
     });
     store = getAICall(conversationId);
     db = await getAIConversation(conversationId);
-  } else if (
-    store &&
-    liveState &&
-    liveState !== store.state &&
-    !isTerminal(liveState)
-  ) {
-    // Live, non-terminal transition (e.g. initiated → in_progress).
-    updateAICall(conversationId, { state: liveState });
-    store = getAICall(conversationId);
+  } else if (liveState && !isTerminal(liveState)) {
+    // Live, non-terminal: keep the in-memory store AND the durable row in sync so
+    // a connected call never looks "not started yet" on another instance.
+    if (store && liveState !== store.state) {
+      updateAICall(conversationId, { state: liveState });
+      store = getAICall(conversationId);
+    }
+    if (liveState === "in_progress") await markAIConversationActive(conversationId);
   }
 
   if (!store && !db && transcript.length === 0 && !liveState) {
@@ -164,8 +184,23 @@ export async function GET(
     );
   }
 
+  // Resolve to the MOST-ADVANCED state any source knows about, so a transient
+  // failed live read can't make a connected/finished call look unstarted.
+  const STATE_RANK: Record<AICallState, number> = {
+    initiated: 0,
+    in_progress: 1,
+    completed: 2,
+    failed: 2,
+  };
+  const knownStates = [
+    store?.state,
+    liveState,
+    db?.state as AICallState | undefined,
+  ].filter((s): s is AICallState => Boolean(s));
   const state: AICallState =
-    store?.state ?? liveState ?? ((db?.state as AICallState) ?? "completed");
+    knownStates.length > 0
+      ? knownStates.reduce((a, b) => (STATE_RANK[b] > STATE_RANK[a] ? b : a))
+      : "completed";
 
   const response: DetailResponse = {
     conversationId,

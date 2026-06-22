@@ -7,6 +7,7 @@ import {
   updateAICall,
 } from "@/lib/ai-call-store";
 import { leads } from "@/lib/data";
+import { markAIConversationActive } from "@/lib/db/records";
 
 export const dynamic = "force-dynamic";
 
@@ -47,6 +48,8 @@ export async function POST(req: Request) {
     });
     updateAICall(conversationId, { state: "in_progress" });
   }
+  // Durable advance so the call shows as connected on every instance.
+  if (conversationId) await markAIConversationActive(conversationId);
 
   // Resolve the agent's prompt + voice from the matched lead's organization
   // (Sunrun/solar → the exact Emily script), plus personalization variables.
