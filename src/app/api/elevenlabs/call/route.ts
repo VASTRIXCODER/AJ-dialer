@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { resolveAgentConfig } from "@/lib/ai/agent-prompt";
 import { registerAICall } from "@/lib/ai-call-store";
 import { getLeadById } from "@/lib/db/leads";
 import { seedAIConversation } from "@/lib/db/records";
@@ -7,6 +8,7 @@ import {
   isElevenLabsConfigured,
   placeOutboundCall,
 } from "@/lib/elevenlabs";
+import { getViewer } from "@/lib/org/membership";
 import type { Lead } from "@/lib/types";
 import { formatPhone, toE164 } from "@/lib/utils";
 
@@ -92,10 +94,19 @@ export async function POST(req: Request) {
   const leadName =
     `${lead.firstName} ${lead.lastName}`.trim() || formatPhone(toNumber);
 
+  // Configure the AI agent from the caller's organization — Sunrun/solar uses
+  // the exact Emily script; other orgs get their white-label prompt + voice.
+  const viewer = await getViewer();
+  const agent = resolveAgentConfig(viewer.org);
+
   try {
     const result = await placeOutboundCall({
       toNumber,
       dynamicVariables: agentVariablesForLead(lead),
+      promptOverride: agent.systemPrompt,
+      firstMessage: agent.firstMessage,
+      language: agent.language,
+      voiceSpeed: agent.voiceSpeed,
     });
 
     if (!result.conversationId) {

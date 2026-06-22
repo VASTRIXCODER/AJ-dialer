@@ -16,8 +16,11 @@ import {
   PhoneForwarded,
   PhoneOff,
   Play,
+  Radio,
   Settings2,
   Smile,
+  Volume2,
+  VolumeX,
   X,
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -87,6 +90,8 @@ export function CallDashboard({
   const [now, setNow] = useState(() => Date.now());
   const [takeover, setTakeover] = useState<"idle" | "joining" | "live">("idle");
   const [takeMuted, setTakeMuted] = useState(false);
+  const [listen, setListen] = useState(false);
+  const spokenRef = useRef(0);
   const scrollRef = useRef<HTMLDivElement>(null);
   const deviceRef = useRef<Device | null>(null);
   const taCallRef = useRef<Call | null>(null);
@@ -116,7 +121,7 @@ export function CallDashboard({
       setLoading(false);
       if (stopped) return;
       const terminal = d?.state === "completed" || d?.state === "failed";
-      timer = setTimeout(tick, terminal ? 10000 : 3000);
+      timer = setTimeout(tick, terminal ? 10000 : 2000);
     }
     tick();
     return () => {
@@ -143,6 +148,57 @@ export function CallDashboard({
     const el = scrollRef.current;
     if (el) el.scrollTop = el.scrollHeight;
   }, [detail?.transcript.length]);
+
+  // Listen in: read new transcript turns aloud as they stream (in-browser).
+  useEffect(() => {
+    if (!listen || typeof window === "undefined" || !window.speechSynthesis) return;
+    const turns = detail?.transcript ?? [];
+    for (let i = spokenRef.current; i < turns.length; i++) {
+      const msg = turns[i]?.message;
+      if (!msg) continue;
+      const u = new SpeechSynthesisUtterance(msg);
+      u.rate = 1;
+      u.pitch = turns[i].role === "agent" ? 0.9 : 1.15;
+      window.speechSynthesis.speak(u);
+    }
+    spokenRef.current = turns.length;
+  }, [listen, detail?.transcript]);
+
+  // Stop reading aloud once the call is over, and always on unmount.
+  useEffect(() => {
+    if (detail && detail.state !== "in_progress" && detail.state !== "initiated") {
+      try {
+        window.speechSynthesis?.cancel();
+      } catch {
+        /* noop */
+      }
+    }
+  }, [detail?.state, detail]);
+
+  useEffect(
+    () => () => {
+      try {
+        window.speechSynthesis?.cancel();
+      } catch {
+        /* noop */
+      }
+    },
+    [],
+  );
+
+  function toggleListen() {
+    setListen((on) => {
+      const next = !on;
+      if (next) spokenRef.current = detail?.transcript.length ?? 0;
+      else
+        try {
+          window.speechSynthesis?.cancel();
+        } catch {
+          /* noop */
+        }
+      return next;
+    });
+  }
 
   const live = detail?.state === "initiated" || detail?.state === "in_progress";
   const dur = detail
@@ -434,10 +490,33 @@ export function CallDashboard({
           )}
 
           <div>
-            <p className="mb-2 flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wide text-muted-foreground">
-              <MessageSquare className="h-3.5 w-3.5" />
-              Transcript
-            </p>
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <p className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wide text-muted-foreground">
+                <MessageSquare className="h-3.5 w-3.5" />
+                Transcript
+                {live && (
+                  <span className="ml-1 inline-flex items-center gap-1 rounded-full bg-success/12 px-1.5 py-0.5 text-[10px] font-bold text-success">
+                    <Radio className="h-3 w-3" />
+                    LIVE
+                  </span>
+                )}
+              </p>
+              {live && (
+                <button
+                  type="button"
+                  onClick={toggleListen}
+                  className={cn(
+                    "inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs font-semibold transition-colors",
+                    listen
+                      ? "border-primary/40 bg-primary-soft text-primary"
+                      : "border-border text-muted-foreground hover:bg-muted/60 hover:text-foreground",
+                  )}
+                >
+                  {listen ? <Volume2 className="h-3.5 w-3.5" /> : <VolumeX className="h-3.5 w-3.5" />}
+                  {listen ? "Listening…" : "Listen in"}
+                </button>
+              )}
+            </div>
 
             {loading && !detail ? (
               <div className="flex items-center justify-center gap-2 py-10 text-sm text-muted-foreground">

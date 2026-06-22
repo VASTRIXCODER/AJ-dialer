@@ -141,14 +141,23 @@ export async function placeOutboundCall(opts: {
   toNumber: string;
   dynamicVariables?: Record<string, string | number | boolean>;
   firstMessage?: string;
+  /** Full system prompt override (e.g. the Emily script) for this call. */
+  promptOverride?: string;
+  language?: string;
+  /** TTS speed 0.7–1.2 (lower = slower/calmer). */
+  voiceSpeed?: number;
 }): Promise<OutboundCallResult> {
   const initData: Record<string, unknown> = {};
   if (opts.dynamicVariables) initData.dynamic_variables = opts.dynamicVariables;
-  if (opts.firstMessage) {
-    initData.conversation_config_override = {
-      agent: { first_message: opts.firstMessage },
-    };
-  }
+
+  const agent: Record<string, unknown> = {};
+  if (opts.firstMessage) agent.first_message = opts.firstMessage;
+  if (opts.promptOverride) agent.prompt = { prompt: opts.promptOverride };
+  if (opts.language) agent.language = opts.language;
+  const override: Record<string, unknown> = {};
+  if (Object.keys(agent).length) override.agent = agent;
+  if (typeof opts.voiceSpeed === "number") override.tts = { speed: opts.voiceSpeed };
+  if (Object.keys(override).length) initData.conversation_config_override = override;
 
   const res = await el("/v1/convai/twilio/outbound-call", {
     method: "POST",

@@ -18,6 +18,7 @@ import { useState } from "react";
 import { SectionCard } from "@/components/shared/section-card";
 import { Button } from "@/components/ui/button";
 import { Input, Label, Select, Textarea } from "@/components/ui/input";
+import { EMILY_SYSTEM_PROMPT } from "@/lib/ai/agent-prompt";
 import type { OrgFull, OrgSettings, OrgUpdate } from "@/lib/org/membership";
 import { DIALER_TEMPLATES } from "@/lib/org/templates";
 import { ROLE_LABEL } from "@/lib/permissions";
@@ -70,7 +71,14 @@ export function OrgSettingsForm({
   const [timezone, setTimezone] = useState(org.timezone);
   const [dialing, setDialing] = useState<OrgSettings["dialing"]>(org.settings.dialing);
   const [hours, setHours] = useState<OrgSettings["hours"]>(org.settings.hours);
-  const [ai, setAi] = useState<OrgSettings["ai"]>(org.settings.ai);
+  const [ai, setAi] = useState<OrgSettings["ai"]>(() => {
+    // Surface the built-in solar (Emily) script so it's visible/editable/copyable.
+    const base = org.settings.ai;
+    if (org.dialerTemplate === "solar" && !base.systemPrompt) {
+      return { ...base, systemPrompt: EMILY_SYSTEM_PROMPT };
+    }
+    return base;
+  });
   const [compliance, setCompliance] = useState<OrgSettings["compliance"]>(
     org.settings.compliance,
   );
@@ -491,6 +499,16 @@ export function OrgSettingsForm({
             value={ai.maxTalkMin}
             onChange={(n) => setAi({ ...ai, maxTalkMin: n })}
           />
+          <Field label="Voice speed (0.7 slow – 1.2 fast)">
+            <Input
+              type="number"
+              step="0.05"
+              min="0.7"
+              max="1.2"
+              value={ai.voiceSpeed}
+              onChange={(e) => setAi({ ...ai, voiceSpeed: Number(e.target.value) })}
+            />
+          </Field>
           <Field label="Persona / instructions" className="sm:col-span-2">
             <Textarea value={ai.persona} onChange={(e) => setAi({ ...ai, persona: e.target.value })} />
           </Field>
@@ -499,6 +517,14 @@ export function OrgSettingsForm({
               value={ai.greeting}
               onChange={(e) => setAi({ ...ai, greeting: e.target.value })}
               placeholder="Use {agent} and {org} as placeholders."
+            />
+          </Field>
+          <Field label="System prompt (advanced)" className="sm:col-span-2">
+            <Textarea
+              value={ai.systemPrompt}
+              onChange={(e) => setAi({ ...ai, systemPrompt: e.target.value })}
+              placeholder="Leave blank to use the built-in script for this vertical (Sunrun uses the Emily resolution script)."
+              className="min-h-[120px] font-mono text-xs"
             />
           </Field>
         </div>

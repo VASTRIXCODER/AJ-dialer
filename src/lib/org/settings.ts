@@ -43,7 +43,11 @@ export interface OrgSettings {
     agentName: string;
     persona: string;
     greeting: string;
+    /** Full system prompt for the AI caller. Empty = use the vertical default. */
+    systemPrompt: string;
     voice: string;
+    /** TTS playback speed (0.7 slow – 1.2 fast). Lower sounds calmer/slower. */
+    voiceSpeed: number;
     transferNumber: string;
     aiFirst: boolean;
     maxTalkMin: number;
@@ -90,7 +94,9 @@ export const DEFAULT_ORG_SETTINGS: OrgSettings = {
     agentName: "Aria",
     persona: "Friendly, concise, and consultative.",
     greeting: "Hi, this is {agent} calling from {org} — do you have a quick moment?",
+    systemPrompt: "",
     voice: "default",
+    voiceSpeed: 0.9,
     transferNumber: "+14693018199",
     aiFirst: true,
     maxTalkMin: 8,

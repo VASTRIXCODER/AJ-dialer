@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { resolveAgentContextByPhone } from "@/lib/ai/agent-context";
 import {
   findByCallSid,
   getAICall,
@@ -6,7 +7,6 @@ import {
   updateAICall,
 } from "@/lib/ai-call-store";
 import { leads } from "@/lib/data";
-import { agentVariablesForLead } from "@/lib/elevenlabs";
 
 export const dynamic = "force-dynamic";
 
@@ -48,10 +48,21 @@ export async function POST(req: Request) {
     updateAICall(conversationId, { state: "in_progress" });
   }
 
-  const dynamic_variables = lead ? agentVariablesForLead(lead) : {};
+  // Resolve the agent's prompt + voice from the matched lead's organization
+  // (Sunrun/solar → the exact Emily script), plus personalization variables.
+  const { dynamicVariables, agentConfig } =
+    await resolveAgentContextByPhone(calledNumber);
 
   return NextResponse.json({
     type: "conversation_initiation_client_data",
-    dynamic_variables,
+    dynamic_variables: dynamicVariables,
+    conversation_config_override: {
+      agent: {
+        prompt: { prompt: agentConfig.systemPrompt },
+        first_message: agentConfig.firstMessage,
+        language: agentConfig.language,
+      },
+      tts: { speed: agentConfig.voiceSpeed },
+    },
   });
 }
