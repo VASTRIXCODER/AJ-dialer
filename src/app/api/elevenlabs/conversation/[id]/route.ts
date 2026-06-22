@@ -11,6 +11,8 @@ import {
   getConversation,
   isElevenLabsConfigured,
 } from "@/lib/elevenlabs";
+import { isMediaStreamConfigured } from "@/lib/media-stream";
+import { isRestConfigured } from "@/lib/twilio";
 import type { CallOutcome } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -35,6 +37,7 @@ interface DetailResponse {
   appointment: { when: string; notes: string } | null;
   transferNumber: string;
   configured: boolean;
+  liveAudioAvailable: boolean;
 }
 
 function mapStatus(status: string | undefined): AICallState | null {
@@ -225,6 +228,7 @@ export async function GET(
     appointment: store?.appointment ?? db?.appointment ?? null,
     transferNumber: elevenLabsConfig.transferNumber,
     configured: isElevenLabsConfigured(),
+    liveAudioAvailable: isMediaStreamConfigured() && isRestConfigured(),
   };
 
   return NextResponse.json(response);

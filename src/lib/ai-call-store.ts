@@ -33,6 +33,8 @@ export interface AICall {
   outcome?: CallOutcome;
   recordingAvailable?: boolean;
   appointment?: { when: string; notes: string } | null;
+  /** Active Twilio Media Stream SID while a supervisor is listening live. */
+  streamSid?: string;
 }
 
 const calls = new Map<string, AICall>();

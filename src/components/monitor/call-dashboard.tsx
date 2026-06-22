@@ -52,7 +52,48 @@ export type CallDetail = {
   appointment: { when: string; notes: string } | null;
   transferNumber: string;
   configured: boolean;
+  liveAudioAvailable: boolean;
 };
+
+// Plays mixed PCM16 8kHz frames (from the live-audio relay) via Web Audio.
+type PcmPlayer = { play: (b64: string) => void; close: () => void };
+function createPcmPlayer(): PcmPlayer {
+  const Ctx =
+    window.AudioContext ||
+    (window as unknown as { webkitAudioContext: typeof AudioContext })
+      .webkitAudioContext;
+  const ctx = new Ctx();
+  void ctx.resume?.();
+  let next = 0;
+  return {
+    play(b64) {
+      const bin = atob(b64);
+      const len = bin.length >> 1;
+      const f32 = new Float32Array(len);
+      for (let i = 0; i < len; i++) {
+        let v = (bin.charCodeAt(i * 2 + 1) << 8) | bin.charCodeAt(i * 2);
+        if (v >= 32768) v -= 65536;
+        f32[i] = v / 32768;
+      }
+      const buf = ctx.createBuffer(1, len, 8000);
+      buf.getChannelData(0).set(f32);
+      const src = ctx.createBufferSource();
+      src.buffer = buf;
+      src.connect(ctx.destination);
+      const now = ctx.currentTime;
+      if (next < now) next = now + 0.12; // jitter buffer
+      src.start(next);
+      next += buf.duration;
+    },
+    close() {
+      try {
+        void ctx.close();
+      } catch {
+        /* noop */
+      }
+    },
+  };
+}
 
 const sentimentMeta: Record<Sentiment, { icon: typeof Smile; tone: string; label: string }> = {
   positive: { icon: Smile, tone: "text-success", label: "Positive" },
@@ -92,6 +133,10 @@ export function CallDashboard({
   const [takeMuted, setTakeMuted] = useState(false);
   const [listen, setListen] = useState(false);
   const spokenRef = useRef(0);
+  const [audioOn, setAudioOn] = useState(false);
+  const [audioErr, setAudioErr] = useState("");
+  const wsRef = useRef<WebSocket | null>(null);
+  const playerRef = useRef<PcmPlayer | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const deviceRef = useRef<Device | null>(null);
   const taCallRef = useRef<Call | null>(null);
@@ -199,6 +244,80 @@ export function CallDashboard({
       return next;
     });
   }
+
+  // ── Live audio (Twilio media stream → relay → Web Audio) ─────────────────────
+  const closeAudio = useCallback(() => {
+    try {
+      wsRef.current?.close();
+    } catch {
+      /* noop */
+    }
+    wsRef.current = null;
+    try {
+      playerRef.current?.close();
+    } catch {
+      /* noop */
+    }
+    playerRef.current = null;
+  }, []);
+
+  function stopAudio() {
+    closeAudio();
+    setAudioOn(false);
+    fetch("/api/twilio/listen", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ conversationId, action: "stop" }),
+    }).catch(() => {});
+  }
+
+  async function startAudio() {
+    setAudioErr("");
+    setBusy("audio");
+    try {
+      const res = await fetch("/api/twilio/listen", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ conversationId }),
+      });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok || !j.ok || !j.listenUrl) {
+        setAudioErr(j.error ?? "Could not start live audio.");
+        return;
+      }
+      const player = createPcmPlayer();
+      playerRef.current = player;
+      const ws = new WebSocket(j.listenUrl);
+      wsRef.current = ws;
+      ws.onmessage = (e) => {
+        try {
+          const m = JSON.parse(e.data as string);
+          if (m.event === "media" && m.payload) player.play(m.payload);
+          else if (m.event === "ended") stopAudio();
+        } catch {
+          /* ignore malformed frame */
+        }
+      };
+      ws.onerror = () => setAudioErr("Live audio connection error.");
+      setAudioOn(true);
+    } catch {
+      setAudioErr("Network error.");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  // Stop live audio when the call ends, and always tear down on unmount.
+  useEffect(() => {
+    if (detail && detail.state !== "in_progress" && detail.state !== "initiated") {
+      if (wsRef.current) {
+        closeAudio();
+        setAudioOn(false);
+      }
+    }
+  }, [detail?.state, detail, closeAudio]);
+
+  useEffect(() => () => closeAudio(), [closeAudio]);
 
   const live = detail?.state === "initiated" || detail?.state === "in_progress";
   const dur = detail
@@ -502,21 +621,46 @@ export function CallDashboard({
                 )}
               </p>
               {live && (
-                <button
-                  type="button"
-                  onClick={toggleListen}
-                  className={cn(
-                    "inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs font-semibold transition-colors",
-                    listen
-                      ? "border-primary/40 bg-primary-soft text-primary"
-                      : "border-border text-muted-foreground hover:bg-muted/60 hover:text-foreground",
+                <div className="flex items-center gap-1.5">
+                  {detail?.liveAudioAvailable && (
+                    <button
+                      type="button"
+                      onClick={() => (audioOn ? stopAudio() : startAudio())}
+                      disabled={busy === "audio"}
+                      className={cn(
+                        "inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs font-semibold transition-colors",
+                        audioOn
+                          ? "border-success/40 bg-success/10 text-success"
+                          : "border-border text-muted-foreground hover:bg-muted/60 hover:text-foreground",
+                      )}
+                    >
+                      {busy === "audio" ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      ) : (
+                        <Headphones className="h-3.5 w-3.5" />
+                      )}
+                      {audioOn ? "Listening (audio)" : "Listen live"}
+                    </button>
                   )}
-                >
-                  {listen ? <Volume2 className="h-3.5 w-3.5" /> : <VolumeX className="h-3.5 w-3.5" />}
-                  {listen ? "Listening…" : "Listen in"}
-                </button>
+                  <button
+                    type="button"
+                    onClick={toggleListen}
+                    className={cn(
+                      "inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs font-semibold transition-colors",
+                      listen
+                        ? "border-primary/40 bg-primary-soft text-primary"
+                        : "border-border text-muted-foreground hover:bg-muted/60 hover:text-foreground",
+                    )}
+                  >
+                    {listen ? <Volume2 className="h-3.5 w-3.5" /> : <VolumeX className="h-3.5 w-3.5" />}
+                    {listen ? "Reading…" : "Read aloud"}
+                  </button>
+                </div>
               )}
             </div>
+            {audioErr && (
+              <p className="mb-2 text-xs font-medium text-danger">{audioErr}</p>
+            )}
 
             {loading && !detail ? (
               <div className="flex items-center justify-center gap-2 py-10 text-sm text-muted-foreground">

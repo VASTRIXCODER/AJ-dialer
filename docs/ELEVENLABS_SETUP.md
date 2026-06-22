@@ -130,14 +130,12 @@ Open **Live Monitor → a live call** for the per-call dashboard:
 4. **Transfer** — bridges the call to `ELEVENLABS_TRANSFER_NUMBER` (a phone).
 5. **End** — hangs up and categorizes the call.
 
-> **Note on raw passive audio:** ElevenLabs does not expose the in-progress call
-> audio over a simple API, and this app runs serverless (no persistent
-> websocket), so silent *audio* listening while the AI keeps talking isn't
-> available. Use **Listen in** (live transcript read-aloud) to monitor, **Take
-> over / Transfer (Conference)** to actually join with audio, and the
-> **recording** plays right after the call. For true 3-way passive audio you'd
-> run calls through a Twilio Conference with media streaming — ask and we can
-> add that architecture.
+> **Passive live audio is now available** via a standalone Twilio Media Streams
+> relay — hear the AI call live without interrupting it. Deploy it and set
+> `MEDIA_STREAM_URL` + `MEDIA_STREAM_SECRET`; then the **Listen live** button
+> appears on live calls. See **`docs/LIVE_AUDIO.md`**. Without it, use **Read
+> aloud** (live transcript), **Take over / Transfer** to join with audio, and the
+> **recording** after the call.
 
 ---
 
