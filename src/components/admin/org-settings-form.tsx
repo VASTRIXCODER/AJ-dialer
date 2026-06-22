@@ -519,14 +519,25 @@ export function OrgSettingsForm({
               placeholder="Use {agent} and {org} as placeholders."
             />
           </Field>
-          <Field label="System prompt (advanced)" className="sm:col-span-2">
+          <div className="sm:col-span-2">
+            <div className="mb-1.5 flex items-center justify-between">
+              <Label className="mb-0">System prompt (paste this into ElevenLabs)</Label>
+              <button
+                type="button"
+                onClick={() => navigator.clipboard?.writeText(ai.systemPrompt)}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-border px-2 py-1 text-xs font-semibold text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
+              >
+                <Copy className="h-3.5 w-3.5" />
+                Copy
+              </button>
+            </div>
             <Textarea
               value={ai.systemPrompt}
               onChange={(e) => setAi({ ...ai, systemPrompt: e.target.value })}
               placeholder="Leave blank to use the built-in script for this vertical (Sunrun uses the Emily resolution script)."
-              className="min-h-[120px] font-mono text-xs"
+              className="min-h-[140px] font-mono text-xs"
             />
-          </Field>
+          </div>
         </div>
         <div className="mt-3">
           <Toggle

@@ -71,6 +71,7 @@ Never promise the utility bill will disappear, guaranteed savings, or refunds. I
 - Never collect a social security number, banking details, or card info.
 - Always wait for responses, ask one question at a time, keep answers short, sound human, and move toward booking the appointment.
 - When the conversation is finished — appointment booked, no issue, not interested, or you hit a voicemail — END THE CALL using your end-call tool. Do not linger or keep talking.
+- If a live human representative joins or is merged into the call, STOP talking immediately, go silent, and let them take over.
 
 # Dispositions (categorize the outcome)
 1 APPOINTMENT SET · 2 CALLBACK · 3 NO ISSUE · 4 NOT INTERESTED · 5 VOICEMAIL · 6 WRONG NUMBER · 7 BAD NUMBER · 8 DNC · 9 ESCALATE`;
@@ -124,6 +125,7 @@ ${p.blurb} Build rapport, qualify quickly, and book a follow-up appointment for 
 # Rules
 - Never invent specifics. Never pressure. Keep it human and short.
 - When finished, END THE CALL using your end-call tool.
+- If a live human representative joins or is merged into the call, stop talking immediately and let them take over.
 - Outcomes to categorize: ${dispositions}.`;
 }
 
