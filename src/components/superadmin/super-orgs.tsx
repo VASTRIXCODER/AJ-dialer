@@ -24,7 +24,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input, Label, Select, Textarea } from "@/components/ui/input";
 import { Portal } from "@/components/ui/portal";
-import type { OrgBlueprint, OrgFeatures } from "@/lib/org/settings";
+import type { OrgBilling, OrgBlueprint, OrgFeatures } from "@/lib/org/settings";
 import { DIALER_TEMPLATES, templateLabel } from "@/lib/org/templates";
 import { ROLE_LABEL } from "@/lib/permissions";
 import { cn, initials } from "@/lib/utils";
@@ -54,7 +54,12 @@ type OrgDetail = Org & {
   accentColor: string;
   defaultRole: string;
   timezone: string;
-  settings: { features: OrgFeatures; leadNoun: string; leadNounPlural: string };
+  settings: {
+    features: OrgFeatures;
+    billing: OrgBilling;
+    leadNoun: string;
+    leadNounPlural: string;
+  };
 };
 type OrgMember = {
   id: string;
@@ -302,6 +307,8 @@ function OrgDrawer({ orgId, onChanged }: { orgId: string; onChanged: () => void 
 
       <OrgEditor detail={detail} onSaved={() => { load(); onChanged(); }} />
 
+      <OrgBillingEditor detail={detail} onSaved={() => { load(); onChanged(); }} />
+
       {/* Members */}
       <div className="rounded-xl border border-border bg-card p-4">
         <p className="mb-2 text-sm font-semibold">Members</p>
@@ -502,6 +509,132 @@ function OrgEditor({ detail, onSaved }: { detail: OrgDetail; onSaved: () => void
             <Save className="h-4 w-4" />
           )}
           {saved ? "Saved" : "Save settings"}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function OrgBillingEditor({ detail, onSaved }: { detail: OrgDetail; onSaved: () => void }) {
+  const b = detail.settings.billing;
+  const [f, setF] = useState({
+    paywall: b.paywall,
+    active: b.active,
+    price: b.price,
+    currency: b.currency || "USD",
+    interval: b.interval,
+    note: b.note,
+  });
+  const [busy, setBusy] = useState(false);
+  const [saved, setSaved] = useState(false);
+
+  async function save() {
+    setBusy(true);
+    const j = await api("PATCH", { id: detail.id, settings: { billing: f } });
+    setBusy(false);
+    if (j.ok) {
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2000);
+      onSaved();
+    }
+  }
+
+  const locked = f.paywall && !f.active;
+
+  return (
+    <div className="rounded-xl border border-border bg-card p-4">
+      <div className="mb-3 flex items-center justify-between">
+        <p className="text-sm font-semibold">Billing &amp; paywall</p>
+        <Badge tone={!f.paywall ? "neutral" : f.active ? "success" : "warning"}>
+          {!f.paywall ? "Free" : f.active ? "Unlocked" : "Locked"}
+        </Badge>
+      </div>
+
+      <div className="space-y-2.5">
+        <label className="flex items-center justify-between gap-2 rounded-lg border border-border bg-background/40 px-3 py-2 text-sm">
+          <span>
+            <span className="font-medium">Require payment</span>
+            <span className="block text-xs text-muted-foreground">
+              Gate this workspace behind a paid plan.
+            </span>
+          </span>
+          <input
+            type="checkbox"
+            checked={f.paywall}
+            onChange={(e) => setF({ ...f, paywall: e.target.checked })}
+          />
+        </label>
+
+        <label
+          className={cn(
+            "flex items-center justify-between gap-2 rounded-lg border px-3 py-2 text-sm transition-colors",
+            f.paywall ? "border-border bg-background/40" : "border-border/40 opacity-50",
+          )}
+        >
+          <span>
+            <span className="font-medium">Access unlocked (paid)</span>
+            <span className="block text-xs text-muted-foreground">
+              On = members get in. Off = they see the lock screen.
+            </span>
+          </span>
+          <input
+            type="checkbox"
+            checked={f.active}
+            disabled={!f.paywall}
+            onChange={(e) => setF({ ...f, active: e.target.checked })}
+          />
+        </label>
+
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+          <Cell label="Price">
+            <Input
+              type="number"
+              min={0}
+              value={String(f.price)}
+              onChange={(e) => setF({ ...f, price: Number(e.target.value) || 0 })}
+            />
+          </Cell>
+          <Cell label="Currency">
+            <Input
+              value={f.currency}
+              onChange={(e) => setF({ ...f, currency: e.target.value.toUpperCase().slice(0, 3) })}
+            />
+          </Cell>
+          <Cell label="Billing period">
+            <Select
+              value={f.interval}
+              onChange={(e) => setF({ ...f, interval: e.target.value as OrgBilling["interval"] })}
+            >
+              <option value="month">Monthly</option>
+              <option value="year">Yearly</option>
+              <option value="once">One-time</option>
+            </Select>
+          </Cell>
+        </div>
+
+        <Cell label="Lock-screen note (optional)">
+          <Textarea
+            value={f.note}
+            onChange={(e) => setF({ ...f, note: e.target.value })}
+            placeholder="e.g. Contact billing@yourcompany.com to activate."
+            className="min-h-[64px]"
+          />
+        </Cell>
+      </div>
+
+      <div className="mt-3 flex items-center justify-between">
+        <p className="text-xs text-muted-foreground">
+          {locked ? "Members are currently locked out." : "Members have full access."}
+        </p>
+        <Button size="sm" className="gap-2" disabled={busy} onClick={save}>
+          {busy ? (
+            <Loader2 className="h-4 w-4 animate-spin" />
+          ) : saved ? (
+            <CheckCircle2 className="h-4 w-4" />
+          ) : (
+            <Save className="h-4 w-4" />
+          )}
+          {saved ? "Saved" : "Save billing"}
         </Button>
       </div>
     </div>

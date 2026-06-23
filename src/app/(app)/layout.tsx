@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { AppShell } from "@/components/layout/app-shell";
 import { MaintenanceScreen } from "@/components/layout/maintenance-screen";
+import { PaywallScreen } from "@/components/layout/paywall-screen";
 import { isAIConfigured } from "@/lib/ai/claude";
 import { getAppSettings, isAccountDisabled } from "@/lib/db/app-control";
 import { getViewer } from "@/lib/org/membership";
@@ -32,6 +33,19 @@ export default async function AppGroupLayout({
     if (await isAccountDisabled(viewer.user.id)) {
       return <MaintenanceScreen suspended />;
     }
+  }
+
+  // Per-org paywall: if this workspace is gated and not yet activated by the
+  // platform owner, lock it for everyone but the superadmin (who grants access).
+  const billing = viewer.org?.settings.billing;
+  if (!superadmin && billing?.paywall && !billing.active) {
+    return (
+      <PaywallScreen
+        orgName={viewer.org?.name ?? "This workspace"}
+        productName={viewer.org?.productName}
+        billing={billing}
+      />
+    );
   }
 
   const account = {
