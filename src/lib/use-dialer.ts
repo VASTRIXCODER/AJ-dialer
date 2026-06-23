@@ -553,6 +553,22 @@ export function useDialer(queue: Lead[], aiConfigured = false) {
           });
           return;
         }
+        const data = (await res.json().catch(() => ({}))) as {
+          calls?: { leadId: string; sid: string | null }[];
+        };
+        const placed = (data.calls ?? []).map((c) => ({
+          leadId: c.leadId,
+          sid: c.sid,
+        }));
+        if (!placed.some((p) => p.sid)) {
+          clearHumanPresence();
+          patch({
+            error: "Couldn't place the call. Check your Twilio number and credentials.",
+            status: "idle",
+            lines: [],
+          });
+          return;
+        }
 
         // Join the rep's browser into the same room (and record the conference).
         const call = await deviceRef.current.connect({
@@ -560,26 +576,38 @@ export function useDialer(queue: Lead[], aiConfigured = false) {
         });
         attachCallHandlers(call);
 
-        // Poll which homeowner answered first (single or parallel) to flip the
-        // line to "connected" and register presence so the monitor can listen.
+        // Detect the connect by polling Twilio for the homeowner leg status
+        // (serverless-safe — not in-memory state). Flips the line to "connected"
+        // so the monitor can listen; wraps up if nobody answers.
         stopPoll();
         pollRef.current = setInterval(async () => {
           try {
-            const a = await fetch(
-              `/api/twilio/answered?room=${encodeURIComponent(room)}`,
-            );
-            const { answeredLeadId } = (await a.json()) as {
+            const a = await fetch("/api/twilio/answered", {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ legs: placed }),
+            });
+            const { answeredLeadId, done } = (await a.json()) as {
               answeredLeadId: string | null;
+              done?: boolean;
             };
             if (answeredLeadId) {
               const lead = leads.find((l) => l.id === answeredLeadId);
               if (lead) connectLine(lead);
               else stopPoll();
+            } else if (done) {
+              // No one answered — release the rep from the empty conference.
+              stopPoll();
+              try {
+                callRef.current?.disconnect();
+              } catch {
+                /* the disconnect handler wraps up */
+              }
             }
           } catch {
             /* keep polling */
           }
-        }, 1200);
+        }, 2000);
       } catch {
         clearHumanPresence();
         patch({ error: "Call failed to start.", status: "idle", lines: [] });

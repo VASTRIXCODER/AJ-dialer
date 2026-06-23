@@ -76,6 +76,7 @@ export async function POST(req: Request) {
           to: leg.to,
           from: twilioConfig.callerId,
           twiml: conferenceTwiml,
+          timeout: 30,
           ...(base
             ? {
                 statusCallback: `${base}/api/twilio/status?room=${encodeURIComponent(room)}&leadId=${encodeURIComponent(leg.leadId)}`,

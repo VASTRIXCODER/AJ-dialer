@@ -26,7 +26,11 @@ export async function GET() {
     state: c.state,
     startedAt: c.startedAt,
     repName: c.repName,
-    canListen: Boolean(c.callSid),
+    // Once the call is connected, its Twilio conference exists and a supervisor
+    // can join it (muted) to listen. Tied to the connected state — which the
+    // rep's browser reports — rather than the voice webhook's CallSid, which on
+    // serverless may have landed on a different instance than this request.
+    canListen: c.state === "connected",
   }));
   return NextResponse.json({ active });
 }
