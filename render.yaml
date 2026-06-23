@@ -1,0 +1,26 @@
+# Render blueprint for the live-audio relay (server/media-stream-server.mjs).
+#
+# This deploys ONLY the WebSocket relay that forks call audio for live listening.
+# Your Next app stays on Vercel; it talks to this service over wss://.
+#
+# Deploy:  Render → New → Blueprint → pick this repo. Render reads this file,
+# creates the service, and prompts you for MEDIA_STREAM_SECRET.
+#
+# ⚠️ Do NOT use the free plan: free services sleep after ~15 min idle and take
+#    ~50s to wake, so Twilio's media WebSocket fails to connect on the first call
+#    after idle. "starter" ($7/mo) stays warm. See docs/LIVE_AUDIO.md.
+services:
+  - type: web
+    name: aj-dialer-media-relay
+    runtime: node
+    plan: starter
+    buildCommand: npm install
+    startCommand: npm run relay
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      # Must be IDENTICAL to MEDIA_STREAM_SECRET in your Next app (Vercel).
+      # Leave sync:false so Render prompts you to paste it (kept out of git).
+      - key: MEDIA_STREAM_SECRET
+        sync: false
+      # PORT is injected by Render automatically; the relay honors it. Don't set it.
