@@ -37,6 +37,7 @@ export default async function MonitorPage({
 
   const aiConfigured = isElevenLabsConfigured();
   const canListen = viewer.permissions.includes("monitor.listen");
+  const canIntervene = viewer.permissions.includes("monitor.intervene");
 
   return (
     <PageContainer>
@@ -50,6 +51,7 @@ export default async function MonitorPage({
         configured={aiConfigured}
         initialCall={call ?? null}
         canListen={canListen}
+        canIntervene={canIntervene}
       />
 
       {/* Human rep calls — appears only when a manual call is live */}

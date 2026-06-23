@@ -35,6 +35,10 @@ export interface AICall {
   appointment?: { when: string; notes: string } | null;
   /** Active Twilio Media Stream SID while a supervisor is listening live. */
   streamSid?: string;
+  /** Conference room (bridge mode) — listeners join this muted. */
+  room?: string;
+  /** The homeowner's Twilio leg (bridge mode), for transfer/end control. */
+  customerCallSid?: string;
 }
 
 const calls = new Map<string, AICall>();
@@ -58,6 +62,8 @@ export function registerAICall(input: {
   leadName: string;
   phone: string;
   city?: string;
+  room?: string;
+  customerCallSid?: string;
 }): AICall {
   sweep();
   const call: AICall = {
@@ -70,6 +76,8 @@ export function registerAICall(input: {
     state: "initiated",
     sentiment: "neutral",
     startedAt: Date.now(),
+    room: input.room,
+    customerCallSid: input.customerCallSid,
   };
   calls.set(call.conversationId, call);
   if (call.callSid) bySid.set(call.callSid, call.conversationId);

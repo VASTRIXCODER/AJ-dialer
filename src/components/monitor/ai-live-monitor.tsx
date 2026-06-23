@@ -102,10 +102,12 @@ export function AiLiveMonitor({
   configured,
   initialCall = null,
   canListen = false,
+  canIntervene = false,
 }: {
   configured: boolean;
   initialCall?: string | null;
   canListen?: boolean;
+  canIntervene?: boolean;
 }) {
   const [active, setActive] = useState<AICall[]>([]);
   const [recent, setRecent] = useState<AICall[]>([]);
@@ -281,21 +283,23 @@ export function AiLiveMonitor({
                       }}
                     >
                       <Headphones className="h-3.5 w-3.5" />
-                      Manage &amp; take over
+                      {canIntervene ? "Manage & take over" : "Open & listen"}
                     </Button>
-                    <Button
-                      size="sm"
-                      variant="danger"
-                      className="gap-1.5"
-                      disabled={busy === c.conversationId + "end"}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        intervene(c.conversationId, "end");
-                      }}
-                    >
-                      <PhoneOff className="h-3.5 w-3.5" />
-                      End
-                    </Button>
+                    {canIntervene && (
+                      <Button
+                        size="sm"
+                        variant="danger"
+                        className="gap-1.5"
+                        disabled={busy === c.conversationId + "end"}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          intervene(c.conversationId, "end");
+                        }}
+                      >
+                        <PhoneOff className="h-3.5 w-3.5" />
+                        End
+                      </Button>
+                    )}
                   </div>
                 </SpotlightCard>
               );
@@ -353,6 +357,7 @@ export function AiLiveMonitor({
           key={openId}
           conversationId={openId}
           canListen={canListen}
+          canIntervene={canIntervene}
           onClose={() => setOpenId(null)}
           onChanged={load}
         />

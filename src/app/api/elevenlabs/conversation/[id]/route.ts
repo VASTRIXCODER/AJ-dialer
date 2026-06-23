@@ -9,6 +9,7 @@ import { getAIConversation, markAIConversationActive } from "@/lib/db/records";
 import {
   elevenLabsConfig,
   getConversation,
+  isAIBridgeConfigured,
   isElevenLabsConfigured,
 } from "@/lib/elevenlabs";
 import { isMediaStreamConfigured } from "@/lib/media-stream";
@@ -234,7 +235,8 @@ export async function GET(
     appointment: store?.appointment ?? db?.appointment ?? null,
     transferNumber: elevenLabsConfig.transferNumber,
     configured: isElevenLabsConfigured(),
-    liveAudioAvailable: isMediaStreamConfigured() && isRestConfigured(),
+    liveAudioAvailable:
+      isAIBridgeConfigured() || (isMediaStreamConfigured() && isRestConfigured()),
   };
 
   // Never let the browser serve a cached snapshot — the live transcript must

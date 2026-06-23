@@ -1,9 +1,12 @@
+import { elevenLabsConfig } from "@/lib/elevenlabs";
 import {
   getPublicBaseUrl,
   isCallerIdConfigured,
   twilioConfig,
   verifyMonitorToken,
 } from "@/lib/twilio";
+
+const digits = (s: string) => s.replace(/\D/g, "");
 
 export const dynamic = "force-dynamic";
 
@@ -55,6 +58,13 @@ export async function POST(req: Request) {
     const monitor = String(form.get("Monitor") ?? "") === "true";
     const monitorToken = String(form.get("Token") ?? "");
     const record = String(form.get("record") ?? "false") === "true";
+
+    // ── AI bridge: the ElevenLabs agent dialed our bridge number. Hold the leg
+    // briefly; /api/elevenlabs/call moves it into the conference room by REST. ──
+    const bridge = elevenLabsConfig.bridgeNumber.trim();
+    if (bridge && to && digits(to) === digits(bridge)) {
+      return twiml(`<Pause length="30"/>`);
+    }
 
     // ── Supervisor live-listen: join MUTED, silently (no relay needed) ────────
     // Only a token signed by the authorized listen route gets in — this is what

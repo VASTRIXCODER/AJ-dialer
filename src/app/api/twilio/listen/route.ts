@@ -1,7 +1,12 @@
 import { NextResponse } from "next/server";
 import { getAICall, updateAICall } from "@/lib/ai-call-store";
 import { getAIConversation } from "@/lib/db/records";
-import { fetchConversation, isElevenLabsConfigured } from "@/lib/elevenlabs";
+import {
+  aiConferenceRoom,
+  fetchConversation,
+  isAIBridgeConfigured,
+  isElevenLabsConfigured,
+} from "@/lib/elevenlabs";
 import { getHumanCall } from "@/lib/human-call-store";
 import {
   isMediaStreamConfigured,
@@ -76,10 +81,28 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: true, room, token });
   }
 
-  // ── AI conversation → relay path (requires the standalone media relay) ───────
+  if (!conversationId)
+    return NextResponse.json({ error: "conversationId or humanId required" }, { status: 400 });
+
+  // ── AI conversation in a conference (bridge mode) → join MUTED, no relay ─────
+  // Identical to human calls: hand back the room + a signed token the browser
+  // presents to the voice webhook. Stopping is client-side (disconnect the leg).
+  if (isAIBridgeConfigured()) {
+    if (action === "stop") return NextResponse.json({ ok: true });
+    const room = getAICall(conversationId)?.room || aiConferenceRoom(conversationId);
+    const token = signMonitorToken(room);
+    if (!token)
+      return NextResponse.json(
+        { error: "Twilio isn't configured for live listening." },
+        { status: 503 },
+      );
+    return NextResponse.json({ ok: true, room, token, mode: "conference" });
+  }
+
+  // ── Fallback: media relay (Twilio Streams → standalone relay) ────────────────
   if (!isMediaStreamConfigured())
     return NextResponse.json(
-      { error: "Live audio isn't configured (set MEDIA_STREAM_URL + MEDIA_STREAM_SECRET)." },
+      { error: "Live audio isn't configured (set TWILIO_AI_BRIDGE_NUMBER for relay-free listening, or MEDIA_STREAM_URL + MEDIA_STREAM_SECRET)." },
       { status: 503 },
     );
   if (!isRestConfigured())
@@ -91,9 +114,6 @@ export async function POST(req: Request) {
   const client = await getRestClient();
   if (!client)
     return NextResponse.json({ error: "Twilio REST unavailable." }, { status: 503 });
-
-  if (!conversationId)
-    return NextResponse.json({ error: "conversationId or humanId required" }, { status: 400 });
 
   const callSid = await resolveAICallSid(conversationId);
   if (!callSid)

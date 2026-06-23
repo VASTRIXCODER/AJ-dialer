@@ -77,11 +77,14 @@ const stateMeta: Record<AICallState, { label: string; tone: "primary" | "success
 export function CallDashboard({
   conversationId,
   canListen = false,
+  canIntervene = false,
   onClose,
   onChanged,
 }: {
   conversationId: string;
   canListen?: boolean;
+  /** Take over / transfer / end + override disposition (supervisors only). */
+  canIntervene?: boolean;
   onClose: () => void;
   onChanged: () => void;
 }) {
@@ -103,6 +106,7 @@ export function CallDashboard({
   const scrollRef = useRef<HTMLDivElement>(null);
   const deviceRef = useRef<Device | null>(null);
   const taCallRef = useRef<Call | null>(null);
+  const listenCallRef = useRef<Call | null>(null);
 
   const fetchDetail = useCallback(async () => {
     try {
@@ -209,7 +213,9 @@ export function CallDashboard({
     });
   }
 
-  // ── Live audio (Twilio media stream → relay → Web Audio) ─────────────────────
+  // ── Live audio ───────────────────────────────────────────────────────────────
+  // Two paths: a Twilio conference join (bridge mode — muted Voice SDK leg, no
+  // relay, identical to human calls) or the media-stream relay (PCM → Web Audio).
   const closeAudio = useCallback(() => {
     try {
       wsRef.current?.close();
@@ -223,6 +229,12 @@ export function CallDashboard({
       /* noop */
     }
     playerRef.current = null;
+    try {
+      listenCallRef.current?.disconnect();
+    } catch {
+      /* noop */
+    }
+    listenCallRef.current = null;
   }, []);
 
   function stopAudio() {
@@ -245,27 +257,54 @@ export function CallDashboard({
         body: JSON.stringify({ conversationId }),
       });
       const j = await res.json().catch(() => ({}));
-      if (!res.ok || !j.ok || !j.listenUrl) {
+      if (!res.ok || !j.ok) {
         setAudioErr(j.error ?? "Could not start live audio.");
         return;
       }
-      const player = createPcmPlayer();
-      playerRef.current = player;
-      const ws = new WebSocket(j.listenUrl);
-      wsRef.current = ws;
-      ws.onmessage = (e) => {
-        try {
-          const m = JSON.parse(e.data as string);
-          if (m.event === "media" && m.payload) player.play(m.payload);
-          else if (m.event === "ended") stopAudio();
-        } catch {
-          /* ignore malformed frame */
-        }
-      };
-      ws.onerror = () => setAudioErr("Live audio connection error.");
-      setAudioOn(true);
-    } catch {
-      setAudioErr("Network error.");
+
+      // Conference mode: join the room muted via the Voice SDK (no relay).
+      if (j.room && j.token) {
+        const device = await ensureDevice();
+        const call = await device.connect({
+          params: { Conference: j.room, Monitor: "true", Token: j.token },
+        });
+        listenCallRef.current = call;
+        call.on("disconnect", () => {
+          listenCallRef.current = null;
+          setAudioOn(false);
+        });
+        call.on("error", () => {
+          setAudioErr("Live audio connection error.");
+          listenCallRef.current = null;
+          setAudioOn(false);
+        });
+        setAudioOn(true);
+        return;
+      }
+
+      // Relay mode: stream PCM frames from the standalone relay.
+      if (j.listenUrl) {
+        const player = createPcmPlayer();
+        playerRef.current = player;
+        const ws = new WebSocket(j.listenUrl);
+        wsRef.current = ws;
+        ws.onmessage = (e) => {
+          try {
+            const m = JSON.parse(e.data as string);
+            if (m.event === "media" && m.payload) player.play(m.payload);
+            else if (m.event === "ended") stopAudio();
+          } catch {
+            /* ignore malformed frame */
+          }
+        };
+        ws.onerror = () => setAudioErr("Live audio connection error.");
+        setAudioOn(true);
+        return;
+      }
+
+      setAudioErr("Could not start live audio.");
+    } catch (e) {
+      setAudioErr(e instanceof Error ? e.message : "Network error — allow microphone access to listen in.");
     } finally {
       setBusy(null);
     }
@@ -366,6 +405,11 @@ export function CallDashboard({
   async function doTakeover() {
     setBusy("takeover");
     setError("");
+    // Stop passive listening first — one Voice SDK call per device.
+    if (audioOn) {
+      closeAudio();
+      setAudioOn(false);
+    }
     setTakeover("joining");
     try {
       const device = await ensureDevice();
@@ -723,7 +767,7 @@ export function CallDashboard({
           )}
 
           {/* Live-call controls: take over (AI → you), transfer, or end */}
-          {live && takeover === "idle" && (
+          {live && canIntervene && takeover === "idle" && (
             <div className="flex flex-wrap gap-2">
               <Button
                 variant="primary"
@@ -769,37 +813,38 @@ export function CallDashboard({
             </div>
           )}
 
-          {showDispo ? (
-            <div className="space-y-2.5">
-              <div className="flex items-center justify-between">
-                <p className="text-xs font-semibold text-muted-foreground">
-                  {detail?.outcome ? "Override disposition" : "Set disposition"}
-                </p>
-                <button
-                  type="button"
-                  onClick={() => setShowDispo(false)}
-                  className="text-xs font-medium text-muted-foreground hover:text-foreground"
-                >
-                  Cancel
-                </button>
+          {canIntervene &&
+            (showDispo ? (
+              <div className="space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <p className="text-xs font-semibold text-muted-foreground">
+                    {detail?.outcome ? "Override disposition" : "Set disposition"}
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => setShowDispo(false)}
+                    className="text-xs font-medium text-muted-foreground hover:text-foreground"
+                  >
+                    Cancel
+                  </button>
+                </div>
+                <OutcomeGrid onSelect={disposition} />
               </div>
-              <OutcomeGrid onSelect={disposition} />
-            </div>
-          ) : (
-            <Button
-              variant="subtle"
-              className="w-full gap-1.5"
-              disabled={busy === "dispo"}
-              onClick={() => setShowDispo(true)}
-            >
-              {busy === "dispo" ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <Settings2 className="h-4 w-4" />
-              )}
-              {detail?.outcome ? "Override disposition" : "Set disposition manually"}
-            </Button>
-          )}
+            ) : (
+              <Button
+                variant="subtle"
+                className="w-full gap-1.5"
+                disabled={busy === "dispo"}
+                onClick={() => setShowDispo(true)}
+              >
+                {busy === "dispo" ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Settings2 className="h-4 w-4" />
+                )}
+                {detail?.outcome ? "Override disposition" : "Set disposition manually"}
+              </Button>
+            ))}
         </div>
       </motion.div>
     </motion.div>

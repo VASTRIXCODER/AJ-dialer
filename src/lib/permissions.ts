@@ -50,6 +50,7 @@ export const PERMISSIONS = [
   "leads.import",
   "monitor.view", // open the Live Monitor (see in-progress AI + rep calls)
   "monitor.listen", // listen to live audio of in-progress calls
+  "monitor.intervene", // take over / transfer / end a live call
 ] as const;
 export type Permission = (typeof PERMISSIONS)[number];
 
@@ -69,8 +70,11 @@ export const ROLE_PERMISSIONS: Record<OrgRole, Permission[]> = {
     "companies.manage",
     "monitor.view",
     "monitor.listen",
+    "monitor.intervene",
   ],
-  rep: [], // reps dial only — no Admin, no Monitor, no reports
+  // Reps dial and work leads. They can open the monitor and LISTEN to live
+  // calls (AI + human), but can't take over / transfer / end them.
+  rep: ["monitor.view", "monitor.listen"],
 };
 
 export const PERMISSION_LABEL: Record<Permission, string> = {
@@ -88,6 +92,7 @@ export const PERMISSION_LABEL: Record<Permission, string> = {
   "leads.import": "Import leads",
   "monitor.view": "Open the Live Monitor",
   "monitor.listen": "Listen to live calls",
+  "monitor.intervene": "Take over, transfer or end live calls",
 };
 
 export function rolePermissions(role: OrgRole | null | undefined): Permission[] {

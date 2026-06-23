@@ -7,6 +7,7 @@ import {
   fetchConversation,
   isElevenLabsConfigured,
 } from "@/lib/elevenlabs";
+import { viewerCan } from "@/lib/org/membership";
 import { getRestClient, isRestConfigured } from "@/lib/twilio";
 
 export const dynamic = "force-dynamic";
@@ -42,8 +43,19 @@ export async function POST(req: Request) {
     );
   }
 
+  // Taking over / transferring / ending a live call is a supervisor action.
+  if (!(await viewerCan("monitor.intervene")))
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+
+  // In bridge (conference) mode the agent dials our bridge number, so callSid is
+  // the AGENT leg and customerSid is the homeowner's leg in the same room. In the
+  // direct mode there's a single leg (callSid = homeowner).
+  const stored = getAICall(conversationId);
+  const customerSid = stored?.customerCallSid ?? null;
+  const bridged = Boolean(customerSid);
+
   // Resolve the Twilio CallSid + (lazily) the live conversation.
-  let callSid = getAICall(conversationId)?.callSid ?? null;
+  let callSid = stored?.callSid ?? null;
   if (!callSid) {
     const owned = await getAIConversation(conversationId);
     callSid = owned?.callSid ?? null;
@@ -56,15 +68,18 @@ export async function POST(req: Request) {
 
   const client = isRestConfigured() ? await getRestClient() : null;
 
-  // ── End: stop the carrier leg if we can, then always finalize the session ───
+  // ── End: stop the carrier leg(s) if we can, then always finalize the session ─
   if (action === "end") {
     let hungUp = false;
-    if (callSid && client) {
-      try {
-        await client.calls(callSid).update({ status: "completed" });
-        hungUp = true;
-      } catch {
-        /* leg may already be over — finalize anyway */
+    if (client) {
+      // Hang up the homeowner first (ends the conference), then the agent leg.
+      for (const sid of [customerSid, callSid].filter(Boolean) as string[]) {
+        try {
+          await client.calls(sid).update({ status: "completed" });
+          hungUp = true;
+        } catch {
+          /* leg may already be over — finalize anyway */
+        }
       }
     }
     if (!convo && isElevenLabsConfigured()) {
@@ -87,8 +102,10 @@ export async function POST(req: Request) {
     });
   }
 
-  // takeover + transfer both need the live Twilio leg + REST.
-  if (!callSid) {
+  // takeover + transfer act on the homeowner's leg (the agent leg in bridge mode
+  // is separate). Need at least one live leg + REST.
+  const homeownerSid = customerSid || callSid;
+  if (!homeownerSid) {
     return NextResponse.json(
       { error: "No live Twilio leg found for this call (it may have already ended)." },
       { status: 404 },
@@ -101,6 +118,17 @@ export async function POST(req: Request) {
     );
   }
 
+  /** In bridge mode, drop the AI agent leg so it stops talking after handoff. */
+  async function dropAgentLeg() {
+    if (bridged && callSid && callSid !== homeownerSid && client) {
+      try {
+        await client.calls(callSid).update({ status: "completed" });
+      } catch {
+        /* agent leg may already be gone */
+      }
+    }
+  }
+
   try {
     // ── Take over: AI → human. Move the homeowner into the rep's conference. ──
     // The homeowner leg is already answered, so this is a plain conference join —
@@ -109,11 +137,12 @@ export async function POST(req: Request) {
       const conf = (room || `to-${conversationId}`)
         .replace(/[^a-zA-Z0-9_-]/g, "")
         .slice(0, 100);
-      await client.calls(callSid).update({
+      await client.calls(homeownerSid).update({
         twiml: xml(
           `<Dial><Conference startConferenceOnEnter="true" endConferenceOnExit="true" beep="false">${conf}</Conference></Dial>`,
         ),
       });
+      await dropAgentLeg();
       updateAICall(conversationId, { summary: "Taken over by a human rep" });
       return NextResponse.json({ ok: true, action, room: conf });
     }
@@ -126,9 +155,10 @@ export async function POST(req: Request) {
         { status: 400 },
       );
     }
-    await client.calls(callSid).update({
+    await client.calls(homeownerSid).update({
       twiml: xml(`<Dial>${target.replace(/[<>&]/g, "")}</Dial>`),
     });
+    await dropAgentLeg();
     updateAICall(conversationId, { summary: `Transferred to ${target}` });
     return NextResponse.json({ ok: true, action, target });
   } catch (err) {

@@ -5,14 +5,82 @@ import { getLeadById } from "@/lib/db/leads";
 import { seedAIConversation } from "@/lib/db/records";
 import {
   agentVariablesForLead,
+  aiConferenceRoom,
+  elevenLabsConfig,
+  isAIBridgeConfigured,
   isElevenLabsConfigured,
   placeOutboundCall,
 } from "@/lib/elevenlabs";
 import { getViewer } from "@/lib/org/membership";
 import type { Lead } from "@/lib/types";
+import {
+  getPublicBaseUrl,
+  getRestClient,
+  isRestConfigured,
+  twilioConfig,
+} from "@/lib/twilio";
 import { formatPhone, toE164 } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
+
+const xml = (body: string) =>
+  `<?xml version="1.0" encoding="UTF-8"?><Response>${body}</Response>`;
+const escapeXml = (s: string) =>
+  s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+
+/**
+ * Bridge a freshly-placed AI call into a Twilio conference so it can be listened
+ * to live with no media relay (parity with human calls). The agent dialed our
+ * bridge number; we move that leg into the room, then dial the homeowner into
+ * the same room. Returns the homeowner's leg SID (for later transfer/end), or
+ * null if the bridge couldn't be set up (caller falls back to the direct call).
+ */
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+async function bridgeIntoConference(opts: {
+  agentCallSid: string;
+  room: string;
+  toNumber: string;
+  record: boolean;
+  base: string | null;
+}): Promise<string | null> {
+  const client = await getRestClient();
+  if (!client) return null;
+  const recAttr =
+    opts.record && opts.base
+      ? ` record="record-from-start" recordingStatusCallback="${escapeXml(`${opts.base}/api/twilio/status`)}"`
+      : opts.record
+        ? ' record="record-from-start"'
+        : "";
+
+  // Dial the homeowner into the room first (no dependency on the agent leg yet);
+  // their hangup ends the conference.
+  const customer = await client.calls.create({
+    to: opts.toNumber,
+    from: twilioConfig.callerId,
+    twiml: xml(
+      `<Dial><Conference startConferenceOnEnter="true" endConferenceOnExit="true" beep="false"${recAttr}>${escapeXml(opts.room)}</Conference></Dial>`,
+    ),
+  });
+
+  // Move the agent leg into the same room. It's still ringing/answering our
+  // bridge (held by the voice webhook's <Pause>), so a redirect can race ahead
+  // of the answer — retry until Twilio accepts it (call reaches in-progress).
+  const moveTwiml = xml(
+    `<Dial><Conference startConferenceOnEnter="true" endConferenceOnExit="false" beep="false">${escapeXml(opts.room)}</Conference></Dial>`,
+  );
+  for (let i = 0; i < 5; i++) {
+    try {
+      await client.calls(opts.agentCallSid).update({ twiml: moveTwiml });
+      break;
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "";
+      if (i === 4 || !/21220|not.?in.?progress/i.test(msg)) throw e;
+      await sleep(700);
+    }
+  }
+  return customer.sid;
+}
 
 const s = (v: unknown) => (typeof v === "string" ? v.trim() : "");
 const n = (v: unknown) => {
@@ -99,9 +167,15 @@ export async function POST(req: Request) {
   const viewer = await getViewer();
   const agent = resolveAgentConfig(viewer.org);
 
+  // Bridge mode: route the agent through our Twilio number so the call lives in
+  // a conference anyone can listen to. The agent dials the bridge; we move it
+  // into the room and dial the homeowner in. Needs Twilio REST + a caller ID.
+  const bridge = isAIBridgeConfigured() && isRestConfigured();
+  const dialTarget = bridge ? toE164(elevenLabsConfig.bridgeNumber) : toNumber;
+
   try {
     const result = await placeOutboundCall({
-      toNumber,
+      toNumber: dialTarget,
       dynamicVariables: agentVariablesForLead(lead),
       promptOverride: agent.systemPrompt,
       firstMessage: agent.firstMessage,
@@ -116,6 +190,25 @@ export async function POST(req: Request) {
       );
     }
 
+    // Set up the conference (best-effort — fall back to the direct call audio).
+    let room: string | undefined;
+    let customerCallSid: string | undefined;
+    if (bridge && result.callSid) {
+      try {
+        room = aiConferenceRoom(result.conversationId);
+        const sid = await bridgeIntoConference({
+          agentCallSid: result.callSid,
+          room,
+          toNumber,
+          record: true,
+          base: getPublicBaseUrl(req),
+        });
+        customerCallSid = sid ?? undefined;
+      } catch {
+        room = undefined; // bridge failed — listening will be unavailable
+      }
+    }
+
     registerAICall({
       conversationId: result.conversationId,
       callSid: result.callSid,
@@ -123,6 +216,8 @@ export async function POST(req: Request) {
       leadName,
       phone: toNumber,
       city: [lead.city, lead.state].filter(Boolean).join(", "),
+      room,
+      customerCallSid,
     });
 
     await seedAIConversation({

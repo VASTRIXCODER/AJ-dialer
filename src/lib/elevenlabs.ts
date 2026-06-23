@@ -25,12 +25,33 @@ export const elevenLabsConfig = {
   webhookSecret: process.env.ELEVENLABS_WEBHOOK_SECRET ?? "",
   /** E.164 rep number the "Transfer" button reroutes a live call to. */
   transferNumber: process.env.ELEVENLABS_TRANSFER_NUMBER || "+14693018199",
+  /**
+   * A Twilio number we own whose Voice webhook points at /api/twilio/voice.
+   * When set, AI calls are placed into a Twilio conference (the agent dials this
+   * bridge, we move it into the room, then dial the homeowner in) so anyone can
+   * listen live by joining the room muted — exactly like human calls, no relay.
+   */
+  bridgeNumber: process.env.TWILIO_AI_BRIDGE_NUMBER ?? "",
 };
 
 /** True when the AI agent can place outbound calls. */
 export function isElevenLabsConfigured() {
   const c = elevenLabsConfig;
   return Boolean(c.apiKey && c.agentId && c.agentPhoneNumberId);
+}
+
+/**
+ * True when AI calls can run through a Twilio conference for relay-free live
+ * listening (a bridge number is configured). When false, calls go straight to
+ * the homeowner as before and live listening falls back to the media relay.
+ */
+export function isAIBridgeConfigured() {
+  return Boolean(elevenLabsConfig.bridgeNumber.trim());
+}
+
+/** The Twilio conference room name for an AI conversation (derived, stable). */
+export function aiConferenceRoom(conversationId: string): string {
+  return `ai-${conversationId}`.replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 120);
 }
 
 /**
