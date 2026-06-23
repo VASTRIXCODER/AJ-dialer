@@ -41,6 +41,68 @@ export async function writeAudit(e: {
   }
 }
 
+// ── Audit log (read, org-scoped) ─────────────────────────────────────────────
+export interface AuditEntry {
+  id: string;
+  action: string;
+  actorName: string;
+  targetName: string | null;
+  targetKind: string | null;
+  detail: Record<string, unknown>;
+  createdAt: string;
+}
+
+/** Recent audit entries for an org, with actor/target names resolved. */
+export async function listAuditLog(orgId: string, limit = 60): Promise<AuditEntry[]> {
+  if (!isAdminConfigured()) return [];
+  try {
+    const admin = createAdminClient();
+    const { data } = await admin
+      .from("audit_log")
+      .select("*")
+      .eq("org_id", orgId)
+      .order("created_at", { ascending: false })
+      .limit(limit);
+    const rows = (data ?? []) as Record<string, unknown>[];
+
+    // Resolve actor + target user ids → member display names within the org.
+    const ids = [
+      ...new Set(
+        rows
+          .flatMap((r) => [r.actor_id, r.target_id])
+          .map((v) => (v ? String(v) : ""))
+          .filter(Boolean),
+      ),
+    ];
+    const names = new Map<string, string>();
+    if (ids.length) {
+      const { data: mem } = await admin
+        .from("organization_members")
+        .select("user_id,name,email")
+        .eq("org_id", orgId)
+        .in("user_id", ids);
+      for (const m of (mem ?? []) as Record<string, unknown>[])
+        names.set(String(m.user_id), String(m.name || m.email || "Member"));
+    }
+
+    return rows.map((r) => ({
+      id: String(r.id),
+      action: String(r.action),
+      actorName: r.actor_id
+        ? names.get(String(r.actor_id)) || "Someone"
+        : String(r.actor_kind ?? "system") === "superadmin"
+          ? "Platform admin"
+          : "System",
+      targetName: r.target_id ? names.get(String(r.target_id)) ?? null : null,
+      targetKind: r.target_kind ? String(r.target_kind) : null,
+      detail: (r.detail as Record<string, unknown>) ?? {},
+      createdAt: String(r.created_at ?? ""),
+    }));
+  } catch {
+    return [];
+  }
+}
+
 // ── Hidden platform superadmins ──────────────────────────────────────────────
 /** Is this account a DB-promoted platform superadmin? (Service-role read.) */
 export async function isPlatformAdmin(userId: string): Promise<boolean> {

@@ -3,6 +3,7 @@ import { AdminConsole } from "@/components/admin/admin-console";
 import { EmptyState } from "@/components/shared/empty-state";
 import { PageContainer, PageHeader } from "@/components/shared/page-header";
 import { isAIConfigured } from "@/lib/ai/claude";
+import { listAuditLog } from "@/lib/db/app-control";
 import { getLeadStats } from "@/lib/db/leads";
 import { isElevenLabsConfigured } from "@/lib/elevenlabs";
 import { listMembers, listOrgCompanies, getViewer } from "@/lib/org/membership";
@@ -31,7 +32,7 @@ export default async function AdminPage() {
     );
   }
 
-  const [members, companies, leadStats] = await Promise.all([
+  const [members, companies, leadStats, audit] = await Promise.all([
     viewer.permissions.includes("members.view")
       ? listMembers(viewer.org.id)
       : Promise.resolve([]),
@@ -39,6 +40,9 @@ export default async function AdminPage() {
       ? listOrgCompanies(viewer.org.id)
       : Promise.resolve([]),
     getLeadStats(),
+    viewer.permissions.includes("members.view")
+      ? listAuditLog(viewer.org.id)
+      : Promise.resolve([]),
   ]);
 
   const integrations = [
@@ -63,6 +67,7 @@ export default async function AdminPage() {
         companies={companies}
         leadStats={leadStats}
         integrations={integrations}
+        audit={audit}
         demo={viewer.isDemo}
       />
     </PageContainer>

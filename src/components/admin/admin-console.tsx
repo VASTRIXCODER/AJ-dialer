@@ -6,7 +6,9 @@ import {
   Check,
   CheckCircle2,
   Copy,
+  Crown,
   Database,
+  History,
   KeyRound,
   Loader2,
   Plug,
@@ -41,9 +43,19 @@ import {
 } from "@/lib/permissions";
 import { cn, initials, relativeTime } from "@/lib/utils";
 
-type Tab = "members" | "organization" | "companies" | "data";
+type Tab = "members" | "organization" | "companies" | "activity" | "data";
 
 type Integration = { name: string; ok: boolean; detail: string };
+
+type AuditEntry = {
+  id: string;
+  action: string;
+  actorName: string;
+  targetName: string | null;
+  targetKind: string | null;
+  detail: Record<string, unknown>;
+  createdAt: string;
+};
 
 const roleTone: Record<OrgRole, "primary" | "accent" | "neutral" | "success"> = {
   owner: "success",
@@ -60,6 +72,7 @@ export function AdminConsole({
   companies,
   leadStats,
   integrations,
+  audit,
   demo,
 }: {
   org: OrgFull;
@@ -69,6 +82,7 @@ export function AdminConsole({
   companies: OrgCompany[];
   leadStats: { total: number; qualified: number; appointments: number; avgScore: number };
   integrations: Integration[];
+  audit: AuditEntry[];
   demo: boolean;
 }) {
   const has = (p: string) => permissions.includes(p);
@@ -77,6 +91,7 @@ export function AdminConsole({
     { key: "members", label: "Members", icon: Users, show: has("members.view") },
     { key: "organization", label: "Organization", icon: Settings2, show: has("org.edit") },
     { key: "companies", label: "Companies", icon: Building2, show: has("companies.manage") },
+    { key: "activity", label: "Activity log", icon: History, show: has("members.view") },
     { key: "data", label: "Data & integrations", icon: Database, show: true },
   ];
   const visible = TABS.filter((t) => t.show);
@@ -123,6 +138,7 @@ export function AdminConsole({
       {tab === "companies" && (
         <CompaniesTab companies={companies} />
       )}
+      {tab === "activity" && <ActivityTab entries={audit} />}
       {tab === "data" && (
         <DataTab integrations={integrations} leadStats={leadStats} canImport={has("leads.import")} />
       )}
@@ -302,12 +318,21 @@ function MembersTab({
               actorRole={role}
               canRole={canRole}
               canRemove={canRemove}
+              canTransfer={role === "owner"}
               busy={busy === m.id}
               onRole={(r) => act({ id: m.id, action: "role", role: r }, m.id)}
               onPerms={(perms) => act({ id: m.id, action: "permissions", permissions: perms }, m.id)}
               onRemove={() => {
                 if (confirm(`Remove ${m.name || m.email} from ${org.name}?`))
                   act({ id: m.id, action: "remove" }, m.id);
+              }}
+              onTransfer={() => {
+                if (
+                  confirm(
+                    `Make ${m.name || m.email} the owner of ${org.name}? You'll be demoted to admin.`,
+                  )
+                )
+                  act({ id: m.id, action: "transfer" }, m.id);
               }}
             />
           ))}
@@ -322,19 +347,23 @@ function MemberRow({
   actorRole,
   canRole,
   canRemove,
+  canTransfer,
   busy,
   onRole,
   onPerms,
   onRemove,
+  onTransfer,
 }: {
   m: Member;
   actorRole: OrgRole;
   canRole: boolean;
   canRemove: boolean;
+  canTransfer: boolean;
   busy: boolean;
   onRole: (role: OrgRole) => void;
   onPerms: (perms: Record<string, boolean>) => void;
   onRemove: () => void;
+  onTransfer: () => void;
 }) {
   const [editing, setEditing] = useState(false);
   // You can only manage members strictly below your own rank, and never the owner.
@@ -377,6 +406,18 @@ function MemberRow({
             )}
           >
             <Shield className="h-4 w-4" />
+          </button>
+        )}
+        {canTransfer && m.role !== "owner" && (
+          <button
+            type="button"
+            aria-label="Transfer ownership"
+            title="Transfer ownership"
+            onClick={onTransfer}
+            disabled={busy}
+            className="flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-warning/10 hover:text-warning"
+          >
+            <Crown className="h-4 w-4" />
           </button>
         )}
         {canRemove && manageable && (
@@ -573,6 +614,58 @@ function CompaniesTab({ companies }: { companies: OrgCompany[] }) {
           ))
         )}
       </div>
+    </SectionCard>
+  );
+}
+
+// ── Activity log ─────────────────────────────────────────────────────────────
+const ACTION_LABEL: Record<string, string> = {
+  "member.approve": "approved",
+  "member.role": "changed the role of",
+  "member.remove": "removed",
+  "member.transfer_ownership": "transferred ownership to",
+  "platform.grant": "granted platform access to",
+  "platform.revoke": "revoked platform access from",
+  "account.suspend": "suspended",
+  "account.restore": "restored",
+};
+
+function ActivityTab({ entries }: { entries: AuditEntry[] }) {
+  return (
+    <SectionCard
+      title="Activity log"
+      description="Recent sensitive actions — role changes, approvals, removals & ownership transfers."
+    >
+      {entries.length === 0 ? (
+        <p className="rounded-xl border border-dashed border-border/70 px-4 py-8 text-center text-sm text-muted-foreground">
+          No recorded activity yet.
+        </p>
+      ) : (
+        <div className="space-y-1.5">
+          {entries.map((e) => {
+            const verb = ACTION_LABEL[e.action] ?? e.action.replace(/[._]/g, " ");
+            const role = typeof e.detail?.role === "string" ? (e.detail.role as string) : null;
+            return (
+              <div key={e.id} className="flex items-start gap-3 rounded-xl border border-border p-3">
+                <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
+                  <History className="h-4 w-4" />
+                </span>
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm leading-snug">
+                    <span className="font-semibold">{e.actorName}</span>{" "}
+                    <span className="text-muted-foreground">{verb}</span>
+                    {e.targetName && <span className="font-semibold"> {e.targetName}</span>}
+                    {role && <span className="capitalize text-muted-foreground"> · {role}</span>}
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    {e.createdAt ? relativeTime(e.createdAt) : ""}
+                  </p>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
     </SectionCard>
   );
 }

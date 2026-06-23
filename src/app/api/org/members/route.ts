@@ -6,6 +6,7 @@ import {
   removeMember,
   setMemberPermissions,
   setMemberRole,
+  transferOwnership,
 } from "@/lib/org/membership";
 import { type OrgRole, isOrgRole } from "@/lib/permissions";
 
@@ -26,7 +27,7 @@ export async function GET() {
 export async function PATCH(req: Request) {
   const body = (await req.json().catch(() => ({}))) as {
     id?: string;
-    action?: "approve" | "reject" | "role" | "permissions" | "remove";
+    action?: "approve" | "reject" | "role" | "permissions" | "remove" | "transfer";
     role?: string;
     permissions?: Record<string, boolean>;
   };
@@ -35,6 +36,9 @@ export async function PATCH(req: Request) {
 
   let r: { ok: boolean; error?: string };
   switch (body.action) {
+    case "transfer":
+      r = await transferOwnership(body.id);
+      break;
     case "approve":
       r = await decideMember(
         body.id,

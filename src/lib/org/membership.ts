@@ -810,6 +810,58 @@ function strictlyAbove(actor: Member, target: Member): boolean {
   return ROLE_RANK[actor.role] > ROLE_RANK[target.role];
 }
 
+/**
+ * Transfer ownership of the org to another active member. Owner-only. The new
+ * owner is promoted to "owner" and the previous owner is demoted to "admin"
+ * (so they keep management access). Updates memberships, the org's owner_id, and
+ * both denormalized profile roles, then audits it.
+ */
+export async function transferOwnership(memberId: string): Promise<Result> {
+  const user = await getUser();
+  if (!user) return { ok: false, error: "Sign in first." };
+  const actor = await getActiveMembership(user.id);
+  if (!actor) return { ok: false, error: "You’re not in an organization." };
+  if (actor.role !== "owner")
+    return { ok: false, error: "Only the current owner can transfer ownership." };
+  if (!isAdminConfigured()) return { ok: false, error: NEEDS_SERVICE };
+
+  const admin = createAdminClient();
+  const target = await loadMember(admin, memberId);
+  if (!target || target.orgId !== actor.orgId)
+    return { ok: false, error: "Member not found." };
+  if (target.status !== "active")
+    return { ok: false, error: "You can only transfer ownership to an active member." };
+  if (target.userId === actor.userId)
+    return { ok: false, error: "You already own this organization." };
+
+  const now = new Date().toISOString();
+  // Promote the target to owner.
+  const promote = await admin
+    .from("organization_members")
+    .update({ role: "owner", decided_at: now, decided_by: actor.userId })
+    .eq("id", target.id);
+  if (promote.error) return { ok: false, error: promote.error.message };
+  // Demote the current owner to admin.
+  await admin
+    .from("organization_members")
+    .update({ role: "admin" })
+    .eq("org_id", actor.orgId)
+    .eq("user_id", actor.userId);
+  // Point the org + both denormalized profile roles at the new structure.
+  await admin.from("organizations").update({ owner_id: target.userId }).eq("id", actor.orgId);
+  await admin.from("profiles").update({ role: "owner" }).eq("id", target.userId);
+  await admin.from("profiles").update({ role: "admin" }).eq("id", actor.userId);
+
+  await writeAudit({
+    action: "member.transfer_ownership",
+    actorId: actor.userId,
+    targetId: target.userId,
+    targetKind: "member",
+    orgId: actor.orgId,
+  });
+  return { ok: true };
+}
+
 // ── Organization customization ───────────────────────────────────────────────
 export interface OrgUpdate {
   name?: string;
