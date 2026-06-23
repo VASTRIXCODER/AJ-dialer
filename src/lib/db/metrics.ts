@@ -12,9 +12,18 @@ import {
   callRecords as sampleRecords,
 } from "../data";
 import { reconcileOwnerActiveCalls } from "../ai-call-reconcile";
+import { composeLeaderboard } from "../leaderboard";
+import { createAdminClient, isAdminConfigured } from "../supabase/admin";
 import { isSupabaseConfigured } from "../supabase/config";
 import { createClient } from "../supabase/server";
-import type { CallOutcome, KpiPoint, MetricSummary, Rep } from "../types";
+import type {
+  CallOutcome,
+  KpiPoint,
+  LeaderboardEntry,
+  LeaderboardStat,
+  MetricSummary,
+  Rep,
+} from "../types";
 import { initials } from "../utils";
 import { getAIConversationsForMonitor } from "./records";
 
@@ -390,4 +399,108 @@ function fallbackReporting(): ReportingData {
     })),
     leaderboard: sampleLeaderboard,
   };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Org-wide team leaderboard. Aggregates EVERY active member's real call +
+// appointment stats over three windows (today / 7d / 30d) so the leaderboard
+// ranks the whole floor, not just the signed-in user. Reads via the service-role
+// client scoped to the viewer's org in app code (any member can see the team
+// ranking, even though RLS would otherwise hide other reps' rows). Falls back to
+// the bundled demo team when Supabase / the service role isn't configured.
+// The pure aggregation lives in ../leaderboard (composeLeaderboard).
+// ─────────────────────────────────────────────────────────────────────────────
+
+async function aggregateTeamLeaderboard(orgId: string): Promise<LeaderboardEntry[]> {
+  if (!isAdminConfigured()) return [];
+  const admin = createAdminClient();
+
+  const { data: memberRows } = await admin
+    .from("organization_members")
+    .select("user_id,name,role")
+    .eq("org_id", orgId)
+    .eq("status", "active");
+  const members = (memberRows ?? []) as Row[];
+  if (!members.length) return [];
+  const ids = members.map((m) => String(m.user_id));
+
+  const sinceMonth = new Date(Date.now() - 30 * 86_400_000).toISOString();
+  const [{ data: profRows }, { data: callRows }] = await Promise.all([
+    admin.from("profiles").select("id,full_name,avatar_color,team").in("id", ids),
+    admin
+      .from("call_records")
+      .select("owner_id,outcome,duration_sec,channel,started_at")
+      .eq("org_id", orgId)
+      .gte("started_at", sinceMonth)
+      .limit(50000),
+  ]);
+  const profById = new Map(((profRows ?? []) as Row[]).map((p) => [String(p.id), p]));
+  return composeLeaderboard(members, profById, (callRows ?? []) as Row[], Date.now());
+}
+
+/** The org-wide leaderboard for the current viewer's organization, + their id. */
+export async function getTeamLeaderboard(): Promise<{
+  reps: LeaderboardEntry[];
+  meId: string | null;
+}> {
+  if (!isSupabaseConfigured()) return { reps: fallbackLeaderboard(), meId: null };
+  try {
+    const supabase = await createClient();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) return { reps: fallbackLeaderboard(), meId: null };
+    const { data: prof } = await supabase
+      .from("profiles")
+      .select("org_id")
+      .eq("id", user.id)
+      .maybeSingle();
+    const orgId = prof?.org_id ? String(prof.org_id) : null;
+    if (!orgId) return { reps: [], meId: user.id };
+    return { reps: await aggregateTeamLeaderboard(orgId), meId: user.id };
+  } catch {
+    return { reps: fallbackLeaderboard(), meId: null };
+  }
+}
+
+function scaleStat(base: LeaderboardStat, factor: number): LeaderboardStat {
+  return {
+    ...base,
+    calls: base.calls * factor,
+    connects: base.connects * factor,
+    appointments: base.appointments * factor,
+    callbacks: base.callbacks * factor,
+    talkTimeMin: base.talkTimeMin * factor,
+    aiCalls: base.aiCalls * factor,
+    humanCalls: base.humanCalls * factor,
+  };
+}
+
+/** Demo team leaderboard (no Supabase) — derived from the bundled sample reps. */
+function fallbackLeaderboard(): LeaderboardEntry[] {
+  return sampleLeaderboard.map((r) => {
+    const daily: LeaderboardStat = {
+      calls: r.callsToday,
+      connects: r.conversationsToday,
+      appointments: r.appointmentsToday,
+      callbacks: Math.round(r.appointmentsToday / 2),
+      talkTimeMin: r.talkTimeMin,
+      connectRate: r.connectRate,
+      conversionRate: pct(r.appointmentsToday, r.conversationsToday),
+      aiCalls: Math.round(r.callsToday / 2),
+      humanCalls: r.callsToday - Math.round(r.callsToday / 2),
+      score: r.score,
+    };
+    return {
+      id: r.id,
+      name: r.name,
+      initials: r.initials,
+      avatarColor: r.avatarColor,
+      role: r.role,
+      team: r.team,
+      daily,
+      weekly: scaleStat(daily, 5),
+      monthly: scaleStat(daily, 21),
+    };
+  });
 }

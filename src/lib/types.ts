@@ -75,6 +75,36 @@ export interface Rep {
   callStartedAt?: string;
 }
 
+/** A rep's aggregated stats over one time window (today / 7d / 30d). */
+export interface LeaderboardStat {
+  calls: number;
+  connects: number;
+  appointments: number;
+  callbacks: number;
+  talkTimeMin: number;
+  /** connects / calls, % */
+  connectRate: number;
+  /** appointments / connects, % */
+  conversionRate: number;
+  aiCalls: number;
+  humanCalls: number;
+  /** Composite performance score 0-100 */
+  score: number;
+}
+
+/** One ranked team member on the org-wide leaderboard, with per-period stats. */
+export interface LeaderboardEntry {
+  id: string;
+  name: string;
+  initials: string;
+  avatarColor: string;
+  role: string;
+  team: string;
+  daily: LeaderboardStat;
+  weekly: LeaderboardStat;
+  monthly: LeaderboardStat;
+}
+
 export interface Appointment {
   id: string;
   leadId: string;

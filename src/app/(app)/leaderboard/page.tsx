@@ -2,25 +2,25 @@ import { Trophy } from "lucide-react";
 import { LeaderboardView } from "@/components/leaderboard/leaderboard-view";
 import { EmptyState } from "@/components/shared/empty-state";
 import { PageContainer, PageHeader } from "@/components/shared/page-header";
-import { getReportingData } from "@/lib/db/metrics";
+import { getTeamLeaderboard } from "@/lib/db/metrics";
 
 export const metadata = { title: "Leaderboard" };
 export const dynamic = "force-dynamic";
 
 export default async function LeaderboardPage() {
-  const { leaderboard } = await getReportingData();
+  const { reps, meId } = await getTeamLeaderboard();
 
-  if (leaderboard.length === 0) {
+  if (reps.length === 0) {
     return (
       <PageContainer>
         <PageHeader
           title="Leaderboard"
-          description="Friendly competition that drives the floor — ranked by appointments, contact rate, and performance score."
+          description="Every rep on the floor, ranked by appointments, connect rate, and performance score — across today, this week, and this month."
         />
         <EmptyState
           icon={Trophy}
           title="No ranking yet"
-          description="Rankings appear here as you log calls and book appointments."
+          description="Rankings appear here as your team logs calls and books appointments."
         />
       </PageContainer>
     );
@@ -30,9 +30,9 @@ export default async function LeaderboardPage() {
     <PageContainer>
       <PageHeader
         title="Leaderboard"
-        description="Friendly competition that drives the floor — ranked by appointments, contact rate, and performance score."
+        description="Every rep on the floor, ranked by appointments, connect rate, and performance score — across today, this week, and this month."
       />
-      <LeaderboardView reps={leaderboard} />
+      <LeaderboardView reps={reps} meId={meId} />
     </PageContainer>
   );
 }

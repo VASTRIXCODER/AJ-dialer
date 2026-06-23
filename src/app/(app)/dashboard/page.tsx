@@ -19,7 +19,7 @@ import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { buttonVariants } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
-import { getReportingData } from "@/lib/db/metrics";
+import { getReportingData, getTeamLeaderboard } from "@/lib/db/metrics";
 import { getViewer } from "@/lib/org/membership";
 import {
   formatCurrency,
@@ -44,17 +44,15 @@ const liveLabel = (s: string) =>
 
 export default async function DashboardPage() {
   const [
-    {
-      metrics,
-      kpiSeries,
-      outcomeBreakdown,
-      hourlyCalls,
-      liveCalls,
-      appointments,
-      leaderboard,
-    },
+    { metrics, kpiSeries, outcomeBreakdown, hourlyCalls, liveCalls, appointments },
     viewer,
-  ] = await Promise.all([getReportingData(), getViewer()]);
+    { reps: teamReps, meId },
+  ] = await Promise.all([getReportingData(), getViewer(), getTeamLeaderboard()]);
+
+  // Top performers today, org-wide (every onboarded member counts).
+  const leaderboard = [...teamReps]
+    .sort((a, b) => b.daily.score - a.daily.score || b.daily.appointments - a.daily.appointments)
+    .slice(0, 5);
 
   const org = viewer.org;
   const isSolar = org?.dialerTemplate === "solar";
@@ -289,7 +287,7 @@ export default async function DashboardPage() {
             </p>
           ) : (
             <ul className="space-y-3">
-              {leaderboard.slice(0, 5).map((rep, i) => (
+              {leaderboard.map((rep, i) => (
                 <li key={rep.id} className="flex items-center gap-3">
                   <span
                     className={`flex h-6 w-6 items-center justify-center rounded-lg text-xs font-bold tabular ${
@@ -306,14 +304,17 @@ export default async function DashboardPage() {
                   </span>
                   <Avatar initials={rep.initials} color={rep.avatarColor} size="sm" />
                   <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-semibold">{rep.name}</p>
+                    <p className="truncate text-sm font-semibold">
+                      {rep.name}
+                      {rep.id === meId && <span className="text-primary"> (You)</span>}
+                    </p>
                     <p className="truncate text-xs text-muted-foreground">
-                      {rep.appointmentsToday} appts · {rep.callsToday} calls
+                      {rep.daily.appointments} appts · {rep.daily.calls} calls
                     </p>
                   </div>
                   <div className="flex items-center gap-1 text-sm font-bold text-success">
                     <TrendingUp className="h-3.5 w-3.5" />
-                    {rep.score}
+                    {rep.daily.score}
                   </div>
                   {i === 0 && <Trophy className="h-4 w-4 text-warning" />}
                 </li>
