@@ -14,6 +14,18 @@ import { canActOn, getScope } from "./scope";
 type Row = Record<string, unknown>;
 const s = (v: unknown) => (v == null ? "" : String(v));
 
+/**
+ * Appointment times are stored as the agreed wall-clock (the resolver anchors
+ * them to the homeowner's timezone). Postgres returns timestamptz with a `+00`
+ * offset, which would re-shift the time in the viewer's locale — so strip the
+ * offset and hand the client a naive local string it renders as-is everywhere
+ * (calendar, buckets, labels).
+ */
+const toFloatingLocal = (v: string): string => {
+  const m = /^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2}(?::\d{2})?)/.exec(v);
+  return m ? `${m[1]}T${m[2]}` : v;
+};
+
 /** owner_id → display name for an org (to attribute team rows). */
 async function memberNames(orgId: string): Promise<Map<string, string>> {
   try {
@@ -238,7 +250,7 @@ export async function getAppointments(): Promise<AppointmentRow[]> {
         // Treat legacy rows (column absent → null) as approved, not pending.
         approved: r.approved == null ? true : Boolean(r.approved),
         scheduledLabel: s(r.scheduled_label),
-        scheduledAt: r.scheduled_at ? s(r.scheduled_at) : null,
+        scheduledAt: r.scheduled_at ? toFloatingLocal(s(r.scheduled_at)) : null,
         notes: s(r.notes),
         phone: c?.phone ?? "",
         city: c?.city ?? "",

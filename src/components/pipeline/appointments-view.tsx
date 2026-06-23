@@ -111,6 +111,9 @@ const pad = (n: number) => String(n).padStart(2, "0");
 const dayKey = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 
 function whenLabel(a: AppointmentRow): string {
+  // The human label is the agreed wording ("Tomorrow — Tue, Jun 23 at 6:00 PM");
+  // prefer it, falling back to formatting the machine timestamp.
+  if (a.scheduledLabel) return a.scheduledLabel;
   if (a.scheduledAt) {
     return new Date(a.scheduledAt).toLocaleString("en-US", {
       weekday: "short",
@@ -120,7 +123,6 @@ function whenLabel(a: AppointmentRow): string {
       minute: "2-digit",
     });
   }
-  if (a.scheduledLabel) return a.scheduledLabel;
   return "No time set";
 }
 
@@ -397,7 +399,7 @@ export function AppointmentsView({
             key={active.id}
             appt={active}
             teamWide={teamWide}
-            busy={busyId === active.id || busyId === active.leadId}
+            busy={busyId != null && (busyId === active.id || busyId === active.leadId)}
             reduce={!!reduce}
             onClose={() => setActive(null)}
             onApprove={async (id) => {
@@ -922,7 +924,8 @@ function DetailDialog({
     if (when !== orig) {
       if (when) {
         const d = new Date(when);
-        patch.scheduledAt = d.toISOString();
+        // Store the naive wall-clock (no tz suffix) so it round-trips unshifted.
+        patch.scheduledAt = when.length === 16 ? `${when}:00` : when;
         patch.scheduledLabel = d.toLocaleString("en-US", {
           weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit",
         });

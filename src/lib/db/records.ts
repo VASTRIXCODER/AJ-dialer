@@ -50,7 +50,7 @@ async function routeDisposition(
     phone: string;
     outcome: CallOutcome;
     summary?: string;
-    appointment?: { when: string; notes: string } | null;
+    appointment?: { when: string; iso?: string; notes: string } | null;
     source: "ai" | "rep";
   },
 ): Promise<void> {
@@ -67,6 +67,9 @@ async function routeDisposition(
       owner_id: ownerId,
       lead_id: leadId,
       lead_name: input.leadName,
+      // Machine timestamp (drives the calendar + time buckets) when the resolver
+      // pinned a concrete slot; the human label is always kept for display.
+      scheduled_at: input.appointment?.iso || null,
       scheduled_label: input.appointment?.when ?? "",
       notes: input.appointment?.notes ?? input.summary ?? "",
       source: input.source,
@@ -191,7 +194,7 @@ export async function completeAIConversation(input: {
   outcome: CallOutcome;
   sentiment: string;
   durationSec?: number;
-  appointment?: { when: string; notes: string } | null;
+  appointment?: { when: string; iso?: string; notes: string } | null;
   /** "failed" for calls that never connected; defaults to "completed". */
   state?: "completed" | "failed";
 }): Promise<void> {

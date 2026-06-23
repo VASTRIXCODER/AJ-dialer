@@ -30,7 +30,7 @@ export interface FinalizeResult {
   outcome: CallOutcome;
   summary: string;
   sentiment: "positive" | "neutral" | "negative";
-  appointment: { when: string; notes: string } | null;
+  appointment: { when: string; iso?: string; notes: string } | null;
   qualification?: {
     utilityBill: number | null;
     solarPayment: number | null;
@@ -75,7 +75,7 @@ export async function finalizeAIConversation(input: {
   let summary: string;
   let outcome: CallOutcome;
   let sentiment: "positive" | "neutral" | "negative";
-  let appointment: { when: string; notes: string } | null = null;
+  let appointment: { when: string; iso?: string; notes: string } | null = null;
   let qualification: FinalizeResult["qualification"];
   let score: number | undefined;
 
@@ -99,6 +99,7 @@ export async function finalizeAIConversation(input: {
       const slot = resolveAppointment(transcript, now, tz);
       appointment = {
         when: slot.when || analysis.appointment.when,
+        iso: slot.iso,
         notes: analysis.appointment.notes || slot.notes,
       };
     }
