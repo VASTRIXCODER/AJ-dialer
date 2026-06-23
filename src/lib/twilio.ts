@@ -25,6 +25,16 @@ export function isVoiceConfigured() {
   return Boolean(c.accountSid && c.apiKeySid && c.apiKeySecret && c.twimlAppSid);
 }
 
+/**
+ * True when an outbound caller ID is set. Required for *manual* (human, PSTN)
+ * dialing — without it the voice webhook would emit `<Dial callerId="">`, which
+ * Twilio rejects and the agent hears "an application error has occurred". Not
+ * required to take over an AI call (that joins a conference, no caller ID).
+ */
+export function isCallerIdConfigured() {
+  return Boolean(twilioConfig.callerId.trim());
+}
+
 /** True when enough is configured to place REST outbound calls (parallel dialing). */
 export function isRestConfigured() {
   const c = twilioConfig;

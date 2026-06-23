@@ -119,6 +119,8 @@ export function useDialer(queue: Lead[], aiConfigured = false) {
   const aiCursorRef = useRef(0);
   const aiTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const humanIdRef = useRef<string | null>(null);
+  // Whether manual PSTN dialing is possible (a Twilio caller ID is configured).
+  const canDialOutRef = useRef(true);
 
   const patch = useCallback((p: Partial<DialerState>) => {
     setState((s) => ({ ...s, ...p }));
@@ -182,6 +184,7 @@ export function useDialer(queue: Lead[], aiConfigured = false) {
           token?: string;
           identity?: string;
           mode: string;
+          canDialOut?: boolean;
         };
         if (cancelled) return;
         if (data.token) {
@@ -194,6 +197,7 @@ export function useDialer(queue: Lead[], aiConfigured = false) {
           }
           deviceRef.current = device;
           identityRef.current = data.identity ?? "agent";
+          canDialOutRef.current = data.canDialOut !== false;
           modeRef.current = "live";
           patch({ mode: "live" });
         } else {
@@ -465,6 +469,15 @@ export function useDialer(queue: Lead[], aiConfigured = false) {
       if (modeRef.current !== "live" || !deviceRef.current) {
         patch({
           error: "Twilio isn't connected. Add your credentials to place calls.",
+          status: "idle",
+        });
+        return;
+      }
+
+      if (!canDialOutRef.current) {
+        patch({
+          error:
+            "No outbound caller ID is configured. Add TWILIO_CALLER_ID to place manual calls.",
           status: "idle",
         });
         return;

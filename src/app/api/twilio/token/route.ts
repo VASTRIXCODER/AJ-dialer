@@ -1,5 +1,9 @@
 import { NextResponse } from "next/server";
-import { createVoiceToken, isVoiceConfigured } from "@/lib/twilio";
+import {
+  createVoiceToken,
+  isCallerIdConfigured,
+  isVoiceConfigured,
+} from "@/lib/twilio";
 
 export const dynamic = "force-dynamic";
 
@@ -20,5 +24,12 @@ export async function GET() {
     return NextResponse.json({ mode: "offline" });
   }
 
-  return NextResponse.json({ mode: "live", identity, token });
+  // canDialOut tells the client whether *manual* PSTN dialing is possible (needs
+  // a caller ID). Taking over an AI call doesn't — it joins a conference.
+  return NextResponse.json({
+    mode: "live",
+    identity,
+    token,
+    canDialOut: isCallerIdConfigured(),
+  });
 }

@@ -1,10 +1,32 @@
 import { attachHumanCallSid } from "@/lib/human-call-store";
-import { getPublicBaseUrl, twilioConfig } from "@/lib/twilio";
+import {
+  getPublicBaseUrl,
+  isCallerIdConfigured,
+  twilioConfig,
+} from "@/lib/twilio";
 
 export const dynamic = "force-dynamic";
 
-const escape = (s: string) =>
-  s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+const escapeXml = (s: string) =>
+  s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&apos;");
+
+/** Wrap a TwiML body in a well-formed document with the right content type. */
+function twiml(body: string) {
+  return new Response(
+    `<?xml version="1.0" encoding="UTF-8"?>\n<Response>${body}</Response>`,
+    { headers: { "Content-Type": "text/xml" } },
+  );
+}
+
+/** A spoken message + hang up — used for graceful failures (never a 500). */
+function say(message: string) {
+  return twiml(`<Say voice="Polly.Joanna">${escapeXml(message)}</Say><Hangup/>`);
+}
 
 /**
  * TwiML endpoint invoked by the Voice SDK / TwiML App when the browser places a
@@ -12,41 +34,90 @@ const escape = (s: string) =>
  *
  *  • `To` present       → single-line / manual dial: bridge the agent to the
  *                         homeowner using the configured caller ID (+ recording).
- *  • `Conference` present → parallel dial: drop the agent into their conference
- *                         room, where the first homeowner to answer is bridged.
+ *  • `Conference` present → parallel dial OR supervisor take-over: drop the agent
+ *                         into the conference room where the homeowner is bridged.
+ *
+ * It must ALWAYS return valid TwiML with HTTP 200 — any non-200 or malformed
+ * response makes Twilio play the generic "an application error has occurred" to
+ * the caller. So every failure path returns a clear spoken message instead.
  *
  * Point your TwiML App's Voice Request URL at: {NEXT_PUBLIC_APP_URL}/api/twilio/voice
  */
 export async function POST(req: Request) {
-  const form = await req.formData();
-  const to = String(form.get("To") ?? "");
-  const conference = String(form.get("Conference") ?? "");
-  const record = String(form.get("record") ?? "false") === "true";
+  try {
+    const form = await req.formData();
+    const to = String(form.get("To") ?? "").trim();
+    const conference = String(form.get("Conference") ?? "").trim();
+    const record = String(form.get("record") ?? "false") === "true";
 
-  // Bind the agent's browser-leg CallSid to its monitor presence so a supervisor
-  // can fork this leg's audio (both tracks = rep + customer) for live listening.
-  const monitorId = String(form.get("MonitorId") ?? "");
-  const callSid = String(form.get("CallSid") ?? "");
-  if (monitorId && callSid) attachHumanCallSid(monitorId, callSid);
+    // Bind the agent's browser-leg CallSid to its monitor presence so a
+    // supervisor can fork this leg's audio (both tracks = rep + customer) for
+    // live listening. Never let a bookkeeping failure break the call.
+    try {
+      const monitorId = String(form.get("MonitorId") ?? "");
+      const callSid = String(form.get("CallSid") ?? "");
+      if (monitorId && callSid) attachHumanCallSid(monitorId, callSid);
+    } catch {
+      /* presence is best-effort */
+    }
 
-  let body: string;
+    // ── Conference: parallel dial winner OR supervisor take-over ──────────────
+    if (conference) {
+      const room = escapeXml(conference);
+      return twiml(
+        `<Dial><Conference startConferenceOnEnter="true" endConferenceOnExit="true" beep="false">${room}</Conference></Dial>`,
+      );
+    }
 
-  if (conference) {
-    body = `<Dial><Conference startConferenceOnEnter="true" endConferenceOnExit="true" beep="false">${escape(conference)}</Conference></Dial>`;
-  } else if (to) {
-    // recordingStatusCallback must be an ABSOLUTE, publicly-reachable URL — a
-    // relative path triggers Twilio 21609. Omit it if we can't build one.
-    const base = getPublicBaseUrl(req);
-    const recordAttr = record
-      ? base
-        ? ` record="record-from-answer-dual" recordingStatusCallback="${escape(`${base}/api/twilio/status`)}"`
-        : ' record="record-from-answer-dual"'
-      : "";
-    body = `<Dial callerId="${escape(twilioConfig.callerId)}"${recordAttr} answerOnBridge="true"><Number>${escape(to)}</Number></Dial>`;
-  } else {
-    body = `<Say voice="Polly.Joanna">No destination was provided.</Say>`;
+    // ── Single / manual dial: bridge to the homeowner over the PSTN ───────────
+    if (to) {
+      // A valid caller ID is mandatory for a PSTN <Dial>. Without it Twilio
+      // rejects the call ("application error"), so fail with a clear message.
+      const callerId = twilioConfig.callerId.trim();
+      if (!callerId) {
+        return say(
+          "This dialer has no outbound caller I D configured. Please add a Twilio caller I D to place manual calls.",
+        );
+      }
+
+      // recordingStatusCallback must be an ABSOLUTE, publicly-reachable URL — a
+      // relative path triggers Twilio 21609. Omit it if we can't build one.
+      const base = getPublicBaseUrl(req);
+      const recordAttr = record
+        ? base
+          ? ` record="record-from-answer-dual" recordingStatusCallback="${escapeXml(`${base}/api/twilio/status`)}"`
+          : ' record="record-from-answer-dual"'
+        : "";
+      return twiml(
+        `<Dial callerId="${escapeXml(callerId)}"${recordAttr} answerOnBridge="true"><Number>${escapeXml(to)}</Number></Dial>`,
+      );
+    }
+
+    return say("No destination was provided for this call.");
+  } catch {
+    // Never surface a 500 to Twilio — that becomes the generic spoken error.
+    return say("We're sorry, something went wrong setting up this call.");
   }
+}
 
-  const twiml = `<?xml version="1.0" encoding="UTF-8"?>\n<Response>${body}</Response>`;
-  return new Response(twiml, { headers: { "Content-Type": "text/xml" } });
+/**
+ * Browser-openable diagnostic (Twilio uses POST, so this never runs for real
+ * calls). Visit this URL to confirm the webhook is reachable and to copy the
+ * EXACT value your TwiML App's Voice Request URL must hold. A stale/wrong URL
+ * there is the usual cause of "an application error has occurred" on manual
+ * dials and supervisor take-overs (both go through this webhook).
+ */
+export async function GET(req: Request) {
+  const base = getPublicBaseUrl(req);
+  return Response.json({
+    ok: true,
+    message:
+      "Twilio Voice webhook is reachable. Set your TwiML App → Voice → Request URL to the voiceUrl below, with HTTP method POST.",
+    voiceUrl: base ? `${base}/api/twilio/voice` : null,
+    method: "POST",
+    callerIdConfigured: isCallerIdConfigured(),
+    callerIdNote: isCallerIdConfigured()
+      ? "Caller ID is set — manual PSTN dialing is enabled."
+      : "No TWILIO_CALLER_ID — manual dialing is disabled (take-over still works).",
+  });
 }

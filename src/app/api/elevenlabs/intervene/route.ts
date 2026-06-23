@@ -103,13 +103,15 @@ export async function POST(req: Request) {
 
   try {
     // ── Take over: AI → human. Move the homeowner into the rep's conference. ──
+    // The homeowner leg is already answered, so this is a plain conference join —
+    // identical TwiML to the rep's browser join (no answerOnBridge needed).
     if (action === "takeover") {
       const conf = (room || `to-${conversationId}`)
         .replace(/[^a-zA-Z0-9_-]/g, "")
         .slice(0, 100);
       await client.calls(callSid).update({
         twiml: xml(
-          `<Dial answerOnBridge="true"><Conference startConferenceOnEnter="true" endConferenceOnExit="true" beep="false">${conf}</Conference></Dial>`,
+          `<Dial><Conference startConferenceOnEnter="true" endConferenceOnExit="true" beep="false">${conf}</Conference></Dial>`,
         ),
       });
       updateAICall(conversationId, { summary: "Taken over by a human rep" });
@@ -130,9 +132,13 @@ export async function POST(req: Request) {
     updateAICall(conversationId, { summary: `Transferred to ${target}` });
     return NextResponse.json({ ok: true, action, target });
   } catch (err) {
-    return NextResponse.json(
-      { error: err instanceof Error ? err.message : String(err) },
-      { status: 502 },
-    );
+    const raw = err instanceof Error ? err.message : String(err);
+    // Make the most common Twilio failures actionable instead of cryptic.
+    const friendly = /not.?in.?progress|21220/i.test(raw)
+      ? "That call has already ended — nothing to take over."
+      : /not.?found|20404/i.test(raw)
+        ? "Couldn't control that call leg. Confirm your Twilio credentials own this call (the same account ElevenLabs dials through)."
+        : raw;
+    return NextResponse.json({ error: friendly }, { status: 502 });
   }
 }
