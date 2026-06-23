@@ -21,6 +21,16 @@ const CHECK_LIMIT = 8;
 const TERMINAL = new Set(["done", "completed", "failed", "processing"]);
 const inFlight = new Set<string>(); // guards against double-finalizing within an instance
 
+const UNCONNECTED =
+  /no[\s_-]?answer|voicemail|machine|answphone|answering|busy|invalid|not[\s_-]?in[\s_-]?service|unallocated|disconnected|timed?[\s_-]?out|timeout|cancel|no[\s_-]?response/i;
+
+/** Did the homeowner actually speak (a real two-way conversation)? */
+function hasHumanTurn(turns: { role: string; message: string }[]): boolean {
+  return turns.some(
+    (t) => t.role !== "agent" && (t.message ?? "").trim().length > 1,
+  );
+}
+
 export interface ActiveRef {
   conversationId: string;
   startedAt: number;
@@ -40,23 +50,39 @@ export async function reconcileActiveCalls(active: ActiveRef[]): Promise<void> {
         const convo = await fetchConversation(c.conversationId);
         const status = (convo?.status ?? "").toLowerCase();
         const tooOld = Date.now() - c.startedAt > MAX_AGE_MS;
+        const turns = convo?.turns ?? [];
 
-        if (status && TERMINAL.has(status)) {
+        // "processing" means the call ended but ElevenLabs is still building the
+        // transcript/analysis. Don't finalize it until we actually have a
+        // transcript (a real conversation) or a clear "didn't connect" signal —
+        // otherwise a connected call gets mis-filed as "no answer" before its
+        // transcript loads. (done/completed/failed are always safe to finalize.)
+        const isProcessing = status === "processing";
+        const safeToFinalize =
+          status &&
+          TERMINAL.has(status) &&
+          (!isProcessing ||
+            hasHumanTurn(turns) ||
+            UNCONNECTED.test(convo?.terminationReason ?? ""));
+
+        if (safeToFinalize) {
           await finalizeAIConversation({
             conversationId: c.conversationId,
-            turns: convo?.turns ?? [],
+            turns,
             status,
             durationSec: convo?.durationSec ?? undefined,
             terminationReason: convo?.terminationReason,
           });
         } else if (tooOld) {
-          // ElevenLabs never reported terminal (or is unreachable) — close it out.
+          // ElevenLabs never reported terminal (or is unreachable) — close it
+          // out. If a transcript did load, finalize it as the real (connected)
+          // call rather than a timeout, so a long chat isn't lost as "failed".
           await finalizeAIConversation({
             conversationId: c.conversationId,
-            turns: convo?.turns ?? [],
-            status: "failed",
+            turns,
+            status: hasHumanTurn(turns) ? "completed" : "failed",
             durationSec: convo?.durationSec ?? undefined,
-            terminationReason: "timeout",
+            terminationReason: hasHumanTurn(turns) ? "" : "timeout",
           });
         }
       } catch {

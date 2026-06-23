@@ -113,7 +113,7 @@ export function AiLiveMonitor({
   const [openId, setOpenId] = useState<string | null>(initialCall);
 
   const load = useCallback(() => {
-    fetch("/api/elevenlabs/conversations")
+    fetch("/api/elevenlabs/conversations", { cache: "no-store" })
       .then((r) => r.json())
       .then((j) => {
         setActive(j.active ?? []);

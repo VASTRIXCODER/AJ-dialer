@@ -1,6 +1,7 @@
 import "server-only";
 
 import { getAICall, updateAICall } from "./ai-call-store";
+import { resolveAppointment } from "./ai/appointment";
 import { analyzeConversation } from "./ai/services";
 import { dispositionBlurb, unconnectedOutcome } from "./call-disposition";
 import { getLeadById } from "./db/leads";
@@ -79,13 +80,28 @@ export async function finalizeAIConversation(input: {
   let score: number | undefined;
 
   if (connected) {
-    const { data: analysis } = await analyzeConversation({ transcript, lead });
+    const now = new Date();
+    const tz = lead?.timezone || undefined;
+    const { data: analysis } = await analyzeConversation({
+      transcript,
+      lead,
+      now,
+      tz,
+    });
     summary = analysis.summary;
     outcome = analysis.outcome;
     sentiment = analysis.sentiment;
-    appointment = analysis.appointment.requested
-      ? { when: analysis.appointment.when, notes: analysis.appointment.notes }
-      : null;
+    if (analysis.appointment.requested) {
+      // Normalize the human-facing time deterministically from the transcript so
+      // it's always a concrete, timezone-anchored slot — even if the model left
+      // it relative ("tomorrow at 6"). Falls back to the model's value if the
+      // resolver can't parse a time.
+      const slot = resolveAppointment(transcript, now, tz);
+      appointment = {
+        when: slot.when || analysis.appointment.when,
+        notes: analysis.appointment.notes || slot.notes,
+      };
+    }
     qualification = analysis.qualification;
     score = analysis.confidence;
   } else {

@@ -1,7 +1,7 @@
 import "server-only";
 
 import { leads as demoLeads } from "../data";
-import { agentVariablesForLead } from "../elevenlabs";
+import { agentVariablesForLead, currentDateVariables } from "../elevenlabs";
 import { mergeSettings } from "../org/settings";
 import { createAdminClient, isAdminConfigured } from "../supabase/admin";
 import { isSupabaseConfigured } from "../supabase/config";
@@ -75,7 +75,9 @@ export async function resolveAgentContextByPhone(
   if (!isSupabaseConfigured() || !isAdminConfigured()) {
     const lead = demoLeads.find((l) => last10(l.phone) === digits) ?? null;
     return {
-      dynamicVariables: lead ? agentVariablesForLead(lead) : {},
+      dynamicVariables: lead
+        ? agentVariablesForLead(lead)
+        : currentDateVariables(),
       agentConfig: resolveAgentConfig(null),
     };
   }
@@ -102,7 +104,8 @@ export async function resolveAgentContextByPhone(
       candidates.find((r) => last10(String(r.phone)) === digits) ?? null;
 
     let orgLike: AgentOrgLike | null = null;
-    let dynamicVariables: Record<string, string | number | boolean> = {};
+    let dynamicVariables: Record<string, string | number | boolean> =
+      currentDateVariables();
     if (leadRow) {
       dynamicVariables = agentVariablesForLead(rowToLead(leadRow));
       const ownerId = String(leadRow.owner_id ?? "");
@@ -124,6 +127,9 @@ export async function resolveAgentContextByPhone(
     }
     return { dynamicVariables, agentConfig: resolveAgentConfig(orgLike) };
   } catch {
-    return { dynamicVariables: {}, agentConfig: resolveAgentConfig(null) };
+    return {
+      dynamicVariables: currentDateVariables(),
+      agentConfig: resolveAgentConfig(null),
+    };
   }
 }

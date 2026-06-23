@@ -145,6 +145,7 @@ export function CallDashboard({
     try {
       const res = await fetch(
         `/api/elevenlabs/conversation/${encodeURIComponent(conversationId)}`,
+        { cache: "no-store" },
       );
       const json = await res.json().catch(() => null);
       if (res.ok && json) {

@@ -1,4 +1,5 @@
 import type { CallOutcome, Lead, MetricSummary } from "@/lib/types";
+import { resolveAppointment } from "./appointment";
 import type {
   CallCopilot,
   CallSummary,
@@ -328,43 +329,105 @@ export function simulateSearch(query: string, leads: Lead[]): SemanticSearch {
   };
 }
 
+/** Pull a plausible monthly dollar amount near billing language from a transcript. */
+function extractBill(t: string): number | null {
+  // Prefer an explicit "$NNN" or "NNN dollars/a month" over any stray number.
+  const dollar = t.match(/\$\s?(\d{2,4})/);
+  if (dollar) return Number(dollar[1]);
+  const perMonth = t.match(
+    /(\d{2,4})\s*(?:dollars|bucks)?\s*(?:a|per)\s*month|(\d{2,4})\s*\/\s*mo/,
+  );
+  if (perMonth) return Number(perMonth[1] ?? perMonth[2]);
+  return null;
+}
+
+/**
+ * Deterministic read of a completed AI conversation when Claude isn't available.
+ * This only runs for calls that actually CONNECTED, so the outcome is always a
+ * connected one. Unlike the old version, it reads the real transcript: it detects
+ * the disposition from what was actually said and resolves the appointment time
+ * the customer agreed to (anchored to today's date + their timezone) instead of
+ * picking a random canned slot.
+ */
 export function simulateConversationAnalysis(input: {
   transcript?: string;
   lead?: Lead | null;
+  now?: Date;
+  tz?: string;
 }): ConversationAnalysis {
   const lead = input.lead ?? null;
-  const t = (input.transcript ?? "").toLowerCase();
+  const raw = input.transcript ?? "";
+  const t = raw.toLowerCase();
   const seed = hash((lead?.id ?? "conv") + t.slice(0, 48));
-  const billMatch = t.match(/\$?\s?(\d{2,4})/);
-  const bill = lead?.utilityBill ?? (billMatch ? Number(billMatch[1]) : 0);
+  const bill = lead?.utilityBill ?? extractBill(t) ?? 0;
   const solar = lead?.solarPayment ?? 0;
 
+  // Resolve the concrete appointment the customer agreed to (if any).
+  const slot = resolveAppointment(raw, input.now ?? new Date(), input.tz);
+
+  const dnc =
+    /\b(do not call|don'?t call(?: me)?(?: again)?|take me off|remove me|stop calling)\b/.test(
+      t,
+    );
+  const declined =
+    /\b(not interested|no thank|we'?re good|all set|happy with|leave me alone|not right now|don'?t need)\b/.test(
+      t,
+    );
+  const accepted =
+    /\b(works|sounds good|sounds great|that works|that'?s (?:good|fine|perfect|great)|perfect|great|yeah|yes|sure|okay|ok|let'?s do|book it|set it up|see you|that time)\b/.test(
+      t,
+    );
+  const callback =
+    /\b(call.{0,8}back|another time|later this|reschedul|busy right now|catch me later|not a good time|try me|circle back)\b/.test(
+      t,
+    );
+  // The agent only says these AFTER the customer agrees (per the script), so they
+  // confirm a booking even when the customer's "yes" was a quiet "mm-hmm".
+  const bookedSignal =
+    /\b(got you (?:in|down)|i'?ve got you|booked you|see you (?:then|tomorrow|on)|locked? (?:it|that) in)\b/.test(
+      t,
+    );
+
+  // A booking requires a concrete slot, an acceptance or the agent's confirmation
+  // (not merely an offered time), and no hard decline.
   const wantsAppt =
-    /appointment|book|schedule|review|works for me|sounds good|set.{0,6}up/.test(t) ||
-    (!t && seed % 2 === 0);
-  const sentiment: ConversationAnalysis["sentiment"] = /not interested|stop|remove|busy/.test(t)
-    ? "negative"
-    : /great|interested|sounds good|yes|perfect/.test(t) || wantsAppt
-      ? "positive"
-      : "neutral";
-  // This analysis only runs when a real conversation happened, so the outcome is
-  // always a "connected" one — never no_answer / voicemail / wrong_number.
-  const outcome: CallOutcome = wantsAppt
-    ? "appointment_booked"
-    : /not interested|no thanks|stop calling|remove me|don'?t call|not right now/.test(t)
-      ? "not_interested"
-      : /call.{0,6}back|later|another time|busy right now|reschedule/.test(t)
-        ? "callback_scheduled"
-        : "qualified";
+    !dnc && !declined && slot.when !== "" && (accepted || bookedSignal);
+
+  const outcome: CallOutcome = dnc
+    ? "do_not_call"
+    : wantsAppt
+      ? "appointment_booked"
+      : declined
+        ? "not_interested"
+        : callback
+          ? "callback_scheduled"
+          : "qualified";
+
+  const sentiment: ConversationAnalysis["sentiment"] =
+    dnc || declined
+      ? "negative"
+      : wantsAppt || (accepted && !callback)
+        ? "positive"
+        : "neutral";
+
+  const summary = lead
+    ? `${lead.firstName} discussed a combined ~$${bill + solar}/mo energy spend. ${
+        wantsAppt
+          ? `Booked a no-cost account review for ${slot.when}.`
+          : outcome === "callback_scheduled"
+            ? "Asked to be called back — follow-up scheduled."
+            : outcome === "not_interested"
+              ? "Not interested at this time."
+              : outcome === "do_not_call"
+                ? "Asked to be placed on the do-not-call list."
+                : "Warm — follow-up recommended."
+      }`
+    : "The AI agent qualified the homeowner against the solar resolution script.";
 
   return {
-    summary: lead
-      ? `${lead.firstName} discussed a combined ~$${bill + solar}/mo energy spend. ${
-          wantsAppt ? "Booked a no-cost account review." : "Warm — follow-up recommended."
-        }`
-      : "The AI agent qualified the homeowner against the solar resolution script.",
-    detailedSummary: input.transcript
-      ? input.transcript.slice(0, 320)
+    summary,
+    detailedSummary: raw
+      ? raw.slice(0, 320)
       : "The AI agent confirmed the utility bill and solar payment, checked for EV / pool / battery, and captured any recent usage changes per the solar resolution script.",
     outcome,
     sentiment,
@@ -377,12 +440,14 @@ export function simulateConversationAnalysis(input: {
     },
     appointment: {
       requested: wantsAppt,
-      when: wantsAppt ? pick(["Tomorrow 2:00pm", "Thursday 11:00am", "Saturday 10:00am"], seed) : "",
-      notes: wantsAppt ? "Homeowner agreed to a no-cost account review." : "",
+      when: wantsAppt ? slot.when : "",
+      notes: wantsAppt ? slot.notes : "",
     },
     followUps: wantsAppt
-      ? ["Send calendar invite + confirmation"]
-      : ["Re-attempt during the early-evening window"],
+      ? ["Send calendar invite + confirmation", "Reminder call ~1h before"]
+      : outcome === "callback_scheduled"
+        ? ["Call back at the requested time"]
+        : ["Re-attempt during the early-evening window"],
     confidence: clamp(70 + (seed % 22)),
   };
 }

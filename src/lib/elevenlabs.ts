@@ -1,6 +1,7 @@
 import "server-only";
 
 import crypto from "node:crypto";
+import { currentDateContext } from "./ai/appointment";
 import type { Lead } from "./types";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -33,6 +34,23 @@ export function isElevenLabsConfigured() {
 }
 
 /**
+ * Today's date variables, so the agent always knows what "today"/"tomorrow" mean
+ * when scheduling and never books a guessed weekday. Computed in the homeowner's
+ * timezone when known. Always sent (independent of lead match) so the prompt's
+ * {{current_day}} / {{tomorrow_day}} tokens are never left empty.
+ */
+export function currentDateVariables(tz?: string): Record<string, string> {
+  const dc = currentDateContext(new Date(), tz);
+  return {
+    current_date: dc.date,
+    current_day: dc.day,
+    current_time: dc.time,
+    tomorrow_day: dc.tomorrowDay,
+    tomorrow_date: dc.tomorrowDate,
+  };
+}
+
+/**
  * The single source of truth for the dynamic variables sent to the agent on
  * every call. The agent's prompt/first-message reference these with {{name}}
  * syntax so each conversation is personalized to the homeowner and matches the
@@ -47,6 +65,7 @@ export function agentVariablesForLead(
     [lead.address, lead.city, lead.state].filter(Boolean).join(", ") +
     (lead.zip ? ` ${lead.zip}` : "");
   return {
+    ...currentDateVariables(lead.timezone || undefined),
     customer_name: `${lead.firstName} ${lead.lastName}`.trim(),
     first_name: lead.firstName,
     last_name: lead.lastName,
@@ -66,6 +85,9 @@ export function agentVariablesForLead(
 
 async function el(path: string, init?: RequestInit): Promise<Response> {
   const res = await fetch(`${API}${path}`, {
+    // Never serve a cached conversation read — the live transcript must reflect
+    // the call as it progresses, not a stale snapshot from an earlier poll.
+    cache: "no-store",
     ...init,
     headers: {
       "xi-api-key": elevenLabsConfig.apiKey,

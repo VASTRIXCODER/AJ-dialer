@@ -231,5 +231,9 @@ export async function GET(
     liveAudioAvailable: isMediaStreamConfigured() && isRestConfigured(),
   };
 
-  return NextResponse.json(response);
+  // Never let the browser serve a cached snapshot — the live transcript must
+  // refresh on every poll while the call is in progress.
+  return NextResponse.json(response, {
+    headers: { "Cache-Control": "no-store, max-age=0" },
+  });
 }

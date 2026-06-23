@@ -53,9 +53,12 @@ export async function GET() {
     .sort((a, b) => (b.endedAt ?? 0) - (a.endedAt ?? 0))
     .slice(0, 12);
 
-  return NextResponse.json({
-    configured: isElevenLabsConfigured(),
-    active,
-    recent,
-  });
+  return NextResponse.json(
+    {
+      configured: isElevenLabsConfigured(),
+      active,
+      recent,
+    },
+    { headers: { "Cache-Control": "no-store, max-age=0" } },
+  );
 }

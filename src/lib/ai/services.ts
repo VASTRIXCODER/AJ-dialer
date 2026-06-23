@@ -1,6 +1,7 @@
 import "server-only";
 
 import type { CallOutcome, Lead, MetricSummary } from "@/lib/types";
+import { currentDateContext } from "./appointment";
 import { generateJSON, runAI } from "./claude";
 import {
   simulateBriefing,
@@ -233,15 +234,30 @@ export function getSemanticSearch(
 export function analyzeConversation(input: {
   transcript: string;
   lead?: Lead | null;
+  /** Anchor for resolving "today"/"tomorrow"/weekday references in the call. */
+  now?: Date;
+  /** Homeowner's IANA timezone, when known. */
+  tz?: string;
 }): Promise<AIResult<ConversationAnalysis>> {
+  const dc = currentDateContext(input.now ?? new Date(), input.tz);
+  const dateLine =
+    `IMPORTANT — today is ${dc.day}, ${dc.date} (local time ${dc.time}); ` +
+    `tomorrow is ${dc.tomorrowDay}, ${dc.tomorrowDate}. When the homeowner agrees to a time, ` +
+    `resolve every relative reference ("today", "tonight", "tomorrow", a weekday name, "in two days") ` +
+    `to the ACTUAL calendar date and put an absolute, unambiguous value in appointment.when, ` +
+    `formatted like "${dc.tomorrowDate.replace(/, \d{4}$/, "")} at 6:00 PM". ` +
+    `Never output a bare relative word and never guess a weekday.`;
   return runAI(
     () =>
       generateJSON<ConversationAnalysis>({
         system: SYSTEM,
         prompt:
-          "Analyze this completed AI sales call transcript. Extract the disposition, sentiment, " +
-          "qualification data (USD/month; use 0 when not stated), whether an appointment was agreed " +
-          "(and when), and follow-ups.\n\n" +
+          "Analyze this completed AI sales call transcript carefully — base every field on what was " +
+          "actually said, never on assumptions. Extract the disposition, sentiment, " +
+          "qualification data (USD/month; use 0 when not stated), whether an appointment was genuinely " +
+          "agreed (only true if the homeowner accepted a specific time — not merely offered one) and " +
+          "exactly when, and follow-ups.\n\n" +
+          `${dateLine}\n\n` +
           (input.lead ? `Lead context: ${leadContext(input.lead)}\n\n` : "") +
           `Transcript:\n${input.transcript.slice(0, 8000)}`,
         schemaName: "conversation_analysis",
