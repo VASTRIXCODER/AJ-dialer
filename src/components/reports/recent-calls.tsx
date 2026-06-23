@@ -53,21 +53,24 @@ export function RecentCalls({ calls }: { calls: RecentCall[] }) {
                   }
                 >
                   <td className="px-5 py-3">
-                    {rec.repName ? (
-                      <div className="flex items-center gap-2">
-                        <Avatar initials={initials(rec.repName)} color="#0EA5E9" size="xs" />
-                        <span className="font-medium">{rec.repName}</span>
-                      </div>
-                    ) : (
+                    <div className="flex items-center gap-2">
                       <Badge tone={rec.channel === "ai" ? "accent" : "neutral"} className="gap-1">
                         {rec.channel === "ai" ? (
                           <Bot className="h-3 w-3" />
                         ) : (
                           <User className="h-3 w-3" />
                         )}
-                        {rec.channel === "ai" ? "AI agent" : "Manual"}
+                        {rec.channel === "ai" ? "AI" : "Manual"}
                       </Badge>
-                    )}
+                      {rec.repName && (
+                        <span className="flex items-center gap-1.5">
+                          <Avatar initials={initials(rec.repName)} color="#0EA5E9" size="xs" />
+                          <span className="truncate text-xs font-medium text-muted-foreground">
+                            {rec.repName}
+                          </span>
+                        </span>
+                      )}
+                    </div>
                   </td>
                   <td className="px-5 py-3 text-muted-foreground">{rec.leadName}</td>
                   <td className="px-5 py-3 text-muted-foreground tabular">

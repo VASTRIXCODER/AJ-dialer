@@ -3,9 +3,10 @@ import {
   Battery,
   Car,
   Clock,
-  Download,
+  Filter,
   PhoneCall,
-  PlayCircle,
+  Target,
+  Users,
   Waves,
   Zap,
 } from "lucide-react";
@@ -13,89 +14,159 @@ import { AiExecReport } from "@/components/ai/exec-report";
 import { HourlyBarChart, OutcomeDonut, TrendAreaChart } from "@/components/dashboard/charts";
 import { MetricCard } from "@/components/dashboard/metric-card";
 import { RecentCalls } from "@/components/reports/recent-calls";
+import {
+  ChannelCompare,
+  DispositionBreakdown,
+  ReportFunnel,
+  RepPerformance,
+} from "@/components/reports/report-sections";
+import {
+  type CsvSection,
+  ExportReportButton,
+} from "@/components/reports/export-report-button";
 import { EmptyState } from "@/components/shared/empty-state";
 import { PageContainer, PageHeader } from "@/components/shared/page-header";
 import { SectionCard } from "@/components/shared/section-card";
-import { Button } from "@/components/ui/button";
-import { getReportingData } from "@/lib/db/metrics";
-import {
-  formatCurrency,
-  formatDuration,
-  formatNumber,
-  formatPercent,
-} from "@/lib/utils";
+import { Badge } from "@/components/ui/badge";
+import { getReportingData, getTeamLeaderboard } from "@/lib/db/metrics";
+import { outcomeConfig } from "@/lib/status";
+import { formatCurrency, formatDuration, formatNumber, formatPercent } from "@/lib/utils";
 
 export const metadata = { title: "Reports" };
 export const dynamic = "force-dynamic";
 
 export default async function ReportsPage() {
-  const { metrics, kpiSeries, hourlyCalls, outcomeBreakdown, recentCalls } =
-    await getReportingData();
+  const [
+    {
+      metrics,
+      kpiSeries,
+      trend30,
+      hourlyCalls,
+      outcomeBreakdown,
+      dispositions,
+      channelStats,
+      funnel,
+      recentCalls,
+      scope,
+    },
+    { reps },
+  ] = await Promise.all([getReportingData(), getTeamLeaderboard()]);
 
   if (metrics.totalCalls === 0 && recentCalls.length === 0) {
     return (
       <PageContainer>
         <PageHeader
           title="Reports"
-          description="Full visibility into calls, conversions, and the utility-bill patterns across your customer base."
+          description="Full visibility into calls, connect rates, every disposition, and team performance."
         />
         <EmptyState
           icon={BarChart3}
           title="No report data yet"
-          description="Call volume, connect rates, outcomes, utility-bill insights, and recordings appear here once dialing begins."
+          description="Call volume, connect rates, dispositions, channel split, and recordings appear here once dialing begins."
           action={{ label: "Open the dialer", href: "/dialer" }}
         />
       </PageContainer>
     );
   }
 
+  const teamWide = scope === "org";
   const homeStats = [
     { label: "EV ownership", value: metrics.evOwnership, icon: Car },
     { label: "Pool ownership", value: metrics.poolOwnership, icon: Waves },
     { label: "Battery storage", value: metrics.batteryOwnership, icon: Battery },
   ];
 
+  // CSV export — disposition summary + the recent-call log.
+  const csvSections: CsvSection[] = [
+    {
+      title: "Disposition summary",
+      headers: ["Disposition", "Count", "Share %", "Connected"],
+      rows: dispositions.map((d) => [d.label, d.count, d.rate, d.connected ? "yes" : "no"]),
+    },
+    {
+      title: "Recent calls",
+      headers: ["Date", "Lead", "Rep", "Channel", "Disposition", "Duration (s)"],
+      rows: recentCalls.map((c) => [
+        new Date(c.startedAt).toLocaleString(),
+        c.leadName,
+        c.repName ?? "—",
+        c.channel,
+        c.outcome ? outcomeConfig[c.outcome].label : "—",
+        c.durationSec,
+      ]),
+    },
+  ];
+
   return (
     <PageContainer>
       <PageHeader
         title="Reports"
-        description="Full visibility into calls, conversions, and the utility-bill patterns across your customer base."
+        description="Calls, connect rates, every disposition, channel split, and team performance."
       >
-        <Button variant="outline" size="sm" className="gap-2">
-          <Download className="h-4 w-4" />
-          Export report
-        </Button>
+        <Badge tone={teamWide ? "primary" : "neutral"} className="gap-1">
+          {teamWide ? <Users className="h-3 w-3" /> : <Filter className="h-3 w-3" />}
+          {teamWide ? "Team-wide" : "Your calls"}
+        </Badge>
+        <ExportReportButton filename="aiatwork-report.csv" sections={csvSections} />
       </PageHeader>
 
-      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+      {/* KPI row */}
+      <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">
         <MetricCard label="Total calls" value={formatNumber(metrics.totalCalls)} icon={PhoneCall} accent="primary" />
         <MetricCard label="Connect rate" value={formatPercent(metrics.connectRate, 1)} icon={Zap} accent="accent" />
-        <MetricCard label="Appt rate" value={formatPercent(metrics.appointmentRate, 1)} icon={PlayCircle} accent="success" />
+        <MetricCard label="Connections" value={formatNumber(metrics.connections)} icon={Users} accent="primary" />
+        <MetricCard label="Appointments" value={formatNumber(funnel.appointments)} icon={Target} accent="success" />
         <MetricCard label="Avg talk time" value={formatDuration(metrics.avgCallLenSec)} icon={Clock} accent="warning" />
       </div>
 
-      <AiExecReport />
+      {/* Funnel + channel split */}
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+        <SectionCard title="Conversion funnel" description="Dials → connects → appointments">
+          <ReportFunnel funnel={funnel} />
+        </SectionCard>
+        <SectionCard title="AI vs human" description="Channel performance side by side">
+          <ChannelCompare channelStats={channelStats} />
+        </SectionCard>
+      </div>
 
+      {/* Trend + outcome mix */}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-        <SectionCard title="Volume trend" description="Calls vs conversations" className="lg:col-span-2">
-          <TrendAreaChart data={kpiSeries} />
+        <SectionCard title="30-day volume trend" description="Calls vs conversations" className="lg:col-span-2">
+          <TrendAreaChart data={trend30} />
         </SectionCard>
         <SectionCard title="Outcome mix" description="Disposition share">
           {outcomeBreakdown.length > 0 ? (
             <OutcomeDonut data={outcomeBreakdown} />
           ) : (
-            <p className="py-10 text-center text-sm text-muted-foreground">
-              No dispositions yet.
-            </p>
+            <p className="py-10 text-center text-sm text-muted-foreground">No dispositions yet.</p>
           )}
         </SectionCard>
       </div>
 
+      {/* All dispositions */}
+      <SectionCard
+        title="Disposition breakdown"
+        description="Every outcome, by volume and share — connected outcomes ringed"
+      >
+        <DispositionBreakdown dispositions={dispositions} />
+      </SectionCard>
+
+      {/* Per-rep performance (supervisors) */}
+      {teamWide && reps.length > 0 && (
+        <SectionCard
+          title="Rep performance"
+          description="This month, ranked by performance score"
+          bodyClassName="p-0"
+        >
+          <RepPerformance reps={reps} />
+        </SectionCard>
+      )}
+
+      {/* Hourly + utility insights */}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-        <SectionCard title="Hourly productivity" description="Dials & connects" className="lg:col-span-2">
+        <SectionCard title="Hourly productivity" description="Dials & connects (today)" className="lg:col-span-2">
           <HourlyBarChart data={hourlyCalls} />
         </SectionCard>
-
         <SectionCard title="Utility-bill insights" description="Across qualified homeowners">
           <div className="space-y-4">
             <div className="grid grid-cols-3 gap-2 text-center">
@@ -126,6 +197,8 @@ export default async function ReportsPage() {
           </div>
         </SectionCard>
       </div>
+
+      <AiExecReport />
 
       <SectionCard
         title="Recent calls"

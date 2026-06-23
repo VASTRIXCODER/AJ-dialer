@@ -12,6 +12,16 @@ import {
   callRecords as sampleRecords,
 } from "../data";
 import { reconcileOwnerActiveCalls } from "../ai-call-reconcile";
+import {
+  channelBreakdown,
+  CONNECTED_OUTCOMES,
+  dispositionBreakdown,
+  funnelOf,
+  isConnectedRow,
+  type ChannelRow,
+  type DispositionRow,
+  type Funnel,
+} from "../call-analytics";
 import { composeLeaderboard } from "../leaderboard";
 import { createAdminClient, isAdminConfigured } from "../supabase/admin";
 import { isSupabaseConfigured } from "../supabase/config";
@@ -68,33 +78,23 @@ export interface ApptLite {
 export interface ReportingData {
   metrics: MetricSummary;
   kpiSeries: KpiPoint[];
+  /** 30-day daily trend (reports). */
+  trend30: KpiPoint[];
   hourlyCalls: { hour: string; calls: number; connects: number }[];
   outcomeBreakdown: { name: string; value: number; color: string }[];
+  /** Counts + rates for EVERY disposition. */
+  dispositions: DispositionRow[];
+  /** AI vs human comparison. */
+  channelStats: ChannelRow[];
+  /** Dials → connects → appointments. */
+  funnel: Funnel;
   recentCalls: RecentCall[];
   liveCalls: LiveCall[];
   appointments: ApptLite[];
   leaderboard: Rep[];
+  /** "org" when the viewer is a supervisor (team-wide) else "own". */
+  scope: "org" | "own";
 }
-
-// Outcomes that mean a real conversation took place.
-const CONNECTED = new Set<CallOutcome>([
-  "appointment_booked",
-  "callback_scheduled",
-  "qualified",
-  "not_interested",
-  "do_not_call",
-]);
-
-const OUTCOME_META: Record<CallOutcome, { label: string; color: string }> = {
-  appointment_booked: { label: "Appointment", color: "var(--color-chart-3)" },
-  callback_scheduled: { label: "Callback", color: "var(--color-chart-1)" },
-  qualified: { label: "Qualified", color: "var(--color-chart-2)" },
-  not_interested: { label: "Not interested", color: "var(--color-chart-5)" },
-  no_answer: { label: "No answer", color: "var(--color-chart-4)" },
-  voicemail: { label: "Voicemail", color: "var(--color-chart-4)" },
-  wrong_number: { label: "Wrong number", color: "var(--color-chart-5)" },
-  do_not_call: { label: "Do not call", color: "var(--color-chart-5)" },
-};
 
 type Row = Record<string, unknown>;
 const pct = (n: number, d: number) => (d > 0 ? Math.round((n / d) * 1000) / 10 : 0);
@@ -138,43 +138,63 @@ export async function getReportingData(): Promise<ReportingData> {
     // are accurate the moment the dashboard / reports load.
     await reconcileOwnerActiveCalls();
 
-    const [callsRes, apptsRes, leadsRes, profileRes, monitor] = await Promise.all([
-      supabase
+    // Scope: supervisors (manager/admin/owner) see the whole org; reps see their
+    // own. Org-wide reads use the service-role client (RLS would otherwise hide
+    // other reps' rows), scoped to the org in app code.
+    const { data: prof } = await supabase
+      .from("profiles")
+      .select("full_name,avatar_color,org_id,role")
+      .eq("id", user.id)
+      .maybeSingle();
+    const orgId = prof?.org_id ? String(prof.org_id) : null;
+    const supervisor = Boolean(
+      orgId &&
+        ["owner", "admin", "manager"].includes(String(prof?.role ?? "rep")) &&
+        isAdminConfigured(),
+    );
+    const reader = supervisor ? createAdminClient() : supabase;
+    const scopeCol = supervisor ? "org_id" : "owner_id";
+    const scopeVal = (supervisor ? orgId : user.id) as string;
+
+    const [callsRes, apptsRes, leadsRes, monitor, memberRes] = await Promise.all([
+      reader
         .from("call_records")
         .select(
-          "id,outcome,duration_sec,channel,started_at,lead_name,conversation_id,recording_url,summary",
+          "id,owner_id,outcome,duration_sec,channel,started_at,lead_name,conversation_id,recording_url,summary",
         )
-        .eq("owner_id", user.id)
+        .eq(scopeCol, scopeVal)
         .order("started_at", { ascending: false })
-        .limit(2000),
-      supabase
+        .limit(supervisor ? 20000 : 2000),
+      reader
         .from("appointments")
         .select("id,status,source,lead_name,scheduled_label,scheduled_at,created_at")
-        .eq("owner_id", user.id)
+        .eq(scopeCol, scopeVal)
         .order("created_at", { ascending: false })
-        .limit(500),
-      supabase
+        .limit(supervisor ? 5000 : 500),
+      reader
         .from("leads")
         .select("utility_bill,solar_payment,has_ev,has_pool,has_battery")
-        .eq("owner_id", user.id)
-        .limit(5000),
-      supabase
-        .from("profiles")
-        .select("full_name,avatar_color")
-        .eq("id", user.id)
-        .maybeSingle(),
+        .eq(scopeCol, scopeVal)
+        .limit(supervisor ? 50000 : 5000),
       getAIConversationsForMonitor(),
+      supervisor && orgId
+        ? createAdminClient()
+            .from("organization_members")
+            .select("user_id,name")
+            .eq("org_id", orgId)
+            .eq("status", "active")
+        : Promise.resolve({ data: [] as Row[] }),
     ]);
 
     const calls = (callsRes.data ?? []) as Row[];
     const appts = (apptsRes.data ?? []) as Row[];
     const leads = (leadsRes.data ?? []) as Row[];
+    const nameById = new Map(
+      ((memberRes.data ?? []) as Row[]).map((m) => [String(m.user_id), String(m.name ?? "")]),
+    );
 
     const outcomeOf = (r: Row) => (r.outcome as CallOutcome) ?? null;
-    const isConnected = (r: Row) => {
-      const o = outcomeOf(r);
-      return o != null && CONNECTED.has(o);
-    };
+    const isConnected = isConnectedRow;
 
     const startToday = new Date();
     startToday.setHours(0, 0, 0, 0);
@@ -225,29 +245,36 @@ export async function getReportingData(): Promise<ReportingData> {
       batteryOwnership: pct(leads.filter((l) => l.has_battery).length, leads.length),
     };
 
-    // ── 7-day trend ─────────────────────────────────────────────────────────────
-    const kpiSeries: KpiPoint[] = [];
-    for (let i = 6; i >= 0; i--) {
-      const d = new Date();
-      d.setHours(0, 0, 0, 0);
-      d.setDate(d.getDate() - i);
-      const next = new Date(d);
-      next.setDate(d.getDate() + 1);
-      const dayCalls = calls.filter((c) => {
-        if (!c.started_at) return false;
-        const t = new Date(String(c.started_at));
-        return t >= d && t < next;
-      });
-      const conv = dayCalls.filter(isConnected).length;
-      kpiSeries.push({
-        label: d.toLocaleDateString("en-US", { weekday: "short" }),
-        calls: dayCalls.length,
-        conversations: conv,
-        appointments: dayCalls.filter((c) => outcomeOf(c) === "appointment_booked")
-          .length,
-        connectRate: Math.round(pct(conv, dayCalls.length)),
-      });
-    }
+    // ── Trends (7-day weekday view + 30-day view) ───────────────────────────────
+    const buildSeries = (days: number): KpiPoint[] => {
+      const out: KpiPoint[] = [];
+      for (let i = days - 1; i >= 0; i--) {
+        const d = new Date();
+        d.setHours(0, 0, 0, 0);
+        d.setDate(d.getDate() - i);
+        const next = new Date(d);
+        next.setDate(d.getDate() + 1);
+        const dayCalls = calls.filter((c) => {
+          if (!c.started_at) return false;
+          const t = new Date(String(c.started_at));
+          return t >= d && t < next;
+        });
+        const conv = dayCalls.filter(isConnected).length;
+        out.push({
+          label: d.toLocaleDateString(
+            "en-US",
+            days > 10 ? { month: "numeric", day: "numeric" } : { weekday: "short" },
+          ),
+          calls: dayCalls.length,
+          conversations: conv,
+          appointments: dayCalls.filter((c) => outcomeOf(c) === "appointment_booked").length,
+          connectRate: Math.round(pct(conv, dayCalls.length)),
+        });
+      }
+      return out;
+    };
+    const kpiSeries = buildSeries(7);
+    const trend30 = buildSeries(30);
 
     // ── Hourly (today, business window) ─────────────────────────────────────────
     const hourlyCalls: { hour: string; calls: number; connects: number }[] = [];
@@ -262,18 +289,16 @@ export async function getReportingData(): Promise<ReportingData> {
       });
     }
 
-    // ── Outcome mix ─────────────────────────────────────────────────────────────
-    const outcomeBreakdown = (Object.keys(byOutcome) as CallOutcome[])
-      .map((o) => ({
-        name: OUTCOME_META[o].label,
-        value: Math.round(pct(byOutcome[o], totalCalls)),
-        color: OUTCOME_META[o].color,
-      }))
-      .filter((o) => o.value > 0)
-      .sort((a, b) => b.value - a.value);
+    // ── Dispositions (all of them), channel split, funnel ───────────────────────
+    const dispositions = dispositionBreakdown(calls);
+    const channelStats = channelBreakdown(calls);
+    const funnel = funnelOf(calls);
+    const outcomeBreakdown = dispositions
+      .filter((d) => d.count > 0)
+      .map((d) => ({ name: d.label, value: Math.round(d.rate), color: d.color }));
 
     // ── Recent calls ────────────────────────────────────────────────────────────
-    const recentCalls: RecentCall[] = calls.slice(0, 12).map((r, i) => {
+    const recentCalls: RecentCall[] = calls.slice(0, supervisor ? 25 : 12).map((r, i) => {
       const outcome = outcomeOf(r);
       const channel = r.channel === "human" ? "human" : "ai";
       const recordingUrl = (r.recording_url as string) ?? null;
@@ -283,11 +308,12 @@ export async function getReportingData(): Promise<ReportingData> {
       const hasRecording =
         channel === "human"
           ? Boolean(recordingUrl)
-          : Boolean(conversationId && outcome && CONNECTED.has(outcome));
+          : Boolean(conversationId && outcome && CONNECTED_OUTCOMES.has(outcome));
       return {
         id: String(r.id ?? conversationId ?? i),
         leadName: String(r.lead_name ?? "Homeowner"),
         channel,
+        repName: supervisor ? nameById.get(String(r.owner_id)) || "Rep" : undefined,
         outcome,
         durationSec: Number(r.duration_sec ?? 0),
         startedAt: String(r.started_at ?? new Date().toISOString()),
@@ -317,9 +343,9 @@ export async function getReportingData(): Promise<ReportingData> {
         state: c.state,
       }));
 
-    // ── Leaderboard (single-account → you, with real stats) ────────────────────
+    // ── Leaderboard (legacy single-account field; UIs use getTeamLeaderboard) ───
     const disp = userDisplay(user);
-    const profile = profileRes.data as Row | null;
+    const profile = prof as Row | null;
     const name = (profile?.full_name as string) || disp.name;
     const apptsToday = appts.filter((a) => onDay(a, "created_at")).length;
     const convToday = todays.filter(isConnected).length;
@@ -346,12 +372,17 @@ export async function getReportingData(): Promise<ReportingData> {
     return {
       metrics,
       kpiSeries,
+      trend30,
       hourlyCalls,
       outcomeBreakdown,
+      dispositions,
+      channelStats,
+      funnel,
       recentCalls,
       liveCalls,
       appointments,
       leaderboard,
+      scope: supervisor ? "org" : "own",
     };
   } catch {
     return fallbackReporting();
@@ -360,11 +391,21 @@ export async function getReportingData(): Promise<ReportingData> {
 
 // ── Demo / empty fallback (bundled data module) ──────────────────────────────
 function fallbackReporting(): ReportingData {
+  const demoRows = sampleRecords.map((r) => ({
+    outcome: r.outcome,
+    duration_sec: r.durationSec,
+    channel: "human",
+  }));
   return {
     metrics: sampleMetrics,
     kpiSeries: sampleKpi,
+    trend30: sampleKpi,
     hourlyCalls: sampleHourly,
     outcomeBreakdown: sampleOutcomes,
+    dispositions: dispositionBreakdown(demoRows),
+    channelStats: channelBreakdown(demoRows),
+    funnel: funnelOf(demoRows),
+    scope: "own",
     recentCalls: sampleRecords.map((r) => ({
       id: r.id,
       leadName: r.leadName,
