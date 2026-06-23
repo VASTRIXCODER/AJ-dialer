@@ -96,9 +96,9 @@ export function SuperConsole() {
     [load],
   );
 
-  async function signOut() {
-    await fetch("/api/superadmin/logout", { method: "POST" }).catch(() => {});
-    window.location.href = "/login";
+  function signOut() {
+    // Superadmin is your normal identity now — just return to the app.
+    window.location.href = "/hub";
   }
 
   const suspended = accounts.filter((a) => a.disabled).length;

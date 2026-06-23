@@ -1,60 +1,40 @@
 import "server-only";
 
-import crypto from "node:crypto";
-import { cookies } from "next/headers";
+import { getUser } from "./auth";
+import { isAccountDisabled, isPlatformAdmin } from "./db/app-control";
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Secret superadmin ("app management") access — a tamper-proof, HMAC-signed
-// httpOnly cookie, entirely separate from Supabase accounts. The credentials
-// default to the agreed passphrase but are env-overridable for real security.
-// The password lives only in this server-only module (never the client bundle).
+// Hidden platform superadmin — tied to your REAL Supabase identity, not a
+// separate password or cookie. This removes the old forgeable `sa_session` token
+// and the sticky-cross-user bug (a leftover cookie sending the next person who
+// signs in straight into the console).
+//
+// You are a superadmin if your signed-in email is in SUPERADMIN_EMAILS (the
+// un-lock-out-able bootstrap) OR your account is in the service-role-only
+// `platform_admins` table. It's never shown on your profile; you appear as a
+// normal member of your org and reach the console through a discreet entry.
 // ─────────────────────────────────────────────────────────────────────────────
 
-const USER = (process.env.SUPERADMIN_USER || "superadmin@gmail.com").toLowerCase();
-const PASSWORD = process.env.SUPERADMIN_PASSWORD || "keystoeverything";
-const SECRET = process.env.SUPERADMIN_SECRET || `${PASSWORD}::aiatwork-superadmin`;
+const ALLOWLIST = (process.env.SUPERADMIN_EMAILS || "")
+  .split(/[,\s]+/)
+  .map((s) => s.trim().toLowerCase())
+  .filter(Boolean);
 
-export const SA_COOKIE = "sa_session";
-const MAX_AGE_SEC = 60 * 60 * 12; // 12h
-
-export function validateSuperadmin(username: string, password: string): boolean {
-  return (username ?? "").trim().toLowerCase() === USER && password === PASSWORD;
+/** The email allowlist (for diagnostics / setup hints). */
+export function superadminAllowlist(): string[] {
+  return ALLOWLIST;
 }
 
-export function signSuperadminToken(): string {
-  const ts = Date.now().toString(36);
-  const sig = crypto.createHmac("sha256", SECRET).update(ts).digest("hex");
-  return `${ts}.${sig}`;
-}
-
-function verify(value?: string | null): boolean {
-  if (!value) return false;
-  const [ts, sig] = value.split(".");
-  if (!ts || !sig) return false;
-  const ageMs = Date.now() - parseInt(ts, 36);
-  if (!Number.isFinite(ageMs) || ageMs < 0 || ageMs > MAX_AGE_SEC * 1000) return false;
-  const expected = crypto.createHmac("sha256", SECRET).update(ts).digest("hex");
-  try {
-    return crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expected));
-  } catch {
-    return false;
-  }
-}
-
-/** True when the current request carries a valid superadmin session cookie. */
+/**
+ * True when the CURRENT signed-in user is a platform superadmin. Allowlisted
+ * emails are always superadmin (can't be locked out); DB-promoted superadmins
+ * additionally lose access if their account is suspended.
+ */
 export async function isSuperadmin(): Promise<boolean> {
-  try {
-    const store = await cookies();
-    return verify(store.get(SA_COOKIE)?.value);
-  } catch {
-    return false;
-  }
+  const user = await getUser();
+  if (!user) return false;
+  const email = (user.email || "").toLowerCase();
+  if (email && ALLOWLIST.includes(email)) return true;
+  if (await isPlatformAdmin(user.id)) return !(await isAccountDisabled(user.id));
+  return false;
 }
-
-export const SA_COOKIE_OPTIONS = {
-  httpOnly: true,
-  secure: process.env.NODE_ENV === "production",
-  sameSite: "lax" as const,
-  path: "/",
-  maxAge: MAX_AGE_SEC,
-};

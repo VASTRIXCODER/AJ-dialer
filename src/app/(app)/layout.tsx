@@ -13,17 +13,18 @@ export default async function AppGroupLayout({
 }: {
   children: React.ReactNode;
 }) {
-  // Superadmins never enter the dialer — they live in the standalone console.
-  if (await isSuperadmin()) redirect("/console");
-
   const viewer = await getViewer();
 
   // Signed out (and not demo) → sign in. Signed in but no active org → the Hub.
   if (!viewer.isDemo && !viewer.user) redirect("/login");
   if (!viewer.isDemo && !viewer.org) redirect("/hub");
 
-  // The global kill switch and per-account suspension gate every real user.
-  if (viewer.user) {
+  // Superadmins are also normal users (hidden) — they use the app like anyone,
+  // and reach the Control Center through a discreet entry. They're exempt from
+  // the kill switch / suspension so they can never lock themselves out.
+  const superadmin = await isSuperadmin();
+
+  if (viewer.user && !superadmin) {
     const settings = await getAppSettings();
     if (settings.maintenance) {
       return <MaintenanceScreen message={settings.message} />;
@@ -50,6 +51,7 @@ export default async function AppGroupLayout({
       productName={viewer.org?.productName || null}
       brandColor={viewer.org?.brandColor || null}
       role={viewer.role}
+      superadmin={superadmin}
     >
       {children}
     </AppShell>

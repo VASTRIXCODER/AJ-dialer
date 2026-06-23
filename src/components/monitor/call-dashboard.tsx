@@ -28,6 +28,7 @@ import { OutcomeGrid } from "@/components/dialer/outcome-grid";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Portal } from "@/components/ui/portal";
+import { createPcmPlayer, type PcmPlayer } from "@/lib/pcm-player";
 import { outcomeConfig } from "@/lib/status";
 import type { CallOutcome } from "@/lib/types";
 import { cn, formatDuration, formatPhone } from "@/lib/utils";
@@ -55,46 +56,6 @@ export type CallDetail = {
   liveAudioAvailable: boolean;
 };
 
-// Plays mixed PCM16 8kHz frames (from the live-audio relay) via Web Audio.
-type PcmPlayer = { play: (b64: string) => void; close: () => void };
-function createPcmPlayer(): PcmPlayer {
-  const Ctx =
-    window.AudioContext ||
-    (window as unknown as { webkitAudioContext: typeof AudioContext })
-      .webkitAudioContext;
-  const ctx = new Ctx();
-  void ctx.resume?.();
-  let next = 0;
-  return {
-    play(b64) {
-      const bin = atob(b64);
-      const len = bin.length >> 1;
-      const f32 = new Float32Array(len);
-      for (let i = 0; i < len; i++) {
-        let v = (bin.charCodeAt(i * 2 + 1) << 8) | bin.charCodeAt(i * 2);
-        if (v >= 32768) v -= 65536;
-        f32[i] = v / 32768;
-      }
-      const buf = ctx.createBuffer(1, len, 8000);
-      buf.getChannelData(0).set(f32);
-      const src = ctx.createBufferSource();
-      src.buffer = buf;
-      src.connect(ctx.destination);
-      const now = ctx.currentTime;
-      if (next < now) next = now + 0.12; // jitter buffer
-      src.start(next);
-      next += buf.duration;
-    },
-    close() {
-      try {
-        void ctx.close();
-      } catch {
-        /* noop */
-      }
-    },
-  };
-}
-
 const sentimentMeta: Record<Sentiment, { icon: typeof Smile; tone: string; label: string }> = {
   positive: { icon: Smile, tone: "text-success", label: "Positive" },
   neutral: { icon: Meh, tone: "text-muted-foreground", label: "Neutral" },
@@ -115,10 +76,12 @@ const stateMeta: Record<AICallState, { label: string; tone: "primary" | "success
  */
 export function CallDashboard({
   conversationId,
+  canListen = false,
   onClose,
   onChanged,
 }: {
   conversationId: string;
+  canListen?: boolean;
   onClose: () => void;
   onChanged: () => void;
 }) {
@@ -623,7 +586,7 @@ export function CallDashboard({
               </p>
               {live && (
                 <div className="flex items-center gap-1.5">
-                  {detail?.liveAudioAvailable && (
+                  {detail?.liveAudioAvailable && canListen && (
                     <button
                       type="button"
                       onClick={() => (audioOn ? stopAudio() : startAudio())}

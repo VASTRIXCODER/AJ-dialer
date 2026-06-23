@@ -1,3 +1,4 @@
+import { attachHumanCallSid } from "@/lib/human-call-store";
 import { getPublicBaseUrl, twilioConfig } from "@/lib/twilio";
 
 export const dynamic = "force-dynamic";
@@ -21,6 +22,12 @@ export async function POST(req: Request) {
   const to = String(form.get("To") ?? "");
   const conference = String(form.get("Conference") ?? "");
   const record = String(form.get("record") ?? "false") === "true";
+
+  // Bind the agent's browser-leg CallSid to its monitor presence so a supervisor
+  // can fork this leg's audio (both tracks = rep + customer) for live listening.
+  const monitorId = String(form.get("MonitorId") ?? "");
+  const callSid = String(form.get("CallSid") ?? "");
+  if (monitorId && callSid) attachHumanCallSid(monitorId, callSid);
 
   let body: string;
 

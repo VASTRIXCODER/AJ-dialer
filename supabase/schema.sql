@@ -350,3 +350,229 @@ update public.profiles p set role = 'owner'
   from public.organization_members m
   where m.user_id = p.id and m.role = 'owner' and m.status = 'active';
 
+-- ═════════════════════════════════════════════════════════════════════════════
+-- PART 2 — SECURITY & HIERARCHY UPGRADE  (idempotent; safe to re-run)
+--
+-- • Hidden platform superadmin tied to your real account (no separate password).
+-- • Account suspension enforced at the database, not just in app code.
+-- • Org-level data isolation: supervisors (manager/admin/owner) see their org's
+--   leads/calls/etc.; reps see only their own. Enforced by RLS, not just the UI.
+-- • Self privilege-escalation is blocked (users can't grant themselves a role,
+--   un-suspend themselves, or move orgs without a validated server path).
+-- • Audit log for sensitive actions.
+-- ═════════════════════════════════════════════════════════════════════════════
+
+-- ── Profile additions ────────────────────────────────────────────────────────
+alter table public.profiles add column if not exists preferences jsonb not null default '{}'::jsonb;
+
+-- ── Hidden platform superadmins ──────────────────────────────────────────────
+-- Service-role-only table (RLS on, no policies) so a user can NEVER grant
+-- themselves platform access. Membership here = superadmin (in addition to the
+-- SUPERADMIN_EMAILS env allowlist, which is the un-lock-out-able bootstrap).
+create table if not exists public.platform_admins (
+  user_id    uuid primary key references auth.users (id) on delete cascade,
+  note       text default '',
+  created_at timestamptz not null default now()
+);
+alter table public.platform_admins enable row level security;
+
+-- ── Audit log (service-role only) ────────────────────────────────────────────
+create table if not exists public.audit_log (
+  id          uuid primary key default gen_random_uuid(),
+  actor_id    uuid,
+  actor_kind  text not null default 'user',   -- user | superadmin | system
+  action      text not null,
+  target_id   text,
+  target_kind text,
+  org_id      uuid,
+  detail      jsonb not null default '{}'::jsonb,
+  created_at  timestamptz not null default now()
+);
+create index if not exists audit_log_created_idx on public.audit_log (created_at desc);
+alter table public.audit_log enable row level security;
+
+-- ── Org scoping on all account data ──────────────────────────────────────────
+alter table public.leads            add column if not exists org_id uuid references public.organizations (id) on delete set null;
+alter table public.call_records     add column if not exists org_id uuid references public.organizations (id) on delete set null;
+alter table public.appointments     add column if not exists org_id uuid references public.organizations (id) on delete set null;
+alter table public.callbacks        add column if not exists org_id uuid references public.organizations (id) on delete set null;
+alter table public.ai_conversations add column if not exists org_id uuid references public.organizations (id) on delete set null;
+alter table public.campaigns        add column if not exists org_id uuid references public.organizations (id) on delete set null;
+
+create index if not exists leads_org_idx            on public.leads (org_id);
+create index if not exists call_records_org_idx     on public.call_records (org_id, started_at desc);
+create index if not exists appointments_org_idx     on public.appointments (org_id, created_at desc);
+create index if not exists callbacks_org_idx        on public.callbacks (org_id);
+create index if not exists ai_conversations_org_idx on public.ai_conversations (org_id, started_at desc);
+create index if not exists campaigns_org_idx        on public.campaigns (org_id);
+
+-- Backfill org_id from each row's owner profile.
+update public.leads            t set org_id = p.org_id from public.profiles p where p.id = t.owner_id and t.org_id is null;
+update public.call_records     t set org_id = p.org_id from public.profiles p where p.id = t.owner_id and t.org_id is null;
+update public.appointments     t set org_id = p.org_id from public.profiles p where p.id = t.owner_id and t.org_id is null;
+update public.callbacks        t set org_id = p.org_id from public.profiles p where p.id = t.owner_id and t.org_id is null;
+update public.ai_conversations t set org_id = p.org_id from public.profiles p where p.id = t.owner_id and t.org_id is null;
+update public.campaigns        t set org_id = p.org_id from public.profiles p where p.id = t.owner_id and t.org_id is null;
+
+-- ── Security-definer helpers (bypass RLS to evaluate the checks) ─────────────
+create or replace function public.app_is_active()
+returns boolean language sql stable security definer set search_path = public as $$
+  select not coalesce((select disabled from public.profiles where id = auth.uid()), false);
+$$;
+
+create or replace function public.app_is_superadmin()
+returns boolean language sql stable security definer set search_path = public as $$
+  select exists (select 1 from public.platform_admins where user_id = auth.uid());
+$$;
+
+-- Is the caller an ACTIVE manager/admin/owner of the given org?
+create or replace function public.app_is_org_supervisor(target_org uuid)
+returns boolean language sql stable security definer set search_path = public as $$
+  select exists (
+    select 1 from public.organization_members m
+    where m.user_id = auth.uid()
+      and m.org_id = target_org
+      and m.status = 'active'
+      and m.role in ('owner','admin','manager')
+  );
+$$;
+
+-- ── Stamp org_id on insert from the owner's profile (app code can't forget) ──
+create or replace function public.stamp_org_id()
+returns trigger language plpgsql security definer set search_path = public as $$
+begin
+  if new.org_id is null then
+    new.org_id := (select org_id from public.profiles where id = new.owner_id);
+  end if;
+  return new;
+end;
+$$;
+
+do $$
+declare t text;
+begin
+  foreach t in array array['leads','call_records','appointments','callbacks','ai_conversations','campaigns']
+  loop
+    execute format('drop trigger if exists stamp_org_id on public.%I', t);
+    execute format('create trigger stamp_org_id before insert on public.%I for each row execute function public.stamp_org_id()', t);
+  end loop;
+end $$;
+
+-- ── Freeze privileged profile columns against self-escalation ────────────────
+-- Ordinary end-users (jwt role 'authenticated') can edit name/team/avatar/prefs
+-- but NOT their role, suspension flag, or org pointer. The service-role server
+-- paths (org switch, approvals, superadmin) bypass this guard.
+create or replace function public.guard_profile_columns()
+returns trigger language plpgsql security definer set search_path = public as $$
+declare jwt_role text;
+begin
+  jwt_role := coalesce(current_setting('request.jwt.claims', true)::jsonb ->> 'role', '');
+  if jwt_role = 'authenticated' then
+    new.role       := old.role;
+    new.disabled   := old.disabled;
+    new.org_id     := old.org_id;
+    new.company_id := old.company_id;
+  end if;
+  return new;
+end;
+$$;
+drop trigger if exists guard_profile_columns on public.profiles;
+create trigger guard_profile_columns before update on public.profiles
+  for each row execute function public.guard_profile_columns();
+
+-- ── Profiles RLS: read self (or superadmin); update self (guarded columns) ───
+drop policy if exists "profiles self" on public.profiles;
+drop policy if exists "profiles self read" on public.profiles;
+drop policy if exists "profiles self update" on public.profiles;
+create policy "profiles self read" on public.profiles for select
+  using (id = auth.uid() or public.app_is_superadmin());
+create policy "profiles self update" on public.profiles for update
+  using (id = auth.uid()) with check (id = auth.uid());
+
+-- ── Data RLS: owner OR org supervisor (read) / owner only (write); suspended
+--    users are blocked everywhere via app_is_active(). Superadmin can do all. ──
+-- leads
+drop policy if exists "leads owner" on public.leads;
+drop policy if exists "leads read" on public.leads;
+drop policy if exists "leads write" on public.leads;
+create policy "leads read" on public.leads for select using (
+  public.app_is_active() and (
+    owner_id = auth.uid()
+    or (org_id is not null and public.app_is_org_supervisor(org_id))
+    or public.app_is_superadmin()));
+create policy "leads write" on public.leads for all
+  using (public.app_is_active() and (owner_id = auth.uid() or public.app_is_superadmin()))
+  with check (public.app_is_active() and (owner_id = auth.uid() or public.app_is_superadmin()));
+
+-- call_records
+drop policy if exists "call_records owner" on public.call_records;
+drop policy if exists "call_records read" on public.call_records;
+drop policy if exists "call_records write" on public.call_records;
+create policy "call_records read" on public.call_records for select using (
+  public.app_is_active() and (
+    owner_id = auth.uid()
+    or (org_id is not null and public.app_is_org_supervisor(org_id))
+    or public.app_is_superadmin()));
+create policy "call_records write" on public.call_records for all
+  using (public.app_is_active() and (owner_id = auth.uid() or public.app_is_superadmin()))
+  with check (public.app_is_active() and (owner_id = auth.uid() or public.app_is_superadmin()));
+
+-- appointments
+drop policy if exists "appointments owner" on public.appointments;
+drop policy if exists "appointments read" on public.appointments;
+drop policy if exists "appointments write" on public.appointments;
+create policy "appointments read" on public.appointments for select using (
+  public.app_is_active() and (
+    owner_id = auth.uid()
+    or (org_id is not null and public.app_is_org_supervisor(org_id))
+    or public.app_is_superadmin()));
+create policy "appointments write" on public.appointments for all
+  using (public.app_is_active() and (owner_id = auth.uid() or public.app_is_superadmin()))
+  with check (public.app_is_active() and (owner_id = auth.uid() or public.app_is_superadmin()));
+
+-- callbacks
+drop policy if exists "callbacks owner" on public.callbacks;
+drop policy if exists "callbacks read" on public.callbacks;
+drop policy if exists "callbacks write" on public.callbacks;
+create policy "callbacks read" on public.callbacks for select using (
+  public.app_is_active() and (
+    owner_id = auth.uid()
+    or (org_id is not null and public.app_is_org_supervisor(org_id))
+    or public.app_is_superadmin()));
+create policy "callbacks write" on public.callbacks for all
+  using (public.app_is_active() and (owner_id = auth.uid() or public.app_is_superadmin()))
+  with check (public.app_is_active() and (owner_id = auth.uid() or public.app_is_superadmin()));
+
+-- ai_conversations
+drop policy if exists "ai_conversations owner" on public.ai_conversations;
+drop policy if exists "ai_conversations read" on public.ai_conversations;
+drop policy if exists "ai_conversations write" on public.ai_conversations;
+create policy "ai_conversations read" on public.ai_conversations for select using (
+  public.app_is_active() and (
+    owner_id = auth.uid()
+    or (org_id is not null and public.app_is_org_supervisor(org_id))
+    or public.app_is_superadmin()));
+create policy "ai_conversations write" on public.ai_conversations for all
+  using (public.app_is_active() and (owner_id = auth.uid() or public.app_is_superadmin()))
+  with check (public.app_is_active() and (owner_id = auth.uid() or public.app_is_superadmin()));
+
+-- campaigns
+drop policy if exists "campaigns owner" on public.campaigns;
+drop policy if exists "campaigns read" on public.campaigns;
+drop policy if exists "campaigns write" on public.campaigns;
+create policy "campaigns read" on public.campaigns for select using (
+  public.app_is_active() and (
+    owner_id = auth.uid()
+    or (org_id is not null and public.app_is_org_supervisor(org_id))
+    or public.app_is_superadmin()));
+create policy "campaigns write" on public.campaigns for all
+  using (public.app_is_active() and (owner_id = auth.uid() or public.app_is_superadmin()))
+  with check (public.app_is_active() and (owner_id = auth.uid() or public.app_is_superadmin()));
+
+-- ── Bootstrap the platform superadmin by email (edit to your address) ────────
+-- This makes YOU a hidden superadmin tied to your real Supabase login. It is not
+-- shown on your profile. Re-run safe.
+insert into public.platform_admins (user_id, note)
+  select id, 'bootstrap' from auth.users where lower(email) = lower('pmtosiri@gmail.com')
+  on conflict (user_id) do nothing;
+

@@ -515,7 +515,11 @@ export function useDialer(queue: Lead[], aiConfigured = false) {
       try {
         if (leads.length === 1) {
           const call = await deviceRef.current.connect({
-            params: { To: toE164(leads[0].phone), record: "true" },
+            params: {
+              To: toE164(leads[0].phone),
+              record: "true",
+              MonitorId: humanIdRef.current,
+            },
           });
           attachCallHandlers(call, () => connectLine(leads[0]));
         } else {
@@ -535,7 +539,7 @@ export function useDialer(queue: Lead[], aiConfigured = false) {
             return;
           }
           const call = await deviceRef.current.connect({
-            params: { Conference: room },
+            params: { Conference: room, MonitorId: humanIdRef.current },
           });
           attachCallHandlers(call);
           stopPoll();

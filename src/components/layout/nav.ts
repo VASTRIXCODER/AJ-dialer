@@ -52,7 +52,13 @@ export const navGroups: NavGroup[] = [
   {
     label: "Team",
     items: [
-      { label: "Live Monitor", href: "/monitor", icon: Radio, feature: "liveMonitor" },
+      {
+        label: "Live Monitor",
+        href: "/monitor",
+        icon: Radio,
+        feature: "liveMonitor",
+        permission: "monitor.view",
+      },
       { label: "Leaderboard", href: "/leaderboard", icon: Trophy, feature: "leaderboard" },
       { label: "Campaigns", href: "/campaigns", icon: Megaphone, feature: "campaigns" },
       { label: "Reports", href: "/reports", icon: BarChart3, feature: "reports" },

@@ -101,9 +101,11 @@ function StatCard({
 export function AiLiveMonitor({
   configured,
   initialCall = null,
+  canListen = false,
 }: {
   configured: boolean;
   initialCall?: string | null;
+  canListen?: boolean;
 }) {
   const [active, setActive] = useState<AICall[]>([]);
   const [recent, setRecent] = useState<AICall[]>([]);
@@ -350,6 +352,7 @@ export function AiLiveMonitor({
         <CallDashboard
           key={openId}
           conversationId={openId}
+          canListen={canListen}
           onClose={() => setOpenId(null)}
           onChanged={load}
         />

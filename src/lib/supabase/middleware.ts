@@ -28,28 +28,9 @@ export async function updateSession(request: NextRequest) {
   const isProtected = PROTECTED.some(
     (p) => path === p || path.startsWith(`${p}/`),
   );
-
-  // Superadmin sessions are a signed httpOnly cookie, separate from Supabase.
-  // The Edge runtime can't run Node crypto, so here we only check presence and
-  // route accordingly — the cookie's HMAC is verified server-side by the page
-  // and API routes it reaches (a forged cookie is bounced back to /login there).
-  const hasSuperadmin = Boolean(request.cookies.get("sa_session")?.value);
-
-  // ── Superadmin routing (works even in demo mode, before Supabase loads) ──
-  // The console demands a superadmin session; everyone else is sent to sign in.
-  if (onConsole && !hasSuperadmin) {
-    const url = request.nextUrl.clone();
-    url.pathname = "/login";
-    url.search = "";
-    return NextResponse.redirect(url);
-  }
-  // A superadmin belongs in the standalone console — never the dialer app.
-  if (hasSuperadmin && isProtected) {
-    const url = request.nextUrl.clone();
-    url.pathname = "/console";
-    url.search = "";
-    return NextResponse.redirect(url);
-  }
+  // The console requires a signed-in user; whether they're actually a superadmin
+  // is verified server-side in the page (identity-based, not a cookie).
+  const needsAuth = isProtected || onConsole;
 
   let response = NextResponse.next({ request });
   if (!isSupabaseConfigured()) return response;
@@ -75,9 +56,8 @@ export async function updateSession(request: NextRequest) {
     data: { user },
   } = await supabase.auth.getUser();
 
-  // A superadmin reaching here was already routed above, so a protected route
-  // without a Supabase user means an unauthenticated visitor → sign in.
-  if (!user && isProtected) {
+  // Unauthenticated visitor hitting a protected route or the console → sign in.
+  if (!user && needsAuth) {
     const url = request.nextUrl.clone();
     url.pathname = "/login";
     url.searchParams.set("redirect", path);

@@ -22,6 +22,7 @@ export function AppShell({
   productName = null,
   brandColor = null,
   role = null,
+  superadmin = false,
 }: {
   children: React.ReactNode;
   voiceConfigured: boolean;
@@ -33,9 +34,10 @@ export function AppShell({
   productName?: string | null;
   brandColor?: string | null;
   role?: string | null;
+  superadmin?: boolean;
 }) {
   const [mobileOpen, setMobileOpen] = useState(false);
-  const sidebarProps = { permissions, features, orgName, productName, brandColor, role };
+  const sidebarProps = { permissions, features, orgName, productName, brandColor, role, superadmin };
 
   return (
     <div className="relative flex min-h-screen">

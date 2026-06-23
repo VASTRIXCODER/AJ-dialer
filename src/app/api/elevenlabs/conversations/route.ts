@@ -7,6 +7,7 @@ import {
 } from "@/lib/ai-call-store";
 import { getAIConversationsForMonitor } from "@/lib/db/records";
 import { isElevenLabsConfigured } from "@/lib/elevenlabs";
+import { viewerCan } from "@/lib/org/membership";
 
 export const dynamic = "force-dynamic";
 
@@ -30,6 +31,10 @@ function merge(memory: Loose[], db: Loose[]): Loose[] {
  * instead of hanging "live" forever.
  */
 export async function GET() {
+  // Live monitoring is supervisors-only — reps never see the floor's calls.
+  if (!(await viewerCan("monitor.view")))
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+
   const first = await getAIConversationsForMonitor();
   const activeForCheck = merge(listActiveAICalls(), first.active);
 

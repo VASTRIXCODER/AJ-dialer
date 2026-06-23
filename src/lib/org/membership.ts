@@ -233,6 +233,24 @@ export async function getViewer(): Promise<Viewer> {
   };
 }
 
+/** Does the current viewer hold a permission? (Demo = owner; reps = none.) */
+export async function viewerCan(permission: Permission): Promise<boolean> {
+  const viewer = await getViewer();
+  return viewer.permissions.includes(permission);
+}
+
+/** Does the viewer hold ANY of the given permissions? */
+export async function viewerCanAny(permissions: Permission[]): Promise<boolean> {
+  const viewer = await getViewer();
+  return permissions.some((p) => viewer.permissions.includes(p));
+}
+
+/** The viewer's active org id (for scoping monitor/reporting reads), or null. */
+export async function viewerOrgId(): Promise<string | null> {
+  const viewer = await getViewer();
+  return viewer.org?.id ?? null;
+}
+
 // ── Reads (RLS-scoped to the caller) ─────────────────────────────────────────
 /**
  * The caller's *active* membership — the org they've entered. The active org is

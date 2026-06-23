@@ -9,6 +9,7 @@ import {
   KeyRound,
   Loader2,
   LogOut,
+  ShieldCheck,
   Sparkles,
   Wand2,
   X,
@@ -58,11 +59,13 @@ export function HubView({
   memberships,
   pending,
   aiConfigured,
+  superadmin = false,
 }: {
   name: string;
   memberships: Membership[];
   pending: Pending[];
   aiConfigured: boolean;
+  superadmin?: boolean;
 }) {
   const router = useRouter();
   const [entering, setEntering] = useState<string | null>(null);
@@ -99,15 +102,26 @@ export function HubView({
             </p>
           </div>
         </div>
-        <form action="/auth/signout" method="post">
-          <button
-            type="submit"
-            className="inline-flex items-center gap-1.5 rounded-xl border border-border/60 px-3 py-2 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
-          >
-            <LogOut className="h-3.5 w-3.5" />
-            Sign out
-          </button>
-        </form>
+        <div className="flex items-center gap-2">
+          {superadmin && (
+            <a
+              href="/console"
+              className="inline-flex items-center gap-1.5 rounded-xl border border-border/60 px-3 py-2 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
+            >
+              <ShieldCheck className="h-3.5 w-3.5" />
+              Control Center
+            </a>
+          )}
+          <form action="/auth/signout" method="post">
+            <button
+              type="submit"
+              className="inline-flex items-center gap-1.5 rounded-xl border border-border/60 px-3 py-2 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
+            >
+              <LogOut className="h-3.5 w-3.5" />
+              Sign out
+            </button>
+          </form>
+        </div>
       </div>
 
       {/* Your organizations */}

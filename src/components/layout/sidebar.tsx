@@ -1,7 +1,7 @@
 "use client";
 
 import { motion } from "framer-motion";
-import { ArrowLeftRight, Building2, LogOut } from "lucide-react";
+import { ArrowLeftRight, Building2, LogOut, ShieldCheck } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useId } from "react";
@@ -23,6 +23,7 @@ export function Sidebar({
   productName = null,
   brandColor = null,
   role = null,
+  superadmin = false,
   onNavigate,
 }: {
   account?: Account | null;
@@ -32,6 +33,7 @@ export function Sidebar({
   productName?: string | null;
   brandColor?: string | null;
   role?: string | null;
+  superadmin?: boolean;
   onNavigate?: () => void;
 }) {
   const pathname = usePathname();
@@ -180,6 +182,16 @@ export function Sidebar({
       </nav>
 
       <div className="space-y-2 px-3 pb-5">
+        {superadmin && (
+          <Link
+            href="/console"
+            onClick={onNavigate}
+            className="flex items-center justify-center gap-2 rounded-xl border border-border/60 px-3 py-2 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
+          >
+            <ShieldCheck className="h-3.5 w-3.5" />
+            Control Center
+          </Link>
+        )}
         <Link
           href="/settings"
           onClick={onNavigate}

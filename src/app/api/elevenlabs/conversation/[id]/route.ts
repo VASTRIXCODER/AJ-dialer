@@ -12,6 +12,7 @@ import {
   isElevenLabsConfigured,
 } from "@/lib/elevenlabs";
 import { isMediaStreamConfigured } from "@/lib/media-stream";
+import { viewerCanAny } from "@/lib/org/membership";
 import { isRestConfigured } from "@/lib/twilio";
 import type { CallOutcome } from "@/lib/types";
 
@@ -97,6 +98,11 @@ export async function GET(
 ) {
   const { id } = await params;
   const conversationId = decodeURIComponent(id);
+
+  // Call detail powers the monitor (live) and the reports drill-in — both are
+  // supervisor-only. Reps can't read other people's call detail.
+  if (!(await viewerCanAny(["monitor.view", "reports.view"])))
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
   // ── Live ElevenLabs read (best-effort; a still-ringing call may 404) ────────
   let rawTurns: Turn[] = [];
