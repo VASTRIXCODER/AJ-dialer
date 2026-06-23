@@ -3,6 +3,7 @@ import {
   getPublicBaseUrl,
   isCallerIdConfigured,
   twilioConfig,
+  verifyMonitorToken,
 } from "@/lib/twilio";
 
 export const dynamic = "force-dynamic";
@@ -30,12 +31,16 @@ function say(message: string) {
 
 /**
  * TwiML endpoint invoked by the Voice SDK / TwiML App when the browser places a
- * call. Two modes:
+ * call. Modes:
  *
- *  • `To` present       → single-line / manual dial: bridge the agent to the
- *                         homeowner using the configured caller ID (+ recording).
- *  • `Conference` present → parallel dial OR supervisor take-over: drop the agent
- *                         into the conference room where the homeowner is bridged.
+ *  • `Conference` + `Monitor` → supervisor live-listen: join the rep's conference
+ *                         MUTED (hears everyone, heard by no one). Gated by a
+ *                         signed token from /api/twilio/listen.
+ *  • `Conference` present → rep call (single/parallel), supervisor take-over, or
+ *                         parallel winner: join the conference room where the
+ *                         homeowner is bridged. `record` records the conference.
+ *  • `To` present       → legacy single PSTN dial: bridge to the homeowner using
+ *                         the configured caller ID (+ recording).
  *
  * It must ALWAYS return valid TwiML with HTTP 200 — any non-200 or malformed
  * response makes Twilio play the generic "an application error has occurred" to
@@ -48,11 +53,13 @@ export async function POST(req: Request) {
     const form = await req.formData();
     const to = String(form.get("To") ?? "").trim();
     const conference = String(form.get("Conference") ?? "").trim();
+    const monitor = String(form.get("Monitor") ?? "") === "true";
+    const monitorToken = String(form.get("Token") ?? "");
     const record = String(form.get("record") ?? "false") === "true";
 
-    // Bind the agent's browser-leg CallSid to its monitor presence so a
-    // supervisor can fork this leg's audio (both tracks = rep + customer) for
-    // live listening. Never let a bookkeeping failure break the call.
+    // Bind the agent's browser-leg CallSid to its monitor presence so the Live
+    // Monitor knows the call is joinable. Never let bookkeeping break the call.
+    // (Supervisor monitor legs carry no MonitorId, so they never overwrite this.)
     try {
       const monitorId = String(form.get("MonitorId") ?? "");
       const callSid = String(form.get("CallSid") ?? "");
@@ -61,11 +68,31 @@ export async function POST(req: Request) {
       /* presence is best-effort */
     }
 
-    // ── Conference: parallel dial winner OR supervisor take-over ──────────────
-    if (conference) {
+    // ── Supervisor live-listen: join MUTED, silently (no relay needed) ────────
+    // Only a token signed by the authorized listen route gets in — this is what
+    // keeps silent eavesdropping locked to permitted supervisors.
+    if (conference && monitor) {
+      if (!verifyMonitorToken(conference, monitorToken)) {
+        return say("You're not authorized to listen to this call.");
+      }
       const room = escapeXml(conference);
       return twiml(
-        `<Dial><Conference startConferenceOnEnter="true" endConferenceOnExit="true" beep="false">${room}</Conference></Dial>`,
+        `<Dial><Conference startConferenceOnEnter="false" endConferenceOnExit="false" muted="true" beep="false">${room}</Conference></Dial>`,
+      );
+    }
+
+    // ── Conference: rep call (single/parallel), or supervisor take-over ───────
+    if (conference) {
+      const room = escapeXml(conference);
+      // Record the whole conference from the rep's leg (exactly one per room).
+      const base = getPublicBaseUrl(req);
+      const recordAttr = record
+        ? base
+          ? ` record="record-from-start" recordingStatusCallback="${escapeXml(`${base}/api/twilio/status`)}"`
+          : ' record="record-from-start"'
+        : "";
+      return twiml(
+        `<Dial><Conference startConferenceOnEnter="true" endConferenceOnExit="true" beep="false"${recordAttr}>${room}</Conference></Dial>`,
       );
     }
 

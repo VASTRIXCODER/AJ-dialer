@@ -464,6 +464,10 @@ export function useDialer(queue: Lead[], aiConfigured = false) {
   );
 
   // ── Human (Twilio) call attempt ───────────────────────────────────────────
+  // Every human call runs through a Twilio conference (single = parallel-of-one):
+  // the homeowner(s) are dialed into room `hc-<humanId>` and the rep's browser
+  // joins the same room. This is what lets a supervisor live-listen by joining
+  // the conference muted — no media relay required.
   const startHumanCall = useCallback(
     async (override?: Lead[]) => {
       if (modeRef.current !== "live" || !deviceRef.current) {
@@ -477,7 +481,7 @@ export function useDialer(queue: Lead[], aiConfigured = false) {
       if (!canDialOutRef.current) {
         patch({
           error:
-            "No outbound caller ID is configured. Add TWILIO_CALLER_ID to place manual calls.",
+            "Outbound calling needs Twilio REST credentials (Account SID, Auth Token, and Caller ID).",
           status: "idle",
         });
         return;
@@ -504,17 +508,20 @@ export function useDialer(queue: Lead[], aiConfigured = false) {
       });
       setState((s) => ({ ...s, callsThisSession: s.callsThisSession + 1 }));
 
-      // Register live presence for the Live Monitor.
+      // Register live presence for the Live Monitor. The conference room is
+      // derived from this id so supervisors can join it to listen.
       const lead0 = leads[0];
-      humanIdRef.current = `h-${Date.now().toString(36)}-${Math.random()
+      const humanId = `h-${Date.now().toString(36)}-${Math.random()
         .toString(36)
         .slice(2, 7)}`;
+      humanIdRef.current = humanId;
+      const room = `hc-${humanId}`;
       fetch("/api/calls/active", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           action: "start",
-          id: humanIdRef.current,
+          id: humanId,
           leadName:
             leads.length > 1
               ? `${leads.length}× parallel dial`
@@ -526,54 +533,53 @@ export function useDialer(queue: Lead[], aiConfigured = false) {
       }).catch(() => {});
 
       try {
-        if (leads.length === 1) {
-          const call = await deviceRef.current.connect({
-            params: {
-              To: toE164(leads[0].phone),
-              record: "true",
-              MonitorId: humanIdRef.current,
-            },
+        // Dial the homeowner(s) into the conference room via Twilio REST.
+        const res = await fetch("/api/twilio/call", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            room,
+            agentIdentity: identityRef.current,
+            leads: leads.map((l) => ({ leadId: l.id, phone: l.phone })),
+          }),
+        });
+        if (!res.ok) {
+          clearHumanPresence();
+          const j = (await res.json().catch(() => ({}))) as { error?: string };
+          patch({
+            error: j.error ?? "Unable to start the call.",
+            status: "idle",
+            lines: [],
           });
-          attachCallHandlers(call, () => connectLine(leads[0]));
-        } else {
-          const room = `room-${identityRef.current}-${Date.now().toString(36)}`;
-          const res = await fetch("/api/twilio/call", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              room,
-              agentIdentity: identityRef.current,
-              leads: leads.map((l) => ({ leadId: l.id, phone: l.phone })),
-            }),
-          });
-          if (!res.ok) {
-            clearHumanPresence();
-            patch({ error: "Unable to start parallel dial.", status: "idle", lines: [] });
-            return;
-          }
-          const call = await deviceRef.current.connect({
-            params: { Conference: room, MonitorId: humanIdRef.current },
-          });
-          attachCallHandlers(call);
-          stopPoll();
-          pollRef.current = setInterval(async () => {
-            try {
-              const a = await fetch(
-                `/api/twilio/answered?room=${encodeURIComponent(room)}`,
-              );
-              const { answeredLeadId } = (await a.json()) as {
-                answeredLeadId: string | null;
-              };
-              if (answeredLeadId) {
-                const lead = leads.find((l) => l.id === answeredLeadId);
-                if (lead) connectLine(lead);
-                else stopPoll();
-              }
-            } catch {
-              /* keep polling */
-            }
-          }, 1200);
+          return;
         }
+
+        // Join the rep's browser into the same room (and record the conference).
+        const call = await deviceRef.current.connect({
+          params: { Conference: room, record: "true", MonitorId: humanId },
+        });
+        attachCallHandlers(call);
+
+        // Poll which homeowner answered first (single or parallel) to flip the
+        // line to "connected" and register presence so the monitor can listen.
+        stopPoll();
+        pollRef.current = setInterval(async () => {
+          try {
+            const a = await fetch(
+              `/api/twilio/answered?room=${encodeURIComponent(room)}`,
+            );
+            const { answeredLeadId } = (await a.json()) as {
+              answeredLeadId: string | null;
+            };
+            if (answeredLeadId) {
+              const lead = leads.find((l) => l.id === answeredLeadId);
+              if (lead) connectLine(lead);
+              else stopPoll();
+            }
+          } catch {
+            /* keep polling */
+          }
+        }, 1200);
       } catch {
         clearHumanPresence();
         patch({ error: "Call failed to start.", status: "idle", lines: [] });

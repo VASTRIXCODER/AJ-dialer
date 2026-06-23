@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import {
   createVoiceToken,
-  isCallerIdConfigured,
+  isRestConfigured,
   isVoiceConfigured,
 } from "@/lib/twilio";
 
@@ -24,12 +24,14 @@ export async function GET() {
     return NextResponse.json({ mode: "offline" });
   }
 
-  // canDialOut tells the client whether *manual* PSTN dialing is possible (needs
-  // a caller ID). Taking over an AI call doesn't — it joins a conference.
+  // canDialOut tells the client whether human (rep↔customer) calls are possible.
+  // They run through a conference where the homeowner is dialed in via Twilio
+  // REST, so this needs full REST creds (Account SID + Auth Token + Caller ID).
+  // Taking over an AI call only joins an existing conference, so it's unaffected.
   return NextResponse.json({
     mode: "live",
     identity,
     token,
-    canDialOut: isCallerIdConfigured(),
+    canDialOut: isRestConfigured(),
   });
 }

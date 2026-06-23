@@ -4,8 +4,9 @@ import "server-only";
 // Live presence for human (manual Twilio) calls so supervisors can see — and
 // listen to — a rep's in-progress call in the Live Monitor. Human calls run in
 // the rep's browser via the Twilio Device, so the client registers start /
-// connect / end here; the TwiML voice route attaches the agent-leg CallSid so we
-// can fork its audio to the relay without disturbing the call.
+// connect / end here; the TwiML voice route attaches the agent-leg CallSid so the
+// monitor knows the call's conference exists and a supervisor can join it (muted)
+// to listen without disturbing the call.
 //
 // Scoped by owner (the rep) + org so the monitor only ever shows an org's own
 // calls. Single-instance state (correct for `next start`); back with Redis /
@@ -24,8 +25,6 @@ export interface HumanCall {
   repName: string;
   /** Agent-leg Twilio CallSid (set by the voice route once the call is placed). */
   callSid: string | null;
-  /** Active media-stream SID while a supervisor is listening. */
-  streamSid?: string;
 }
 
 const calls = new Map<string, HumanCall>();
@@ -94,11 +93,6 @@ export function attachHumanCallSid(id: string, callSid: string): void {
       callSid,
     });
   }
-}
-
-export function setHumanStreamSid(id: string, streamSid: string | undefined): void {
-  const c = calls.get(id);
-  if (c) c.streamSid = streamSid;
 }
 
 export function getHumanCall(id: string): HumanCall | null {

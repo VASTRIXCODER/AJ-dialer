@@ -1,5 +1,7 @@
 import "server-only";
 
+import crypto from "node:crypto";
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Server-side Twilio configuration.
 //
@@ -115,4 +117,45 @@ export async function getRestClient() {
   if (!isRestConfigured()) return null;
   const twilio = (await import("twilio")).default;
   return twilio(twilioConfig.accountSid, twilioConfig.authToken);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Supervisor live-listen authorization.
+//
+// A supervisor listens to a rep↔customer call by joining its Twilio conference
+// MUTED (hears everyone, heard by no one) — no media relay required. The browser
+// drives that join through the public TwiML voice webhook, so we gate it with a
+// short-lived HMAC: the authorized /api/twilio/listen route signs the room, and
+// the voice webhook verifies it before emitting a muted <Conference> join. This
+// keeps silent eavesdropping locked to supervisors who passed the org/permission
+// check. Keyed on the always-present Twilio auth token — no extra env var.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Sign a `${exp}.${sig}` token authorizing a muted monitor join of `room`. */
+export function signMonitorToken(room: string, ttlSec = 3600): string {
+  const secret = twilioConfig.authToken;
+  if (!secret) return "";
+  const exp = Math.floor(Date.now() / 1000) + ttlSec;
+  const sig = crypto
+    .createHmac("sha256", secret)
+    .update(`${room}.${exp}`)
+    .digest("hex");
+  return `${exp}.${sig}`;
+}
+
+export function verifyMonitorToken(room: string, token: string): boolean {
+  const secret = twilioConfig.authToken;
+  if (!secret) return false;
+  const [exp, sig] = (token || "").split(".");
+  if (!exp || !sig) return false;
+  if (Number(exp) * 1000 < Date.now()) return false;
+  const expected = crypto
+    .createHmac("sha256", secret)
+    .update(`${room}.${exp}`)
+    .digest("hex");
+  try {
+    return crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expected));
+  } catch {
+    return false;
+  }
 }

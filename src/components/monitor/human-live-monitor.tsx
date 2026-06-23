@@ -1,10 +1,10 @@
 "use client";
 
+import type { Call, Device } from "@twilio/voice-sdk";
 import { Headphones, Loader2, Phone, User } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
-import { createPcmPlayer, type PcmPlayer } from "@/lib/pcm-player";
 import { cn, formatDuration, formatPhone } from "@/lib/utils";
 
 type HumanCall = {
@@ -21,8 +21,10 @@ type HumanCall = {
 /**
  * Live presence for human (manual) rep↔customer calls, polled from
  * /api/calls/active (scoped to the supervisor's org). A supervisor with
- * monitor.listen can listen in on a connected call — the rep's call audio is
- * forked to the relay and played here without interrupting the call.
+ * monitor.listen can listen in on a connected call: their browser joins the
+ * rep's Twilio conference MUTED via the Voice SDK — hearing both sides without
+ * being heard, and without any media relay. /api/twilio/listen authorizes the
+ * join (permission + org) and returns the room + a signed token.
  */
 export function HumanLiveMonitor({ canListen = false }: { canListen?: boolean }) {
   const [calls, setCalls] = useState<HumanCall[]>([]);
@@ -30,22 +32,30 @@ export function HumanLiveMonitor({ canListen = false }: { canListen?: boolean })
   const [listeningId, setListeningId] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [err, setErr] = useState("");
-  const wsRef = useRef<WebSocket | null>(null);
-  const playerRef = useRef<PcmPlayer | null>(null);
+  const deviceRef = useRef<Device | null>(null);
+  const callRef = useRef<Call | null>(null);
+
+  // Lazily mint a Voice token + register a device for the supervisor (cached).
+  const ensureDevice = useCallback(async (): Promise<Device> => {
+    if (deviceRef.current) return deviceRef.current;
+    const res = await fetch("/api/twilio/token");
+    const data = (await res.json().catch(() => ({}))) as { token?: string };
+    if (!data.token)
+      throw new Error("Twilio isn't connected — add credentials to listen in.");
+    const { Device } = await import("@twilio/voice-sdk");
+    const device = new Device(data.token, { logLevel: "error" });
+    await device.register();
+    deviceRef.current = device;
+    return device;
+  }, []);
 
   const stopListening = useCallback((notifyServer = true) => {
     try {
-      wsRef.current?.close();
+      callRef.current?.disconnect();
     } catch {
       /* noop */
     }
-    wsRef.current = null;
-    try {
-      playerRef.current?.close();
-    } catch {
-      /* noop */
-    }
-    playerRef.current = null;
+    callRef.current = null;
     setListeningId((id) => {
       if (id && notifyServer) {
         fetch("/api/twilio/listen", {
@@ -79,7 +89,21 @@ export function HumanLiveMonitor({ canListen = false }: { canListen?: boolean })
       stopListening(false);
     }
   }, [calls, listeningId, stopListening]);
-  useEffect(() => () => stopListening(false), [stopListening]);
+  useEffect(
+    () => () => {
+      try {
+        callRef.current?.disconnect();
+      } catch {
+        /* noop */
+      }
+      try {
+        deviceRef.current?.destroy();
+      } catch {
+        /* noop */
+      }
+    },
+    [],
+  );
 
   async function listen(id: string) {
     setErr("");
@@ -96,27 +120,32 @@ export function HumanLiveMonitor({ canListen = false }: { canListen?: boolean })
         body: JSON.stringify({ humanId: id }),
       });
       const j = await res.json().catch(() => ({}));
-      if (!res.ok || !j.ok || !j.listenUrl) {
+      if (!res.ok || !j.ok || !j.room) {
         setErr(j.error ?? "Could not start live audio.");
         return;
       }
-      const player = createPcmPlayer();
-      playerRef.current = player;
-      const ws = new WebSocket(j.listenUrl);
-      wsRef.current = ws;
-      ws.onmessage = (e) => {
-        try {
-          const m = JSON.parse(e.data as string);
-          if (m.event === "media" && m.payload) player.play(m.payload);
-          else if (m.event === "ended") stopListening(false);
-        } catch {
-          /* ignore malformed frame */
-        }
-      };
-      ws.onerror = () => setErr("Live audio connection error.");
+      // Join the rep's conference muted — hear both sides, stay silent.
+      const device = await ensureDevice();
+      const call = await device.connect({
+        params: { Conference: j.room, Monitor: "true", Token: j.token ?? "" },
+      });
+      callRef.current = call;
+      call.on("disconnect", () => {
+        callRef.current = null;
+        setListeningId((cur) => (cur === id ? null : cur));
+      });
+      call.on("error", () => {
+        setErr("Live audio connection error.");
+        callRef.current = null;
+        setListeningId((cur) => (cur === id ? null : cur));
+      });
       setListeningId(id);
-    } catch {
-      setErr("Network error.");
+    } catch (e) {
+      setErr(
+        e instanceof Error
+          ? e.message
+          : "Could not connect — allow microphone access to listen in.",
+      );
     } finally {
       setBusyId(null);
     }

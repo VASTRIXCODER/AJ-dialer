@@ -62,7 +62,12 @@ export async function POST(req: Request) {
   // The status callback drives parallel auto-release; without it the call still
   // connects, it just won't auto-cancel the losing legs.
   const base = getPublicBaseUrl(req);
-  const conferenceTwiml = `<?xml version="1.0" encoding="UTF-8"?><Response><Dial answerOnBridge="true"><Conference startConferenceOnEnter="true" endConferenceOnExit="false" beep="false">${room}</Conference></Dial></Response>`;
+
+  // For a single call, the homeowner hanging up should end the call (matching a
+  // direct dial). For parallel, the losing legs are force-released, so they must
+  // NOT end the conference on exit — only the rep's leg does that.
+  const endOnExit = leads.length === 1 ? "true" : "false";
+  const conferenceTwiml = `<?xml version="1.0" encoding="UTF-8"?><Response><Dial answerOnBridge="true"><Conference startConferenceOnEnter="true" endConferenceOnExit="${endOnExit}" beep="false">${room}</Conference></Dial></Response>`;
 
   const placed = await Promise.all(
     leads.map(async (leg) => {

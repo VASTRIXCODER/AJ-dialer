@@ -60,12 +60,12 @@ Per-member permission **overrides** (grant/revoke a single permission) are set i
 ## Live monitoring of human calls
 
 Supervisors (manager+) can **listen live** to an in-progress rep↔customer call.
-The rep's call leg is forked with Twilio Media Streams (both tracks = rep +
-customer) to the same relay used for AI calls (`server/media-stream-server.mjs`),
-then played in the browser. It's gated to `monitor.listen` and scoped to the
-supervisor's own org. Requires `MEDIA_STREAM_URL` + `MEDIA_STREAM_SECRET` and
-Twilio REST (see `docs/LIVE_AUDIO.md`); without them the transcript/presence still
-work, just not live audio.
+The supervisor's browser joins the call's Twilio conference **muted** (hears both
+sides, is never heard) — no media relay required. It's gated to `monitor.listen`,
+scoped to the supervisor's own org, and the muted join is authorized by a
+short-lived HMAC token (signed with the Twilio auth token) so no one else can
+join silently. Needs only Twilio REST creds (see `docs/LIVE_AUDIO.md`). Listening
+to **AI** calls is the one path that still uses the Media Streams relay.
 
 ## Manual setup steps
 
