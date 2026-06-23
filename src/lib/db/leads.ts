@@ -45,22 +45,24 @@ function rowToLead(r: Row): Lead {
 }
 
 export async function getLeads(): Promise<Lead[]> {
+  // Bundled sample leads ONLY in demo mode (no Supabase). A configured
+  // deployment never shows placeholder data — a fresh org reads as empty.
   if (!isSupabaseConfigured()) return fallbackLeads;
   try {
     const supabase = await createClient();
     const {
       data: { user },
     } = await supabase.auth.getUser();
-    if (!user) return fallbackLeads;
+    if (!user) return [];
     const { data, error } = await supabase
       .from("leads")
       .select("*")
       .eq("owner_id", user.id)
       .order("ai_score", { ascending: false, nullsFirst: false });
-    if (error || !data) return fallbackLeads;
+    if (error || !data) return [];
     return data.map(rowToLead);
   } catch {
-    return fallbackLeads;
+    return [];
   }
 }
 
@@ -73,10 +75,9 @@ export async function getLeadById(id: string): Promise<Lead | null> {
       .select("*")
       .eq("id", id)
       .maybeSingle();
-    if (data) return rowToLead(data);
-    return fallbackById(id) ?? null;
+    return data ? rowToLead(data) : null;
   } catch {
-    return fallbackById(id) ?? null;
+    return null;
   }
 }
 

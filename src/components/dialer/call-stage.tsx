@@ -8,6 +8,7 @@ import {
   Grid3x3,
   Hash,
   Loader2,
+  Lock,
   Mic,
   MicOff,
   Pause,
@@ -167,31 +168,51 @@ export function CallStage({
               exit={{ opacity: 0, y: -10 }}
               className="flex w-full max-w-sm flex-col items-center gap-6"
             >
-              {/* AI / Manual toggle (hidden when the org is AI-only) */}
-              {aiConfigured && manualEnabled && (
-                <div className="inline-flex rounded-xl border border-border bg-card p-1">
-                  <button
-                    type="button"
-                    onClick={() => onSetAiMode(true)}
-                    className={cn(
-                      "flex items-center gap-1.5 rounded-lg px-4 py-1.5 text-sm font-semibold transition-colors",
-                      ai ? "bg-solar text-white shadow-soft" : "text-muted-foreground hover:text-foreground",
+              {/* AI / Manual toggle. When manual dialing is locked behind the
+                  paywall, the Manual option still shows — but disabled with a
+                  lock — so it reads as a premium upgrade rather than missing. */}
+              {aiConfigured && (
+                <div className="flex flex-col items-center gap-1.5">
+                  <div className="inline-flex rounded-xl border border-border bg-card p-1">
+                    <button
+                      type="button"
+                      onClick={() => onSetAiMode(true)}
+                      className={cn(
+                        "flex items-center gap-1.5 rounded-lg px-4 py-1.5 text-sm font-semibold transition-colors",
+                        ai ? "bg-solar text-white shadow-soft" : "text-muted-foreground hover:text-foreground",
+                      )}
+                    >
+                      <Bot className="h-4 w-4" />
+                      AI calling
+                    </button>
+                    {manualEnabled ? (
+                      <button
+                        type="button"
+                        onClick={() => onSetAiMode(false)}
+                        className={cn(
+                          "flex items-center gap-1.5 rounded-lg px-4 py-1.5 text-sm font-semibold transition-colors",
+                          !ai ? "bg-foreground text-background shadow-soft" : "text-muted-foreground hover:text-foreground",
+                        )}
+                      >
+                        <Hash className="h-4 w-4" />
+                        Manual
+                      </button>
+                    ) : (
+                      <span
+                        title="Manual dialing is a premium feature — locked on this plan."
+                        className="flex cursor-not-allowed items-center gap-1.5 rounded-lg px-4 py-1.5 text-sm font-semibold text-muted-foreground/60"
+                      >
+                        <Lock className="h-3.5 w-3.5" />
+                        Manual
+                      </span>
                     )}
-                  >
-                    <Bot className="h-4 w-4" />
-                    AI calling
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => onSetAiMode(false)}
-                    className={cn(
-                      "flex items-center gap-1.5 rounded-lg px-4 py-1.5 text-sm font-semibold transition-colors",
-                      !ai ? "bg-foreground text-background shadow-soft" : "text-muted-foreground hover:text-foreground",
-                    )}
-                  >
-                    <Hash className="h-4 w-4" />
-                    Manual
-                  </button>
+                  </div>
+                  {!manualEnabled && (
+                    <p className="flex items-center gap-1 text-[11px] text-muted-foreground">
+                      <Lock className="h-3 w-3" />
+                      Manual dialing is a premium feature on this plan.
+                    </p>
+                  )}
                 </div>
               )}
 
