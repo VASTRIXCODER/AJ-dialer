@@ -226,6 +226,7 @@ export async function generateOrgBlueprint(
 
     const features: OrgFeatures = {
       aiDialer: spec.features?.aiDialer ?? true,
+      manualDialer: spec.features?.manualDialer ?? true,
       leads: spec.features?.leads ?? true,
       appointments: spec.features?.appointments ?? true,
       callbacks: spec.features?.callbacks ?? true,

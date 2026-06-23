@@ -17,12 +17,15 @@ export function DialerClient({
   initialCampaign = "",
   voiceConfigured,
   aiAgentConfigured,
+  manualEnabled = true,
 }: {
   queue: Lead[];
   campaigns?: { id: string; name: string }[];
   initialCampaign?: string;
   voiceConfigured: boolean;
   aiAgentConfigured: boolean;
+  /** Org feature: when false, only AI calling is offered (no manual dialing). */
+  manualEnabled?: boolean;
 }) {
   // Filter the dialing queue to a campaign (client-side; the page ships the full
   // queue). Only changeable between calls so the active session isn't disrupted.
@@ -51,7 +54,7 @@ export function DialerClient({
   return (
     <div className="space-y-4">
       {/* Manual mode needs Twilio; AI mode places calls server-side without it. */}
-      {!voiceConfigured && !state.aiMode && (
+      {manualEnabled && !voiceConfigured && !state.aiMode && (
         <Card className="flex flex-col items-start gap-3 border-warning/30 bg-warning/5 p-4 sm:flex-row sm:items-center">
           <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-warning/15 text-warning">
             <AlertTriangle className="h-5 w-5" />
@@ -119,6 +122,7 @@ export function DialerClient({
             focusLead={focusLead}
             hasQueue={queueForDialer.length > 0}
             aiConfigured={aiAgentConfigured}
+            manualEnabled={manualEnabled}
             onStart={() => dialer.startCall()}
             onManualDial={dialer.dialNumber}
             onAiDialNumber={dialer.aiDialNumber}

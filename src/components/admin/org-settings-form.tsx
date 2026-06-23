@@ -28,6 +28,7 @@ const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
 const FEATURE_FLAGS: { key: keyof OrgSettings["features"]; label: string }[] = [
   { key: "aiDialer", label: "Power dialer" },
+  { key: "manualDialer", label: "Manual dialing" },
   { key: "leads", label: "Leads" },
   { key: "appointments", label: "Appointments" },
   { key: "callbacks", label: "Callbacks" },

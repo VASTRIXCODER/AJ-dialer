@@ -38,6 +38,7 @@ type Pending = { orgId: string; orgName: string; requireApproval: boolean };
 
 const FEATURE_LABEL: Record<keyof OrgFeatures, string> = {
   aiDialer: "Power dialer",
+  manualDialer: "Manual dialing",
   leads: "Leads",
   appointments: "Appointments",
   callbacks: "Callbacks",

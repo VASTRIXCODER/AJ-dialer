@@ -12,6 +12,8 @@ export type DispositionTone = "success" | "warning" | "danger" | "neutral";
 
 export interface OrgFeatures {
   aiDialer: boolean;
+  /** Browser-based manual (human) dialing. Off ⇒ AI-only workspace. */
+  manualDialer: boolean;
   leads: boolean;
   appointments: boolean;
   callbacks: boolean;
@@ -20,6 +22,26 @@ export interface OrgFeatures {
   campaigns: boolean;
   reports: boolean;
   aiAgent: boolean;
+}
+
+/**
+ * Per-organization paywall, controlled by the platform owner (superadmin). There
+ * is no payment processor — the owner sets the price and flips `active` to grant
+ * or revoke access. While `paywall` is on and `active` is off, members see a
+ * branded lock screen instead of the app.
+ */
+export interface OrgBilling {
+  /** Is this workspace gated behind payment at all? */
+  paywall: boolean;
+  /** Superadmin switch: is access currently unlocked (paid)? */
+  active: boolean;
+  /** Price the platform owner charges (in whole currency units). */
+  price: number;
+  /** ISO-4217 currency code, e.g. "USD". */
+  currency: string;
+  interval: "month" | "year" | "once";
+  /** Optional line shown on the lock screen (e.g. a contact or plan name). */
+  note: string;
 }
 
 export interface OrgSettings {
@@ -60,6 +82,7 @@ export interface OrgSettings {
   };
   dispositions: { label: string; tone: DispositionTone }[];
   features: OrgFeatures;
+  billing: OrgBilling;
   /** Domain noun the dialer uses for a contact, e.g. "homeowner". */
   leadNoun: string;
   leadNounPlural: string;
@@ -67,6 +90,7 @@ export interface OrgSettings {
 
 export const DEFAULT_FEATURES: OrgFeatures = {
   aiDialer: true,
+  manualDialer: true,
   leads: true,
   appointments: true,
   callbacks: true,
@@ -75,6 +99,15 @@ export const DEFAULT_FEATURES: OrgFeatures = {
   campaigns: true,
   reports: true,
   aiAgent: true,
+};
+
+export const DEFAULT_BILLING: OrgBilling = {
+  paywall: false,
+  active: true,
+  price: 0,
+  currency: "USD",
+  interval: "month",
+  note: "",
 };
 
 export const DEFAULT_ORG_SETTINGS: OrgSettings = {
@@ -114,6 +147,7 @@ export const DEFAULT_ORG_SETTINGS: OrgSettings = {
     { label: "No answer", tone: "neutral" },
   ],
   features: { ...DEFAULT_FEATURES },
+  billing: { ...DEFAULT_BILLING },
   leadNoun: "lead",
   leadNounPlural: "leads",
 };
@@ -130,6 +164,7 @@ export function mergeSettings(raw: unknown): OrgSettings {
       ? s.dispositions
       : DEFAULT_ORG_SETTINGS.dispositions,
     features: { ...DEFAULT_FEATURES, ...(s.features ?? {}) },
+    billing: { ...DEFAULT_BILLING, ...(s.billing ?? {}) },
     leadNoun: s.leadNoun ?? DEFAULT_ORG_SETTINGS.leadNoun,
     leadNounPlural: s.leadNounPlural ?? DEFAULT_ORG_SETTINGS.leadNounPlural,
   };

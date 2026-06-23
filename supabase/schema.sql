@@ -295,6 +295,34 @@ update public.organizations set
   tagline      = coalesce(nullif(tagline, ''), 'AI-powered solar resolution calling')
   where slug = 'sunrun';
 
+-- ── UNRG: AI-only workspace behind the platform paywall ──────────────────────
+-- A white-label organization with manual (human) browser dialing turned OFF and
+-- access gated behind the superadmin-controlled paywall until it's marked paid.
+-- Only partial settings are stored; mergeSettings() fills the rest from defaults,
+-- so AI calling and live listening stay enabled. The price + unlock are managed
+-- from the superadmin console (App Control → the org's Billing section).
+insert into public.organizations
+    (name, slug, industry, dialer_template, product_name, tagline, settings)
+  values (
+    'UNRG', 'unrg', 'AI Sales', 'general',
+    'UNRG Dialer', 'AI-powered outbound calling',
+    jsonb_build_object(
+      'features', jsonb_build_object('manualDialer', false),
+      'billing',  jsonb_build_object(
+        'paywall',  true,
+        'active',   false,
+        'price',    0,
+        'currency', 'USD',
+        'interval', 'month',
+        'note',     ''
+      )
+    )
+  )
+  on conflict (slug) do nothing;
+update public.organizations
+  set join_code = upper(substr(md5(random()::text || id::text), 1, 7))
+  where slug = 'unrg' and join_code is null;
+
 -- Membership = who is in an org, their role, their approval status, and any
 -- per-member permission overrides. One active membership per user per org.
 create table if not exists public.organization_members (

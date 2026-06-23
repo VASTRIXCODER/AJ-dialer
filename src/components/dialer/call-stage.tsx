@@ -73,6 +73,7 @@ export function CallStage({
   focusLead,
   hasQueue,
   aiConfigured,
+  manualEnabled = true,
   onStart,
   onManualDial,
   onAiDialNumber,
@@ -94,6 +95,7 @@ export function CallStage({
   focusLead: Lead | null;
   hasQueue: boolean;
   aiConfigured: boolean;
+  manualEnabled?: boolean;
   onStart: () => void;
   onManualDial: (number: string) => void;
   onAiDialNumber: (phone: string, known: KnownInfo) => void;
@@ -165,8 +167,8 @@ export function CallStage({
               exit={{ opacity: 0, y: -10 }}
               className="flex w-full max-w-sm flex-col items-center gap-6"
             >
-              {/* AI / Manual toggle */}
-              {aiConfigured && (
+              {/* AI / Manual toggle (hidden when the org is AI-only) */}
+              {aiConfigured && manualEnabled && (
                 <div className="inline-flex rounded-xl border border-border bg-card p-1">
                   <button
                     type="button"
@@ -316,7 +318,7 @@ export function CallStage({
                       <DialPad
                         onAiCall={aiConfigured ? (num) => setPendingAiNumber(num) : undefined}
                         onCall={onManualDial}
-                        callDisabled={!canCall}
+                        callDisabled={!canCall || !manualEnabled}
                       />
                     </motion.div>
                   )}
