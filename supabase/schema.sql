@@ -571,3 +571,30 @@ insert into public.platform_admins (user_id, note)
   select id, 'bootstrap' from auth.users where lower(email) = lower('pmtosiri@gmail.com')
   on conflict (user_id) do nothing;
 
+-- ═════════════════════════════════════════════════════════════════════════════
+-- PART 3 — LIVE CALL PRESENCE  (idempotent; safe to re-run)
+--
+-- Shared, cross-instance presence for in-progress human (manual) rep↔customer
+-- calls so the Live Monitor is consistent on serverless (Vercel): the rep's
+-- browser writes a row when a call starts/connects/ends, and every supervisor
+-- instance reads the same rows. Without this table the app falls back to
+-- per-instance memory, which makes a call flicker in/out of the monitor.
+--
+-- Service-role only (RLS on, no policies): the server engine scopes reads to the
+-- viewer's org in application code, exactly like organization management.
+-- ═════════════════════════════════════════════════════════════════════════════
+create table if not exists public.live_calls (
+  id         text primary key,                 -- the client-generated humanId
+  org_id     uuid,
+  owner_id   uuid,
+  rep_name   text not null default '',
+  lead_name  text not null default 'Manual call',
+  city       text not null default '',
+  phone      text not null default '',
+  state      text not null default 'ringing',  -- ringing | connected
+  started_at timestamptz not null default now()
+);
+create index if not exists live_calls_org_idx on public.live_calls (org_id, started_at desc);
+alter table public.live_calls enable row level security;
+
+

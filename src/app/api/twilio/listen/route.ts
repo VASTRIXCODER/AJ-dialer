@@ -56,7 +56,7 @@ export async function POST(req: Request) {
     // Stopping is fully client-side (the supervisor disconnects their own leg).
     if (action === "stop") return NextResponse.json({ ok: true });
 
-    const call = getHumanCall(humanId);
+    const call = await getHumanCall(humanId);
     if (!call)
       return NextResponse.json({ error: "Call not found (it may have ended)." }, { status: 404 });
     // Scope to the viewer's org — a supervisor can only listen to their own org.

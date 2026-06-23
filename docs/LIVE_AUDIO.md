@@ -47,6 +47,9 @@ Homeowner  ──┘        ▲
   the same webhook that powers dialing and take-over.
 - The supervisor's browser will ask for **microphone permission** (the Voice SDK
   requires it to open an audio session, even though the supervisor joins muted).
+- **Run the latest `supabase/schema.sql`** so the `live_calls` table exists. Live
+  presence is shared through it across serverless instances; without it the
+  monitor falls back to per-instance memory and a call flickers in and out.
 
 That's it. No Render, no `MEDIA_STREAM_URL`/`MEDIA_STREAM_SECRET`.
 

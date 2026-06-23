@@ -209,32 +209,35 @@ export function HubView({
         </section>
       )}
 
-      {/* Join + create */}
-      <section className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+      {/* Join + create. Creating a new org (the AI builder) is reserved for the
+          platform superadmin; everyone else joins an existing org with a code. */}
+      <section className={superadmin ? "grid grid-cols-1 gap-4 lg:grid-cols-2" : ""}>
         <JoinCard
           onJoinedActive={() => (window.location.href = "/dashboard")}
           onPending={() => router.refresh()}
         />
-        <div className="surface-glass flex flex-col rounded-2xl border border-border/60 p-6 shadow-soft">
-          <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-solar text-white shadow-glow">
-            <Wand2 className="h-5 w-5" />
-          </span>
-          <h3 className="mt-3 text-base font-bold tracking-tight">
-            Create a new organization
-          </h3>
-          <p className="mt-1 flex-1 text-sm text-muted-foreground">
-            Describe your business and the AI will white-label the dialer for you —
-            branding, AI agent, dispositions and features, all configured
-            automatically.
-          </p>
-          <Button className="mt-4 gap-2 self-start" onClick={() => setWizardOpen(true)}>
-            <Sparkles className="h-4 w-4" />
-            Build with AI
-          </Button>
-        </div>
+        {superadmin && (
+          <div className="surface-glass flex flex-col rounded-2xl border border-border/60 p-6 shadow-soft">
+            <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-solar text-white shadow-glow">
+              <Wand2 className="h-5 w-5" />
+            </span>
+            <h3 className="mt-3 text-base font-bold tracking-tight">
+              Create a new organization
+            </h3>
+            <p className="mt-1 flex-1 text-sm text-muted-foreground">
+              Describe your business and the AI will white-label the dialer for you —
+              branding, AI agent, dispositions and features, all configured
+              automatically.
+            </p>
+            <Button className="mt-4 gap-2 self-start" onClick={() => setWizardOpen(true)}>
+              <Sparkles className="h-4 w-4" />
+              Build with AI
+            </Button>
+          </div>
+        )}
       </section>
 
-      {wizardOpen && (
+      {superadmin && wizardOpen && (
         <AIBuilder aiConfigured={aiConfigured} onClose={() => setWizardOpen(false)} />
       )}
     </div>

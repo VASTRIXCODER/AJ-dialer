@@ -1,14 +1,18 @@
 import { NextResponse } from "next/server";
-import { getUser } from "@/lib/auth";
 import { generateOrgBlueprint } from "@/lib/org/org-builder";
+import { isSuperadmin } from "@/lib/superadmin";
 import { isSupabaseConfigured } from "@/lib/supabase/config";
 
 export const dynamic = "force-dynamic";
 
 /** Generate a white-label org blueprint from a business description (preview). */
 export async function POST(req: Request) {
-  if (isSupabaseConfigured() && !(await getUser()))
-    return NextResponse.json({ ok: false, error: "Sign in first." }, { status: 401 });
+  // Creating organizations is reserved for the platform superadmin.
+  if (isSupabaseConfigured() && !(await isSuperadmin()))
+    return NextResponse.json(
+      { ok: false, error: "Only the platform owner can create organizations." },
+      { status: 403 },
+    );
 
   const { description, name, industry } = (await req.json().catch(() => ({}))) as {
     description?: string;

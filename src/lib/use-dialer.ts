@@ -574,11 +574,19 @@ export function useDialer(queue: Lead[], aiConfigured = false) {
         const call = await deviceRef.current.connect({
           params: { Conference: room, record: "true", MonitorId: humanId },
         });
-        attachCallHandlers(call);
 
-        // Detect the connect by polling Twilio for the homeowner leg status
-        // (serverless-safe — not in-memory state). Flips the line to "connected"
-        // so the monitor can listen; wraps up if nobody answers.
+        if (leads.length === 1) {
+          // Single call: the rep is live the instant they join the conference —
+          // flip on the SDK's own accept event (client-side, 100% reliable, no
+          // dependence on serverless state). The homeowner joins as they answer.
+          attachCallHandlers(call, () => connectLine(leads[0]));
+          return;
+        }
+
+        // Parallel dial: poll Twilio for the first homeowner to answer (the
+        // winner) — serverless-safe (queries Twilio, not in-memory state) — to
+        // pick the connected line and release the losing legs.
+        attachCallHandlers(call);
         stopPoll();
         pollRef.current = setInterval(async () => {
           try {

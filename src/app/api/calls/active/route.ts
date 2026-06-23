@@ -18,7 +18,8 @@ export async function GET() {
   if (!(await viewerCan("monitor.view")))
     return NextResponse.json({ active: [] }, { status: 403 });
   const viewer = await getViewer();
-  const active = listActiveHumanCallsForOrg(viewer.org?.id ?? null).map((c) => ({
+  const calls = await listActiveHumanCallsForOrg(viewer.org?.id ?? null);
+  const active = calls.map((c) => ({
     id: c.id,
     leadName: c.leadName,
     city: c.city,
@@ -57,7 +58,7 @@ export async function POST(req: Request) {
     // Attribute the call to the signed-in rep + their org so supervisors in the
     // same org can see and listen to it.
     const viewer = await getViewer();
-    startHumanCall({
+    await startHumanCall({
       id,
       leadName: leadName ?? "Manual call",
       city,
@@ -67,9 +68,9 @@ export async function POST(req: Request) {
       repName: viewer.displayName,
     });
   } else if (action === "connect") {
-    connectHumanCall(id);
+    await connectHumanCall(id);
   } else {
-    endHumanCall(id);
+    await endHumanCall(id);
   }
 
   return NextResponse.json({ ok: true });

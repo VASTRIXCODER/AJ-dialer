@@ -1,4 +1,3 @@
-import { attachHumanCallSid } from "@/lib/human-call-store";
 import {
   getPublicBaseUrl,
   isCallerIdConfigured,
@@ -56,17 +55,6 @@ export async function POST(req: Request) {
     const monitor = String(form.get("Monitor") ?? "") === "true";
     const monitorToken = String(form.get("Token") ?? "");
     const record = String(form.get("record") ?? "false") === "true";
-
-    // Bind the agent's browser-leg CallSid to its monitor presence so the Live
-    // Monitor knows the call is joinable. Never let bookkeeping break the call.
-    // (Supervisor monitor legs carry no MonitorId, so they never overwrite this.)
-    try {
-      const monitorId = String(form.get("MonitorId") ?? "");
-      const callSid = String(form.get("CallSid") ?? "");
-      if (monitorId && callSid) attachHumanCallSid(monitorId, callSid);
-    } catch {
-      /* presence is best-effort */
-    }
 
     // ── Supervisor live-listen: join MUTED, silently (no relay needed) ────────
     // Only a token signed by the authorized listen route gets in — this is what

@@ -67,7 +67,7 @@ export async function POST(req: Request) {
   // direct dial). For parallel, the losing legs are force-released, so they must
   // NOT end the conference on exit — only the rep's leg does that.
   const endOnExit = leads.length === 1 ? "true" : "false";
-  const conferenceTwiml = `<?xml version="1.0" encoding="UTF-8"?><Response><Dial answerOnBridge="true"><Conference startConferenceOnEnter="true" endConferenceOnExit="${endOnExit}" beep="false">${room}</Conference></Dial></Response>`;
+  const conferenceTwiml = `<?xml version="1.0" encoding="UTF-8"?><Response><Dial><Conference startConferenceOnEnter="true" endConferenceOnExit="${endOnExit}" beep="false">${room}</Conference></Dial></Response>`;
 
   const placed = await Promise.all(
     leads.map(async (leg) => {

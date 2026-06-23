@@ -1,16 +1,21 @@
 import "server-only";
 
+import { createAdminClient, isAdminConfigured } from "@/lib/supabase/admin";
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Live presence for human (manual Twilio) calls so supervisors can see — and
 // listen to — a rep's in-progress call in the Live Monitor. Human calls run in
 // the rep's browser via the Twilio Device, so the client registers start /
-// connect / end here; the TwiML voice route attaches the agent-leg CallSid so the
-// monitor knows the call's conference exists and a supervisor can join it (muted)
-// to listen without disturbing the call.
+// connect / end here.
 //
-// Scoped by owner (the rep) + org so the monitor only ever shows an org's own
-// calls. Single-instance state (correct for `next start`); back with Redis /
-// Twilio Sync for horizontal scale.
+// Backed by Supabase (the `live_calls` table) so presence is SHARED across every
+// serverless instance: the rep's browser may write on one Vercel instance while
+// the supervisor's monitor reads on another, and they must agree. With only
+// in-memory state (the previous design) the call flickered in and out of the
+// monitor as each poll hit a different instance. Without a service-role key
+// (demo / single process) it falls back to an in-memory map.
+//
+// Scoped by org so the monitor only ever shows an org's own calls.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export interface HumanCall {
@@ -23,21 +28,9 @@ export interface HumanCall {
   ownerId: string | null;
   orgId: string | null;
   repName: string;
-  /** Agent-leg Twilio CallSid (set by the voice route once the call is placed). */
-  callSid: string | null;
 }
 
-const calls = new Map<string, HumanCall>();
-const TTL_MS = 30 * 60_000;
-
-function sweep() {
-  const now = Date.now();
-  for (const [id, c] of calls) {
-    if (now - c.startedAt > TTL_MS) calls.delete(id);
-  }
-}
-
-export function startHumanCall(input: {
+interface StartInput {
   id: string;
   leadName: string;
   city?: string;
@@ -45,10 +38,57 @@ export function startHumanCall(input: {
   ownerId?: string | null;
   orgId?: string | null;
   repName?: string;
-}): void {
-  sweep();
-  const existing = calls.get(input.id);
-  calls.set(input.id, {
+}
+
+const TABLE = "live_calls";
+const TTL_MS = 30 * 60_000;
+
+type Row = Record<string, unknown>;
+
+function rowToCall(r: Row): HumanCall {
+  return {
+    id: String(r.id),
+    leadName: String(r.lead_name ?? "Manual call"),
+    city: String(r.city ?? ""),
+    phone: String(r.phone ?? ""),
+    state: r.state === "connected" ? "connected" : "ringing",
+    startedAt: r.started_at ? new Date(String(r.started_at)).getTime() : Date.now(),
+    ownerId: r.owner_id ? String(r.owner_id) : null,
+    orgId: r.org_id ? String(r.org_id) : null,
+    repName: String(r.rep_name ?? ""),
+  };
+}
+
+// ── In-memory fallback (no service role: demo / single process) ──────────────
+const mem = new Map<string, HumanCall>();
+function memSweep() {
+  const now = Date.now();
+  for (const [id, c] of mem) if (now - c.startedAt > TTL_MS) mem.delete(id);
+}
+
+export async function startHumanCall(input: StartInput): Promise<void> {
+  if (isAdminConfigured()) {
+    try {
+      await createAdminClient()
+        .from(TABLE)
+        .upsert({
+          id: input.id,
+          org_id: input.orgId ?? null,
+          owner_id: input.ownerId ?? null,
+          rep_name: input.repName ?? "",
+          lead_name: input.leadName || "Manual call",
+          city: input.city ?? "",
+          phone: input.phone ?? "",
+          state: "ringing",
+          started_at: new Date().toISOString(),
+        });
+      return;
+    } catch {
+      /* fall back to memory so a call is never blocked by presence */
+    }
+  }
+  memSweep();
+  mem.set(input.id, {
     id: input.id,
     leadName: input.leadName || "Manual call",
     city: input.city ?? "",
@@ -58,56 +98,78 @@ export function startHumanCall(input: {
     ownerId: input.ownerId ?? null,
     orgId: input.orgId ?? null,
     repName: input.repName ?? "",
-    callSid: existing?.callSid ?? null, // a CallSid attached pre-start survives
   });
 }
 
-export function connectHumanCall(id: string): void {
-  const c = calls.get(id);
+export async function connectHumanCall(id: string): Promise<void> {
+  if (isAdminConfigured()) {
+    try {
+      await createAdminClient().from(TABLE).update({ state: "connected" }).eq("id", id);
+      return;
+    } catch {
+      /* fall through */
+    }
+  }
+  const c = mem.get(id);
   if (c) c.state = "connected";
 }
 
-export function endHumanCall(id: string): void {
-  calls.delete(id);
-}
-
-/** Attach the agent-leg CallSid (called from the TwiML voice route). */
-export function attachHumanCallSid(id: string, callSid: string): void {
-  sweep();
-  const c = calls.get(id);
-  if (c) {
-    c.callSid = callSid;
-  } else {
-    // The voice webhook can arrive a beat before the client's "start" — stash a
-    // placeholder so the SID isn't lost; start() preserves it.
-    calls.set(id, {
-      id,
-      leadName: "Manual call",
-      city: "",
-      phone: "",
-      state: "ringing",
-      startedAt: Date.now(),
-      ownerId: null,
-      orgId: null,
-      repName: "",
-      callSid,
-    });
+export async function endHumanCall(id: string): Promise<void> {
+  if (isAdminConfigured()) {
+    try {
+      await createAdminClient().from(TABLE).delete().eq("id", id);
+      return;
+    } catch {
+      /* fall through */
+    }
   }
+  mem.delete(id);
 }
 
-export function getHumanCall(id: string): HumanCall | null {
-  return calls.get(id) ?? null;
-}
-
-export function listActiveHumanCalls(): HumanCall[] {
-  sweep();
-  return [...calls.values()].sort((a, b) => b.startedAt - a.startedAt);
+export async function getHumanCall(id: string): Promise<HumanCall | null> {
+  if (isAdminConfigured()) {
+    try {
+      const { data } = await createAdminClient()
+        .from(TABLE)
+        .select("*")
+        .eq("id", id)
+        .maybeSingle();
+      return data ? rowToCall(data as Row) : null;
+    } catch {
+      /* fall through */
+    }
+  }
+  return mem.get(id) ?? null;
 }
 
 /** Active human calls within an org (the supervisor's monitor view). */
-export function listActiveHumanCallsForOrg(orgId: string | null): HumanCall[] {
-  sweep();
-  return [...calls.values()]
-    .filter((c) => orgId != null && c.orgId === orgId)
+export async function listActiveHumanCallsForOrg(
+  orgId: string | null,
+): Promise<HumanCall[]> {
+  if (!orgId) return [];
+  if (isAdminConfigured()) {
+    try {
+      const admin = createAdminClient();
+      const cutoff = new Date(Date.now() - TTL_MS).toISOString();
+      // Best-effort tidy of rows from calls that never sent an explicit end
+      // (e.g. a tab killed mid-call). Fire-and-forget; never blocks the read.
+      admin.from(TABLE).delete().lt("started_at", cutoff).then(
+        () => {},
+        () => {},
+      );
+      const { data } = await admin
+        .from(TABLE)
+        .select("*")
+        .eq("org_id", orgId)
+        .gte("started_at", cutoff)
+        .order("started_at", { ascending: false });
+      return ((data ?? []) as Row[]).map(rowToCall);
+    } catch {
+      /* fall through */
+    }
+  }
+  memSweep();
+  return [...mem.values()]
+    .filter((c) => c.orgId === orgId)
     .sort((a, b) => b.startedAt - a.startedAt);
 }
