@@ -108,7 +108,6 @@ const STATUS_OPTIONS = [
 
 // ── time helpers ─────────────────────────────────────────────────────────────
 const pad = (n: number) => String(n).padStart(2, "0");
-const dayKey = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 
 function whenLabel(a: AppointmentRow): string {
   // The human label is the agreed wording ("Tomorrow — Tue, Jun 23 at 6:00 PM");
@@ -124,10 +123,6 @@ function whenLabel(a: AppointmentRow): string {
     });
   }
   return "No time set";
-}
-
-function clockLabel(iso: string): string {
-  return new Date(iso).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
 }
 
 function toLocalInput(iso: string | null): string {
@@ -741,160 +736,48 @@ function BulkBar({
   );
 }
 
-// ── Calendar view ────────────────────────────────────────────────────────────
+// ── Calendar view (under development) ────────────────────────────────────────
 function CalendarView({
-  items, density, onOpen,
+  items,
 }: { items: AppointmentRow[]; density: Density; onOpen: (a: AppointmentRow) => void }) {
-  const [month, setMonth] = useState(() => {
-    const d = new Date();
-    return new Date(d.getFullYear(), d.getMonth(), 1);
-  });
-
-  const byDay = useMemo(() => {
-    const map = new Map<string, AppointmentRow[]>();
-    for (const a of items) {
-      if (!a.scheduledAt) continue;
-      const d = new Date(a.scheduledAt);
-      if (Number.isNaN(d.getTime())) continue;
-      const k = dayKey(d);
-      const arr = map.get(k);
-      if (arr) arr.push(a);
-      else map.set(k, [a]);
-    }
-    for (const arr of map.values())
-      arr.sort((a, b) => new Date(a.scheduledAt!).getTime() - new Date(b.scheduledAt!).getTime());
-    return map;
-  }, [items]);
-
-  const cells = useMemo(() => {
-    const first = new Date(month.getFullYear(), month.getMonth(), 1);
-    const start = new Date(first);
-    start.setDate(1 - first.getDay()); // back up to Sunday
-    return Array.from({ length: 42 }, (_, i) => {
-      const d = new Date(start);
-      d.setDate(start.getDate() + i);
-      return d;
-    });
-  }, [month]);
-
-  const todayKey = dayKey(new Date());
-  const unscheduled = items.filter((a) => !a.scheduledAt).length;
-  const maxChips = density === "compact" ? 2 : 3;
-
+  const scheduled = items.filter((a) => a.scheduledAt).length;
   return (
     <Card className="overflow-hidden">
-      <div className="flex items-center justify-between border-b border-border/60 px-5 py-3.5">
-        <h3 className="text-sm font-semibold">
-          {month.toLocaleDateString("en-US", { month: "long", year: "numeric" })}
-        </h3>
-        <div className="flex items-center gap-1.5">
-          <button
-            type="button"
-            onClick={() => setMonth(new Date(month.getFullYear(), month.getMonth() - 1, 1))}
-            className="flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-            aria-label="Previous month"
-          >
-            <ChevronLeft className="h-4 w-4" />
-          </button>
-          <button
-            type="button"
-            onClick={() => { const d = new Date(); setMonth(new Date(d.getFullYear(), d.getMonth(), 1)); }}
-            className="rounded-lg px-2.5 py-1.5 text-xs font-semibold text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-          >
-            Today
-          </button>
-          <button
-            type="button"
-            onClick={() => setMonth(new Date(month.getFullYear(), month.getMonth() + 1, 1))}
-            className="flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-            aria-label="Next month"
-          >
-            <ChevronRight className="h-4 w-4" />
-          </button>
-        </div>
-      </div>
-
-      <div className="grid grid-cols-7 border-b border-border/60 bg-muted/30">
-        {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((d) => (
-          <div key={d} className="px-2 py-2 text-center text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-            {d}
+      <div className="flex flex-col items-center justify-center gap-5 px-6 py-20 text-center">
+        <div className="relative">
+          <div className="flex h-20 w-20 items-center justify-center rounded-3xl bg-primary/10">
+            <CalendarDays className="h-9 w-9 text-primary" />
           </div>
-        ))}
-      </div>
-
-      <div className="grid grid-cols-7">
-        {cells.map((d, i) => {
-          const k = dayKey(d);
-          const inMonth = d.getMonth() === month.getMonth();
-          const dayAppts = byDay.get(k) ?? [];
-          const isToday = k === todayKey;
-          return (
-            <div
-              key={i}
-              className={cn(
-                "min-h-[92px] border-b border-r border-border/40 p-1.5 sm:min-h-[112px]",
-                i % 7 === 6 && "border-r-0",
-                !inMonth && "bg-muted/20",
-              )}
-            >
-              <div className="mb-1 flex items-center justify-between px-0.5">
-                <span
-                  className={cn(
-                    "flex h-5 min-w-5 items-center justify-center rounded-full px-1 text-[11px] font-semibold tabular",
-                    isToday ? "bg-primary text-white" : inMonth ? "text-foreground" : "text-muted-foreground/50",
-                  )}
-                >
-                  {d.getDate()}
-                </span>
-              </div>
-              <div className="space-y-1">
-                {dayAppts.slice(0, maxChips).map((a) => (
-                  <CalChip key={a.id} a={a} onOpen={onOpen} />
-                ))}
-                {dayAppts.length > maxChips && (
-                  <button
-                    type="button"
-                    onClick={() => onOpen(dayAppts[maxChips])}
-                    className="w-full rounded-md px-1.5 py-0.5 text-left text-[10px] font-medium text-muted-foreground transition-colors hover:bg-muted"
-                  >
-                    +{dayAppts.length - maxChips} more
-                  </button>
-                )}
-              </div>
-            </div>
-          );
-        })}
-      </div>
-
-      {unscheduled > 0 && (
-        <div className="border-t border-border/60 px-5 py-3 text-xs text-muted-foreground">
-          {unscheduled} {unscheduled === 1 ? "appointment has" : "appointments have"} no exact time — switch to the list view to see {unscheduled === 1 ? "it" : "them"}.
+          <span className="absolute -right-1 -top-1 flex h-5 w-5 items-center justify-center rounded-full bg-warning text-[10px] font-bold text-white">
+            ✦
+          </span>
         </div>
-      )}
-    </Card>
-  );
-}
 
-function CalChip({ a, onOpen }: { a: AppointmentRow; onOpen: (a: AppointmentRow) => void }) {
-  const isReview = !a.approved && a.status !== "completed" && a.status !== "no_show" && a.status !== "cancelled";
-  const tones: Record<string, string> = {
-    scheduled: "bg-accent-soft text-accent",
-    completed: "bg-success/12 text-success",
-    no_show: "bg-danger/12 text-danger",
-    rescheduled: "bg-warning/15 text-warning",
-    cancelled: "bg-muted text-muted-foreground line-through",
-  };
-  const cls = isReview ? "border border-dashed border-warning/50 bg-warning/10 text-warning" : tones[a.status] ?? tones.scheduled;
-  return (
-    <button
-      type="button"
-      onClick={() => onOpen(a)}
-      className={cn("flex w-full items-center gap-1 truncate rounded-md px-1.5 py-0.5 text-left text-[10px] font-medium transition-transform hover:scale-[1.02]", cls)}
-      title={`${a.leadName} · ${whenLabel(a)}`}
-    >
-      {a.scheduledAt && <span className="tabular opacity-80">{clockLabel(a.scheduledAt)}</span>}
-      <span className="truncate">{a.leadName}</span>
-    </button>
+        <div className="max-w-sm space-y-1.5">
+          <h3 className="text-lg font-semibold">Calendar view coming soon</h3>
+          <p className="text-sm text-muted-foreground">
+            We&apos;re building a monthly grid where you can see every scheduled appointment at a
+            glance, drag to reschedule, and spot open slots — refined and ready shortly.
+          </p>
+        </div>
+
+        {scheduled > 0 && (
+          <div className="flex items-center gap-2 rounded-xl border border-border/60 bg-muted/50 px-4 py-2.5 text-sm">
+            <CalendarClock className="h-4 w-4 shrink-0 text-accent" />
+            <span>
+              <span className="font-semibold">{scheduled}</span>{" "}
+              {scheduled === 1 ? "appointment is" : "appointments are"} already timed and will
+              appear here once the calendar is live.
+            </span>
+          </div>
+        )}
+
+        <p className="text-xs text-muted-foreground">
+          In the meantime, use the <span className="font-semibold">List</span> view to manage and
+          approve appointments.
+        </p>
+      </div>
+    </Card>
   );
 }
 
