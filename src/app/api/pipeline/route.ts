@@ -2,9 +2,13 @@ import { NextResponse } from "next/server";
 import {
   APPOINTMENT_STATUSES,
   CALLBACK_STATUSES,
+  approveAppointment,
+  approveAppointmentsBulk,
   overrideLeadDisposition,
+  routeAppointmentsBulk,
   setAppointmentStatus,
   setCallbackStatus,
+  updateAppointment,
 } from "@/lib/db/dispositions";
 import type { CallOutcome } from "@/lib/types";
 
@@ -34,7 +38,43 @@ export async function POST(req: Request) {
     outcome?: CallOutcome;
     id?: string;
     status?: string;
+    ids?: string[];
+    op?: "approve" | "route";
+    scheduledLabel?: string;
+    scheduledAt?: string | null;
+    notes?: string;
+    approve?: boolean;
   };
+
+  if (body.action === "appointment-approve") {
+    if (!body.id) return NextResponse.json({ error: "id is required." }, { status: 400 });
+    const r = await approveAppointment(body.id);
+    return NextResponse.json(r, { status: r.ok ? 200 : 400 });
+  }
+
+  if (body.action === "appointment-edit") {
+    if (!body.id) return NextResponse.json({ error: "id is required." }, { status: 400 });
+    const r = await updateAppointment(body.id, {
+      scheduledLabel: body.scheduledLabel,
+      scheduledAt: body.scheduledAt,
+      notes: body.notes,
+      approve: body.approve,
+    });
+    return NextResponse.json(r, { status: r.ok ? 200 : 400 });
+  }
+
+  if (body.action === "appointment-bulk") {
+    if (!Array.isArray(body.ids) || body.ids.length === 0)
+      return NextResponse.json({ error: "ids are required." }, { status: 400 });
+    if (body.op === "route") {
+      if (!body.outcome || !OUTCOMES.includes(body.outcome))
+        return NextResponse.json({ error: "A valid outcome is required." }, { status: 400 });
+      const r = await routeAppointmentsBulk(body.ids, body.outcome);
+      return NextResponse.json(r, { status: r.ok ? 200 : 400 });
+    }
+    const r = await approveAppointmentsBulk(body.ids);
+    return NextResponse.json(r, { status: r.ok ? 200 : 400 });
+  }
 
   if (body.action === "disposition") {
     if (!body.leadId || !body.outcome || !OUTCOMES.includes(body.outcome))

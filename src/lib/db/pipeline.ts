@@ -186,10 +186,15 @@ export interface AppointmentRow {
   leadName: string;
   status: string;
   source: string;
+  /** AI bookings are proposals (false) until a human approves them. */
+  approved: boolean;
   scheduledLabel: string;
   scheduledAt: string | null;
   notes: string;
+  phone: string;
+  city: string;
   createdAt: string;
+  reviewedAt: string | null;
   /** Owning rep's name (team view only). */
   repName?: string;
   /** Whether the viewer sees the whole org's pipeline. */
@@ -210,20 +215,39 @@ export async function getAppointments(): Promise<AppointmentRow[]> {
       .select("*")
       .eq(orgWide ? "org_id" : "owner_id", orgWide ? scope.orgId : scope.userId)
       .order("created_at", { ascending: false });
+    const rows = (data ?? []) as Row[];
     const names = orgWide ? await memberNames(scope.orgId as string) : null;
-    return (data ?? []).map((r: Row) => ({
-      id: s(r.id),
-      leadId: r.lead_id ? s(r.lead_id) : null,
-      leadName: s(r.lead_name) || "Homeowner",
-      status: s(r.status) || "scheduled",
-      source: s(r.source) || "ai",
-      scheduledLabel: s(r.scheduled_label),
-      scheduledAt: r.scheduled_at ? s(r.scheduled_at) : null,
-      notes: s(r.notes),
-      createdAt: s(r.created_at),
-      repName: names ? names.get(s(r.owner_id)) || "Rep" : undefined,
-      teamWide: orgWide,
-    }));
+
+    // Batch the leads' phone/city for richer review context.
+    const leadIds = [...new Set(rows.map((r) => r.lead_id).filter(Boolean).map(String))];
+    const contacts = new Map<string, { phone: string; city: string }>();
+    if (leadIds.length) {
+      const { data: ls } = await reader.from("leads").select("id,phone,city").in("id", leadIds);
+      for (const l of (ls ?? []) as Row[])
+        contacts.set(s(l.id), { phone: s(l.phone), city: s(l.city) });
+    }
+
+    return rows.map((r) => {
+      const c = r.lead_id ? contacts.get(s(r.lead_id)) : undefined;
+      return {
+        id: s(r.id),
+        leadId: r.lead_id ? s(r.lead_id) : null,
+        leadName: s(r.lead_name) || "Homeowner",
+        status: s(r.status) || "scheduled",
+        source: s(r.source) || "ai",
+        // Treat legacy rows (column absent → null) as approved, not pending.
+        approved: r.approved == null ? true : Boolean(r.approved),
+        scheduledLabel: s(r.scheduled_label),
+        scheduledAt: r.scheduled_at ? s(r.scheduled_at) : null,
+        notes: s(r.notes),
+        phone: c?.phone ?? "",
+        city: c?.city ?? "",
+        createdAt: s(r.created_at),
+        reviewedAt: r.reviewed_at ? s(r.reviewed_at) : null,
+        repName: names ? names.get(s(r.owner_id)) || "Rep" : undefined,
+        teamWide: orgWide,
+      };
+    });
   } catch {
     return [];
   }

@@ -608,4 +608,16 @@ alter table public.call_records add column if not exists campaign_id text;
 create index if not exists call_records_campaign_idx on public.call_records (campaign_id);
 create index if not exists leads_campaign_idx on public.leads (campaign_id);
 
+-- ═════════════════════════════════════════════════════════════════════════════
+-- PART 5 — APPOINTMENT APPROVAL LAYER  (idempotent; safe to re-run)
+--
+-- AI-booked appointments are PROPOSALS until a human approves them. Reps' own
+-- appointments are auto-approved. Existing rows default to approved (true) so
+-- nothing retroactively lands back in the review queue.
+-- ═════════════════════════════════════════════════════════════════════════════
+alter table public.appointments add column if not exists approved boolean not null default true;
+alter table public.appointments add column if not exists reviewed_by uuid references auth.users (id) on delete set null;
+alter table public.appointments add column if not exists reviewed_at timestamptz;
+create index if not exists appointments_approved_idx on public.appointments (org_id, approved);
+
 

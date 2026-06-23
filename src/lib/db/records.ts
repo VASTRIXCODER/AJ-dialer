@@ -71,6 +71,8 @@ async function routeDisposition(
       notes: input.appointment?.notes ?? input.summary ?? "",
       source: input.source,
       status: "scheduled",
+      // AI bookings are proposals pending human approval; rep-created are final.
+      approved: input.source !== "ai",
     });
   } else if (outcome === "callback_scheduled") {
     await client.from("callbacks").insert({
