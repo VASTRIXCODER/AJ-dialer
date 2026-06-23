@@ -2,6 +2,7 @@ import "server-only";
 
 import type { User } from "@supabase/supabase-js";
 import { getUser } from "../auth";
+import { writeAudit } from "../db/app-control";
 import {
   type OrgRole,
   type Permission,
@@ -662,6 +663,7 @@ async function loadMember(admin: ReturnType<typeof createAdminClient>, id: strin
 export async function decideMember(
   memberId: string,
   decision: "approve" | "reject",
+  role?: OrgRole,
 ): Promise<Result> {
   const auth = await authorize("members.approve");
   if (!auth.ok) return { ok: false, error: auth.error };
@@ -673,10 +675,21 @@ export async function decideMember(
     return { ok: false, error: "That request was already decided." };
 
   if (decision === "approve") {
+    // Classify the joiner on approval (defaults to their requested role, usually
+    // "rep"). You can only assign a role strictly below your own, never owner.
+    let assigned: OrgRole = target.role;
+    if (role && role !== target.role) {
+      if (role === "owner")
+        return { ok: false, error: "Ownership is transferred separately." };
+      if (ROLE_RANK[role] >= ROLE_RANK[auth.actor.role])
+        return { ok: false, error: "You can’t assign a role at or above your own." };
+      assigned = role;
+    }
     const { error } = await admin
       .from("organization_members")
       .update({
         status: "active",
+        role: assigned,
         decided_at: new Date().toISOString(),
         decided_by: auth.actor.userId,
       })
@@ -684,8 +697,16 @@ export async function decideMember(
     if (error) return { ok: false, error: error.message };
     await admin
       .from("profiles")
-      .update({ org_id: target.orgId, role: target.role })
+      .update({ org_id: target.orgId, role: assigned })
       .eq("id", target.userId);
+    await writeAudit({
+      action: "member.approve",
+      actorId: auth.actor.userId,
+      targetId: target.userId,
+      targetKind: "member",
+      orgId: target.orgId,
+      detail: { role: assigned },
+    });
     return { ok: true };
   }
 
@@ -723,6 +744,14 @@ export async function setMemberRole(memberId: string, role: OrgRole): Promise<Re
   if (error) return { ok: false, error: error.message };
   if (target.status === "active")
     await admin.from("profiles").update({ role }).eq("id", target.userId);
+  await writeAudit({
+    action: "member.role",
+    actorId: auth.actor.userId,
+    targetId: target.userId,
+    targetKind: "member",
+    orgId: target.orgId,
+    detail: { role },
+  });
   return { ok: true };
 }
 
@@ -767,6 +796,13 @@ export async function removeMember(memberId: string): Promise<Result> {
   if (error) return { ok: false, error: error.message };
   // Send them back to onboarding.
   await admin.from("profiles").update({ org_id: null }).eq("id", target.userId);
+  await writeAudit({
+    action: "member.remove",
+    actorId: auth.actor.userId,
+    targetId: target.userId,
+    targetKind: "member",
+    orgId: target.orgId,
+  });
   return { ok: true };
 }
 

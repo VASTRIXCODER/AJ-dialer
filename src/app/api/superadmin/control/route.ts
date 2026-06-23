@@ -5,6 +5,7 @@ import {
   listAccounts,
   setAccountDisabled,
   setAppSettings,
+  setPlatformAdmin,
 } from "@/lib/db/app-control";
 import {
   assignAccount,
@@ -32,7 +33,13 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
   const body = (await req.json().catch(() => ({}))) as {
-    action?: "maintenance" | "disable" | "enable" | "delete" | "assign";
+    action?:
+      | "maintenance"
+      | "disable"
+      | "enable"
+      | "delete"
+      | "assign"
+      | "platform";
     id?: string;
     on?: boolean;
     message?: string;
@@ -65,6 +72,12 @@ export async function POST(req: Request) {
         orgId: body.orgId ?? null,
         companyId: body.companyId ?? null,
       });
+      return NextResponse.json(r, { status: r.ok ? 200 : 400 });
+    }
+    case "platform": {
+      if (!body.id)
+        return NextResponse.json({ ok: false, error: "id required" }, { status: 400 });
+      const r = await setPlatformAdmin(body.id, !!body.on);
       return NextResponse.json(r, { status: r.ok ? 200 : 400 });
     }
     default:

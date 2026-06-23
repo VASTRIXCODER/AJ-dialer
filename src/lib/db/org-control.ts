@@ -2,6 +2,7 @@ import "server-only";
 
 import { mergeSettings } from "../org/settings";
 import { createAdminClient, isAdminConfigured } from "../supabase/admin";
+import { writeAudit } from "./app-control";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Organization & company management for the superadmin console. Service-role
@@ -487,11 +488,52 @@ export async function assignAccount(
   if (!isAdminConfigured()) return { ok: false, error: "Service role not configured." };
   try {
     const admin = createAdminClient();
+    const { data: prof } = await admin
+      .from("profiles")
+      .select("role, full_name")
+      .eq("id", profileId)
+      .maybeSingle();
     const { error } = await admin
       .from("profiles")
       .update({ org_id: input.orgId, company_id: input.companyId ?? null })
       .eq("id", profileId);
-    return error ? { ok: false, error: error.message } : { ok: true };
+    if (error) return { ok: false, error: error.message };
+
+    // Keep membership in sync so org-scoped RLS (supervisor reads) recognizes the
+    // assignment — otherwise the account would have an org pointer but no member
+    // row. Upsert into the org; clearing the org removes the active membership.
+    if (input.orgId) {
+      const role = String(prof?.role ?? "rep");
+      const { data: existing } = await admin
+        .from("organization_members")
+        .select("id")
+        .eq("org_id", input.orgId)
+        .eq("user_id", profileId)
+        .maybeSingle();
+      if (existing) {
+        await admin
+          .from("organization_members")
+          .update({ status: "active", role, decided_at: new Date().toISOString() })
+          .eq("id", existing.id);
+      } else {
+        await admin.from("organization_members").insert({
+          org_id: input.orgId,
+          user_id: profileId,
+          name: String(prof?.full_name ?? ""),
+          role,
+          status: "active",
+          decided_at: new Date().toISOString(),
+        });
+      }
+    }
+    await writeAudit({
+      action: "account.assign",
+      actorKind: "superadmin",
+      targetId: profileId,
+      targetKind: "account",
+      orgId: input.orgId,
+    });
+    return { ok: true };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "Failed." };
   }

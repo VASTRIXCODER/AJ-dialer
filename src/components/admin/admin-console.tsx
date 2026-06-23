@@ -152,6 +152,9 @@ function MembersTab({
   const canApprove = permissions.includes("members.approve");
   const canRole = permissions.includes("members.role");
   const canRemove = permissions.includes("members.remove");
+  // Roles a manager may assign on approval (always includes Rep; never owner).
+  const approveChoices = assignableRoles(role);
+  const [approveRole, setApproveRole] = useState<Record<string, OrgRole>>({});
 
   async function act(body: Record<string, unknown>, key: string) {
     setBusy(key);
@@ -206,57 +209,82 @@ function MembersTab({
         </div>
       )}
 
-      {/* Pending approvals */}
+      {/* Join requests */}
       {pending.length > 0 && (
         <SectionCard
-          title={`Pending approvals (${pending.length})`}
-          description="People who requested to join your organization."
+          title={`Join requests (${pending.length})`}
+          description="People who requested to join — classify their role, then approve."
         >
           <div className="space-y-2">
-            {pending.map((m) => (
-              <div
-                key={m.id}
-                className="flex flex-wrap items-center gap-3 rounded-xl border border-warning/30 bg-warning/5 p-3"
-              >
-                <Avatar initials={initials(m.name || m.email)} color="#f59e0b" size="sm" />
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-semibold">{m.name || m.email}</p>
-                  <p className="truncate text-xs text-muted-foreground">
-                    {m.email} · requested {relativeTime(m.requestedAt)}
-                  </p>
-                </div>
-                {canApprove ? (
-                  <div className="flex gap-2">
-                    <Button
-                      size="sm"
-                      variant="success"
-                      className="gap-1.5"
-                      disabled={busy === m.id}
-                      onClick={() => act({ id: m.id, action: "approve" }, m.id)}
-                    >
-                      {busy === m.id ? (
-                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                      ) : (
-                        <UserCheck className="h-3.5 w-3.5" />
-                      )}
-                      Approve
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className="gap-1.5"
-                      disabled={busy === m.id}
-                      onClick={() => act({ id: m.id, action: "reject" }, m.id)}
-                    >
-                      <Ban className="h-3.5 w-3.5" />
-                      Reject
-                    </Button>
+            {pending.map((m) => {
+              const chosen = approveRole[m.id] ?? "rep";
+              return (
+                <div
+                  key={m.id}
+                  className="flex flex-wrap items-center gap-3 rounded-xl border border-warning/30 bg-warning/5 p-3"
+                >
+                  <Avatar initials={initials(m.name || m.email)} color="#f59e0b" size="sm" />
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-semibold">{m.name || m.email}</p>
+                    <p className="truncate text-xs text-muted-foreground">
+                      {m.email} · requested {relativeTime(m.requestedAt)}
+                    </p>
                   </div>
-                ) : (
-                  <Badge tone="warning">Awaiting a manager</Badge>
-                )}
-              </div>
-            ))}
+                  {canApprove ? (
+                    <div className="flex flex-wrap items-center gap-2">
+                      <label className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+                        Role
+                        <select
+                          value={chosen}
+                          disabled={busy === m.id}
+                          onChange={(e) =>
+                            setApproveRole((s) => ({
+                              ...s,
+                              [m.id]: e.target.value as OrgRole,
+                            }))
+                          }
+                          className="h-8 rounded-lg border border-border bg-background px-2 text-xs font-semibold capitalize outline-none focus-visible:border-primary/50"
+                        >
+                          {approveChoices.map((r) => (
+                            <option key={r} value={r}>
+                              {ROLE_LABEL[r]}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <Button
+                        size="sm"
+                        variant="success"
+                        className="gap-1.5"
+                        disabled={busy === m.id}
+                        onClick={() =>
+                          act({ id: m.id, action: "approve", role: chosen }, m.id)
+                        }
+                      >
+                        {busy === m.id ? (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        ) : (
+                          <UserCheck className="h-3.5 w-3.5" />
+                        )}
+                        Approve
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="gap-1.5"
+                        disabled={busy === m.id}
+                        onClick={() => act({ id: m.id, action: "reject" }, m.id)}
+                      >
+                        <Ban className="h-3.5 w-3.5" />
+                        Reject
+                      </Button>
+                    </div>
+                  ) : (
+                    <Badge tone="warning">Awaiting a manager</Badge>
+                  )}
+                </div>
+              );
+            })}
           </div>
         </SectionCard>
       )}

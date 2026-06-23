@@ -36,7 +36,11 @@ export async function PATCH(req: Request) {
   let r: { ok: boolean; error?: string };
   switch (body.action) {
     case "approve":
-      r = await decideMember(body.id, "approve");
+      r = await decideMember(
+        body.id,
+        "approve",
+        isOrgRole(body.role) ? (body.role as OrgRole) : undefined,
+      );
       break;
     case "reject":
       r = await decideMember(body.id, "reject");

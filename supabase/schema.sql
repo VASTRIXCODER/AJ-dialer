@@ -489,85 +489,80 @@ create policy "profiles self read" on public.profiles for select
 create policy "profiles self update" on public.profiles for update
   using (id = auth.uid()) with check (id = auth.uid());
 
--- ── Data RLS: owner OR org supervisor (read) / owner only (write); suspended
---    users are blocked everywhere via app_is_active(). Superadmin can do all. ──
+-- ── Data RLS: superadmin can do all; otherwise the account must be ACTIVE and
+--    either own the row (read+write) or supervise its org (read only). Suspended
+--    users are blocked everywhere (except superadmins, who can't be locked out). ─
 -- leads
 drop policy if exists "leads owner" on public.leads;
 drop policy if exists "leads read" on public.leads;
 drop policy if exists "leads write" on public.leads;
 create policy "leads read" on public.leads for select using (
-  public.app_is_active() and (
+  public.app_is_superadmin() or (public.app_is_active() and (
     owner_id = auth.uid()
-    or (org_id is not null and public.app_is_org_supervisor(org_id))
-    or public.app_is_superadmin()));
+    or (org_id is not null and public.app_is_org_supervisor(org_id)))));
 create policy "leads write" on public.leads for all
-  using (public.app_is_active() and (owner_id = auth.uid() or public.app_is_superadmin()))
-  with check (public.app_is_active() and (owner_id = auth.uid() or public.app_is_superadmin()));
+  using (public.app_is_superadmin() or (public.app_is_active() and owner_id = auth.uid()))
+  with check (public.app_is_superadmin() or (public.app_is_active() and owner_id = auth.uid()));
 
 -- call_records
 drop policy if exists "call_records owner" on public.call_records;
 drop policy if exists "call_records read" on public.call_records;
 drop policy if exists "call_records write" on public.call_records;
 create policy "call_records read" on public.call_records for select using (
-  public.app_is_active() and (
+  public.app_is_superadmin() or (public.app_is_active() and (
     owner_id = auth.uid()
-    or (org_id is not null and public.app_is_org_supervisor(org_id))
-    or public.app_is_superadmin()));
+    or (org_id is not null and public.app_is_org_supervisor(org_id)))));
 create policy "call_records write" on public.call_records for all
-  using (public.app_is_active() and (owner_id = auth.uid() or public.app_is_superadmin()))
-  with check (public.app_is_active() and (owner_id = auth.uid() or public.app_is_superadmin()));
+  using (public.app_is_superadmin() or (public.app_is_active() and owner_id = auth.uid()))
+  with check (public.app_is_superadmin() or (public.app_is_active() and owner_id = auth.uid()));
 
 -- appointments
 drop policy if exists "appointments owner" on public.appointments;
 drop policy if exists "appointments read" on public.appointments;
 drop policy if exists "appointments write" on public.appointments;
 create policy "appointments read" on public.appointments for select using (
-  public.app_is_active() and (
+  public.app_is_superadmin() or (public.app_is_active() and (
     owner_id = auth.uid()
-    or (org_id is not null and public.app_is_org_supervisor(org_id))
-    or public.app_is_superadmin()));
+    or (org_id is not null and public.app_is_org_supervisor(org_id)))));
 create policy "appointments write" on public.appointments for all
-  using (public.app_is_active() and (owner_id = auth.uid() or public.app_is_superadmin()))
-  with check (public.app_is_active() and (owner_id = auth.uid() or public.app_is_superadmin()));
+  using (public.app_is_superadmin() or (public.app_is_active() and owner_id = auth.uid()))
+  with check (public.app_is_superadmin() or (public.app_is_active() and owner_id = auth.uid()));
 
 -- callbacks
 drop policy if exists "callbacks owner" on public.callbacks;
 drop policy if exists "callbacks read" on public.callbacks;
 drop policy if exists "callbacks write" on public.callbacks;
 create policy "callbacks read" on public.callbacks for select using (
-  public.app_is_active() and (
+  public.app_is_superadmin() or (public.app_is_active() and (
     owner_id = auth.uid()
-    or (org_id is not null and public.app_is_org_supervisor(org_id))
-    or public.app_is_superadmin()));
+    or (org_id is not null and public.app_is_org_supervisor(org_id)))));
 create policy "callbacks write" on public.callbacks for all
-  using (public.app_is_active() and (owner_id = auth.uid() or public.app_is_superadmin()))
-  with check (public.app_is_active() and (owner_id = auth.uid() or public.app_is_superadmin()));
+  using (public.app_is_superadmin() or (public.app_is_active() and owner_id = auth.uid()))
+  with check (public.app_is_superadmin() or (public.app_is_active() and owner_id = auth.uid()));
 
 -- ai_conversations
 drop policy if exists "ai_conversations owner" on public.ai_conversations;
 drop policy if exists "ai_conversations read" on public.ai_conversations;
 drop policy if exists "ai_conversations write" on public.ai_conversations;
 create policy "ai_conversations read" on public.ai_conversations for select using (
-  public.app_is_active() and (
+  public.app_is_superadmin() or (public.app_is_active() and (
     owner_id = auth.uid()
-    or (org_id is not null and public.app_is_org_supervisor(org_id))
-    or public.app_is_superadmin()));
+    or (org_id is not null and public.app_is_org_supervisor(org_id)))));
 create policy "ai_conversations write" on public.ai_conversations for all
-  using (public.app_is_active() and (owner_id = auth.uid() or public.app_is_superadmin()))
-  with check (public.app_is_active() and (owner_id = auth.uid() or public.app_is_superadmin()));
+  using (public.app_is_superadmin() or (public.app_is_active() and owner_id = auth.uid()))
+  with check (public.app_is_superadmin() or (public.app_is_active() and owner_id = auth.uid()));
 
 -- campaigns
 drop policy if exists "campaigns owner" on public.campaigns;
 drop policy if exists "campaigns read" on public.campaigns;
 drop policy if exists "campaigns write" on public.campaigns;
 create policy "campaigns read" on public.campaigns for select using (
-  public.app_is_active() and (
+  public.app_is_superadmin() or (public.app_is_active() and (
     owner_id = auth.uid()
-    or (org_id is not null and public.app_is_org_supervisor(org_id))
-    or public.app_is_superadmin()));
+    or (org_id is not null and public.app_is_org_supervisor(org_id)))));
 create policy "campaigns write" on public.campaigns for all
-  using (public.app_is_active() and (owner_id = auth.uid() or public.app_is_superadmin()))
-  with check (public.app_is_active() and (owner_id = auth.uid() or public.app_is_superadmin()));
+  using (public.app_is_superadmin() or (public.app_is_active() and owner_id = auth.uid()))
+  with check (public.app_is_superadmin() or (public.app_is_active() and owner_id = auth.uid()));
 
 -- ── Bootstrap the platform superadmin by email (edit to your address) ────────
 -- This makes YOU a hidden superadmin tied to your real Supabase login. It is not

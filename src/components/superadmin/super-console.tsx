@@ -11,6 +11,7 @@ import {
   Power,
   RotateCcw,
   ShieldAlert,
+  ShieldCheck,
   Trash2,
   UserCheck,
   Users,
@@ -34,6 +35,7 @@ type Account = {
   name: string;
   role: string;
   disabled: boolean;
+  platformAdmin: boolean;
   createdAt: string;
   lastSignInAt: string | null;
   orgId: string | null;
@@ -195,6 +197,7 @@ export function SuperConsole() {
             onAssign={(id, orgId, companyId) => control({ action: "assign", id, orgId, companyId }, `as-${id}`)}
             onToggle={(id, disabled) => control({ action: disabled ? "enable" : "disable", id }, id)}
             onDelete={(id) => control({ action: "delete", id }, `del-${id}`)}
+            onPlatform={(id, on) => control({ action: "platform", id, on }, `pa-${id}`)}
           />
         ) : (
           <AppControlTab
@@ -317,6 +320,7 @@ function AccountsTab({
   onAssign,
   onToggle,
   onDelete,
+  onPlatform,
 }: {
   accounts: Account[];
   orgs: Org[];
@@ -325,6 +329,7 @@ function AccountsTab({
   onAssign: (id: string, orgId: string | null, companyId: string | null) => void;
   onToggle: (id: string, disabled: boolean) => void;
   onDelete: (id: string) => void;
+  onPlatform: (id: string, on: boolean) => void;
 }) {
   const sel = "h-9 rounded-lg border border-border bg-background px-2 text-xs outline-none";
   return (
@@ -385,6 +390,18 @@ function AccountsTab({
                 <Badge tone={a.disabled ? "warning" : "success"}>
                   {a.disabled ? "Suspended" : "Active"}
                 </Badge>
+                {a.platformAdmin && <Badge tone="primary">Platform</Badge>}
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="gap-1.5"
+                  disabled={busy === `pa-${a.id}`}
+                  onClick={() => onPlatform(a.id, !a.platformAdmin)}
+                  title="Grant or revoke hidden platform-superadmin access"
+                >
+                  <ShieldCheck className="h-3.5 w-3.5" />
+                  {a.platformAdmin ? "Revoke platform" : "Make platform"}
+                </Button>
                 <Button
                   size="sm"
                   variant="outline"

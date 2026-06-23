@@ -1,6 +1,18 @@
 "use client";
 
-import { Bell, CalendarCheck, Monitor, Moon, PhoneCall, Radio, Sun } from "lucide-react";
+import {
+  Bell,
+  Building2,
+  CalendarCheck,
+  Check,
+  Minus,
+  Monitor,
+  Moon,
+  PhoneCall,
+  Radio,
+  ShieldCheck,
+  Sun,
+} from "lucide-react";
 import { useTheme } from "next-themes";
 import { useEffect, useState } from "react";
 import { Avatar } from "@/components/ui/avatar";
@@ -8,6 +20,13 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input, Label } from "@/components/ui/input";
+import {
+  PERMISSION_LABEL,
+  PERMISSIONS,
+  type OrgRole,
+  ROLE_DESCRIPTION,
+  ROLE_LABEL,
+} from "@/lib/permissions";
 import { cn } from "@/lib/utils";
 
 function Switch({
@@ -65,8 +84,18 @@ function PrefRow({
 
 export function SettingsView({
   account,
+  role = null,
+  orgName = null,
+  productName = null,
+  membershipStatus = "none",
+  permissions = [],
 }: {
   account?: { name: string; email: string } | null;
+  role?: OrgRole | null;
+  orgName?: string | null;
+  productName?: string | null;
+  membershipStatus?: "active" | "pending" | "none";
+  permissions?: string[];
 }) {
   const { theme, setTheme } = useTheme();
   const [mounted, setMounted] = useState(false);
@@ -135,9 +164,21 @@ export function SettingsView({
           {displayEmail && (
             <p className="text-sm text-muted-foreground">{displayEmail}</p>
           )}
-          <Badge tone="primary" className="mt-2">
-            {team}
-          </Badge>
+          <div className="mt-2 flex flex-wrap items-center justify-center gap-1.5">
+            {role && (
+              <Badge tone={role === "rep" ? "neutral" : "primary"}>
+                {ROLE_LABEL[role]}
+              </Badge>
+            )}
+            {membershipStatus === "pending" && <Badge tone="warning">Pending approval</Badge>}
+          </div>
+          {orgName && (
+            <p className="mt-3 flex items-center gap-1.5 text-xs text-muted-foreground">
+              <Building2 className="h-3.5 w-3.5" />
+              {orgName}
+              {productName ? ` · ${productName}` : ""}
+            </p>
+          )}
         </div>
       </Card>
 
@@ -169,6 +210,46 @@ export function SettingsView({
               {saving ? "Saving…" : "Save changes"}
             </Button>
           </div>
+        </Card>
+
+        {/* Access & permissions */}
+        <Card className="p-6">
+          <div className="flex items-center gap-2">
+            <ShieldCheck className="h-4 w-4 text-primary" />
+            <h3 className="font-semibold">Access &amp; permissions</h3>
+          </div>
+          <p className="mt-1 text-sm text-muted-foreground">
+            {role
+              ? `You're ${ROLE_LABEL[role]} in this organization. ${ROLE_DESCRIPTION[role]}`
+              : "You're not an active member of an organization yet."}
+          </p>
+          <div className="mt-4 grid grid-cols-1 gap-x-6 gap-y-1 sm:grid-cols-2">
+            {PERMISSIONS.map((p) => {
+              const granted = permissions.includes(p);
+              return (
+                <div
+                  key={p}
+                  className={cn(
+                    "flex items-center gap-2 rounded-lg px-2 py-1.5 text-sm",
+                    granted ? "text-foreground" : "text-muted-foreground/60",
+                  )}
+                >
+                  <span
+                    className={cn(
+                      "flex h-5 w-5 shrink-0 items-center justify-center rounded-md",
+                      granted ? "bg-success/15 text-success" : "bg-muted text-muted-foreground/60",
+                    )}
+                  >
+                    {granted ? <Check className="h-3.5 w-3.5" /> : <Minus className="h-3 w-3" />}
+                  </span>
+                  {PERMISSION_LABEL[p]}
+                </div>
+              );
+            })}
+          </div>
+          <p className="mt-3 text-xs text-muted-foreground">
+            Permissions are set by your organization’s admins. Ask an admin if you need more access.
+          </p>
         </Card>
 
         {/* Appearance */}
