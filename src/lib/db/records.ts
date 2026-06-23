@@ -389,7 +389,76 @@ export async function getAIConversation(
   }
 }
 
-// ── Manual disposition override (from the monitor mini-dashboard) ─────────────
+/**
+ * Apply a human-chosen disposition to a lead (admin client; caller has already
+ * authorized the actor). Re-files the lead: updates its status, corrects the
+ * lead's most recent call record so reports reflect the change, and routes it to
+ * the right pipeline tab (clearing the stale appointment/callback). Shared by the
+ * Appointments/Callbacks override controls.
+ */
+export async function applyManualDisposition(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  admin: { from: (t: string) => any },
+  input: {
+    lead: {
+      id: string;
+      owner_id: string;
+      first_name?: string | null;
+      last_name?: string | null;
+      phone?: string | null;
+    };
+    outcome: CallOutcome;
+    actorLabel?: string;
+  },
+): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const { lead, outcome } = input;
+    const leadName =
+      `${lead.first_name ?? ""} ${lead.last_name ?? ""}`.trim() || "Homeowner";
+    await admin
+      .from("leads")
+      .update({
+        status: OUTCOME_TO_STATUS[outcome] ?? "contacted",
+        last_contacted_at: new Date().toISOString(),
+      })
+      .eq("id", lead.id);
+
+    // Correct the lead's most recent call record so dispositions/reports update.
+    const { data: rec } = await admin
+      .from("call_records")
+      .select("id")
+      .eq("lead_id", lead.id)
+      .order("started_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (rec) {
+      await admin.from("call_records").update({ outcome }).eq("id", rec.id);
+    } else {
+      await admin.from("call_records").insert({
+        owner_id: lead.owner_id,
+        lead_id: lead.id,
+        lead_name: leadName,
+        outcome,
+        channel: "human",
+        summary: input.actorLabel ?? "Manually dispositioned",
+      });
+    }
+
+    await routeDisposition(admin, {
+      ownerId: lead.owner_id,
+      leadId: lead.id,
+      leadName,
+      phone: lead.phone ?? "",
+      outcome,
+      summary: input.actorLabel ?? "Manually re-dispositioned",
+      source: "rep",
+    });
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Failed." };
+  }
+}
+
 export async function setConversationDisposition(
   conversationId: string,
   outcome: CallOutcome,

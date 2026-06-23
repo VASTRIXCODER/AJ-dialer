@@ -1,11 +1,14 @@
 import "server-only";
 
 import { reconcileOwnerActiveCalls } from "../ai-call-reconcile";
+import { createAdminClient, isAdminConfigured } from "../supabase/admin";
 import { isSupabaseConfigured } from "../supabase/config";
 import { createClient } from "../supabase/server";
+import { getScope } from "./scope";
 
 // Account-scoped reads/writes for the pipeline surfaces. Each returns empty (or
-// a graceful error) in demo mode instead of throwing.
+// a graceful error) in demo mode instead of throwing. Appointments + callbacks
+// are org-aware: supervisors see the whole org, reps see their own.
 
 async function ctx() {
   const supabase = await createClient();
@@ -17,6 +20,21 @@ async function ctx() {
 
 type Row = Record<string, unknown>;
 const s = (v: unknown) => (v == null ? "" : String(v));
+
+/** owner_id → display name for an org (to attribute team rows). */
+async function memberNames(orgId: string): Promise<Map<string, string>> {
+  try {
+    const admin = createAdminClient();
+    const { data } = await admin
+      .from("organization_members")
+      .select("user_id,name")
+      .eq("org_id", orgId)
+      .eq("status", "active");
+    return new Map(((data ?? []) as Row[]).map((m) => [s(m.user_id), s(m.name)]));
+  } catch {
+    return new Map();
+  }
+}
 
 // ── Campaigns ────────────────────────────────────────────────────────────────
 export interface CampaignRow {
@@ -95,6 +113,7 @@ export async function setCampaignStatus(
 // ── Appointments ─────────────────────────────────────────────────────────────
 export interface AppointmentRow {
   id: string;
+  leadId: string | null;
   leadName: string;
   status: string;
   source: string;
@@ -102,22 +121,30 @@ export interface AppointmentRow {
   scheduledAt: string | null;
   notes: string;
   createdAt: string;
+  /** Owning rep's name (team view only). */
+  repName?: string;
+  /** Whether the viewer sees the whole org's pipeline. */
+  teamWide: boolean;
 }
 
 export async function getAppointments(): Promise<AppointmentRow[]> {
   if (!isSupabaseConfigured()) return [];
   try {
-    const c = await ctx();
-    if (!c) return [];
+    const scope = await getScope();
+    if (!scope) return [];
     // Finalize any stuck calls first so freshly-booked reviews show immediately.
     await reconcileOwnerActiveCalls();
-    const { data } = await c.supabase
+    const orgWide = scope.supervisor && isAdminConfigured() && Boolean(scope.orgId);
+    const reader = orgWide ? createAdminClient() : await createClient();
+    const { data } = await reader
       .from("appointments")
       .select("*")
-      .eq("owner_id", c.user.id)
+      .eq(orgWide ? "org_id" : "owner_id", orgWide ? scope.orgId : scope.userId)
       .order("created_at", { ascending: false });
+    const names = orgWide ? await memberNames(scope.orgId as string) : null;
     return (data ?? []).map((r: Row) => ({
       id: s(r.id),
+      leadId: r.lead_id ? s(r.lead_id) : null,
       leadName: s(r.lead_name) || "Homeowner",
       status: s(r.status) || "scheduled",
       source: s(r.source) || "ai",
@@ -125,6 +152,8 @@ export async function getAppointments(): Promise<AppointmentRow[]> {
       scheduledAt: r.scheduled_at ? s(r.scheduled_at) : null,
       notes: s(r.notes),
       createdAt: s(r.created_at),
+      repName: names ? names.get(s(r.owner_id)) || "Rep" : undefined,
+      teamWide: orgWide,
     }));
   } catch {
     return [];
@@ -134,34 +163,43 @@ export async function getAppointments(): Promise<AppointmentRow[]> {
 // ── Callbacks ────────────────────────────────────────────────────────────────
 export interface CallbackRow {
   id: string;
+  leadId: string | null;
   leadName: string;
   phone: string;
   reason: string;
   status: string;
   dueAt: string | null;
   createdAt: string;
+  repName?: string;
+  teamWide: boolean;
 }
 
 export async function getCallbacks(): Promise<CallbackRow[]> {
   if (!isSupabaseConfigured()) return [];
   try {
-    const c = await ctx();
-    if (!c) return [];
+    const scope = await getScope();
+    if (!scope) return [];
     // Finalize any stuck calls first so callback-dispositioned ones show up.
     await reconcileOwnerActiveCalls();
-    const { data } = await c.supabase
+    const orgWide = scope.supervisor && isAdminConfigured() && Boolean(scope.orgId);
+    const reader = orgWide ? createAdminClient() : await createClient();
+    const { data } = await reader
       .from("callbacks")
       .select("*")
-      .eq("owner_id", c.user.id)
-      .order("due_at", { ascending: true });
+      .eq(orgWide ? "org_id" : "owner_id", orgWide ? scope.orgId : scope.userId)
+      .order("created_at", { ascending: false });
+    const names = orgWide ? await memberNames(scope.orgId as string) : null;
     return (data ?? []).map((r: Row) => ({
       id: s(r.id),
+      leadId: r.lead_id ? s(r.lead_id) : null,
       leadName: s(r.lead_name) || "Homeowner",
       phone: s(r.phone),
       reason: s(r.reason),
       status: s(r.status) || "due",
       dueAt: r.due_at ? s(r.due_at) : null,
       createdAt: s(r.created_at),
+      repName: names ? names.get(s(r.owner_id)) || "Rep" : undefined,
+      teamWide: orgWide,
     }));
   } catch {
     return [];
