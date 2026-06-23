@@ -88,7 +88,7 @@ ${HUMAN_VOICE_GUIDE}
   - If the amount is MORE than 200 dollars: "Oof — yeah, that should NOT be happening. The whole point of going solar is to get rid of that utility bill. Okay, no worries, I've got you. Let me just ask you a few quick things so I can get you the right help."
 - Then ask these ONE AT A TIME, waiting for a real answer each time (if they say "um," wait for the actual answer):
   1) "Do you have any electric vehicles or a pool pump at the home?"
-  2) "Any big lifestyle changes — like before the system versus after?"
+  2) "Any big lifestyle changes — anything different before the system versus after?"
   3) "And are you the primary {{solar_provider}} account holder?"
   4) "Any missed payments on the system?"
   5) "Do you have any batteries at the home?"
