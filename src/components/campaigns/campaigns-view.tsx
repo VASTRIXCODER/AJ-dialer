@@ -1,13 +1,24 @@
 "use client";
 
 import { motion } from "framer-motion";
-import { Loader2, Megaphone, Pause, Play, Plus, X } from "lucide-react";
+import {
+  ArrowRight,
+  Loader2,
+  Megaphone,
+  Pause,
+  Play,
+  Plus,
+  Trash2,
+  X,
+} from "lucide-react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { SpotlightCard } from "@/components/motion";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input, Label } from "@/components/ui/input";
+import type { CampaignStats } from "@/lib/campaign-stats";
 
 type Campaign = {
   id: string;
@@ -16,6 +27,8 @@ type Campaign = {
   status: "active" | "paused" | "completed";
   color: string;
   createdAt: string;
+  ownerId: string | null;
+  stats: CampaignStats;
 };
 
 const tone = {
@@ -29,8 +42,10 @@ export function CampaignsView({ campaigns }: { campaigns: Campaign[] }) {
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
   const [utility, setUtility] = useState("");
+  const [color, setColor] = useState("#2563eb");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
+  const [pendingId, setPendingId] = useState<string | null>(null);
 
   async function create(e: React.FormEvent) {
     e.preventDefault();
@@ -40,7 +55,7 @@ export function CampaignsView({ campaigns }: { campaigns: Campaign[] }) {
     const res = await fetch("/api/campaigns", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ name, utilityProvider: utility }),
+      body: JSON.stringify({ name, utilityProvider: utility, color }),
     });
     const j = await res.json().catch(() => ({}));
     setBusy(false);
@@ -55,12 +70,26 @@ export function CampaignsView({ campaigns }: { campaigns: Campaign[] }) {
   }
 
   async function toggle(c: Campaign) {
+    setPendingId(c.id);
     const next = c.status === "active" ? "paused" : "active";
     await fetch("/api/campaigns", {
       method: "PATCH",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ id: c.id, status: next }),
     });
+    setPendingId(null);
+    router.refresh();
+  }
+
+  async function remove(c: Campaign) {
+    if (!window.confirm(`Delete "${c.name}"? Its leads stay, just un-assigned.`)) return;
+    setPendingId(c.id);
+    await fetch("/api/campaigns", {
+      method: "DELETE",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ id: c.id }),
+    });
+    setPendingId(null);
     router.refresh();
   }
 
@@ -80,22 +109,23 @@ export function CampaignsView({ campaigns }: { campaigns: Campaign[] }) {
           onSubmit={create}
           className="surface-glass rounded-2xl border border-border/60 p-5"
         >
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
             <div>
               <Label>Campaign name</Label>
-              <Input
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                placeholder="Spring Sunrun Resolution"
-                autoFocus
-              />
+              <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Spring Resolution" autoFocus />
             </div>
             <div>
               <Label>Utility provider</Label>
-              <Input
-                value={utility}
-                onChange={(e) => setUtility(e.target.value)}
-                placeholder="PG&E"
+              <Input value={utility} onChange={(e) => setUtility(e.target.value)} placeholder="PG&E" />
+            </div>
+            <div>
+              <Label>Color</Label>
+              <input
+                type="color"
+                value={color}
+                onChange={(e) => setColor(e.target.value)}
+                className="h-10 w-full cursor-pointer rounded-xl border border-border bg-background"
+                aria-label="Campaign color"
               />
             </div>
           </div>
@@ -116,21 +146,23 @@ export function CampaignsView({ campaigns }: { campaigns: Campaign[] }) {
           </span>
           <p className="mt-4 font-semibold">No campaigns yet</p>
           <p className="mt-1 text-sm text-muted-foreground">
-            Create a campaign to organize outreach by utility provider and territory.
+            Create a campaign, assign leads to it, then dial it from the Power Dialer.
           </p>
         </div>
       ) : (
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
           {campaigns.map((c) => {
             const cfg = tone[c.status];
+            const st = c.stats;
+            const pending = pendingId === c.id;
             return (
               <SpotlightCard key={c.id} className="flex flex-col overflow-hidden">
                 <div className="h-1.5 w-full" style={{ background: c.color }} />
                 <div className="flex flex-1 flex-col p-5">
                   <div className="flex items-start justify-between gap-3">
-                    <div>
-                      <h3 className="font-semibold leading-tight">{c.name}</h3>
-                      <p className="mt-0.5 text-xs text-muted-foreground">
+                    <div className="min-w-0">
+                      <h3 className="truncate font-semibold leading-tight">{c.name}</h3>
+                      <p className="mt-0.5 truncate text-xs text-muted-foreground">
                         {c.utilityProvider || "All providers"}
                       </p>
                     </div>
@@ -138,27 +170,51 @@ export function CampaignsView({ campaigns }: { campaigns: Campaign[] }) {
                       {cfg.label}
                     </Badge>
                   </div>
-                  <p className="mt-4 text-xs text-muted-foreground">
-                    Created {new Date(c.createdAt).toLocaleDateString()}
-                  </p>
-                  <div className="mt-5 border-t border-border pt-4">
+
+                  {/* Stats */}
+                  <div className="mt-4 grid grid-cols-2 gap-2">
+                    <Stat label="Leads" value={st.totalLeads} />
+                    <Stat label="Dialable" value={st.dialableLeads} />
+                    <Stat label="Calls" value={st.calls} />
+                    <Stat label="Appts" value={st.appointments} accent />
+                  </div>
+                  <div className="mt-3 space-y-2">
+                    <Bar label="Contact rate" value={st.contactRate} />
+                    <Bar label="Connect rate" value={st.connectRate} />
+                  </div>
+
+                  <div className="mt-5 flex items-center gap-2 border-t border-border pt-4">
+                    <Link
+                      href={`/campaigns/${c.id}`}
+                      className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-xl border border-border px-3 py-1.5 text-sm font-semibold transition-colors hover:bg-muted"
+                    >
+                      View
+                      <ArrowRight className="h-3.5 w-3.5" />
+                    </Link>
                     <Button
                       variant="outline"
                       size="sm"
-                      className="w-full gap-1.5"
+                      className="gap-1.5"
                       onClick={() => toggle(c)}
-                      disabled={c.status === "completed"}
+                      disabled={c.status === "completed" || pending}
                     >
-                      {c.status === "active" ? (
-                        <>
-                          <Pause className="h-3.5 w-3.5" /> Pause
-                        </>
+                      {pending ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      ) : c.status === "active" ? (
+                        <Pause className="h-3.5 w-3.5" />
                       ) : (
-                        <>
-                          <Play className="h-3.5 w-3.5" /> Resume
-                        </>
+                        <Play className="h-3.5 w-3.5" />
                       )}
                     </Button>
+                    <button
+                      type="button"
+                      onClick={() => remove(c)}
+                      disabled={pending}
+                      aria-label="Delete campaign"
+                      className="flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-danger/10 hover:text-danger disabled:opacity-50"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </button>
                   </div>
                 </div>
               </SpotlightCard>
@@ -166,6 +222,29 @@ export function CampaignsView({ campaigns }: { campaigns: Campaign[] }) {
           })}
         </div>
       )}
+    </div>
+  );
+}
+
+function Stat({ label, value, accent }: { label: string; value: number; accent?: boolean }) {
+  return (
+    <div className="rounded-xl bg-muted/60 p-2.5 text-center">
+      <p className={`text-lg font-bold tabular ${accent ? "text-primary" : ""}`}>{value}</p>
+      <p className="text-[10px] text-muted-foreground">{label}</p>
+    </div>
+  );
+}
+
+function Bar({ label, value }: { label: string; value: number }) {
+  return (
+    <div>
+      <div className="mb-1 flex items-center justify-between text-xs">
+        <span className="text-muted-foreground">{label}</span>
+        <span className="font-semibold tabular">{value}%</span>
+      </div>
+      <div className="h-1.5 overflow-hidden rounded-full bg-muted">
+        <div className="h-full rounded-full bg-primary" style={{ width: `${Math.min(100, value)}%` }} />
+      </div>
     </div>
   );
 }

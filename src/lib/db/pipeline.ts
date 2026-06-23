@@ -1,22 +1,15 @@
 import "server-only";
 
 import { reconcileOwnerActiveCalls } from "../ai-call-reconcile";
+import { statsForCampaign, type CampaignStats } from "../campaign-stats";
 import { createAdminClient, isAdminConfigured } from "../supabase/admin";
 import { isSupabaseConfigured } from "../supabase/config";
 import { createClient } from "../supabase/server";
-import { getScope } from "./scope";
+import { canActOn, getScope } from "./scope";
 
 // Account-scoped reads/writes for the pipeline surfaces. Each returns empty (or
 // a graceful error) in demo mode instead of throwing. Appointments + callbacks
 // are org-aware: supervisors see the whole org, reps see their own.
-
-async function ctx() {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  return user ? { supabase, user } : null;
-}
 
 type Row = Record<string, unknown>;
 const s = (v: unknown) => (v == null ? "" : String(v));
@@ -36,7 +29,7 @@ async function memberNames(orgId: string): Promise<Map<string, string>> {
   }
 }
 
-// ── Campaigns ────────────────────────────────────────────────────────────────
+// ── Campaigns (org-shared) ───────────────────────────────────────────────────
 export interface CampaignRow {
   id: string;
   name: string;
@@ -44,43 +37,66 @@ export interface CampaignRow {
   status: "active" | "paused" | "completed";
   color: string;
   createdAt: string;
+  ownerId: string | null;
+  stats: CampaignStats;
 }
 
+type Result = { ok: boolean; error?: string };
+
+/**
+ * Campaigns are shared across the org: every member sees them and their live
+ * stats (leads + call performance keyed by campaign_id). Reads go org-wide via
+ * the service-role client when available; otherwise own-scoped.
+ */
 export async function getCampaigns(): Promise<CampaignRow[]> {
   if (!isSupabaseConfigured()) return [];
   try {
-    const c = await ctx();
-    if (!c) return [];
-    const { data } = await c.supabase
-      .from("campaigns")
-      .select("*")
-      .eq("owner_id", c.user.id)
-      .order("created_at", { ascending: false });
-    return (data ?? []).map((r: Row) => ({
+    const scope = await getScope();
+    if (!scope) return [];
+    const useOrg = isAdminConfigured() && Boolean(scope.orgId);
+    const reader = useOrg ? createAdminClient() : await createClient();
+    const col = useOrg ? "org_id" : "owner_id";
+    const val = useOrg ? (scope.orgId as string) : scope.userId;
+    const [cRes, lRes, callRes] = await Promise.all([
+      reader.from("campaigns").select("*").eq(col, val).order("created_at", { ascending: false }),
+      reader.from("leads").select("campaign_id,status").eq(col, val),
+      reader.from("call_records").select("campaign_id,outcome").eq(col, val),
+    ]);
+    const leads = (lRes.data ?? []) as Row[];
+    const calls = (callRes.data ?? []) as Row[];
+    return ((cRes.data ?? []) as Row[]).map((r) => ({
       id: s(r.id),
       name: s(r.name),
       utilityProvider: s(r.utility_provider),
       status: (s(r.status) || "active") as CampaignRow["status"],
       color: s(r.color) || "#3B82F6",
       createdAt: s(r.created_at),
+      ownerId: r.owner_id ? s(r.owner_id) : null,
+      stats: statsForCampaign(s(r.id), leads, calls),
     }));
   } catch {
     return [];
   }
 }
 
+export async function getCampaign(id: string): Promise<CampaignRow | null> {
+  const all = await getCampaigns();
+  return all.find((c) => c.id === id) ?? null;
+}
+
 export async function createCampaign(input: {
   name: string;
   utilityProvider?: string;
   color?: string;
-}): Promise<{ ok: boolean; error?: string }> {
-  if (!isSupabaseConfigured())
-    return { ok: false, error: "Connect Supabase to create campaigns." };
+}): Promise<Result> {
+  if (!isSupabaseConfigured()) return { ok: false, error: "Connect Supabase to create campaigns." };
+  if (!isAdminConfigured()) return { ok: false, error: "Service role required to create campaigns." };
   try {
-    const c = await ctx();
-    if (!c) return { ok: false, error: "You must be signed in." };
-    const { error } = await c.supabase.from("campaigns").insert({
-      owner_id: c.user.id,
+    const scope = await getScope();
+    if (!scope) return { ok: false, error: "You must be signed in." };
+    const { error } = await createAdminClient().from("campaigns").insert({
+      owner_id: scope.userId,
+      org_id: scope.orgId,
       name: input.name,
       utility_provider: input.utilityProvider ?? "",
       color: input.color ?? "#3B82F6",
@@ -91,23 +107,76 @@ export async function createCampaign(input: {
   }
 }
 
+/** Load a campaign for a write + confirm the actor may touch it. */
+async function authorizeCampaign(
+  id: string,
+): Promise<{ admin: ReturnType<typeof createAdminClient> } | { error: string }> {
+  if (!isAdminConfigured()) return { error: "Service role not configured." };
+  const scope = await getScope();
+  if (!scope) return { error: "You must be signed in." };
+  const admin = createAdminClient();
+  const { data } = await admin
+    .from("campaigns")
+    .select("owner_id, org_id")
+    .eq("id", id)
+    .maybeSingle();
+  if (!data) return { error: "Campaign not found." };
+  if (!canActOn(scope, data.owner_id as string, (data.org_id as string) ?? null))
+    return { error: "You don't have access to this campaign." };
+  return { admin };
+}
+
 export async function setCampaignStatus(
   id: string,
   status: "active" | "paused" | "completed",
-): Promise<{ ok: boolean; error?: string }> {
+): Promise<Result> {
   if (!isSupabaseConfigured()) return { ok: false, error: "Not configured." };
-  try {
-    const c = await ctx();
-    if (!c) return { ok: false, error: "You must be signed in." };
-    const { error } = await c.supabase
+  const auth = await authorizeCampaign(id);
+  if ("error" in auth) return { ok: false, error: auth.error };
+  const { error } = await auth.admin.from("campaigns").update({ status }).eq("id", id);
+  return error ? { ok: false, error: error.message } : { ok: true };
+}
+
+export async function deleteCampaign(id: string): Promise<Result> {
+  if (!isSupabaseConfigured()) return { ok: false, error: "Not configured." };
+  const auth = await authorizeCampaign(id);
+  if ("error" in auth) return { ok: false, error: auth.error };
+  // Unassign the campaign's leads first so none point at a deleted campaign.
+  await auth.admin.from("leads").update({ campaign_id: null }).eq("campaign_id", id);
+  const { error } = await auth.admin.from("campaigns").delete().eq("id", id);
+  return error ? { ok: false, error: error.message } : { ok: true };
+}
+
+/** Assign (or clear, with null) a set of leads to a campaign — scoped to the actor. */
+export async function assignLeadsToCampaign(
+  leadIds: string[],
+  campaignId: string | null,
+): Promise<Result> {
+  if (!isSupabaseConfigured()) return { ok: false, error: "Not configured." };
+  if (!isAdminConfigured()) return { ok: false, error: "Service role not configured." };
+  const scope = await getScope();
+  if (!scope) return { ok: false, error: "You must be signed in." };
+  const ids = leadIds.filter(Boolean).slice(0, 5000);
+  if (!ids.length) return { ok: false, error: "No leads selected." };
+  const admin = createAdminClient();
+  if (campaignId) {
+    const { data: camp } = await admin
       .from("campaigns")
-      .update({ status })
-      .eq("id", id)
-      .eq("owner_id", c.user.id);
-    return error ? { ok: false, error: error.message } : { ok: true };
-  } catch (e) {
-    return { ok: false, error: e instanceof Error ? e.message : "Failed." };
+      .select("owner_id, org_id")
+      .eq("id", campaignId)
+      .maybeSingle();
+    if (!camp) return { ok: false, error: "Campaign not found." };
+    if (!canActOn(scope, camp.owner_id as string, (camp.org_id as string) ?? null))
+      return { ok: false, error: "You don't have access to that campaign." };
   }
+  // Scope the update so reps only touch their own leads, supervisors their org's.
+  const base = admin.from("leads").update({ campaign_id: campaignId }).in("id", ids);
+  const q =
+    scope.supervisor && scope.orgId
+      ? base.eq("org_id", scope.orgId)
+      : base.eq("owner_id", scope.userId);
+  const { error } = await q;
+  return error ? { ok: false, error: error.message } : { ok: true };
 }
 
 // ── Appointments ─────────────────────────────────────────────────────────────

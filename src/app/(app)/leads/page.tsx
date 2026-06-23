@@ -7,13 +7,17 @@ import { PageContainer, PageHeader } from "@/components/shared/page-header";
 import { Button } from "@/components/ui/button";
 import { CalendarCheck, Sparkles, Zap } from "lucide-react";
 import { getLeads } from "@/lib/db/leads";
+import { getCampaigns } from "@/lib/db/pipeline";
 import { formatNumber } from "@/lib/utils";
 
 export const metadata = { title: "Leads" };
 export const dynamic = "force-dynamic";
 
 export default async function LeadsPage() {
-  const leads = await getLeads();
+  const [leads, campaigns] = await Promise.all([getLeads(), getCampaigns()]);
+  const campaignList = campaigns
+    .filter((c) => c.status !== "completed")
+    .map((c) => ({ id: c.id, name: c.name }));
   const qualified = leads.filter(
     (l) => l.status === "qualified" || l.status === "appointment",
   ).length;
@@ -29,7 +33,7 @@ export default async function LeadsPage() {
       title="Leads"
       description="Every homeowner in your pipeline, scored and ready to dial."
     >
-      <CsvImport variant="button" />
+      <CsvImport variant="button" campaigns={campaignList} />
       <Button variant="outline" size="sm" className="gap-2">
         <Download className="h-4 w-4" />
         Export
@@ -62,7 +66,7 @@ export default async function LeadsPage() {
         <MetricCard label="Avg AI score" value={String(avgScore)} icon={Sparkles} accent="warning" />
       </div>
 
-      <LeadsTable leads={leads} />
+      <LeadsTable leads={leads} campaigns={campaignList} />
     </PageContainer>
   );
 }

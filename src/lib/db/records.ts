@@ -101,21 +101,35 @@ export async function insertCallRecord(input: {
       data: { user },
     } = await supabase.auth.getUser();
     if (!user) return;
+    const leadUuid = asUuid(input.leadId);
+
+    // Tag the call with the lead's campaign so reports + the campaigns tab can
+    // slice performance per campaign.
+    let campaignId: string | null = null;
+    if (leadUuid) {
+      const { data: l } = await supabase
+        .from("leads")
+        .select("campaign_id")
+        .eq("id", leadUuid)
+        .maybeSingle();
+      campaignId = (l?.campaign_id as string) ?? null;
+    }
+
     await supabase.from("call_records").insert({
       owner_id: user.id,
-      lead_id: asUuid(input.leadId),
+      lead_id: leadUuid,
       lead_name: input.leadName ?? "",
       phone: input.phone ?? "",
       duration_sec: input.durationSec ?? 0,
       outcome: input.outcome ?? null,
       channel: input.channel ?? "human",
       summary: input.summary ?? null,
+      campaign_id: campaignId,
     });
 
     if (!input.outcome) return;
 
     // Reflect the disposition on the lead + route it to the right pipeline tab.
-    const leadUuid = asUuid(input.leadId);
     if (leadUuid) {
       await supabase
         .from("leads")
@@ -228,6 +242,16 @@ export async function completeAIConversation(input: {
       .maybeSingle();
 
     if (!existingRec) {
+      // Tag the AI call with the lead's campaign for per-campaign reporting.
+      let campaignId: string | null = null;
+      if (existing?.lead_id) {
+        const { data: l } = await admin
+          .from("leads")
+          .select("campaign_id")
+          .eq("id", existing.lead_id)
+          .maybeSingle();
+        campaignId = (l?.campaign_id as string) ?? null;
+      }
       await admin.from("call_records").insert({
         owner_id: ownerId,
         lead_id: existing?.lead_id ?? null,
@@ -238,6 +262,7 @@ export async function completeAIConversation(input: {
         conversation_id: input.conversationId,
         summary: input.summary,
         sentiment: input.sentiment,
+        campaign_id: campaignId,
       });
     } else if (upgrading) {
       // Correct the previously-filed (e.g. no-answer) record with the real result.

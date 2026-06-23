@@ -1,7 +1,8 @@
 "use client";
 
-import { AlertTriangle, Settings } from "lucide-react";
+import { AlertTriangle, Megaphone, Settings } from "lucide-react";
 import Link from "next/link";
+import { useState } from "react";
 import { Card } from "@/components/ui/card";
 import { buttonVariants } from "@/components/ui/button";
 import type { Lead } from "@/lib/types";
@@ -12,14 +13,26 @@ import { QualifyPanel } from "./qualify-panel";
 
 export function DialerClient({
   queue,
+  campaigns = [],
+  initialCampaign = "",
   voiceConfigured,
   aiAgentConfigured,
 }: {
   queue: Lead[];
+  campaigns?: { id: string; name: string }[];
+  initialCampaign?: string;
   voiceConfigured: boolean;
   aiAgentConfigured: boolean;
 }) {
-  const dialer = useDialer(queue, aiAgentConfigured);
+  // Filter the dialing queue to a campaign (client-side; the page ships the full
+  // queue). Only changeable between calls so the active session isn't disrupted.
+  const [campaignFilter, setCampaignFilter] = useState(
+    initialCampaign && campaigns.some((c) => c.id === initialCampaign) ? initialCampaign : "",
+  );
+  const queueForDialer = campaignFilter
+    ? queue.filter((l) => l.campaignId === campaignFilter)
+    : queue;
+  const dialer = useDialer(queueForDialer, aiAgentConfigured);
   const { state } = dialer;
 
   // Which lead the side panels describe right now (null when the queue is empty
@@ -27,11 +40,11 @@ export function DialerClient({
   const focusLead: Lead | null =
     state.connectedLead ??
     state.lines[0]?.lead ??
-    (queue.length ? queue[state.queueIndex % queue.length] : null);
+    (queueForDialer.length ? queueForDialer[state.queueIndex % queueForDialer.length] : null);
 
-  const upNext = queue.length
-    ? Array.from({ length: Math.min(4, queue.length - 1) }).map(
-        (_, i) => queue[(state.queueIndex + i + 1) % queue.length],
+  const upNext = queueForDialer.length
+    ? Array.from({ length: Math.min(4, queueForDialer.length - 1) }).map(
+        (_, i) => queueForDialer[(state.queueIndex + i + 1) % queueForDialer.length],
       )
     : [];
 
@@ -60,14 +73,39 @@ export function DialerClient({
         </Card>
       )}
 
+      {campaigns.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2.5">
+          <span className="flex items-center gap-1.5 text-sm font-medium text-muted-foreground">
+            <Megaphone className="h-4 w-4" />
+            Campaign
+          </span>
+          <select
+            value={campaignFilter}
+            onChange={(e) => setCampaignFilter(e.target.value)}
+            disabled={state.status !== "idle"}
+            className="h-9 rounded-xl border border-border bg-background/60 px-2.5 text-sm font-medium transition-colors focus-visible:border-primary/50 focus-visible:outline-none disabled:opacity-50"
+          >
+            <option value="">All leads</option>
+            {campaigns.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name}
+              </option>
+            ))}
+          </select>
+          <span className="text-xs text-muted-foreground">
+            {queueForDialer.length} lead{queueForDialer.length === 1 ? "" : "s"} queued
+          </span>
+        </div>
+      )}
+
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-12">
         <Card className="overflow-hidden lg:col-span-3">
           <LeadPanel
             lead={focusLead}
             upNext={upNext}
-            queue={queue}
-            index={queue.length ? state.queueIndex % queue.length : 0}
-            total={queue.length}
+            queue={queueForDialer}
+            index={queueForDialer.length ? state.queueIndex % queueForDialer.length : 0}
+            total={queueForDialer.length}
             onPrev={dialer.prevLead}
             onNext={dialer.nextLead}
             onSelect={dialer.selectLead}
@@ -79,7 +117,7 @@ export function DialerClient({
           <CallStage
             state={state}
             focusLead={focusLead}
-            hasQueue={queue.length > 0}
+            hasQueue={queueForDialer.length > 0}
             aiConfigured={aiAgentConfigured}
             onStart={() => dialer.startCall()}
             onManualDial={dialer.dialNumber}

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { createCampaign, setCampaignStatus } from "@/lib/db/pipeline";
+import { createCampaign, deleteCampaign, setCampaignStatus } from "@/lib/db/pipeline";
 
 export const dynamic = "force-dynamic";
 
@@ -26,5 +26,12 @@ export async function PATCH(req: Request) {
     );
   }
   const r = await setCampaignStatus(id, status);
+  return NextResponse.json(r, { status: r.ok ? 200 : 400 });
+}
+
+export async function DELETE(req: Request) {
+  const { id } = (await req.json().catch(() => ({}))) as { id?: string };
+  if (!id) return NextResponse.json({ ok: false, error: "id is required." }, { status: 400 });
+  const r = await deleteCampaign(id);
   return NextResponse.json(r, { status: r.ok ? 200 : 400 });
 }

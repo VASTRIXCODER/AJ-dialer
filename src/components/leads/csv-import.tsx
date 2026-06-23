@@ -109,13 +109,16 @@ type Status = { type: "idle" | "working" | "done" | "error"; message?: string };
 
 export function CsvImport({
   variant = "dropzone",
+  campaigns = [],
 }: {
   variant?: "dropzone" | "button";
+  campaigns?: { id: string; name: string }[];
 }) {
   const router = useRouter();
   const inputRef = useRef<HTMLInputElement>(null);
   const [status, setStatus] = useState<Status>({ type: "idle" });
   const [dragOver, setDragOver] = useState(false);
+  const [campaignId, setCampaignId] = useState("");
 
   async function handleFile(file: File) {
     setStatus({ type: "working", message: `Reading ${file.name}…` });
@@ -129,7 +132,7 @@ export function CsvImport({
       const res = await fetch("/api/leads/import", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ rows: leads }),
+        body: JSON.stringify({ rows: leads, campaignId: campaignId || null }),
       });
       const json = await res.json().catch(() => ({}));
       if (!res.ok || json.error) {
@@ -159,6 +162,22 @@ export function CsvImport({
     />
   );
 
+  const campaignPicker = campaigns.length > 0 && (
+    <select
+      value={campaignId}
+      onChange={(e) => setCampaignId(e.target.value)}
+      className="h-9 rounded-xl border border-border bg-background/60 px-2.5 text-sm text-foreground transition-colors focus-visible:border-primary/50 focus-visible:outline-none"
+      title="Assign imported leads to a campaign"
+    >
+      <option value="">No campaign</option>
+      {campaigns.map((c) => (
+        <option key={c.id} value={c.id}>
+          {c.name}
+        </option>
+      ))}
+    </select>
+  );
+
   const statusLine = status.message && (
     <p
       className={cn(
@@ -185,20 +204,24 @@ export function CsvImport({
     return (
       <>
         {hiddenInput}
-        <Button
-          variant="outline"
-          size="sm"
-          className="gap-2"
-          onClick={() => inputRef.current?.click()}
-          disabled={status.type === "working"}
-        >
-          {status.type === "working" ? (
-            <Loader2 className="h-4 w-4 animate-spin" />
-          ) : (
-            <UploadCloud className="h-4 w-4" />
-          )}
-          Import CSV
-        </Button>
+        <div className="flex items-center gap-2">
+          {campaignPicker}
+          <Button
+            variant="outline"
+            size="sm"
+            className="gap-2"
+            onClick={() => inputRef.current?.click()}
+            disabled={status.type === "working"}
+          >
+            {status.type === "working" ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <UploadCloud className="h-4 w-4" />
+            )}
+            Import CSV
+          </Button>
+        </div>
+        {statusLine}
       </>
     );
   }
@@ -206,6 +229,7 @@ export function CsvImport({
   return (
     <div>
       {hiddenInput}
+      {campaignPicker && <div className="mb-3 flex justify-center">{campaignPicker}</div>}
       <button
         type="button"
         onClick={() => inputRef.current?.click()}

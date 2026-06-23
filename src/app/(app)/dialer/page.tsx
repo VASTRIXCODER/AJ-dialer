@@ -2,6 +2,7 @@ import { Headphones, Users } from "lucide-react";
 import { DialerClient } from "@/components/dialer/dialer-client";
 import { PageContainer, PageHeader } from "@/components/shared/page-header";
 import { Badge } from "@/components/ui/badge";
+import { getCampaigns } from "@/lib/db/pipeline";
 import { isElevenLabsConfigured } from "@/lib/elevenlabs";
 import { getDialQueue } from "@/lib/leads-source";
 import { isVoiceConfigured } from "@/lib/twilio";
@@ -9,10 +10,21 @@ import { isVoiceConfigured } from "@/lib/twilio";
 export const metadata = { title: "Power Dialer" };
 export const dynamic = "force-dynamic";
 
-export default async function DialerPage() {
-  const queue = await getDialQueue();
+export default async function DialerPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ campaign?: string }>;
+}) {
+  const [{ campaign }, queue, campaigns] = await Promise.all([
+    searchParams,
+    getDialQueue(),
+    getCampaigns(),
+  ]);
   const voiceConfigured = isVoiceConfigured();
   const aiAgentConfigured = isElevenLabsConfigured();
+  const dialCampaigns = campaigns
+    .filter((c) => c.status !== "completed")
+    .map((c) => ({ id: c.id, name: c.name }));
 
   return (
     <PageContainer>
@@ -35,6 +47,8 @@ export default async function DialerPage() {
 
       <DialerClient
         queue={queue}
+        campaigns={dialCampaigns}
+        initialCampaign={campaign ?? ""}
         voiceConfigured={voiceConfigured}
         aiAgentConfigured={aiAgentConfigured}
       />

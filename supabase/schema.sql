@@ -597,4 +597,15 @@ create table if not exists public.live_calls (
 create index if not exists live_calls_org_idx on public.live_calls (org_id, started_at desc);
 alter table public.live_calls enable row level security;
 
+-- ═════════════════════════════════════════════════════════════════════════════
+-- PART 4 — CAMPAIGN ATTRIBUTION  (idempotent; safe to re-run)
+--
+-- Tag each call with the campaign of the lead it was for, so reports + the
+-- campaigns tab can slice performance per campaign. Leads already carry
+-- campaign_id; this adds the same to call_records.
+-- ═════════════════════════════════════════════════════════════════════════════
+alter table public.call_records add column if not exists campaign_id text;
+create index if not exists call_records_campaign_idx on public.call_records (campaign_id);
+create index if not exists leads_campaign_idx on public.leads (campaign_id);
+
 
