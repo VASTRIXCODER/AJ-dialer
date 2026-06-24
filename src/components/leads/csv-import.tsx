@@ -10,248 +10,7 @@ import {
 import { useRouter } from "next/navigation";
 import { useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { cn, isValidPhone, normalizePhone } from "@/lib/utils";
-
-type LeadInput = {
-  firstName: string;
-  lastName: string;
-  phone: string;
-  email?: string;
-  address?: string;
-  city?: string;
-  state?: string;
-  zip?: string;
-  utilityProvider?: string;
-  solarProvider?: string;
-  utilityBill?: number;
-  solarPayment?: number;
-  notes?: string;
-};
-
-/** Result of turning a sheet into leads, with counts so we can report skips. */
-type ParseResult = {
-  leads: LeadInput[];
-  /** Rows that had data but no dialable phone number. */
-  noPhone: number;
-  /** Whether any column mapped to a phone at all (catches bad delimiters). */
-  sawPhoneColumn: boolean;
-};
-
-/** Detect the most likely delimiter from the header line (comma/semicolon/tab/pipe). */
-function detectDelimiter(firstLine: string): string {
-  const candidates = [",", ";", "\t", "|"];
-  let best = ",";
-  let bestCount = 0;
-  for (const d of candidates) {
-    // Count delimiters that sit outside quotes — good enough for a header row.
-    const count = firstLine.split(d).length - 1;
-    if (count > bestCount) {
-      bestCount = count;
-      best = d;
-    }
-  }
-  return best;
-}
-
-/** RFC-4180-ish parser that honors a chosen delimiter (handles quotes + escapes). */
-function parseDelimited(text: string, delimiter: string): string[][] {
-  const rows: string[][] = [];
-  let row: string[] = [];
-  let field = "";
-  let inQuotes = false;
-  for (let i = 0; i < text.length; i++) {
-    const ch = text[i];
-    if (inQuotes) {
-      if (ch === '"') {
-        if (text[i + 1] === '"') {
-          field += '"';
-          i++;
-        } else inQuotes = false;
-      } else field += ch;
-    } else if (ch === '"') inQuotes = true;
-    else if (ch === delimiter) {
-      row.push(field);
-      field = "";
-    } else if (ch === "\n") {
-      row.push(field);
-      rows.push(row);
-      row = [];
-      field = "";
-    } else if (ch !== "\r") field += ch;
-  }
-  if (field.length || row.length) {
-    row.push(field);
-    rows.push(row);
-  }
-  return rows.filter((r) => r.some((c) => c.trim().length));
-}
-
-/** Parse a spreadsheet, auto-detecting the delimiter and stripping any BOM. */
-function parseSheet(raw: string): string[][] {
-  // Strip a BOM and normalize all line endings (\r\n and old-Mac \r → \n) so
-  // row splitting works regardless of where the file was exported.
-  const text = raw.replace(/^﻿/, "").replace(/\r\n?/g, "\n");
-  const nl = text.indexOf("\n");
-  const firstLine = nl === -1 ? text : text.slice(0, nl);
-  return parseDelimited(text, detectDelimiter(firstLine));
-}
-
-/** How many significant digits a cell holds (10+ ⇒ looks like a phone number). */
-function digitCount(v: string): number {
-  return v.replace(/\D/g, "").length;
-}
-
-/**
- * Map a column header to a lead field. Phone is checked FIRST and matches a wide
- * range of names (phone, mobile, cell, tel, contact number, etc.) so a customer's
- * column never silently fails to map — the usual cause of un-dialable imports.
- */
-function mapHeader(h: string): keyof LeadInput | "name" | null {
-  const n = h.toLowerCase().replace(/[^a-z0-9]/g, "");
-  if (!n) return null;
-  // ── Phone (broad, checked before everything else) ──
-  if (
-    n.includes("phone") ||
-    n.includes("mobile") ||
-    n.includes("cell") ||
-    n.includes("telephone") ||
-    n === "tel" ||
-    n === "ph" ||
-    n === "phno" ||
-    n === "number" ||
-    n === "msisdn" ||
-    n.includes("contactnumber") ||
-    n.includes("contactno") ||
-    n.includes("phonenumber") ||
-    n.includes("wireless")
-  )
-    return "phone";
-  // ── Name parts ──
-  if (n.includes("firstname") || n === "first" || n === "fname" || n === "givenname")
-    return "firstName";
-  if (
-    n.includes("lastname") ||
-    n === "last" ||
-    n === "lname" ||
-    n === "surname" ||
-    n === "familyname"
-  )
-    return "lastName";
-  if (
-    n === "name" ||
-    n === "fullname" ||
-    n === "homeowner" ||
-    n === "customer" ||
-    n === "customername" ||
-    n === "contact" ||
-    n === "contactname" ||
-    n === "leadname"
-  )
-    return "name";
-  // ── Contact + address ──
-  if (n.includes("email") || n === "mail") return "email";
-  if (
-    n.includes("street") ||
-    n === "address" ||
-    n === "address1" ||
-    n === "streetaddress" ||
-    n.includes("addr")
-  )
-    return "address";
-  if (n === "city" || n === "town") return "city";
-  if (n === "state" || n === "st" || n.includes("province") || n === "region") return "state";
-  if (n.includes("zip") || n.includes("postal") || n === "postcode") return "zip";
-  // ── Solar economics ──
-  if (
-    (n.includes("utility") || n.includes("electric") || n.includes("power")) &&
-    (n.includes("bill") || n.includes("amount") || n.includes("cost"))
-  )
-    return "utilityBill";
-  if (
-    n.includes("solar") &&
-    (n.includes("payment") || n.includes("pmt") || n.includes("loan") || n.includes("lease"))
-  )
-    return "solarPayment";
-  if (n.includes("utility") || n === "provider") return "utilityProvider";
-  if (n.includes("solar")) return "solarProvider";
-  // ── Free text ──
-  if (n.includes("note") || n.includes("comment") || n.includes("remark")) return "notes";
-  return null;
-}
-
-/**
- * Find the column that actually holds phone numbers when the header didn't map
- * one (weird/blank header). Scans the data rows and picks the unmapped column
- * whose values most consistently look like phone numbers (10+ digits).
- */
-function sniffPhoneColumn(
-  grid: string[][],
-  header: (keyof LeadInput | "name" | null)[],
-): number {
-  const width = header.length;
-  let best = -1;
-  let bestHits = 0;
-  for (let c = 0; c < width; c++) {
-    if (header[c]) continue; // don't steal an already-mapped column
-    let hits = 0;
-    let seen = 0;
-    for (let r = 1; r < grid.length; r++) {
-      const v = (grid[r][c] ?? "").trim();
-      if (!v) continue;
-      seen++;
-      if (digitCount(v) >= 10 && digitCount(v) <= 15) hits++;
-    }
-    // Require the column to be mostly phone-like, not just a stray numeric cell.
-    if (seen > 0 && hits >= bestHits && hits / seen >= 0.5 && hits > 0) {
-      bestHits = hits;
-      best = c;
-    }
-  }
-  return best;
-}
-
-function rowsToLeads(grid: string[][]): ParseResult {
-  if (grid.length < 2) return { leads: [], noPhone: 0, sawPhoneColumn: false };
-  const header = grid[0].map(mapHeader);
-  // If no header mapped to a phone, sniff the data to find the phone column so
-  // numbers are still captured (and the leads become dialable).
-  if (!header.includes("phone")) {
-    const sniffed = sniffPhoneColumn(grid, header);
-    if (sniffed >= 0) header[sniffed] = "phone";
-  }
-  const sawPhoneColumn = header.includes("phone");
-  const out: LeadInput[] = [];
-  let noPhone = 0;
-  for (let r = 1; r < grid.length; r++) {
-    const cells = grid[r];
-    const lead: LeadInput = { firstName: "", lastName: "", phone: "" };
-    header.forEach((key, c) => {
-      const val = (cells[c] ?? "").trim();
-      if (!key || !val) return;
-      if (key === "name") {
-        // Only split a combined name into the parts we don't already have.
-        const parts = val.split(/\s+/);
-        lead.firstName = lead.firstName || parts[0] || "";
-        lead.lastName = lead.lastName || parts.slice(1).join(" ");
-      } else if (key === "utilityBill" || key === "solarPayment") {
-        const num = Number(val.replace(/[^0-9.]/g, ""));
-        if (!Number.isNaN(num) && num > 0) lead[key] = num;
-      } else if (key === "phone") {
-        // Normalize to E.164 right here so storage + dialing are consistent.
-        // Keep the original when it can't be normalized so the row still imports
-        // (it just won't be dialable) — preserving the user's data.
-        lead.phone = normalizePhone(val) || val;
-      } else {
-        lead[key] = val;
-      }
-    });
-    const hasName = Boolean(lead.firstName || lead.lastName);
-    if (!lead.phone && !hasName) continue; // truly empty row
-    if (lead.phone && !isValidPhone(lead.phone)) noPhone++;
-    out.push(lead);
-  }
-  return { leads: out, noPhone, sawPhoneColumn };
-}
+import { cn } from "@/lib/utils";
 
 type Status = { type: "idle" | "working" | "done" | "error"; message?: string };
 
@@ -272,31 +31,30 @@ export function CsvImport({
     setStatus({ type: "working", message: `Reading ${file.name}…` });
     try {
       const text = await file.text();
-      const { leads, noPhone, sawPhoneColumn } = rowsToLeads(parseSheet(text));
-      if (!leads.length) {
-        setStatus({
-          type: "error",
-          message: sawPhoneColumn
-            ? "No leads found — check your CSV has data rows under the headers."
-            : "No phone column detected. Add a column named Phone / Mobile / Cell.",
-        });
+      if (!text.trim()) {
+        setStatus({ type: "error", message: "That file looks empty." });
         return;
       }
+      // The server parses + maps the CSV — using Claude to read any layout
+      // (including header-less broker exports) when the simple mapper can't.
+      setStatus({ type: "working", message: "Reading your columns…" });
       const res = await fetch("/api/leads/import", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ rows: leads, campaignId: campaignId || null }),
+        body: JSON.stringify({ csv: text, campaignId: campaignId || null }),
       });
       const json = await res.json().catch(() => ({}));
       if (!res.ok || json.error) {
         setStatus({ type: "error", message: json.error ?? "Import failed." });
         return;
       }
-      // Surface how many rows imported without a dialable number so the user
-      // isn't surprised when those leads don't appear in the dial queue.
-      const skipped = typeof json.invalidPhone === "number" ? json.invalidPhone : noPhone;
-      const suffix = skipped > 0 ? ` (${skipped} without a valid phone — not dialable)` : "";
-      setStatus({ type: "done", message: `Imported ${json.inserted} leads${suffix}.` });
+      const skipped = typeof json.invalidPhone === "number" ? json.invalidPhone : 0;
+      const skipNote = skipped > 0 ? ` (${skipped} without a valid phone — not dialable)` : "";
+      const how = json.source === "ai" ? " — columns mapped by AI" : "";
+      setStatus({
+        type: "done",
+        message: `Imported ${json.inserted} leads${skipNote}${how}.`,
+      });
       router.refresh();
     } catch {
       setStatus({ type: "error", message: "Couldn’t read that file." });
