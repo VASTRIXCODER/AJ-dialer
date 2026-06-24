@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useState } from "react";
 import { Card } from "@/components/ui/card";
 import { buttonVariants } from "@/components/ui/button";
+import type { AiLockReason } from "@/lib/org/settings";
 import type { Lead } from "@/lib/types";
 import { useDialer } from "@/lib/use-dialer";
 import { CallStage } from "./call-stage";
@@ -18,6 +19,8 @@ export function DialerClient({
   voiceConfigured,
   aiAgentConfigured,
   manualEnabled = true,
+  aiEnabled = true,
+  aiLockReason = null,
 }: {
   queue: Lead[];
   campaigns?: { id: string; name: string }[];
@@ -26,6 +29,10 @@ export function DialerClient({
   aiAgentConfigured: boolean;
   /** Org feature: when false, only AI calling is offered (no manual dialing). */
   manualEnabled?: boolean;
+  /** Viewer access: when false, AI calling is locked (premium plan or rep role). */
+  aiEnabled?: boolean;
+  /** Why AI is locked, to tailor the message ("premium" plan vs "role"). */
+  aiLockReason?: AiLockReason;
 }) {
   // Filter the dialing queue to a campaign (client-side; the page ships the full
   // queue). Only changeable between calls so the active session isn't disrupted.
@@ -35,7 +42,9 @@ export function DialerClient({
   const queueForDialer = campaignFilter
     ? queue.filter((l) => l.campaignId === campaignFilter)
     : queue;
-  const dialer = useDialer(queueForDialer, aiAgentConfigured);
+  // AI is usable only when the agent is configured AND this viewer is allowed it.
+  const aiUsable = aiAgentConfigured && aiEnabled;
+  const dialer = useDialer(queueForDialer, aiUsable);
   const { state } = dialer;
 
   // Which lead the side panels describe right now (null when the queue is empty
@@ -123,6 +132,8 @@ export function DialerClient({
             hasQueue={queueForDialer.length > 0}
             aiConfigured={aiAgentConfigured}
             manualEnabled={manualEnabled}
+            aiEnabled={aiEnabled}
+            aiLockReason={aiLockReason}
             onStart={() => dialer.startCall()}
             onManualDial={dialer.dialNumber}
             onAiDialNumber={dialer.aiDialNumber}

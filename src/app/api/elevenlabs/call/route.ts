@@ -12,6 +12,7 @@ import {
   placeOutboundCall,
 } from "@/lib/elevenlabs";
 import { getViewer } from "@/lib/org/membership";
+import { resolveDialerAccess } from "@/lib/org/settings";
 import type { Lead } from "@/lib/types";
 import {
   getPublicBaseUrl,
@@ -165,6 +166,22 @@ export async function POST(req: Request) {
   // Configure the AI agent from the caller's organization — Sunrun/solar uses
   // the exact Emily script; other orgs get their white-label prompt + voice.
   const viewer = await getViewer();
+
+  // Gate the AI dialer server-side too: an org may have it off (premium lock) or
+  // restrict it to managers+ (reps without `dialer.ai`). Mirrors the dialer UI.
+  if (viewer.org) {
+    const { aiEnabled } = resolveDialerAccess(
+      viewer.org.settings.features,
+      viewer.permissions.includes("dialer.ai"),
+    );
+    if (!aiEnabled) {
+      return NextResponse.json(
+        { error: "The AI dialer isn’t available for your role or plan." },
+        { status: 403 },
+      );
+    }
+  }
+
   const agent = resolveAgentConfig(viewer.org);
 
   // Bridge mode: route the agent through our Twilio number so the call lives in

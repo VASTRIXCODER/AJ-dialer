@@ -152,6 +152,38 @@ export const DEFAULT_ORG_SETTINGS: OrgSettings = {
   leadNounPlural: "leads",
 };
 
+/** Why the AI dialer is locked for a viewer: a plan upgrade vs a role limit. */
+export type AiLockReason = "premium" | "role" | null;
+
+export interface DialerAccess {
+  manualEnabled: boolean;
+  aiEnabled: boolean;
+  aiLockReason: AiLockReason;
+}
+
+/**
+ * Resolve which dialer modes a viewer may use, from the org's feature flags and
+ * whether they hold the `dialer.ai` permission. Two independent gates on AI:
+ *  • `aiDialer` off ⇒ AI is a locked premium feature for everyone (paywall).
+ *  • no AI permission ⇒ AI is manager+ only (reps are manual-only) — UNLESS the
+ *    workspace is AI-only (manual off), where reps must keep AI or be stranded.
+ */
+export function resolveDialerAccess(
+  features: OrgFeatures,
+  hasAiPermission: boolean,
+): DialerAccess {
+  const manualEnabled = features.manualDialer !== false;
+  const aiOrgEnabled = features.aiDialer !== false;
+  const aiRoleAllowed = hasAiPermission || !manualEnabled;
+  const aiEnabled = aiOrgEnabled && aiRoleAllowed;
+  const aiLockReason: AiLockReason = aiEnabled
+    ? null
+    : !aiOrgEnabled
+      ? "premium"
+      : "role";
+  return { manualEnabled, aiEnabled, aiLockReason };
+}
+
 /** Deep-merge a stored (partial) settings blob over the defaults. */
 export function mergeSettings(raw: unknown): OrgSettings {
   const s = (raw ?? {}) as Partial<OrgSettings>;

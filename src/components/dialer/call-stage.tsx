@@ -24,6 +24,7 @@ import { useState } from "react";
 import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
+import type { AiLockReason } from "@/lib/org/settings";
 import type { CallOutcome, Lead } from "@/lib/types";
 import type { AiLaunch, DialerState, KnownInfo } from "@/lib/use-dialer";
 import { cn, formatDuration, initials } from "@/lib/utils";
@@ -75,6 +76,8 @@ export function CallStage({
   hasQueue,
   aiConfigured,
   manualEnabled = true,
+  aiEnabled = true,
+  aiLockReason = null,
   onStart,
   onManualDial,
   onAiDialNumber,
@@ -97,6 +100,8 @@ export function CallStage({
   hasQueue: boolean;
   aiConfigured: boolean;
   manualEnabled?: boolean;
+  aiEnabled?: boolean;
+  aiLockReason?: AiLockReason;
   onStart: () => void;
   onManualDial: (number: string) => void;
   onAiDialNumber: (phone: string, known: KnownInfo) => void;
@@ -117,10 +122,20 @@ export function CallStage({
   const [showKeypad, setShowKeypad] = useState(false);
   const [manualOpen, setManualOpen] = useState(!hasQueue);
   const [pendingAiNumber, setPendingAiNumber] = useState<string | null>(null);
-  const ai = state.aiMode && aiConfigured;
+  // AI is usable only when configured AND permitted for this viewer; when it's
+  // locked we still surface the option, just disabled with a reason.
+  const aiUsable = aiConfigured && aiEnabled;
+  const ai = state.aiMode && aiUsable;
   const canCall = state.mode === "live";
   const canStart = ai ? hasQueue : canCall && Boolean(focusLead);
   const name = focusLead ? `${focusLead.firstName} ${focusLead.lastName}` : "No lead";
+  // Show the AI/Manual selector whenever AI is configured, or either mode is
+  // locked (so the lock — premium plan or rep role — is visible, not hidden).
+  const showModeBar = aiConfigured || !aiEnabled || !manualEnabled;
+  const aiLockText =
+    aiLockReason === "role"
+      ? "The AI dialer is available to admins and managers."
+      : "AI dialing is a premium feature on this plan.";
 
   const modeBadge = ai
     ? { label: "AI agent ready", cls: "bg-accent-soft text-accent" }
@@ -168,23 +183,33 @@ export function CallStage({
               exit={{ opacity: 0, y: -10 }}
               className="flex w-full max-w-sm flex-col items-center gap-6"
             >
-              {/* AI / Manual toggle. When manual dialing is locked behind the
-                  paywall, the Manual option still shows — but disabled with a
-                  lock — so it reads as a premium upgrade rather than missing. */}
-              {aiConfigured && (
+              {/* AI / Manual toggle. A mode that's locked — AI for reps or on a
+                  manual-only plan, Manual on an AI-only plan — still shows, but
+                  disabled with a lock, so it reads as gated rather than missing. */}
+              {showModeBar && (
                 <div className="flex flex-col items-center gap-1.5">
                   <div className="inline-flex rounded-xl border border-border bg-card p-1">
-                    <button
-                      type="button"
-                      onClick={() => onSetAiMode(true)}
-                      className={cn(
-                        "flex items-center gap-1.5 rounded-lg px-4 py-1.5 text-sm font-semibold transition-colors",
-                        ai ? "bg-solar text-white shadow-soft" : "text-muted-foreground hover:text-foreground",
-                      )}
-                    >
-                      <Bot className="h-4 w-4" />
-                      AI calling
-                    </button>
+                    {aiEnabled ? (
+                      <button
+                        type="button"
+                        onClick={() => onSetAiMode(true)}
+                        className={cn(
+                          "flex items-center gap-1.5 rounded-lg px-4 py-1.5 text-sm font-semibold transition-colors",
+                          ai ? "bg-solar text-white shadow-soft" : "text-muted-foreground hover:text-foreground",
+                        )}
+                      >
+                        <Bot className="h-4 w-4" />
+                        AI calling
+                      </button>
+                    ) : (
+                      <span
+                        title={aiLockText}
+                        className="flex cursor-not-allowed items-center gap-1.5 rounded-lg px-4 py-1.5 text-sm font-semibold text-muted-foreground/60"
+                      >
+                        <Lock className="h-3.5 w-3.5" />
+                        AI calling
+                      </span>
+                    )}
                     {manualEnabled ? (
                       <button
                         type="button"
@@ -207,6 +232,12 @@ export function CallStage({
                       </span>
                     )}
                   </div>
+                  {!aiEnabled && (
+                    <p className="flex items-center gap-1 text-[11px] text-muted-foreground">
+                      <Lock className="h-3 w-3" />
+                      {aiLockText}
+                    </p>
+                  )}
                   {!manualEnabled && (
                     <p className="flex items-center gap-1 text-[11px] text-muted-foreground">
                       <Lock className="h-3 w-3" />
@@ -337,7 +368,7 @@ export function CallStage({
                       className="overflow-hidden"
                     >
                       <DialPad
-                        onAiCall={aiConfigured ? (num) => setPendingAiNumber(num) : undefined}
+                        onAiCall={aiUsable ? (num) => setPendingAiNumber(num) : undefined}
                         onCall={onManualDial}
                         callDisabled={!canCall || !manualEnabled}
                       />

@@ -6,6 +6,7 @@ import { getCampaigns } from "@/lib/db/pipeline";
 import { isElevenLabsConfigured } from "@/lib/elevenlabs";
 import { getDialQueue } from "@/lib/leads-source";
 import { getViewer } from "@/lib/org/membership";
+import { DEFAULT_FEATURES, resolveDialerAccess } from "@/lib/org/settings";
 import { isVoiceConfigured } from "@/lib/twilio";
 
 export const metadata = { title: "Power Dialer" };
@@ -24,9 +25,12 @@ export default async function DialerPage({
   ]);
   const voiceConfigured = isVoiceConfigured();
   const aiAgentConfigured = isElevenLabsConfigured();
-  // Org-level: when manual (human) browser dialing is disabled, the workspace is
-  // AI-only — hide the manual toggle, keypad call, and the Twilio-needed warning.
-  const manualEnabled = viewer.org?.settings.features.manualDialer !== false;
+  // Resolve dialer access from org features + the viewer's role. Manual off ⇒
+  // AI-only workspace; AI off (or rep without dialer.ai) ⇒ AI shows locked.
+  const { manualEnabled, aiEnabled, aiLockReason } = resolveDialerAccess(
+    viewer.org?.settings.features ?? DEFAULT_FEATURES,
+    viewer.permissions.includes("dialer.ai"),
+  );
   const dialCampaigns = campaigns
     .filter((c) => c.status !== "completed")
     .map((c) => ({ id: c.id, name: c.name }));
@@ -57,6 +61,8 @@ export default async function DialerPage({
         voiceConfigured={voiceConfigured}
         aiAgentConfigured={aiAgentConfigured}
         manualEnabled={manualEnabled}
+        aiEnabled={aiEnabled}
+        aiLockReason={aiLockReason}
       />
     </PageContainer>
   );

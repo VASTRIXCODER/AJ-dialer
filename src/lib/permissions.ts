@@ -48,6 +48,7 @@ export const PERMISSIONS = [
   "companies.manage",
   "reports.view",
   "leads.import",
+  "dialer.ai", // launch AI agent calls (reps are manual-only by default)
   "monitor.view", // open the Live Monitor (see in-progress AI + rep calls)
   "monitor.listen", // listen to live audio of in-progress calls
   "monitor.intervene", // take over / transfer / end a live call
@@ -68,12 +69,14 @@ export const ROLE_PERMISSIONS: Record<OrgRole, Permission[]> = {
     "reports.view",
     "leads.import",
     "companies.manage",
+    "dialer.ai",
     "monitor.view",
     "monitor.listen",
     "monitor.intervene",
   ],
-  // Reps dial and work leads. They can open the monitor and LISTEN to live
-  // calls (AI + human), but can't take over / transfer / end them.
+  // Reps dial and work leads. They get the MANUAL dialer; the AI dialer is gated
+  // (managers+ only) unless the workspace is AI-only. They can open the monitor
+  // and LISTEN to live calls (AI + human), but can't take over / transfer / end.
   rep: ["monitor.view", "monitor.listen"],
 };
 
@@ -90,6 +93,7 @@ export const PERMISSION_LABEL: Record<Permission, string> = {
   "companies.manage": "Manage companies / teams",
   "reports.view": "View reports & analytics",
   "leads.import": "Import leads",
+  "dialer.ai": "Use the AI dialer",
   "monitor.view": "Open the Live Monitor",
   "monitor.listen": "Listen to live calls",
   "monitor.intervene": "Take over, transfer or end live calls",

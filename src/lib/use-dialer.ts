@@ -751,10 +751,13 @@ export function useDialer(queue: Lead[], aiConfigured = false) {
 
   const setAiMode = useCallback(
     (value: boolean) => {
-      aiModeRef.current = value;
+      // AI can only be turned ON when it's actually usable for this viewer
+      // (configured + permitted); otherwise the dialer stays in manual mode.
+      const next = value && aiConfiguredRef.current;
+      aiModeRef.current = next;
       stopAITimer();
       clearHumanPresence();
-      patch({ aiMode: value, status: "idle", aiCalls: [], aiCampaign: "idle" });
+      patch({ aiMode: next, status: "idle", aiCalls: [], aiCampaign: "idle" });
     },
     [clearHumanPresence, patch, stopAITimer],
   );

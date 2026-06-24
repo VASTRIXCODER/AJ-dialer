@@ -323,6 +323,25 @@ update public.organizations
   set join_code = upper(substr(md5(random()::text || id::text), 1, 7))
   where slug = 'unrg' and join_code is null;
 
+-- ── Donny: manual-only workspace; AI dialing locked behind a paywall ─────────
+-- The inverse of UNRG: human (browser) dialing is ON for everyone, but the AI
+-- dialer feature is turned OFF, so it surfaces as a locked premium upgrade for
+-- every member regardless of role. Flip `features.aiDialer` to true (from the
+-- owner's settings) to unlock AI calling once they're on the paid plan.
+insert into public.organizations
+    (name, slug, industry, dialer_template, product_name, tagline, settings)
+  values (
+    'Donny', 'donny', 'Sales', 'general',
+    'Donny Dialer', 'Manual outbound calling',
+    jsonb_build_object(
+      'features', jsonb_build_object('aiDialer', false, 'manualDialer', true)
+    )
+  )
+  on conflict (slug) do nothing;
+update public.organizations
+  set join_code = upper(substr(md5(random()::text || id::text), 1, 7))
+  where slug = 'donny' and join_code is null;
+
 -- Membership = who is in an org, their role, their approval status, and any
 -- per-member permission overrides. One active membership per user per org.
 create table if not exists public.organization_members (
