@@ -40,12 +40,47 @@ export function formatPhone(raw: string) {
   return raw;
 }
 
-export function toE164(raw: string) {
-  const digits = raw.replace(/\D/g, "");
+/**
+ * Normalize a raw phone string to a dialable E.164 number, or "" when the input
+ * isn't a usable number. This is the single source of truth for "is this phone
+ * callable" — every dial path and the CSV importer run through it.
+ *
+ *  • 10 digits           → +1XXXXXXXXXX (US, country code added)
+ *  • 11 digits, "1"-led  → +1XXXXXXXXXX (US with country code already present)
+ *  • starts with "+"     → kept if it has a plausible E.164 length (8–15 digits)
+ *  • anything else       → "" (too few digits, placeholder text like "N/A",
+ *                              merged address junk, etc. — NOT safe to dial)
+ *
+ * Returning "" for junk is what stops a meaningless "+" reaching Twilio (which
+ * rejects it with "The phone number ... + ... is not valid").
+ */
+export function normalizePhone(raw: string): string {
+  if (!raw) return "";
+  const trimmed = String(raw).trim();
+  const hadPlus = trimmed.startsWith("+");
+  const digits = trimmed.replace(/\D/g, "");
+  if (!digits) return "";
   if (digits.length === 10) return `+1${digits}`;
   if (digits.length === 11 && digits.startsWith("1")) return `+${digits}`;
-  if (raw.trim().startsWith("+")) return `+${digits}`;
-  return `+${digits}`;
+  // Explicit international number with a credible E.164 length.
+  if (hadPlus && digits.length >= 8 && digits.length <= 15) return `+${digits}`;
+  // 12–15 bare digits with no "+" is more likely merged junk than a real
+  // number, but accept a clean country-coded form when it's the only reading.
+  return "";
+}
+
+/** True when `raw` yields a dialable phone number. */
+export function isValidPhone(raw: string): boolean {
+  return normalizePhone(raw).length > 0;
+}
+
+/**
+ * Best-effort conversion to E.164 for dialing. Delegates to {@link normalizePhone},
+ * so invalid input yields "" — callers already guard with a digit-count check or
+ * (in the Twilio route) filter empty targets before placing the call.
+ */
+export function toE164(raw: string) {
+  return normalizePhone(raw);
 }
 
 export function relativeTime(iso: string, now: Date = new Date()) {

@@ -10,7 +10,7 @@ import {
 import { useRouter } from "next/navigation";
 import { useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { cn } from "@/lib/utils";
+import { cn, isValidPhone, normalizePhone } from "@/lib/utils";
 
 type LeadInput = {
   firstName: string;
@@ -25,10 +25,36 @@ type LeadInput = {
   solarProvider?: string;
   utilityBill?: number;
   solarPayment?: number;
+  notes?: string;
 };
 
-/** Minimal RFC-4180-ish CSV parser (handles quotes + escaped quotes). */
-function parseCSV(text: string): string[][] {
+/** Result of turning a sheet into leads, with counts so we can report skips. */
+type ParseResult = {
+  leads: LeadInput[];
+  /** Rows that had data but no dialable phone number. */
+  noPhone: number;
+  /** Whether any column mapped to a phone at all (catches bad delimiters). */
+  sawPhoneColumn: boolean;
+};
+
+/** Detect the most likely delimiter from the header line (comma/semicolon/tab/pipe). */
+function detectDelimiter(firstLine: string): string {
+  const candidates = [",", ";", "\t", "|"];
+  let best = ",";
+  let bestCount = 0;
+  for (const d of candidates) {
+    // Count delimiters that sit outside quotes — good enough for a header row.
+    const count = firstLine.split(d).length - 1;
+    if (count > bestCount) {
+      bestCount = count;
+      best = d;
+    }
+  }
+  return best;
+}
+
+/** RFC-4180-ish parser that honors a chosen delimiter (handles quotes + escapes). */
+function parseDelimited(text: string, delimiter: string): string[][] {
   const rows: string[][] = [];
   let row: string[] = [];
   let field = "";
@@ -43,7 +69,7 @@ function parseCSV(text: string): string[][] {
         } else inQuotes = false;
       } else field += ch;
     } else if (ch === '"') inQuotes = true;
-    else if (ch === ",") {
+    else if (ch === delimiter) {
       row.push(field);
       field = "";
     } else if (ch === "\n") {
@@ -60,29 +86,98 @@ function parseCSV(text: string): string[][] {
   return rows.filter((r) => r.some((c) => c.trim().length));
 }
 
+/** Parse a spreadsheet, auto-detecting the delimiter and stripping any BOM. */
+function parseSheet(raw: string): string[][] {
+  const text = raw.replace(/^﻿/, "");
+  const nl = text.indexOf("\n");
+  const firstLine = nl === -1 ? text : text.slice(0, nl);
+  return parseDelimited(text, detectDelimiter(firstLine));
+}
+
+/**
+ * Map a column header to a lead field. Phone is checked FIRST and matches a wide
+ * range of names (phone, mobile, cell, tel, contact number, etc.) so a customer's
+ * column never silently fails to map — the usual cause of un-dialable imports.
+ */
 function mapHeader(h: string): keyof LeadInput | "name" | null {
-  const n = h.toLowerCase().replace(/[^a-z]/g, "");
-  if (n.includes("first")) return "firstName";
-  if (n.includes("last")) return "lastName";
-  if (n === "name" || n === "fullname" || n === "homeowner") return "name";
-  if (n.includes("phone") || n.includes("mobile") || n.includes("cell")) return "phone";
-  if (n.includes("email")) return "email";
-  if (n.includes("street") || n === "address" || n.includes("addr")) return "address";
-  if (n.includes("city")) return "city";
-  if (n === "state" || n.includes("province")) return "state";
-  if (n.includes("zip") || n.includes("postal")) return "zip";
-  if (n.includes("utility") && (n.includes("bill") || n.includes("amount"))) return "utilityBill";
-  if (n.includes("solar") && (n.includes("payment") || n.includes("loan") || n.includes("lease")))
+  const n = h.toLowerCase().replace(/[^a-z0-9]/g, "");
+  if (!n) return null;
+  // ── Phone (broad, checked before everything else) ──
+  if (
+    n.includes("phone") ||
+    n.includes("mobile") ||
+    n.includes("cell") ||
+    n.includes("telephone") ||
+    n === "tel" ||
+    n === "ph" ||
+    n === "phno" ||
+    n === "number" ||
+    n === "msisdn" ||
+    n.includes("contactnumber") ||
+    n.includes("contactno") ||
+    n.includes("phonenumber") ||
+    n.includes("wireless")
+  )
+    return "phone";
+  // ── Name parts ──
+  if (n.includes("firstname") || n === "first" || n === "fname" || n === "givenname")
+    return "firstName";
+  if (
+    n.includes("lastname") ||
+    n === "last" ||
+    n === "lname" ||
+    n === "surname" ||
+    n === "familyname"
+  )
+    return "lastName";
+  if (
+    n === "name" ||
+    n === "fullname" ||
+    n === "homeowner" ||
+    n === "customer" ||
+    n === "customername" ||
+    n === "contact" ||
+    n === "contactname" ||
+    n === "leadname"
+  )
+    return "name";
+  // ── Contact + address ──
+  if (n.includes("email") || n === "mail") return "email";
+  if (
+    n.includes("street") ||
+    n === "address" ||
+    n === "address1" ||
+    n === "streetaddress" ||
+    n.includes("addr")
+  )
+    return "address";
+  if (n === "city" || n === "town") return "city";
+  if (n === "state" || n === "st" || n.includes("province") || n === "region") return "state";
+  if (n.includes("zip") || n.includes("postal") || n === "postcode") return "zip";
+  // ── Solar economics ──
+  if (
+    (n.includes("utility") || n.includes("electric") || n.includes("power")) &&
+    (n.includes("bill") || n.includes("amount") || n.includes("cost"))
+  )
+    return "utilityBill";
+  if (
+    n.includes("solar") &&
+    (n.includes("payment") || n.includes("pmt") || n.includes("loan") || n.includes("lease"))
+  )
     return "solarPayment";
-  if (n.includes("utility")) return "utilityProvider";
+  if (n.includes("utility") || n === "provider") return "utilityProvider";
   if (n.includes("solar")) return "solarProvider";
+  // ── Free text ──
+  if (n.includes("note") || n.includes("comment") || n.includes("remark")) return "notes";
   return null;
 }
 
-function rowsToLeads(grid: string[][]): LeadInput[] {
-  if (grid.length < 2) return [];
+function rowsToLeads(grid: string[][]): ParseResult {
+  if (grid.length < 2) return { leads: [], noPhone: 0, sawPhoneColumn: false };
   const header = grid[0].map(mapHeader);
+  const sawPhoneColumn = header.includes("phone");
   const out: LeadInput[] = [];
+  let noPhone = 0;
   for (let r = 1; r < grid.length; r++) {
     const cells = grid[r];
     const lead: LeadInput = { firstName: "", lastName: "", phone: "" };
@@ -90,19 +185,28 @@ function rowsToLeads(grid: string[][]): LeadInput[] {
       const val = (cells[c] ?? "").trim();
       if (!key || !val) return;
       if (key === "name") {
+        // Only split a combined name into the parts we don't already have.
         const parts = val.split(/\s+/);
         lead.firstName = lead.firstName || parts[0] || "";
         lead.lastName = lead.lastName || parts.slice(1).join(" ");
       } else if (key === "utilityBill" || key === "solarPayment") {
         const num = Number(val.replace(/[^0-9.]/g, ""));
-        if (!Number.isNaN(num)) lead[key] = num;
+        if (!Number.isNaN(num) && num > 0) lead[key] = num;
+      } else if (key === "phone") {
+        // Normalize to E.164 right here so storage + dialing are consistent.
+        // Keep the original when it can't be normalized so the row still imports
+        // (it just won't be dialable) — preserving the user's data.
+        lead.phone = normalizePhone(val) || val;
       } else {
         lead[key] = val;
       }
     });
-    if (lead.phone || lead.firstName || lead.lastName) out.push(lead);
+    const hasName = Boolean(lead.firstName || lead.lastName);
+    if (!lead.phone && !hasName) continue; // truly empty row
+    if (lead.phone && !isValidPhone(lead.phone)) noPhone++;
+    out.push(lead);
   }
-  return out;
+  return { leads: out, noPhone, sawPhoneColumn };
 }
 
 type Status = { type: "idle" | "working" | "done" | "error"; message?: string };
@@ -124,9 +228,14 @@ export function CsvImport({
     setStatus({ type: "working", message: `Reading ${file.name}…` });
     try {
       const text = await file.text();
-      const leads = rowsToLeads(parseCSV(text));
+      const { leads, noPhone, sawPhoneColumn } = rowsToLeads(parseSheet(text));
       if (!leads.length) {
-        setStatus({ type: "error", message: "No leads found. Check your CSV headers." });
+        setStatus({
+          type: "error",
+          message: sawPhoneColumn
+            ? "No leads found — check your CSV has data rows under the headers."
+            : "No phone column detected. Add a column named Phone / Mobile / Cell.",
+        });
         return;
       }
       const res = await fetch("/api/leads/import", {
@@ -139,7 +248,11 @@ export function CsvImport({
         setStatus({ type: "error", message: json.error ?? "Import failed." });
         return;
       }
-      setStatus({ type: "done", message: `Imported ${json.inserted} leads.` });
+      // Surface how many rows imported without a dialable number so the user
+      // isn't surprised when those leads don't appear in the dial queue.
+      const skipped = typeof json.invalidPhone === "number" ? json.invalidPhone : noPhone;
+      const suffix = skipped > 0 ? ` (${skipped} without a valid phone — not dialable)` : "";
+      setStatus({ type: "done", message: `Imported ${json.inserted} leads${suffix}.` });
       router.refresh();
     } catch {
       setStatus({ type: "error", message: "Couldn’t read that file." });

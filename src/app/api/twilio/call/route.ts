@@ -41,13 +41,25 @@ export async function POST(req: Request) {
   };
 
   const room = body.room?.trim();
-  const leads = (body.leads ?? [])
+  const rawLeads = body.leads ?? [];
+  // Normalize every number; toE164 returns "" for anything not dialable, so the
+  // filter drops placeholder/garbled phones before we ever hit Twilio.
+  const leads = rawLeads
     .map((l) => ({ leadId: l.leadId, to: toE164(l.phone) }))
     .filter((l) => l.to && l.leadId);
 
-  if (!room || !leads.length) {
+  if (!room) {
+    return NextResponse.json({ error: "A conference room is required" }, { status: 400 });
+  }
+  if (!leads.length) {
+    // Distinguish "you sent nothing" from "every number was invalid" so the rep
+    // gets an actionable message instead of a generic credentials warning.
     return NextResponse.json(
-      { error: "room and at least one lead are required" },
+      {
+        error: rawLeads.length
+          ? "None of these leads have a valid phone number. Check the numbers on the lead(s) and re-import if needed."
+          : "At least one lead is required",
+      },
       { status: 400 },
     );
   }
