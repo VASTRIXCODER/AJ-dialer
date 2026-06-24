@@ -667,4 +667,8 @@ alter table public.appointments add column if not exists reviewed_by uuid refere
 alter table public.appointments add column if not exists reviewed_at timestamptz;
 create index if not exists appointments_approved_idx on public.appointments (org_id, approved);
 
-
+-- ── Add call_sid to call_records (manual call recording linkage) ─────────────
+-- The rep's Twilio Voice SDK call SID is written here when the disposition is
+-- saved. The recording-status webhook then uses it to back-fill recording_url.
+alter table public.call_records add column if not exists call_sid text;
+create index if not exists call_records_call_sid_idx on public.call_records (call_sid) where call_sid is not null;

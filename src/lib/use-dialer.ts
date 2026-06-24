@@ -53,6 +53,7 @@ export interface DialerState {
   connectsThisSession: number;
   queueIndex: number;
   error: string | null;
+  callSid: string | null;
   /** AI calling is the default; flip off for manual (human Twilio) dialing. */
   aiMode: boolean;
   aiCalls: AiLaunch[];
@@ -100,6 +101,7 @@ export function useDialer(queue: Lead[], aiConfigured = false) {
     connectsThisSession: 0,
     queueIndex: 0,
     error: null,
+    callSid: null,
     aiMode: aiConfigured,
     aiCalls: [],
     aiCampaign: "idle",
@@ -272,13 +274,14 @@ export function useDialer(queue: Lead[], aiConfigured = false) {
     stopTick();
     stopPoll();
     clearHumanPresence();
+    const sid = callRef.current?.parameters?.CallSid ?? null;
     try {
       callRef.current?.disconnect();
     } catch {
       /* noop */
     }
     callRef.current = null;
-    patch({ status: "wrapup" });
+    patch({ status: "wrapup", callSid: sid });
   }, [clearHumanPresence, patch, stopTick, stopPoll]);
 
   const attachCallHandlers = useCallback(
@@ -505,6 +508,7 @@ export function useDialer(queue: Lead[], aiConfigured = false) {
         onHold: false,
         lastOutcome: null,
         error: null,
+        callSid: null,
       });
       setState((s) => ({ ...s, callsThisSession: s.callsThisSession + 1 }));
 

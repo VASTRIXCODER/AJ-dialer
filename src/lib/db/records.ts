@@ -98,14 +98,15 @@ export async function insertCallRecord(input: {
   outcome?: CallOutcome;
   channel?: "human" | "ai";
   summary?: string;
-}): Promise<void> {
-  if (!isSupabaseConfigured()) return;
+  callSid?: string | null;
+}): Promise<string | null> {
+  if (!isSupabaseConfigured()) return null;
   try {
     const supabase = await createClient();
     const {
       data: { user },
     } = await supabase.auth.getUser();
-    if (!user) return;
+    if (!user) return null;
     const leadUuid = asUuid(input.leadId);
 
     // Tag the call with the lead's campaign so reports + the campaigns tab can
@@ -120,7 +121,7 @@ export async function insertCallRecord(input: {
       campaignId = (l?.campaign_id as string) ?? null;
     }
 
-    await supabase.from("call_records").insert({
+    const { data: rec } = await supabase.from("call_records").insert({
       owner_id: user.id,
       lead_id: leadUuid,
       lead_name: input.leadName ?? "",
@@ -129,10 +130,12 @@ export async function insertCallRecord(input: {
       outcome: input.outcome ?? null,
       channel: input.channel ?? "human",
       summary: input.summary ?? null,
+      call_sid: input.callSid ?? null,
       campaign_id: campaignId,
-    });
+    }).select("id").maybeSingle();
+    const recordId = (rec as { id?: string } | null)?.id ?? null;
 
-    if (!input.outcome) return;
+    if (!input.outcome) return recordId;
 
     // Reflect the disposition on the lead + route it to the right pipeline tab.
     if (leadUuid) {
@@ -153,7 +156,9 @@ export async function insertCallRecord(input: {
       summary: input.summary,
       source: input.channel === "ai" ? "ai" : "rep",
     });
+    return recordId ?? null;
   } catch {
+    return null;
     /* best-effort */
   }
 }

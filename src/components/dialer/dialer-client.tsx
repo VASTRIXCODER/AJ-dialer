@@ -150,6 +150,7 @@ export function DialerClient({
                     phone: focusLead.phone,
                     durationSec: state.durationSec,
                     outcome: o,
+                    callSid: state.callSid,
                   }),
                 }).catch(() => {});
               }
