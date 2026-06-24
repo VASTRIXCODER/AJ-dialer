@@ -51,10 +51,19 @@ export function CsvImport({
       const skipped = typeof json.invalidPhone === "number" ? json.invalidPhone : 0;
       const skipNote = skipped > 0 ? ` (${skipped} without a valid phone — not dialable)` : "";
       const how = json.source === "ai" ? " — columns mapped by AI" : "";
-      setStatus({
-        type: "done",
-        message: `Imported ${json.inserted} leads${skipNote}${how}.`,
-      });
+      // If the file needed AI mapping but it wasn't available/failed, the import
+      // still ran with best-effort header detection — warn so it's not silent.
+      if (json.aiError) {
+        setStatus({
+          type: "error",
+          message: `Imported ${json.inserted} leads, but AI column mapping didn't run: ${json.aiError}`,
+        });
+      } else {
+        setStatus({
+          type: "done",
+          message: `Imported ${json.inserted} leads${skipNote}${how}.`,
+        });
+      }
       router.refresh();
     } catch {
       setStatus({ type: "error", message: "Couldn’t read that file." });

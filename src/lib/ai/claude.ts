@@ -73,6 +73,66 @@ export async function generateJSON<T>(opts: {
 }
 
 /**
+ * JSON generation WITHOUT structured outputs — maximum compatibility. A plain
+ * messages.create with a strict "JSON only" instruction, parsed tolerantly. Use
+ * this when structured outputs aren't available or a call must not depend on the
+ * exact output_config.format shape (which has drifted across API versions).
+ */
+export async function generateJSONLoose<T>(opts: {
+  system: string;
+  prompt: string;
+  maxTokens?: number;
+}): Promise<T> {
+  const res = await client().messages.create({
+    model: AI_MODEL,
+    max_tokens: opts.maxTokens ?? 2048,
+    system:
+      opts.system +
+      "\n\nRespond with ONLY a single valid JSON object — no prose, no explanation, no markdown code fences.",
+    messages: [{ role: "user", content: opts.prompt }],
+  });
+  const block = res.content.find(
+    (b): b is Anthropic.TextBlock => b.type === "text",
+  );
+  return extractJSON<T>(block?.text ?? "");
+}
+
+/**
+ * Make a tiny real call to verify the Anthropic connection actually works
+ * (key present AND reachable AND the model is accessible). Powers the health
+ * check so misconfiguration is visible instead of silently degrading to demo.
+ */
+export async function pingAI(): Promise<{
+  configured: boolean;
+  ok: boolean;
+  model?: string;
+  reply?: string;
+  error?: string;
+}> {
+  if (!isAIConfigured()) {
+    return { configured: false, ok: false, error: "ANTHROPIC_API_KEY is not set on the server." };
+  }
+  try {
+    const res = await client().messages.create({
+      model: AI_MODEL,
+      max_tokens: 16,
+      messages: [{ role: "user", content: "Reply with the single word: OK" }],
+    });
+    const block = res.content.find(
+      (b): b is Anthropic.TextBlock => b.type === "text",
+    );
+    const reply = block?.text?.trim();
+    return { configured: true, ok: Boolean(reply), model: res.model, reply };
+  } catch (e) {
+    return {
+      configured: true,
+      ok: false,
+      error: e instanceof Error ? e.message : String(e),
+    };
+  }
+}
+
+/**
  * Run an AI task with graceful degradation. Returns Claude output when
  * configured and successful; otherwise a deterministic simulated result, tagged
  * with its source so the UI can show whether intelligence is live.

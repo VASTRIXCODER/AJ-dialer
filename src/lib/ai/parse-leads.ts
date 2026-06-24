@@ -2,7 +2,7 @@ import "server-only";
 
 import type { ParsedLead, ParseResult } from "@/lib/leads/csv";
 import { isValidPhone, normalizePhone } from "@/lib/utils";
-import { generateJSON, isAIConfigured } from "./claude";
+import { generateJSON, generateJSONLoose, isAIConfigured } from "./claude";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // AI-assisted lead extraction.
@@ -82,13 +82,22 @@ const MAPPING_SCHEMA = {
 const SYSTEM =
   "You map spreadsheet columns to a CRM lead schema. You are given the first rows " +
   "of a CSV (as JSON arrays of cell strings). The file may or may not have a header " +
-  "row. Return ONLY the requested JSON. Use 0-based column indices, and -1 for any " +
-  "field that is not present. Identify EVERY phone-number column (in priority order) " +
-  "and, for each, the index of an adjacent Do-Not-Call/status column if one exists " +
-  "(else -1). List all email columns. Put other useful person data (gender, age or " +
-  "date of birth, marital status, net worth, income, occupation, owner type, mailing " +
-  "address) into `extras` with a short human label for each. Never guess a column " +
-  "that isn't clearly that field.";
+  "row. Use 0-based column indices, and -1 for any field that is not present. Identify " +
+  "EVERY phone-number column (in priority order) and, for each, the index of an " +
+  "adjacent Do-Not-Call/status column if one exists (else -1). List all email columns. " +
+  "Put other useful person data (gender, age or date of birth, marital status, net " +
+  "worth, income, occupation, owner type, mailing address) into `extras` with a short " +
+  "human label for each. Never guess a column that isn't clearly that field.\n\n" +
+  "Return a JSON object with EXACTLY these keys:\n" +
+  "{\n" +
+  '  "hasHeader": boolean,\n' +
+  '  "firstNameCol": integer, "lastNameCol": integer, "fullNameCol": integer,\n' +
+  '  "addressCol": integer, "cityCol": integer, "stateCol": integer, "zipCol": integer,\n' +
+  '  "utilityBillCol": integer,\n' +
+  '  "emailCols": integer[],\n' +
+  '  "phoneCols": [{ "numberCol": integer, "dncCol": integer }],\n' +
+  '  "extras": [{ "label": string, "col": integer }]\n' +
+  "}";
 
 /** Build a compact, token-bounded sample of the grid for the model. */
 function sampleFor(grid: string[][]): string {
@@ -98,14 +107,26 @@ function sampleFor(grid: string[][]): string {
 }
 
 async function inferColumns(grid: string[][]): Promise<ColumnMapping> {
-  return generateJSON<ColumnMapping>({
-    system: SYSTEM,
-    prompt: sampleFor(grid),
-    schema: MAPPING_SCHEMA as Record<string, unknown>,
-    schemaName: "lead_column_mapping",
-    effort: "low",
-    maxTokens: 1024,
-  });
+  const prompt = sampleFor(grid);
+  // Plain JSON first (most compatible — independent of the output_config.format
+  // shape, which varies across API versions). Fall back to structured outputs if
+  // the loose parse somehow fails.
+  try {
+    return await generateJSONLoose<ColumnMapping>({
+      system: SYSTEM,
+      prompt,
+      maxTokens: 1024,
+    });
+  } catch {
+    return generateJSON<ColumnMapping>({
+      system: SYSTEM,
+      prompt,
+      schema: MAPPING_SCHEMA as Record<string, unknown>,
+      schemaName: "lead_column_mapping",
+      effort: "low",
+      maxTokens: 1024,
+    });
+  }
 }
 
 const cell = (row: string[], i: number) =>

@@ -25,6 +25,7 @@ export async function POST(req: Request) {
 
   let leads: ParsedLead[] | LeadInput[] = [];
   let source: "headers" | "ai" | "rows" = "rows";
+  let aiError: string | null = null;
 
   if (typeof body.csv === "string" && body.csv.trim()) {
     const grid = parseSheet(body.csv);
@@ -39,17 +40,21 @@ export async function POST(req: Request) {
       leads = deterministic.leads;
       source = "headers";
     } else if (canAIParse()) {
-      // Let Claude figure out the column layout, then fall back to whatever the
-      // deterministic pass managed if the AI call fails.
+      // Let Claude figure out the column layout. If the call fails, record why
+      // and fall back to whatever the deterministic pass managed.
       try {
         const ai = await aiParseLeads(grid);
         leads = ai.leads.length ? ai.leads : deterministic.leads;
         source = ai.leads.length ? "ai" : "headers";
-      } catch {
+      } catch (e) {
+        aiError = e instanceof Error ? e.message : "AI parsing failed.";
         leads = deterministic.leads;
         source = "headers";
       }
     } else {
+      // No header mapping AND no AI available — tell the user exactly why.
+      aiError =
+        "This file has no recognizable header row, so AI column mapping is needed — but ANTHROPIC_API_KEY isn't configured on the server.";
       leads = deterministic.leads;
       source = "headers";
     }
@@ -62,6 +67,7 @@ export async function POST(req: Request) {
       {
         inserted: 0,
         error:
+          aiError ??
           "Couldn't find any leads in that file. Make sure it has a phone or name column.",
       },
       { status: 400 },
@@ -74,5 +80,8 @@ export async function POST(req: Request) {
     .map((r) => (body.campaignId ? { ...r, campaignId: body.campaignId } : { ...r }));
 
   const result = await insertLeads(rows);
-  return NextResponse.json({ ...result, source }, { status: result.error ? 400 : 200 });
+  return NextResponse.json(
+    { ...result, source, aiError },
+    { status: result.error ? 400 : 200 },
+  );
 }
