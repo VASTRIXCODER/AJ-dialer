@@ -134,10 +134,11 @@ export function isOrgRole(value: unknown): value is OrgRole {
   return typeof value === "string" && (ORG_ROLES as readonly string[]).includes(value);
 }
 
-/** Roles `actor` is allowed to assign to others (never at/above themselves, and
- *  only the owner can mint admins; nobody assigns "owner" through the UI). */
+/** Roles `actor` is allowed to assign to others (never above themselves, and
+ *  nobody assigns "owner" through the UI; managers/owners can assign up to
+ *  their own rank so a manager can promote a rep to manager). */
 export function assignableRoles(actor: OrgRole): OrgRole[] {
   return ORG_ROLES.filter(
-    (r) => r !== "owner" && ROLE_RANK[r] < ROLE_RANK[actor],
+    (r) => r !== "owner" && ROLE_RANK[r] <= ROLE_RANK[actor],
   );
 }

@@ -681,8 +681,8 @@ export async function decideMember(
     if (role && role !== target.role) {
       if (role === "owner")
         return { ok: false, error: "Ownership is transferred separately." };
-      if (ROLE_RANK[role] >= ROLE_RANK[auth.actor.role])
-        return { ok: false, error: "You can’t assign a role at or above your own." };
+      if (ROLE_RANK[role] > ROLE_RANK[auth.actor.role])
+        return { ok: false, error: "You can’t assign a role above your own." };
       assigned = role;
     }
     const { error } = await admin
@@ -731,11 +731,15 @@ export async function setMemberRole(memberId: string, role: OrgRole): Promise<Re
     return { ok: false, error: "Member not found." };
   if (target.role === "owner")
     return { ok: false, error: "You can’t change the owner’s role." };
-  // You can only manage people strictly below you, and only assign roles below you.
-  if (!strictlyAbove(auth.actor, target))
-    return { ok: false, error: "You can’t manage someone at or above your role." };
-  if (ROLE_RANK[role] >= ROLE_RANK[auth.actor.role])
-    return { ok: false, error: "You can’t assign a role at or above your own." };
+  if (target.userId === auth.actor.userId)
+    return { ok: false, error: "You can’t change your own role." };
+  // Block managing someone who outranks you; same-rank is allowed so a manager
+  // can promote/demote another manager.
+  if (ROLE_RANK[target.role] > ROLE_RANK[auth.actor.role])
+    return { ok: false, error: "You can’t manage someone above your role." };
+  // Block assigning a role strictly above your own (e.g. manager can’t mint admins).
+  if (ROLE_RANK[role] > ROLE_RANK[auth.actor.role])
+    return { ok: false, error: "You can’t assign a role above your own." };
 
   const { error } = await admin
     .from("organization_members")
