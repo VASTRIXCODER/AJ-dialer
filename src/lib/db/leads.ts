@@ -4,7 +4,7 @@ import { leads as fallbackLeads, getLeadById as fallbackById } from "../data";
 import { isSupabaseConfigured } from "../supabase/config";
 import { createClient } from "../supabase/server";
 import type { Lead, LeadStatus } from "../types";
-import { isValidPhone, normalizePhone } from "../utils";
+import { normalizePhone } from "../utils";
 
 // Account-scoped lead access. When Supabase is configured and the user is signed
 // in, reads come from their `leads` table (RLS-enforced); otherwise it falls
@@ -84,11 +84,12 @@ export async function getLeadById(id: string): Promise<Lead | null> {
 
 export async function getDialQueue(): Promise<Lead[]> {
   const all = await getLeads();
-  // Require a genuinely dialable phone (not just any truthy string) so leads
-  // with placeholder/garbled numbers never enter the queue and produce a "+"
-  // call attempt that Twilio rejects.
+  // Show every lead with a plausibly-dialable number (10+ digits) so imported
+  // leads reliably appear on the dialer. Exact E.164 normalization happens at
+  // dial time (toE164); a genuinely un-dialable number is rejected there with a
+  // clear message rather than being silently hidden from the rep here.
   return all
-    .filter((l) => DIALABLE.includes(l.status) && isValidPhone(l.phone))
+    .filter((l) => DIALABLE.includes(l.status) && l.phone.replace(/\D/g, "").length >= 10)
     .sort((a, b) => (b.aiScore ?? 0) - (a.aiScore ?? 0));
 }
 

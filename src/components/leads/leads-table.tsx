@@ -236,13 +236,30 @@ export function LeadsTable({
                       <div className="flex items-center gap-2.5">
                         <Avatar initials={initials(name)} color="#3B82F6" size="sm" />
                         <div className="min-w-0">
-                          <p className="font-semibold">{name}</p>
-                          <p className="text-xs text-muted-foreground tabular">{formatPhone(l.phone)}</p>
+                          <p className="font-semibold">{name || "—"}</p>
+                          <p className="text-xs text-muted-foreground tabular">
+                            {l.phone ? formatPhone(l.phone) : "No phone"}
+                          </p>
+                          {l.email && (
+                            <p className="truncate text-xs text-muted-foreground">{l.email}</p>
+                          )}
                         </div>
                       </div>
                     </td>
                     <td className="px-4 py-3 text-muted-foreground">
-                      {l.city}, {l.state}
+                      <div className="min-w-0">
+                        {l.address && <p className="truncate">{l.address}</p>}
+                        <p className="truncate">
+                          {[l.city, l.state].filter(Boolean).join(", ")}
+                          {l.zip ? ` ${l.zip}` : ""}
+                          {!l.city && !l.state && !l.zip && !l.address ? "—" : ""}
+                        </p>
+                        {(l.utilityProvider || l.solarProvider) && (
+                          <p className="truncate text-xs">
+                            {[l.utilityProvider, l.solarProvider].filter(Boolean).join(" · ")}
+                          </p>
+                        )}
+                      </div>
                     </td>
                     <td className="px-4 py-3">
                       {l.campaignId && campaignName.get(l.campaignId) ? (

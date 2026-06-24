@@ -88,10 +88,17 @@ function parseDelimited(text: string, delimiter: string): string[][] {
 
 /** Parse a spreadsheet, auto-detecting the delimiter and stripping any BOM. */
 function parseSheet(raw: string): string[][] {
-  const text = raw.replace(/^﻿/, "");
+  // Strip a BOM and normalize all line endings (\r\n and old-Mac \r → \n) so
+  // row splitting works regardless of where the file was exported.
+  const text = raw.replace(/^﻿/, "").replace(/\r\n?/g, "\n");
   const nl = text.indexOf("\n");
   const firstLine = nl === -1 ? text : text.slice(0, nl);
   return parseDelimited(text, detectDelimiter(firstLine));
+}
+
+/** How many significant digits a cell holds (10+ ⇒ looks like a phone number). */
+function digitCount(v: string): number {
+  return v.replace(/\D/g, "").length;
 }
 
 /**
@@ -172,9 +179,46 @@ function mapHeader(h: string): keyof LeadInput | "name" | null {
   return null;
 }
 
+/**
+ * Find the column that actually holds phone numbers when the header didn't map
+ * one (weird/blank header). Scans the data rows and picks the unmapped column
+ * whose values most consistently look like phone numbers (10+ digits).
+ */
+function sniffPhoneColumn(
+  grid: string[][],
+  header: (keyof LeadInput | "name" | null)[],
+): number {
+  const width = header.length;
+  let best = -1;
+  let bestHits = 0;
+  for (let c = 0; c < width; c++) {
+    if (header[c]) continue; // don't steal an already-mapped column
+    let hits = 0;
+    let seen = 0;
+    for (let r = 1; r < grid.length; r++) {
+      const v = (grid[r][c] ?? "").trim();
+      if (!v) continue;
+      seen++;
+      if (digitCount(v) >= 10 && digitCount(v) <= 15) hits++;
+    }
+    // Require the column to be mostly phone-like, not just a stray numeric cell.
+    if (seen > 0 && hits >= bestHits && hits / seen >= 0.5 && hits > 0) {
+      bestHits = hits;
+      best = c;
+    }
+  }
+  return best;
+}
+
 function rowsToLeads(grid: string[][]): ParseResult {
   if (grid.length < 2) return { leads: [], noPhone: 0, sawPhoneColumn: false };
   const header = grid[0].map(mapHeader);
+  // If no header mapped to a phone, sniff the data to find the phone column so
+  // numbers are still captured (and the leads become dialable).
+  if (!header.includes("phone")) {
+    const sniffed = sniffPhoneColumn(grid, header);
+    if (sniffed >= 0) header[sniffed] = "phone";
+  }
   const sawPhoneColumn = header.includes("phone");
   const out: LeadInput[] = [];
   let noPhone = 0;
