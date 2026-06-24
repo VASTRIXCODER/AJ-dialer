@@ -558,7 +558,8 @@ export function useDialer(queue: Lead[], aiConfigured = false) {
           return;
         }
         const data = (await res.json().catch(() => ({}))) as {
-          calls?: { leadId: string; sid: string | null }[];
+          calls?: { leadId: string; sid: string | null; error?: string | null }[];
+          errors?: (string | null)[];
         };
         const placed = (data.calls ?? []).map((c) => ({
           leadId: c.leadId,
@@ -566,8 +567,15 @@ export function useDialer(queue: Lead[], aiConfigured = false) {
         }));
         if (!placed.some((p) => p.sid)) {
           clearHumanPresence();
+          // Surface the real Twilio rejection (e.g. unverified number on trial
+          // account, invalid caller ID, geographic restriction, etc.) so the
+          // team knows exactly what to fix rather than getting a generic message.
+          const twilioMsg = (data.errors ?? []).filter(Boolean)[0];
+          const errorMsg = twilioMsg
+            ? `Call failed: ${twilioMsg}`
+            : "Couldn't place the call. Check your Twilio number and credentials.";
           patch({
-            error: "Couldn't place the call. Check your Twilio number and credentials.",
+            error: errorMsg,
             status: "idle",
             lines: [],
           });

@@ -84,14 +84,18 @@ export async function POST(req: Request) {
               }
             : {}),
         });
-        return { leadId: leg.leadId, to: leg.to, sid: call.sid };
-      } catch {
-        return { leadId: leg.leadId, to: leg.to, sid: null };
+        return { leadId: leg.leadId, to: leg.to, sid: call.sid, error: null };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error(`[twilio/call] calls.create failed for ${leg.to}:`, msg);
+        return { leadId: leg.leadId, to: leg.to, sid: null, error: msg };
       }
     }),
   );
 
   registerRoom(room, placed);
 
-  return NextResponse.json({ room, calls: placed });
+  // Collect errors from failed legs so the client can surface the real reason.
+  const errors = placed.filter((p) => !p.sid && p.error).map((p) => p.error);
+  return NextResponse.json({ room, calls: placed, errors });
 }
