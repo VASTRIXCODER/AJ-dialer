@@ -99,6 +99,8 @@ export async function insertCallRecord(input: {
   channel?: "human" | "ai";
   summary?: string;
   callSid?: string | null;
+  /** Conference room (`hc-<id>`) for manual calls — links the recording. */
+  room?: string | null;
 }): Promise<string | null> {
   if (!isSupabaseConfigured()) return null;
   try {
@@ -131,9 +133,33 @@ export async function insertCallRecord(input: {
       channel: input.channel ?? "human",
       summary: input.summary ?? null,
       call_sid: input.callSid ?? null,
+      room: input.room ?? null,
       campaign_id: campaignId,
     }).select("id").maybeSingle();
     const recordId = (rec as { id?: string } | null)?.id ?? null;
+
+    // Claim a recording that finished before this record existed (the rep was
+    // still wrapping up when the conference recording webhook fired).
+    if (recordId && input.room && isAdminConfigured()) {
+      try {
+        const admin = createAdminClient();
+        const { data: pending } = await admin
+          .from("pending_recordings")
+          .select("recording_url")
+          .eq("room", input.room)
+          .maybeSingle();
+        const pendingUrl = (pending as { recording_url?: string } | null)?.recording_url;
+        if (pendingUrl) {
+          await admin
+            .from("call_records")
+            .update({ recording_url: pendingUrl })
+            .eq("id", recordId);
+          await admin.from("pending_recordings").delete().eq("room", input.room);
+        }
+      } catch {
+        /* best-effort */
+      }
+    }
 
     if (!input.outcome) return recordId;
 

@@ -83,10 +83,16 @@ export async function POST(req: Request) {
     if (conference) {
       const room = escapeXml(conference);
       // Record the whole conference from the rep's leg (exactly one per room).
+      // Pass the room back on the recording callback so /api/twilio/status can
+      // link the finished recording to this call record — a conference recording
+      // webhook carries the ConferenceSid, never the rep's CallSid.
       const base = getPublicBaseUrl(req);
+      const recordingCb = base
+        ? `${base}/api/twilio/status?room=${encodeURIComponent(conference)}`
+        : "";
       const recordAttr = record
-        ? base
-          ? ` record="record-from-start" recordingStatusCallback="${escapeXml(`${base}/api/twilio/status`)}"`
+        ? recordingCb
+          ? ` record="record-from-start" recordingStatusCallback="${escapeXml(recordingCb)}"`
           : ' record="record-from-start"'
         : "";
       return twiml(

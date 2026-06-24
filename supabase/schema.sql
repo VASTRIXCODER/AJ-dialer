@@ -672,3 +672,26 @@ create index if not exists appointments_approved_idx on public.appointments (org
 -- saved. The recording-status webhook then uses it to back-fill recording_url.
 alter table public.call_records add column if not exists call_sid text;
 create index if not exists call_records_call_sid_idx on public.call_records (call_sid) where call_sid is not null;
+
+-- ═════════════════════════════════════════════════════════════════════════════
+-- PART 6 — MANUAL CALL RECORDING LINKAGE  (idempotent; safe to re-run)
+--
+-- A manual (human) call is a Twilio CONFERENCE, so its recording-status webhook
+-- carries the ConferenceSid, NOT the rep's CallSid — matching by call_sid never
+-- works for these. Instead we tag the call record with its conference room name
+-- (`hc-<id>`) and the webhook passes the same room back, so the two always link.
+--
+-- Because the recording webhook can fire BEFORE the rep finishes wrap-up (i.e.
+-- before the call record exists), a recording that arrives early is parked in
+-- `pending_recordings` keyed by room and claimed when the record is written.
+-- ═════════════════════════════════════════════════════════════════════════════
+alter table public.call_records add column if not exists room text;
+create index if not exists call_records_room_idx on public.call_records (room) where room is not null;
+
+create table if not exists public.pending_recordings (
+  room          text primary key,
+  recording_url text not null,
+  created_at    timestamptz not null default now()
+);
+-- Service-role only (no policies) — written by the webhook, claimed on insert.
+alter table public.pending_recordings enable row level security;

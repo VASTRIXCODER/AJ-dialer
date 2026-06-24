@@ -35,27 +35,37 @@ export default async function MonitorPage({
     );
   }
 
-  const aiConfigured = isElevenLabsConfigured();
   const canListen = viewer.permissions.includes("monitor.listen");
   const canIntervene = viewer.permissions.includes("monitor.intervene");
+  // Org-level gate: a manual-only workspace (e.g. Donny) has no AI calls, so the
+  // entire AI live view — "Live AI calls" + "Recent AI calls" — is hidden, and
+  // the human monitor becomes the primary (always-on) view.
+  const aiDialerEnabled = viewer.org?.settings.features.aiDialer !== false;
+  const aiConfigured = isElevenLabsConfigured() && aiDialerEnabled;
 
   return (
     <PageContainer>
       <PageHeader
         title="Live Monitor"
-        description="Watch every call in real time — AI and human. Listen in, oversee the transcript, take over, or end and categorize it from one place."
+        description={
+          aiDialerEnabled
+            ? "Watch every call in real time — AI and human. Listen in, oversee the transcript, take over, or end and categorize it from one place."
+            : "Watch your reps' calls in real time. Listen in on a live call; completed calls with recordings and summaries live in Reports."
+        }
       />
 
-      {/* AI agent calls — the primary live view */}
-      <AiLiveMonitor
-        configured={aiConfigured}
-        initialCall={call ?? null}
-        canListen={canListen}
-        canIntervene={canIntervene}
-      />
+      {/* AI agent calls — only when the org actually uses the AI dialer */}
+      {aiConfigured && (
+        <AiLiveMonitor
+          configured={aiConfigured}
+          initialCall={call ?? null}
+          canListen={canListen}
+          canIntervene={canIntervene}
+        />
+      )}
 
-      {/* Human rep calls — appears only when a manual call is live */}
-      <HumanLiveMonitor canListen={canListen} />
+      {/* Human rep calls — primary (always shown) when there's no AI view */}
+      <HumanLiveMonitor canListen={canListen} primary={!aiConfigured} />
     </PageContainer>
   );
 }

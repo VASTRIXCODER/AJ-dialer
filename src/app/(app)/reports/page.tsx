@@ -29,6 +29,7 @@ import { PageContainer, PageHeader } from "@/components/shared/page-header";
 import { SectionCard } from "@/components/shared/section-card";
 import { Badge } from "@/components/ui/badge";
 import { getReportingData, getTeamLeaderboard } from "@/lib/db/metrics";
+import { getViewer } from "@/lib/org/membership";
 import { outcomeConfig } from "@/lib/status";
 import { formatCurrency, formatDuration, formatNumber, formatPercent } from "@/lib/utils";
 
@@ -50,7 +51,12 @@ export default async function ReportsPage() {
       scope,
     },
     { reps },
-  ] = await Promise.all([getReportingData(), getTeamLeaderboard()]);
+    viewer,
+  ] = await Promise.all([getReportingData(), getTeamLeaderboard(), getViewer()]);
+
+  // Manual-only orgs (e.g. Donny) have no AI calls, so drop the AI-vs-human
+  // split and the AI executive report — every call here is a human call.
+  const aiDialerEnabled = viewer.org?.settings.features.aiDialer !== false;
 
   if (metrics.totalCalls === 0 && recentCalls.length === 0) {
     return (
@@ -119,14 +125,16 @@ export default async function ReportsPage() {
         <MetricCard label="Avg talk time" value={formatDuration(metrics.avgCallLenSec)} icon={Clock} accent="warning" />
       </div>
 
-      {/* Funnel + channel split */}
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+      {/* Funnel + channel split (channel split only when AI is in play) */}
+      <div className={aiDialerEnabled ? "grid grid-cols-1 gap-4 lg:grid-cols-2" : "grid grid-cols-1 gap-4"}>
         <SectionCard title="Conversion funnel" description="Dials → connects → appointments">
           <ReportFunnel funnel={funnel} />
         </SectionCard>
-        <SectionCard title="AI vs human" description="Channel performance side by side">
-          <ChannelCompare channelStats={channelStats} />
-        </SectionCard>
+        {aiDialerEnabled && (
+          <SectionCard title="AI vs human" description="Channel performance side by side">
+            <ChannelCompare channelStats={channelStats} />
+          </SectionCard>
+        )}
       </div>
 
       {/* Trend + outcome mix */}
@@ -198,11 +206,15 @@ export default async function ReportsPage() {
         </SectionCard>
       </div>
 
-      <AiExecReport />
+      {aiDialerEnabled && <AiExecReport />}
 
       <SectionCard
         title="Recent calls"
-        description="Click any AI call for the full breakdown — transcript, summary, appointment & recording"
+        description={
+          aiDialerEnabled
+            ? "Click any call for the full breakdown — transcript, summary, appointment & recording"
+            : "Click any call for the full breakdown — summary, outcome & recording"
+        }
         bodyClassName="p-0"
       >
         <RecentCalls calls={recentCalls} />

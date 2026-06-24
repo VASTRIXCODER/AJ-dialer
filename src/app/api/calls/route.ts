@@ -16,6 +16,7 @@ export async function POST(req: Request) {
     durationSec?: number;
     outcome?: CallOutcome;
     callSid?: string;
+    room?: string;
   };
 
   const recordId = await insertCallRecord({
@@ -26,6 +27,7 @@ export async function POST(req: Request) {
     outcome: body.outcome,
     channel: "human",
     callSid: body.callSid ?? null,
+    room: body.room ?? null,
   });
 
   // Fire-and-forget: generate an AI summary from lead context + outcome and

@@ -54,6 +54,8 @@ export interface DialerState {
   queueIndex: number;
   error: string | null;
   callSid: string | null;
+  /** Conference room for the active manual call — links its recording. */
+  room: string | null;
   /** AI calling is the default; flip off for manual (human Twilio) dialing. */
   aiMode: boolean;
   aiCalls: AiLaunch[];
@@ -102,6 +104,7 @@ export function useDialer(queue: Lead[], aiConfigured = false) {
     queueIndex: 0,
     error: null,
     callSid: null,
+    room: null,
     aiMode: aiConfigured,
     aiCalls: [],
     aiCampaign: "idle",
@@ -509,6 +512,7 @@ export function useDialer(queue: Lead[], aiConfigured = false) {
         lastOutcome: null,
         error: null,
         callSid: null,
+        room: null,
       });
       setState((s) => ({ ...s, callsThisSession: s.callsThisSession + 1 }));
 
@@ -520,6 +524,8 @@ export function useDialer(queue: Lead[], aiConfigured = false) {
         .slice(2, 7)}`;
       humanIdRef.current = humanId;
       const room = `hc-${humanId}`;
+      // Persist the room so the disposition save can link the recording to it.
+      patch({ room });
       fetch("/api/calls/active", {
         method: "POST",
         headers: { "content-type": "application/json" },

@@ -151,6 +151,7 @@ export function DialerClient({
                     durationSec: state.durationSec,
                     outcome: o,
                     callSid: state.callSid,
+                    room: state.room,
                   }),
                 }).catch(() => {});
               }

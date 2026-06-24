@@ -4,6 +4,7 @@ import { Bot, PlayCircle, User } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { CallDashboard } from "@/components/monitor/call-dashboard";
+import { ManualCallDetail } from "@/components/reports/manual-call-detail";
 import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import type { RecentCall } from "@/lib/db/metrics";
@@ -11,12 +12,15 @@ import { outcomeConfig } from "@/lib/status";
 import { formatClock, formatDuration, initials } from "@/lib/utils";
 
 /**
- * Recent-calls table where each AI row opens the full per-call breakdown
- * (transcript, AI summary, booked appointment, recording, disposition).
+ * Recent-calls table where every row opens the full per-call breakdown: AI rows
+ * open the AI dashboard (transcript, summary, recording, disposition); manual
+ * rows open the human-call detail (summary, outcome, recording) — so both
+ * channels get the same depth in Reports.
  */
 export function RecentCalls({ calls }: { calls: RecentCall[] }) {
   const router = useRouter();
   const [openId, setOpenId] = useState<string | null>(null);
+  const [manualCall, setManualCall] = useState<RecentCall | null>(null);
 
   return (
     <>
@@ -35,18 +39,22 @@ export function RecentCalls({ calls }: { calls: RecentCall[] }) {
           <tbody className="divide-y divide-border">
             {calls.map((rec) => {
               const cfg = rec.outcome ? outcomeConfig[rec.outcome] : null;
-              const openable = Boolean(rec.conversationId);
+              const isAI = rec.channel === "ai";
+              // Every row is openable: AI → AI dashboard, manual → manual detail.
+              const openable = isAI ? Boolean(rec.conversationId) : true;
+              const open = () => {
+                if (isAI && rec.conversationId) setOpenId(rec.conversationId);
+                else if (!isAI) setManualCall(rec);
+              };
               const recordingHref = !rec.hasRecording
                 ? null
-                : rec.channel === "ai" && rec.conversationId
+                : isAI && rec.conversationId
                   ? `/api/elevenlabs/audio/${encodeURIComponent(rec.conversationId)}`
                   : rec.recordingUrl || null;
               return (
                 <tr
                   key={rec.id}
-                  onClick={
-                    openable ? () => setOpenId(rec.conversationId!) : undefined
-                  }
+                  onClick={openable ? open : undefined}
                   className={
                     "transition-colors hover:bg-muted/40" +
                     (openable ? " cursor-pointer" : "")
@@ -54,13 +62,9 @@ export function RecentCalls({ calls }: { calls: RecentCall[] }) {
                 >
                   <td className="px-5 py-3">
                     <div className="flex items-center gap-2">
-                      <Badge tone={rec.channel === "ai" ? "accent" : "neutral"} className="gap-1">
-                        {rec.channel === "ai" ? (
-                          <Bot className="h-3 w-3" />
-                        ) : (
-                          <User className="h-3 w-3" />
-                        )}
-                        {rec.channel === "ai" ? "AI" : "Manual"}
+                      <Badge tone={isAI ? "accent" : "neutral"} className="gap-1">
+                        {isAI ? <Bot className="h-3 w-3" /> : <User className="h-3 w-3" />}
+                        {isAI ? "AI" : "Manual"}
                       </Badge>
                       {rec.repName && (
                         <span className="flex items-center gap-1.5">
@@ -100,13 +104,7 @@ export function RecentCalls({ calls }: { calls: RecentCall[] }) {
                           Play
                         </a>
                       )}
-                      {openable ? (
-                        <span className="text-xs font-medium text-primary">View →</span>
-                      ) : (
-                        !recordingHref && (
-                          <span className="text-xs text-muted-foreground">—</span>
-                        )
-                      )}
+                      {openable && <span className="text-xs font-medium text-primary">View →</span>}
                     </div>
                   </td>
                 </tr>
@@ -123,6 +121,10 @@ export function RecentCalls({ calls }: { calls: RecentCall[] }) {
           onClose={() => setOpenId(null)}
           onChanged={() => router.refresh()}
         />
+      )}
+
+      {manualCall && (
+        <ManualCallDetail call={manualCall} onClose={() => setManualCall(null)} />
       )}
     </>
   );

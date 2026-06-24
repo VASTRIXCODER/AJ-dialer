@@ -51,13 +51,27 @@ export interface RecentCall {
   leadName: string;
   channel: "ai" | "human";
   repName?: string;
+  phone?: string;
   outcome: CallOutcome | null;
   durationSec: number;
   startedAt: string;
   recordingUrl?: string | null;
   conversationId?: string | null;
+  /** The AI/auto-generated executive summary, when one exists. */
+  summary?: string | null;
   hasSummary: boolean;
   hasRecording: boolean;
+}
+
+/**
+ * Turn a stored Twilio recording URL into our authenticated proxy path so the
+ * browser can play it (raw Twilio media is private and 401s). Leaves anything
+ * that isn't a Twilio recording URL (e.g. already-proxied paths) untouched.
+ */
+function toPlayableRecording(raw: string | null): string | null {
+  if (!raw) return null;
+  const m = /\/Recordings\/(RE[0-9a-f]{32})/i.exec(raw);
+  return m ? `/api/twilio/recording/${m[1]}` : raw;
 }
 
 export interface LiveCall {
@@ -160,7 +174,7 @@ export async function getReportingData(): Promise<ReportingData> {
       reader
         .from("call_records")
         .select(
-          "id,owner_id,outcome,duration_sec,channel,started_at,lead_name,conversation_id,recording_url,summary",
+          "id,owner_id,outcome,duration_sec,channel,started_at,lead_name,phone,conversation_id,recording_url,summary",
         )
         .eq(scopeCol, scopeVal)
         .order("started_at", { ascending: false })
@@ -301,8 +315,12 @@ export async function getReportingData(): Promise<ReportingData> {
     const recentCalls: RecentCall[] = calls.slice(0, supervisor ? 25 : 12).map((r, i) => {
       const outcome = outcomeOf(r);
       const channel = r.channel === "human" ? "human" : "ai";
-      const recordingUrl = (r.recording_url as string) ?? null;
+      const recordingUrl =
+        channel === "human"
+          ? toPlayableRecording((r.recording_url as string) ?? null)
+          : ((r.recording_url as string) ?? null);
       const conversationId = (r.conversation_id as string) ?? null;
+      const summary = (r.summary as string) ?? null;
       // A recording only exists when the call actually connected — no-answer /
       // voicemail / failed calls have none, so don't offer a dead "Play" link.
       const hasRecording =
@@ -314,12 +332,14 @@ export async function getReportingData(): Promise<ReportingData> {
         leadName: String(r.lead_name ?? "Homeowner"),
         channel,
         repName: supervisor ? nameById.get(String(r.owner_id)) || "Rep" : undefined,
+        phone: String(r.phone ?? ""),
         outcome,
         durationSec: Number(r.duration_sec ?? 0),
         startedAt: String(r.started_at ?? new Date().toISOString()),
         recordingUrl,
         conversationId,
-        hasSummary: Boolean(r.summary),
+        summary,
+        hasSummary: Boolean(summary),
         hasRecording,
       };
     });

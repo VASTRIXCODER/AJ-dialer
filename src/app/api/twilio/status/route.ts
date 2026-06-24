@@ -27,23 +27,34 @@ export async function POST(req: Request) {
   const callSid = String(form.get("CallSid") ?? "");
 
   // ── Recording complete: save URL to the matching call record ────────────────
-  if (recordingStatus === "completed" && recordingUrl && callSid && isAdminConfigured()) {
+  // Manual calls are conferences, so the webhook carries the room (passed on the
+  // callback URL) — match the record by room. If the record doesn't exist yet
+  // (the rep is still wrapping up), park the URL in pending_recordings; the
+  // insert claims it. We still try call_sid for any non-conference recordings.
+  if (recordingStatus === "completed" && recordingUrl && isAdminConfigured()) {
     try {
       const admin = createAdminClient();
-      // Match by the rep's call SID (written when the disposition is saved).
-      // Also try matching AI conference recordings via the ai_conversations table.
-      await Promise.all([
-        admin
+      const isHumanRoom = Boolean(room && room.startsWith("hc-"));
+      if (isHumanRoom) {
+        const { data: updated } = await admin
+          .from("call_records")
+          .update({ recording_url: recordingUrl })
+          .eq("room", room)
+          .is("recording_url", null)
+          .select("id");
+        // Record not written yet — park the recording so the insert can claim it.
+        if (!updated || updated.length === 0) {
+          await admin
+            .from("pending_recordings")
+            .upsert({ room, recording_url: recordingUrl }, { onConflict: "room" });
+        }
+      } else if (callSid) {
+        await admin
           .from("call_records")
           .update({ recording_url: recordingUrl })
           .eq("call_sid", callSid)
-          .is("recording_url", null),
-        admin
-          .from("call_records")
-          .update({ recording_url: recordingUrl })
-          .eq("conversation_id", url.searchParams.get("conversationId") ?? "")
-          .is("recording_url", null),
-      ]);
+          .is("recording_url", null);
+      }
     } catch {
       /* best-effort */
     }

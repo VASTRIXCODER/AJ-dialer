@@ -26,7 +26,15 @@ type HumanCall = {
  * being heard, and without any media relay. /api/twilio/listen authorizes the
  * join (permission + org) and returns the room + a signed token.
  */
-export function HumanLiveMonitor({ canListen = false }: { canListen?: boolean }) {
+export function HumanLiveMonitor({
+  canListen = false,
+  primary = false,
+}: {
+  canListen?: boolean;
+  /** When true this is the only live view (manual-only org) — always render,
+   *  showing an idle state instead of disappearing when no call is live. */
+  primary?: boolean;
+}) {
   const [calls, setCalls] = useState<HumanCall[]>([]);
   const [now, setNow] = useState(() => Date.now());
   const [listeningId, setListeningId] = useState<string | null>(null);
@@ -151,24 +159,44 @@ export function HumanLiveMonitor({ canListen = false }: { canListen?: boolean })
     }
   }
 
-  if (calls.length === 0) return null;
+  if (calls.length === 0 && !primary) return null;
 
   return (
     <section className="space-y-3 border-t border-border pt-6">
       <div className="flex items-center gap-2">
         <h3 className="text-lg font-semibold tracking-tight">Live rep calls</h3>
-        <span className="flex items-center gap-1.5 rounded-full bg-success/10 px-2 py-0.5 text-[11px] font-bold uppercase tracking-wide text-success">
-          <span className="relative flex h-2 w-2">
-            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-success opacity-60" />
-            <span className="relative inline-flex h-2 w-2 rounded-full bg-success" />
+        {calls.length > 0 ? (
+          <span className="flex items-center gap-1.5 rounded-full bg-success/10 px-2 py-0.5 text-[11px] font-bold uppercase tracking-wide text-success">
+            <span className="relative flex h-2 w-2">
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-success opacity-60" />
+              <span className="relative inline-flex h-2 w-2 rounded-full bg-success" />
+            </span>
+            {calls.length} live
           </span>
-          {calls.length} live
-        </span>
+        ) : (
+          <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] font-bold uppercase tracking-wide text-muted-foreground">
+            Idle
+          </span>
+        )}
       </div>
 
       {err && <p className="text-xs font-medium text-danger">{err}</p>}
 
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+      {calls.length === 0 ? (
+        <Card className="flex flex-col items-center justify-center gap-3 p-10 text-center">
+          <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-muted text-muted-foreground">
+            <Phone className="h-6 w-6" />
+          </span>
+          <div>
+            <p className="font-semibold">No live calls right now</p>
+            <p className="mt-0.5 text-sm text-muted-foreground">
+              Active rep calls appear here in real time. Completed calls — with
+              recordings and full summaries — live in Reports.
+            </p>
+          </div>
+        </Card>
+      ) : (
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
         {calls.map((c) => {
           const dur = Math.min(
             Math.max(0, Math.floor((now - c.startedAt) / 1000)),
@@ -241,7 +269,8 @@ export function HumanLiveMonitor({ canListen = false }: { canListen?: boolean })
             </Card>
           );
         })}
-      </div>
+        </div>
+      )}
     </section>
   );
 }
