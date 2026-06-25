@@ -593,20 +593,15 @@ export function useDialer(queue: Lead[], aiConfigured = false) {
           params: { Conference: room, record: "true", MonitorId: humanId },
         });
 
-        if (leads.length === 1) {
-          // Single call: the rep is live the instant they join the conference —
-          // flip on the SDK's own accept event (client-side, 100% reliable, no
-          // dependence on serverless state). The homeowner joins as they answer.
-          attachCallHandlers(call, () => connectLine(leads[0]));
-          return;
-        }
-
-        // Parallel dial: poll Twilio for the first homeowner to answer (the
-        // winner) — serverless-safe (queries Twilio, not in-memory state) — to
-        // pick the connected line and release the losing legs.
+        // The rep's browser is now in the conference, but the CALL is NOT
+        // "connected" until the CUSTOMER actually answers. Poll Twilio for the
+        // answered leg — works for single AND parallel — and flip to connected
+        // only then. So the dialer + Live Monitor stay on "Dialing / Ringing"
+        // until pickup (never a premature "connected"), the talk timer starts at
+        // the real answer, and a no-answer cleanly wraps the attempt up.
         attachCallHandlers(call);
         stopPoll();
-        pollRef.current = setInterval(async () => {
+        const pollAnswered = async () => {
           try {
             const a = await fetch("/api/twilio/answered", {
               method: "POST",
@@ -618,11 +613,10 @@ export function useDialer(queue: Lead[], aiConfigured = false) {
               done?: boolean;
             };
             if (answeredLeadId) {
-              const lead = leads.find((l) => l.id === answeredLeadId);
-              if (lead) connectLine(lead);
-              else stopPoll();
+              const lead = leads.find((l) => l.id === answeredLeadId) ?? leads[0];
+              connectLine(lead); // connectLine stops the poll + starts the timer
             } else if (done) {
-              // No one answered — release the rep from the empty conference.
+              // Nobody answered — release the rep from the empty conference.
               stopPoll();
               try {
                 callRef.current?.disconnect();
@@ -633,7 +627,8 @@ export function useDialer(queue: Lead[], aiConfigured = false) {
           } catch {
             /* keep polling */
           }
-        }, 2000);
+        };
+        pollRef.current = setInterval(pollAnswered, 2000);
       } catch {
         clearHumanPresence();
         patch({ error: "Call failed to start.", status: "idle", lines: [] });
