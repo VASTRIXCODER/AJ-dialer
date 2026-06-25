@@ -381,9 +381,13 @@ export function LeadsTable({
                       </div>
                     </td>
                     <td className="px-4 py-3 text-muted-foreground">
-                      <div className="min-w-0">
-                        {l.address && <p className="truncate">{l.address}</p>}
-                        <p className="truncate">
+                      <div className="min-w-0 max-w-[280px]">
+                        {l.address && (
+                          <p className="break-words" title={l.address}>
+                            {l.address}
+                          </p>
+                        )}
+                        <p className="break-words">
                           {[l.city, l.state].filter(Boolean).join(", ")}
                           {l.zip ? ` ${l.zip}` : ""}
                           {!l.city && !l.state && !l.zip && !l.address ? "—" : ""}

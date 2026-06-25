@@ -32,6 +32,8 @@ interface ColumnMapping {
   lastNameCol: number;
   fullNameCol: number;
   addressCol: number;
+  /** Secondary address line / unit / apt / suite column (-1 if none). */
+  address2Col: number;
   cityCol: number;
   stateCol: number;
   zipCol: number;
@@ -51,6 +53,7 @@ const MAPPING_SCHEMA = {
     lastNameCol: { type: "integer" },
     fullNameCol: { type: "integer" },
     addressCol: { type: "integer" },
+    address2Col: { type: "integer" },
     cityCol: { type: "integer" },
     stateCol: { type: "integer" },
     zipCol: { type: "integer" },
@@ -80,7 +83,8 @@ const MAPPING_SCHEMA = {
   },
   required: [
     "hasHeader", "firstNameCol", "lastNameCol", "fullNameCol", "addressCol",
-    "cityCol", "stateCol", "zipCol", "utilityBillCol", "emailCols", "phoneCols", "extras",
+    "address2Col", "cityCol", "stateCol", "zipCol", "utilityBillCol", "emailCols",
+    "phoneCols", "extras",
   ],
 } as const;
 
@@ -95,15 +99,26 @@ const SYSTEM =
   "(usually 11–13 digits), a ZIP code (5 digits), a date, a dollar amount, or a year. " +
   "Look at the actual values, not just the position; pick the columns whose values " +
   "look like real phone numbers.\n" +
+  "ADDRESS: capture the COMPLETE street address. `addressCol` is the main street " +
+  "line (house number + street), or a single combined column that already includes " +
+  "city/state/zip. If the street is split across a second column — 'Address Line 2', " +
+  "a unit / apt / suite, or a separate house-number vs street-name pair — put that " +
+  "second column in `address2Col` (else -1) so the full address is preserved. Map " +
+  "city / state / zip to their own columns when they're separate; set them to -1 " +
+  "when the address is one combined column. Prefer the column with the fullest " +
+  "address; never pick a partial one if a more complete column exists.\n" +
+  "NAME: set firstNameCol/lastNameCol when separate, otherwise fullNameCol for a " +
+  "single full-name column.\n" +
   "List all email columns. Put other useful person data (gender, age or date of birth, " +
-  "marital status, net worth, income, occupation, owner type, mailing address) into " +
+  "marital status, net worth, income, occupation, owner type) into " +
   "`extras` with a short human label for each. Never guess a column that isn't clearly " +
   "that field.\n\n" +
   "Return a JSON object with EXACTLY these keys:\n" +
   "{\n" +
   '  "hasHeader": boolean,\n' +
   '  "firstNameCol": integer, "lastNameCol": integer, "fullNameCol": integer,\n' +
-  '  "addressCol": integer, "cityCol": integer, "stateCol": integer, "zipCol": integer,\n' +
+  '  "addressCol": integer, "address2Col": integer, "cityCol": integer,\n' +
+  '  "stateCol": integer, "zipCol": integer,\n' +
   '  "utilityBillCol": integer,\n' +
   '  "emailCols": integer[],\n' +
   '  "phoneCols": [{ "numberCol": integer, "dncCol": integer }],\n' +
@@ -200,12 +215,19 @@ function applyMapping(grid: string[][], m: ColumnMapping): ParseResult {
     const billRaw = cell(row, m.utilityBillCol).replace(/[^0-9.]/g, "");
     const bill = billRaw ? Number(billRaw) : NaN;
 
+    // Combine the street line + any unit / line-2 column into one full address
+    // so multi-column addresses are never truncated to just the street number.
+    const address =
+      [cell(row, m.addressCol), cell(row, m.address2Col)]
+        .filter(Boolean)
+        .join(", ") || undefined;
+
     const lead: ParsedLead = {
       firstName,
       lastName,
       phone,
       email: emails[0] || undefined,
-      address: cell(row, m.addressCol) || undefined,
+      address,
       city: cell(row, m.cityCol) || undefined,
       state: cell(row, m.stateCol) || undefined,
       zip: cell(row, m.zipCol) || undefined,

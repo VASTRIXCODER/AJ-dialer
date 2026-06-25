@@ -92,11 +92,14 @@ export function digitCount(v: string): number {
   return v.replace(/\D/g, "").length;
 }
 
-type Field = keyof ParsedLead | "name" | null;
+type Field = keyof ParsedLead | "name" | "address2" | null;
 
 /**
  * Map a column header to a lead field. Phone is checked FIRST and matches a wide
- * range of names so a customer's column never silently fails to map.
+ * range of names so a customer's column never silently fails to map. Address is
+ * matched generously — line 1, line 2, unit/apt/suite, and combined "full /
+ * mailing / property / service address" columns are all captured, and line 2 is
+ * checked BEFORE the generic address so it isn't swallowed.
  */
 export function mapHeader(h: string): Field {
   const n = h.toLowerCase().replace(/[^a-z0-9]/g, "");
@@ -114,13 +117,30 @@ export function mapHeader(h: string): Field {
     return "lastName";
   if (
     n === "name" || n === "fullname" || n === "homeowner" || n === "customer" ||
-    n === "customername" || n === "contact" || n === "contactname" || n === "leadname"
+    n === "customername" || n === "contact" || n === "contactname" || n === "leadname" ||
+    n === "owner" || n === "ownername" || n === "resident"
   )
     return "name";
   if (n.includes("email") || n === "mail") return "email";
-  if (n.includes("street") || n === "address" || n === "address1" || n === "streetaddress" || n.includes("addr"))
+  // Secondary address line / unit — must come BEFORE the generic address match.
+  if (
+    n === "address2" || n === "addr2" || n === "addressline2" ||
+    n === "line2" || n === "addr2line" || n === "unit" || n === "unitnumber" ||
+    n === "unitno" || n === "apt" || n === "apartment" || n === "aptnumber" ||
+    n === "aptno" || n === "suite" || n === "ste" || n === "secondaryaddress"
+  )
+    return "address2";
+  // Primary street address — line 1 or a combined/full address column.
+  if (
+    n.includes("street") || n === "address" || n === "address1" ||
+    n === "addressline1" || n === "line1" || n.includes("streetaddress") ||
+    n.includes("propertyaddress") || n.includes("mailingaddress") ||
+    n.includes("serviceaddress") || n.includes("siteaddress") ||
+    n.includes("homeaddress") || n.includes("fulladdress") ||
+    n === "house" || n === "housenumber" || n.includes("addr")
+  )
     return "address";
-  if (n === "city" || n === "town") return "city";
+  if (n === "city" || n === "town" || n === "municipality") return "city";
   if (n === "state" || n === "st" || n.includes("province") || n === "region") return "state";
   if (n.includes("zip") || n.includes("postal") || n === "postcode") return "zip";
   if (
@@ -211,6 +231,8 @@ export function rowsToLeads(grid: string[][]): ParseResult {
   for (let r = 1; r < grid.length; r++) {
     const cells = grid[r];
     const lead: ParsedLead = { firstName: "", lastName: "", phone: "" };
+    let addr1 = "";
+    let addr2 = "";
     header.forEach((key, c) => {
       const val = (cells[c] ?? "").trim();
       if (!key || !val) return;
@@ -225,10 +247,19 @@ export function rowsToLeads(grid: string[][]): ParseResult {
         // Only accept a genuine phone here; a mis-mapped column (carrier, money)
         // falls through to per-row recovery below.
         lead.phone = looksLikePhone(val) ? normalizePhone(val) : "";
+      } else if (key === "address") {
+        // Multiple address columns are concatenated, not overwritten, so a split
+        // "street" + "address" never drops half the address.
+        addr1 = addr1 && addr1 !== val ? `${addr1}, ${val}` : val;
+      } else if (key === "address2") {
+        addr2 = addr2 && addr2 !== val ? `${addr2}, ${val}` : val;
       } else {
         lead[key] = val;
       }
     });
+    // Combine the full street address (line 1 + unit / line 2) so nothing is lost.
+    const fullAddr = [addr1, addr2].filter(Boolean).join(", ");
+    if (fullAddr) lead.address = fullAddr;
     // Guarantee a dialable phone if one exists ANYWHERE in the row — covers
     // mis-mapped/missing phone columns and headerless broker exports.
     if (!isValidPhone(lead.phone)) {
