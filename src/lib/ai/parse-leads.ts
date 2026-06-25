@@ -1,6 +1,11 @@
 import "server-only";
 
-import type { ParsedLead, ParseResult } from "@/lib/leads/csv";
+import {
+  looksLikePhone,
+  recoverPhone,
+  type ParsedLead,
+  type ParseResult,
+} from "@/lib/leads/csv";
 import { isValidPhone, normalizePhone } from "@/lib/utils";
 import { generateJSON, generateJSONLoose, isAIConfigured } from "./claude";
 
@@ -84,10 +89,16 @@ const SYSTEM =
   "of a CSV (as JSON arrays of cell strings). The file may or may not have a header " +
   "row. Use 0-based column indices, and -1 for any field that is not present. Identify " +
   "EVERY phone-number column (in priority order) and, for each, the index of an " +
-  "adjacent Do-Not-Call/status column if one exists (else -1). List all email columns. " +
-  "Put other useful person data (gender, age or date of birth, marital status, net " +
-  "worth, income, occupation, owner type, mailing address) into `extras` with a short " +
-  "human label for each. Never guess a column that isn't clearly that field.\n\n" +
+  "adjacent Do-Not-Call/status column if one exists (else -1).\n" +
+  "A PHONE column holds 10-digit US phone numbers — optionally with a country code, " +
+  "spaces, dashes, parentheses, or a leading +1. It is NOT a record/account ID " +
+  "(usually 11–13 digits), a ZIP code (5 digits), a date, a dollar amount, or a year. " +
+  "Look at the actual values, not just the position; pick the columns whose values " +
+  "look like real phone numbers.\n" +
+  "List all email columns. Put other useful person data (gender, age or date of birth, " +
+  "marital status, net worth, income, occupation, owner type, mailing address) into " +
+  "`extras` with a short human label for each. Never guess a column that isn't clearly " +
+  "that field.\n\n" +
   "Return a JSON object with EXACTLY these keys:\n" +
   "{\n" +
   '  "hasHeader": boolean,\n' +
@@ -154,16 +165,23 @@ function applyMapping(grid: string[][], m: ColumnMapping): ParseResult {
 
     // Phones: normalize each, prefer the first dialable number NOT flagged DNC.
     const phones = m.phoneCols
-      .map((p) => ({
-        raw: cell(row, p.numberCol),
-        e164: normalizePhone(cell(row, p.numberCol)),
-        dnc: p.dncCol >= 0 && isDnc(cell(row, p.dncCol)),
-      }))
+      .map((p) => {
+        const raw = cell(row, p.numberCol);
+        return {
+          raw,
+          // Guard against a mis-mapped money/ID column producing a fake phone.
+          e164: looksLikePhone(raw) ? normalizePhone(raw) : "",
+          dnc: p.dncCol >= 0 && isDnc(cell(row, p.dncCol)),
+        };
+      })
       .filter((p) => p.raw);
     const callable = phones.filter((p) => p.e164 && !p.dnc);
     const anyValid = phones.filter((p) => p.e164);
-    const primary = callable[0] ?? anyValid[0] ?? phones[0];
-    const phone = primary ? primary.e164 || primary.raw : "";
+    const primary = callable[0] ?? anyValid[0];
+    // Recovery net: if the AI's phone columns didn't yield a dialable number for
+    // this row (wrong mapping, blank cell), find the first valid phone anywhere
+    // in the row so a number is never lost.
+    const phone = primary ? primary.e164 : recoverPhone(row);
 
     const emails = m.emailCols.map((i) => cell(row, i)).filter(Boolean);
 
@@ -196,7 +214,7 @@ function applyMapping(grid: string[][], m: ColumnMapping): ParseResult {
     if (!Number.isNaN(bill) && bill > 0) lead.utilityBill = bill;
 
     if (!lead.phone && !firstName && !lastName) continue;
-    if (lead.phone && !isValidPhone(lead.phone)) noPhone++;
+    if (!isValidPhone(lead.phone)) noPhone++;
     out.push(lead);
   }
 

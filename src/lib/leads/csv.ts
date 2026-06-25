@@ -136,22 +136,60 @@ export function mapHeader(h: string): Field {
   return null;
 }
 
-/** Find the phone column from the data when no header mapped one. */
+/**
+ * Is this cell plausibly a PHONE number (vs. a value that merely has ~10 digits)?
+ * Crucial for recovery: a money band like "$50,000-74,999" strips to 5000074999
+ * (10 digits) and would otherwise be mistaken for a phone. We reject money,
+ * percentages, thousands-grouped numbers, numeric ranges, and dates BEFORE the
+ * E.164 check — while still accepting formatted phones like "(214) 403-9949".
+ */
+export function looksLikePhone(raw: string): boolean {
+  const t = (raw ?? "").trim();
+  if (!t) return false;
+  if (/[$%,]/.test(t)) return false; // money / percent / thousands separators
+  if (/\d{4,}\s*[-–]\s*\d{4,}/.test(t)) return false; // range of two big numbers
+  if (/^\d{1,2}\/\d{1,4}(\/\d{2,4})?$/.test(t)) return false; // dates (07/1958, 1/2/85)
+  return isValidPhone(t);
+}
+
+/**
+ * Universal per-row phone recovery: scan every cell in a row and return the
+ * first one that genuinely looks like a phone (normalized to E.164). The safety
+ * net that makes extraction robust regardless of column mapping — if a phone
+ * exists ANYWHERE in the row, we find it, while ignoring IDs, ZIPs, dates, and
+ * money. An optional skip set excludes columns already consumed.
+ */
+export function recoverPhone(cells: string[], skip?: Set<number>): string {
+  for (let c = 0; c < cells.length; c++) {
+    if (skip?.has(c)) continue;
+    const v = (cells[c] ?? "").trim();
+    if (looksLikePhone(v)) return normalizePhone(v);
+  }
+  return "";
+}
+
+/**
+ * Find the phone column from the data when no header mapped one. Scores each
+ * unmapped column by how many of its values are VALID phone numbers (not merely
+ * 10+ digits) — so data-broker ID columns (12–13 digits) and ZIPs (5 digits)
+ * are rejected, and the real 10/11-digit phone column wins.
+ */
 function sniffPhoneColumn(grid: string[][], header: Field[]): number {
-  const width = header.length;
+  const width = grid.reduce((m, r) => Math.max(m, r.length), 0);
+  const limit = Math.min(grid.length, 80); // sample enough rows to be confident
   let best = -1;
   let bestHits = 0;
   for (let c = 0; c < width; c++) {
-    if (header[c]) continue;
+    if (header[c]) continue; // don't steal an already-mapped column
     let hits = 0;
     let seen = 0;
-    for (let r = 1; r < grid.length; r++) {
-      const v = (grid[r][c] ?? "").trim();
+    for (let r = 1; r < limit; r++) {
+      const v = (grid[r]?.[c] ?? "").trim();
       if (!v) continue;
       seen++;
-      if (digitCount(v) >= 10 && digitCount(v) <= 15) hits++;
+      if (looksLikePhone(v)) hits++;
     }
-    if (seen > 0 && hits >= bestHits && hits / seen >= 0.5 && hits > 0) {
+    if (seen > 0 && hits / seen >= 0.5 && hits > bestHits) {
       bestHits = hits;
       best = c;
     }
@@ -184,17 +222,27 @@ export function rowsToLeads(grid: string[][]): ParseResult {
         const num = Number(val.replace(/[^0-9.]/g, ""));
         if (!Number.isNaN(num) && num > 0) lead[key] = num;
       } else if (key === "phone") {
-        lead.phone = normalizePhone(val) || val;
+        // Only accept a genuine phone here; a mis-mapped column (carrier, money)
+        // falls through to per-row recovery below.
+        lead.phone = looksLikePhone(val) ? normalizePhone(val) : "";
       } else {
         lead[key] = val;
       }
     });
+    // Guarantee a dialable phone if one exists ANYWHERE in the row — covers
+    // mis-mapped/missing phone columns and headerless broker exports.
+    if (!isValidPhone(lead.phone)) {
+      const recovered = recoverPhone(cells);
+      if (recovered) lead.phone = recovered;
+    }
     const hasName = Boolean(lead.firstName || lead.lastName);
     if (!lead.phone && !hasName) continue;
-    if (lead.phone && !isValidPhone(lead.phone)) noPhone++;
+    if (!isValidPhone(lead.phone)) noPhone++;
     out.push(lead);
   }
-  return { leads: out, noPhone, sawPhoneColumn };
+  // We "saw" phones if a column mapped OR recovery found dialable numbers.
+  const recoveredAny = out.some((l) => isValidPhone(l.phone));
+  return { leads: out, noPhone, sawPhoneColumn: sawPhoneColumn || recoveredAny };
 }
 
 /**
