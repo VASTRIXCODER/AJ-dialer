@@ -50,7 +50,10 @@ export function Sidebar({
       items: g.items.filter(
         (it) =>
           (!it.permission || permissions.includes(it.permission)) &&
-          (!it.feature || !features || features[it.feature] !== false),
+          (!it.feature || !features || features[it.feature] !== false) &&
+          (!it.anyFeature ||
+            !features ||
+            it.anyFeature.some((f) => features[f] !== false)),
       ),
     }))
     .filter((g) => g.items.length > 0);

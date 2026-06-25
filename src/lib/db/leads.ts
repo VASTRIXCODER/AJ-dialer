@@ -67,7 +67,12 @@ export async function getLeads(): Promise<Lead[]> {
       .maybeSingle();
     const orgId = prof?.org_id ? String(prof.org_id) : null;
     const base = supabase.from("leads").select("*");
-    const scoped = orgId ? base.eq("org_id", orgId) : base.eq("owner_id", user.id);
+    // Match the whole org pool OR the viewer's own leads. The owner_id fallback
+    // is essential: leads imported before org_id was backfilled have a null
+    // org_id, and an org-only filter would hide them from their importer.
+    const scoped = orgId
+      ? base.or(`org_id.eq.${orgId},owner_id.eq.${user.id}`)
+      : base.eq("owner_id", user.id);
     const { data, error } = await scoped.order("ai_score", {
       ascending: false,
       nullsFirst: false,

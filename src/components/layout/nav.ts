@@ -25,6 +25,8 @@ export interface NavItem {
   permission?: Permission;
   /** When set, the item only shows if the org has this feature enabled. */
   feature?: keyof OrgFeatures;
+  /** When set, the item shows if the org has ANY of these features enabled. */
+  anyFeature?: (keyof OrgFeatures)[];
 }
 
 export interface NavGroup {
@@ -41,7 +43,8 @@ export const navGroups: NavGroup[] = [
         label: "Power Dialer",
         href: "/dialer",
         icon: PhoneCall,
-        feature: "aiDialer",
+        // Show for any org that can dial — manual-only (e.g. Donny) or AI.
+        anyFeature: ["manualDialer", "aiDialer"],
         ...(DEMO_DATA ? { badge: "Live" } : {}),
       },
       { label: "Leads", href: "/leads", icon: Users, feature: "leads" },
