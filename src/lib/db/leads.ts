@@ -147,6 +147,48 @@ export async function getLeadById(id: string): Promise<Lead | null> {
   }
 }
 
+const last10 = (s: string) => (s || "").replace(/\D/g, "").slice(-10);
+
+/**
+ * Look up a lead by id with the service-role client (no user session needed).
+ * Used by the post-call pipeline (webhook), where the session client would see
+ * nothing under RLS and the lead context would be lost.
+ */
+export async function getLeadByIdAdmin(id: string): Promise<Lead | null> {
+  if (!isAdminConfigured() || !UUID.test(id)) return null;
+  try {
+    const admin = createAdminClient();
+    const { data } = await admin
+      .from("leads")
+      .select("*")
+      .eq("id", id)
+      .maybeSingle();
+    return data ? rowToLead(data as Row) : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Resolve a lead by phone (last 10 digits) with the service-role client. */
+export async function getLeadByPhoneAdmin(phone: string): Promise<Lead | null> {
+  const digits = last10(phone);
+  if (!isAdminConfigured() || digits.length < 10) return null;
+  try {
+    const admin = createAdminClient();
+    const { data } = await admin
+      .from("leads")
+      .select("*")
+      .ilike("phone", `%${digits}%`)
+      .limit(5);
+    const hit = (data ?? []).find(
+      (r) => last10(String((r as Row).phone)) === digits,
+    );
+    return hit ? rowToLead(hit as Row) : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function getDialQueue(): Promise<Lead[]> {
   const all = await getLeads();
   // Show every lead with a plausibly-dialable number (10+ digits) so imported

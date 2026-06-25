@@ -4,8 +4,12 @@ import { getAICall, updateAICall } from "./ai-call-store";
 import { readCall, resolveAppointment } from "./ai/appointment";
 import { analyzeConversation } from "./ai/services";
 import { dispositionBlurb, unconnectedOutcome } from "./call-disposition";
-import { getLeadById } from "./db/leads";
-import { completeAIConversation, enrichLeadFromAI } from "./db/records";
+import { getLeadById, getLeadByIdAdmin, getLeadByPhoneAdmin } from "./db/leads";
+import {
+  completeAIConversation,
+  enrichLeadFromAI,
+  getConversationLeadRef,
+} from "./db/records";
 import type { CallOutcome, Lead } from "./types";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -69,8 +73,19 @@ export async function finalizeAIConversation(input: {
   const connected = didConnect(turns, input.status ?? "");
 
   const tracked = getAICall(conversationId);
-  const lead =
-    input.lead ?? (tracked?.leadId ? await getLeadById(tracked.leadId) : null);
+  // Resolve the lead robustly. The webhook has no user session, so we must use
+  // the service-role client (getLeadById would see nothing under RLS). Order:
+  // explicit input → in-memory tracked ref → the seeded conversation row → phone.
+  let lead: Lead | null = input.lead ?? null;
+  if (!lead) {
+    const ref = tracked?.leadId
+      ? { leadId: tracked.leadId, phone: tracked.phone ?? "" }
+      : await getConversationLeadRef(conversationId);
+    if (ref?.leadId) {
+      lead = (await getLeadByIdAdmin(ref.leadId)) ?? (await getLeadById(ref.leadId));
+    }
+    if (!lead && ref?.phone) lead = await getLeadByPhoneAdmin(ref.phone);
+  }
 
   let summary: string;
   let outcome: CallOutcome;

@@ -189,6 +189,32 @@ export async function insertCallRecord(input: {
   }
 }
 
+/**
+ * Read the lead_id + phone seeded for a conversation, using the service-role
+ * client (no session — webhook path). Lets the post-call pipeline recover the
+ * lead for analysis even when the in-memory store was lost to instance churn.
+ */
+export async function getConversationLeadRef(
+  conversationId: string,
+): Promise<{ leadId: string | null; phone: string } | null> {
+  if (!isAdminConfigured()) return null;
+  try {
+    const admin = createAdminClient();
+    const { data } = await admin
+      .from("ai_conversations")
+      .select("lead_id, phone")
+      .eq("conversation_id", conversationId)
+      .maybeSingle();
+    if (!data) return null;
+    return {
+      leadId: (data.lead_id as string) ?? null,
+      phone: (data.phone as string) ?? "",
+    };
+  } catch {
+    return null;
+  }
+}
+
 // ── AI conversation: seed at call placement (user session present) ───────────
 export async function seedAIConversation(input: {
   conversationId: string;
