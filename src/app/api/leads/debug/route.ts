@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { getDialQueue, getLeads } from "@/lib/db/leads";
 import { getViewer } from "@/lib/org/membership";
+import { isAdminConfigured } from "@/lib/supabase/admin";
+import { isSupabaseConfigured } from "@/lib/supabase/config";
 
 export const dynamic = "force-dynamic";
 
@@ -11,6 +13,7 @@ export const dynamic = "force-dynamic";
  *   dialable      — leads the Power Dialer queue shows (getDialQueue)
  *   statusCounts  — why leads might be excluded (only new/no_answer/callback dial)
  *   sample        — first few with phone digit counts (need 10+ to dial)
+ *   serviceRole   — whether cross-account sharing can bypass RLS
  */
 export async function GET() {
   const [viewer, all, dial] = await Promise.all([
@@ -25,6 +28,9 @@ export async function GET() {
     if (l.phone.replace(/\D/g, "").length < 10) noPhone++;
   }
   return NextResponse.json({
+    supabaseConfigured: isSupabaseConfigured(),
+    serviceRoleConfigured: isAdminConfigured(),
+    signedIn: Boolean(viewer.user),
     orgId: viewer.org?.id ?? null,
     orgName: viewer.org?.name ?? null,
     totalVisible: all.length,
