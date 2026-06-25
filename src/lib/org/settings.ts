@@ -54,7 +54,15 @@ export interface OrgSettings {
     retryAttempts: number;
     retryDelayMin: number;
     respectDnc: boolean;
+    /** Primary outbound caller ID (used when the rotation pool is empty). */
     callerId: string;
+    /**
+     * Caller-ID rotation pool — a list of E.164 numbers the dialer cycles
+     * through for BOTH manual and AI calls. Empty = always use `callerId`/env.
+     */
+    callerIds: string[];
+    /** Switch to the next pool number after this many calls (min 1). */
+    rotateEvery: number;
   };
   hours: {
     startHour: number; // 0–23 local to the org timezone
@@ -121,6 +129,8 @@ export const DEFAULT_ORG_SETTINGS: OrgSettings = {
     retryDelayMin: 60,
     respectDnc: true,
     callerId: "",
+    callerIds: [],
+    rotateEvery: 1,
   },
   hours: { startHour: 8, endHour: 20, days: [1, 2, 3, 4, 5] },
   ai: {

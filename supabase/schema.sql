@@ -749,3 +749,33 @@ create policy "leads delete" on public.leads for delete using (
   public.app_is_superadmin() or (public.app_is_active() and (
     owner_id = auth.uid()
     or (org_id is not null and public.app_is_org_supervisor(org_id)))));
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- PART 9 — Caller-ID rotation
+--
+-- A shared, atomic per-org counter so manual + AI calls cycle through the org's
+-- pool of outbound numbers together (the pool + cadence live in
+-- organizations.settings.dialing). app_next_dial_seq() returns the next value
+-- atomically, so concurrent power-dials never collide on the same sequence.
+-- ─────────────────────────────────────────────────────────────────────────────
+alter table public.organizations
+  add column if not exists dial_seq bigint not null default 0;
+
+create or replace function public.app_next_dial_seq(p_org uuid)
+returns bigint
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare v bigint;
+begin
+  update public.organizations
+     set dial_seq = coalesce(dial_seq, 0) + 1
+   where id = p_org
+   returning dial_seq into v;
+  return coalesce(v, 0);
+end;
+$$;
+
+grant execute on function public.app_next_dial_seq(uuid)
+  to anon, authenticated, service_role;

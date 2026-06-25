@@ -11,6 +11,7 @@ import {
   isElevenLabsConfigured,
   placeOutboundCall,
 } from "@/lib/elevenlabs";
+import { nextCallerId } from "@/lib/dialer/rotation-server";
 import { getViewer } from "@/lib/org/membership";
 import { resolveDialerAccess } from "@/lib/org/settings";
 import type { Lead } from "@/lib/types";
@@ -44,6 +45,8 @@ async function bridgeIntoConference(opts: {
   toNumber: string;
   record: boolean;
   base: string | null;
+  /** Rotated caller ID for the homeowner leg (falls back to the env caller ID). */
+  from?: string;
 }): Promise<string | null> {
   const client = await getRestClient();
   if (!client) return null;
@@ -58,7 +61,7 @@ async function bridgeIntoConference(opts: {
   // their hangup ends the conference.
   const customer = await client.calls.create({
     to: opts.toNumber,
-    from: twilioConfig.callerId,
+    from: opts.from || twilioConfig.callerId,
     twiml: xml(
       `<Dial><Conference startConferenceOnEnter="true" endConferenceOnExit="true" beep="false"${recAttr}>${escapeXml(opts.room)}</Conference></Dial>`,
     ),
@@ -184,6 +187,10 @@ export async function POST(req: Request) {
 
   const agent = resolveAgentConfig(viewer.org);
 
+  // Caller-ID rotation: one number per call, from the org's shared pool. The
+  // same counter drives manual + AI so the whole org rotates together.
+  const rotatedFrom = await nextCallerId(viewer.org?.id, viewer.org?.settings);
+
   // Bridge mode: route the agent through our Twilio number so the call lives in
   // a conference anyone can listen to. The agent dials the bridge; we move it
   // into the room and dial the homeowner in. Needs Twilio REST + a caller ID.
@@ -198,6 +205,9 @@ export async function POST(req: Request) {
       firstMessage: agent.firstMessage,
       language: agent.language,
       voiceSpeed: agent.voiceSpeed,
+      // In bridge mode the homeowner sees the customer-leg caller ID (set below),
+      // so only rotate the ElevenLabs number for DIRECT (non-bridge) calls.
+      agentPhoneNumberId: bridge ? undefined : rotatedFrom || undefined,
     });
 
     if (!result.conversationId) {
@@ -219,6 +229,7 @@ export async function POST(req: Request) {
           toNumber,
           record: true,
           base: getPublicBaseUrl(req),
+          from: rotatedFrom || undefined,
         });
         customerCallSid = sid ?? undefined;
       } catch {

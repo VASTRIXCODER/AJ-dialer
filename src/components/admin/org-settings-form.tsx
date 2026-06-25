@@ -391,6 +391,38 @@ export function OrgSettingsForm({
             value={dialing.retryDelayMin}
             onChange={(n) => setDialing({ ...dialing, retryDelayMin: n })}
           />
+          <NumberField
+            label="Rotate caller ID every (calls)"
+            value={dialing.rotateEvery}
+            onChange={(n) => setDialing({ ...dialing, rotateEvery: Math.max(1, n) })}
+          />
+        </div>
+        <div className="mt-4">
+          <Field label="Caller ID rotation pool">
+            <Textarea
+              value={(dialing.callerIds ?? []).join("\n")}
+              placeholder={"+13466456704\n+1…  (one number per line)"}
+              onChange={(e) =>
+                setDialing({
+                  ...dialing,
+                  callerIds: e.target.value
+                    .split(/[\n,]/)
+                    .map((s) => s.trim())
+                    .filter(Boolean),
+                })
+              }
+            />
+          </Field>
+          <p className="mt-1.5 text-xs text-muted-foreground">
+            One E.164 number per line. The dialer cycles through these for both
+            manual and AI calls, switching every{" "}
+            <span className="font-semibold tabular">
+              {Math.max(1, dialing.rotateEvery || 1)}
+            </span>{" "}
+            call{(dialing.rotateEvery || 1) === 1 ? "" : "s"}. Leave empty to always
+            use the single Caller ID above. Each number must be one you own in
+            Twilio (and, for AI calls, imported into ElevenLabs).
+          </p>
         </div>
         <div className="mt-3 space-y-3">
           <Toggle

@@ -169,34 +169,46 @@ export async function listPhoneNumbers(): Promise<ElevenLabsPhoneNumber[]> {
     []) as ElevenLabsPhoneNumber[];
 }
 
-let _cachedPhoneNumberId: string | null = null;
+const _phoneIdCache = new Map<string, string>();
 
 /**
- * Resolve the agent phone-number ID. Accepts EITHER the ElevenLabs phone number
- * ID (used as-is) OR a raw E.164 number — which we look up against the account's
- * imported numbers. This makes outbound calls work regardless of which value was
- * pasted into ELEVENLABS_AGENT_PHONE_NUMBER_ID (a common 404 source).
+ * Resolve a phone identifier to an ElevenLabs phone_number_id. Accepts EITHER an
+ * ElevenLabs ID (used as-is) OR a raw E.164 number — looked up against the
+ * account's imported numbers and cached by digits. Returns "" when an E.164
+ * number isn't imported, so rotation callers can fall back to the default number.
  */
-export async function resolveAgentPhoneNumberId(): Promise<string> {
-  const configured = elevenLabsConfig.agentPhoneNumberId.trim();
-  const looksLikeNumber = /^\+?[\d\s().-]{7,}$/.test(configured);
-  if (!looksLikeNumber) return configured; // already an ID (e.g. phnum_…)
-  if (_cachedPhoneNumberId) return _cachedPhoneNumberId;
+export async function resolvePhoneNumberId(value: string): Promise<string> {
+  const v = (value ?? "").trim();
+  if (!v) return "";
+  const looksLikeNumber = /^\+?[\d\s().-]{7,}$/.test(v);
+  if (!looksLikeNumber) return v; // already an ID (e.g. phnum_…)
+  const want = v.replace(/\D/g, "");
+  const cached = _phoneIdCache.get(want);
+  if (cached) return cached;
   try {
     const numbers = await listPhoneNumbers();
-    const want = configured.replace(/\D/g, "");
     const match = numbers.find(
       (p) => (p.phone_number ?? "").replace(/\D/g, "") === want,
     );
     const id = match?.phone_number_id ?? match?.id;
     if (id) {
-      _cachedPhoneNumberId = id;
+      _phoneIdCache.set(want, id);
       return id;
     }
   } catch {
-    /* fall through to the configured value */
+    /* fall through */
   }
-  return configured;
+  return "";
+}
+
+/**
+ * Resolve the DEFAULT agent phone-number ID from env. Accepts an ID or a raw
+ * E.164 number (a common 404 source), falling back to the raw configured value
+ * if a lookup can't resolve it.
+ */
+export async function resolveAgentPhoneNumberId(): Promise<string> {
+  const configured = elevenLabsConfig.agentPhoneNumberId.trim();
+  return (await resolvePhoneNumberId(configured)) || configured;
 }
 
 /**
@@ -213,6 +225,12 @@ export async function placeOutboundCall(opts: {
   language?: string;
   /** TTS speed 0.7–1.2 (lower = slower/calmer). */
   voiceSpeed?: number;
+  /**
+   * Outbound caller number for THIS call (rotation). An ElevenLabs phone-number
+   * ID or a raw E.164 we resolve to one. Falls back to the env default number
+   * when omitted or not importable into ElevenLabs.
+   */
+  agentPhoneNumberId?: string;
 }): Promise<OutboundCallResult> {
   const initData: Record<string, unknown> = {};
   if (opts.dynamicVariables) initData.dynamic_variables = opts.dynamicVariables;
@@ -232,11 +250,18 @@ export async function placeOutboundCall(opts: {
     if (Object.keys(override).length) initData.conversation_config_override = override;
   }
 
+  // Rotation: use the per-call number when it resolves to an imported ElevenLabs
+  // number, otherwise fall back to the configured default.
+  const agentPhoneNumberId =
+    (opts.agentPhoneNumberId
+      ? await resolvePhoneNumberId(opts.agentPhoneNumberId)
+      : "") || (await resolveAgentPhoneNumberId());
+
   const res = await el("/v1/convai/twilio/outbound-call", {
     method: "POST",
     body: JSON.stringify({
       agent_id: elevenLabsConfig.agentId,
-      agent_phone_number_id: await resolveAgentPhoneNumberId(),
+      agent_phone_number_id: agentPhoneNumberId,
       to_number: opts.toNumber,
       ...(Object.keys(initData).length
         ? { conversation_initiation_client_data: initData }

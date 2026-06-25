@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 import { registerRoom } from "@/lib/call-registry";
+import { nextCallerId } from "@/lib/dialer/rotation-server";
+import { getViewer } from "@/lib/org/membership";
 import {
   getPublicBaseUrl,
   getRestClient,
@@ -69,6 +71,12 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Twilio unavailable" }, { status: 503 });
   }
 
+  // Resolve the caller's org so manual legs rotate through the same caller-ID
+  // pool (and shared counter) as AI calls.
+  const viewer = await getViewer();
+  const orgId = viewer.org?.id ?? null;
+  const orgSettings = viewer.org?.settings ?? null;
+
   // Only attach a StatusCallback when we have a publicly-reachable origin —
   // an unreachable/relative URL makes Twilio reject the request (21609 / 11200).
   // The status callback drives parallel auto-release; without it the call still
@@ -84,9 +92,11 @@ export async function POST(req: Request) {
   const placed = await Promise.all(
     leads.map(async (leg) => {
       try {
+        // One rotated caller ID per leg (atomic counter → distinct seq each).
+        const from = (await nextCallerId(orgId, orgSettings)) || twilioConfig.callerId;
         const call = await client.calls.create({
           to: leg.to,
-          from: twilioConfig.callerId,
+          from,
           twiml: conferenceTwiml,
           timeout: 30,
           ...(base
