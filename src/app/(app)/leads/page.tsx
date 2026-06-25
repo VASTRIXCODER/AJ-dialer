@@ -8,13 +8,20 @@ import { Button } from "@/components/ui/button";
 import { CalendarCheck, Sparkles, Zap } from "lucide-react";
 import { getLeads } from "@/lib/db/leads";
 import { getCampaigns } from "@/lib/db/pipeline";
+import { getViewer } from "@/lib/org/membership";
 import { formatNumber } from "@/lib/utils";
 
 export const metadata = { title: "Leads" };
 export const dynamic = "force-dynamic";
 
 export default async function LeadsPage() {
-  const [leads, campaigns] = await Promise.all([getLeads(), getCampaigns()]);
+  const [leads, campaigns, viewer] = await Promise.all([
+    getLeads(),
+    getCampaigns(),
+    getViewer(),
+  ]);
+  // Lead management (delete) is for managers+ (anyone who can import leads).
+  const canManage = viewer.permissions.includes("leads.import");
   const campaignList = campaigns
     .filter((c) => c.status !== "completed")
     .map((c) => ({ id: c.id, name: c.name }));
@@ -66,7 +73,7 @@ export default async function LeadsPage() {
         <MetricCard label="Avg AI score" value={String(avgScore)} icon={Sparkles} accent="warning" />
       </div>
 
-      <LeadsTable leads={leads} campaigns={campaignList} />
+      <LeadsTable leads={leads} campaigns={campaignList} canManage={canManage} />
     </PageContainer>
   );
 }

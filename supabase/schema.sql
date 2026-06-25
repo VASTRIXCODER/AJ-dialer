@@ -695,3 +695,57 @@ create table if not exists public.pending_recordings (
 );
 -- Service-role only (no policies) — written by the webhook, claimed on insert.
 alter table public.pending_recordings enable row level security;
+
+-- ═════════════════════════════════════════════════════════════════════════════
+-- PART 7 — SHARED ORG LEAD POOL  (idempotent; safe to re-run)
+--
+-- Leads become a single shared pool per organization: every active member sees
+-- and works the same leads (not just their own imports). Reads + updates are
+-- open to any active org member (so any rep can dial and disposition any lead);
+-- deletes are limited to supervisors (manager/admin/owner). Inserts stay
+-- owner-stamped (you create leads you own; the org_id trigger shares them).
+-- ═════════════════════════════════════════════════════════════════════════════
+
+-- Active member (ANY role) of the given org?
+create or replace function public.app_is_org_member(target_org uuid)
+returns boolean language sql stable security definer set search_path = public as $$
+  select exists (
+    select 1 from public.organization_members m
+    where m.user_id = auth.uid()
+      and m.org_id = target_org
+      and m.status = 'active'
+  );
+$$;
+
+-- Replace the owner-only leads policies with shared-pool policies.
+drop policy if exists "leads owner"  on public.leads;
+drop policy if exists "leads read"   on public.leads;
+drop policy if exists "leads write"  on public.leads;
+drop policy if exists "leads insert" on public.leads;
+drop policy if exists "leads update" on public.leads;
+drop policy if exists "leads delete" on public.leads;
+
+-- Read: any active member of the lead's org (shared pool), the owner, or superadmin.
+create policy "leads read" on public.leads for select using (
+  public.app_is_superadmin() or (public.app_is_active() and (
+    owner_id = auth.uid()
+    or (org_id is not null and public.app_is_org_member(org_id)))));
+
+-- Insert: you create leads you own (the stamp_org_id trigger fills org_id).
+create policy "leads insert" on public.leads for insert with check (
+  public.app_is_superadmin() or (public.app_is_active() and owner_id = auth.uid()));
+
+-- Update: any active org member (so any rep can disposition any shared lead).
+create policy "leads update" on public.leads for update
+  using (public.app_is_superadmin() or (public.app_is_active() and (
+    owner_id = auth.uid()
+    or (org_id is not null and public.app_is_org_member(org_id)))))
+  with check (public.app_is_superadmin() or (public.app_is_active() and (
+    owner_id = auth.uid()
+    or (org_id is not null and public.app_is_org_member(org_id)))));
+
+-- Delete: the owner, or a supervisor (manager/admin/owner) of the lead's org.
+create policy "leads delete" on public.leads for delete using (
+  public.app_is_superadmin() or (public.app_is_active() and (
+    owner_id = auth.uid()
+    or (org_id is not null and public.app_is_org_supervisor(org_id)))));

@@ -12,6 +12,8 @@ import { normalizePhone } from "../utils";
 
 const DIALABLE: LeadStatus[] = ["new", "no_answer", "callback"];
 
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 type Row = Record<string, unknown>;
 
 function rowToLead(r: Row): Lead {
@@ -55,15 +57,55 @@ export async function getLeads(): Promise<Lead[]> {
       data: { user },
     } = await supabase.auth.getUser();
     if (!user) return [];
-    const { data, error } = await supabase
-      .from("leads")
-      .select("*")
-      .eq("owner_id", user.id)
-      .order("ai_score", { ascending: false, nullsFirst: false });
+    // Shared org pool: read every lead in the viewer's organization, not just
+    // the ones they personally imported. RLS lets any active org member read the
+    // org's leads; solo users (no org) fall back to their own leads.
+    const { data: prof } = await supabase
+      .from("profiles")
+      .select("org_id")
+      .eq("id", user.id)
+      .maybeSingle();
+    const orgId = prof?.org_id ? String(prof.org_id) : null;
+    const base = supabase.from("leads").select("*");
+    const scoped = orgId ? base.eq("org_id", orgId) : base.eq("owner_id", user.id);
+    const { data, error } = await scoped.order("ai_score", {
+      ascending: false,
+      nullsFirst: false,
+    });
     if (error || !data) return [];
     return data.map(rowToLead);
   } catch {
     return [];
+  }
+}
+
+/**
+ * Delete leads by id. Scoped + authorized by RLS (a member can only delete leads
+ * in their own org, and only supervisors may delete). Returns how many were
+ * removed. Their call records are kept (lead_id is set null) so reports stay intact.
+ */
+export async function deleteLeads(
+  leadIds: string[],
+): Promise<{ deleted: number; error?: string }> {
+  if (!isSupabaseConfigured())
+    return { deleted: 0, error: "Connect Supabase to manage leads." };
+  try {
+    const supabase = await createClient();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) return { deleted: 0, error: "You must be signed in." };
+    const ids = leadIds.filter((id) => UUID.test(id));
+    if (!ids.length) return { deleted: 0, error: "No valid leads selected." };
+    const { data, error } = await supabase
+      .from("leads")
+      .delete()
+      .in("id", ids)
+      .select("id");
+    if (error) return { deleted: 0, error: error.message };
+    return { deleted: data?.length ?? 0 };
+  } catch (e) {
+    return { deleted: 0, error: e instanceof Error ? e.message : "Delete failed." };
   }
 }
 

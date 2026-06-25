@@ -7,6 +7,7 @@ import {
   Loader2,
   PhoneCall,
   Search,
+  Trash2,
   Waves,
 } from "lucide-react";
 import Link from "next/link";
@@ -31,9 +32,12 @@ const FILTERS: Array<{ value: LeadStatus | "all"; label: string }> = [
 export function LeadsTable({
   leads,
   campaigns = [],
+  canManage = false,
 }: {
   leads: Lead[];
   campaigns?: { id: string; name: string }[];
+  /** Whether the viewer can delete leads (managers+). Gates the delete UI. */
+  canManage?: boolean;
 }) {
   const router = useRouter();
   const [query, setQuery] = useState("");
@@ -42,6 +46,12 @@ export function LeadsTable({
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [assignTo, setAssignTo] = useState("");
   const [busy, setBusy] = useState(false);
+  // Ids queued for deletion, awaiting confirmation (individual = 1, bulk = many).
+  const [pendingDelete, setPendingDelete] = useState<string[] | null>(null);
+  const [err, setErr] = useState("");
+
+  // Checkboxes are useful for bulk-assign (campaigns) and bulk-delete (canManage).
+  const selectable = canManage || campaigns.length > 0;
 
   const campaignName = useMemo(
     () => new Map(campaigns.map((c) => [c.id, c.name])),
@@ -95,6 +105,36 @@ export function LeadsTable({
       setBusy(false);
     }
   }
+
+  async function confirmDelete() {
+    if (!pendingDelete?.length) return;
+    setBusy(true);
+    setErr("");
+    try {
+      const res = await fetch("/api/leads/delete", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ leadIds: pendingDelete }),
+      });
+      const json = (await res.json().catch(() => ({}))) as {
+        deleted?: number;
+        error?: string;
+      };
+      if (!res.ok || json.error) {
+        setErr(json.error ?? "Couldn’t delete those leads.");
+        return;
+      }
+      setSelected(new Set());
+      setPendingDelete(null);
+      router.refresh();
+    } catch {
+      setErr("Network error while deleting.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const deleteCount = pendingDelete?.length ?? 0;
 
   return (
     <div className="space-y-4">
@@ -150,44 +190,93 @@ export function LeadsTable({
         </div>
       </div>
 
-      {/* Bulk-assign bar */}
-      {selected.size > 0 && campaigns.length > 0 && (
+      {/* Delete confirmation — takes over the action bar while pending */}
+      {pendingDelete && (
+        <div className="flex flex-wrap items-center gap-2 rounded-xl border border-danger/40 bg-danger/10 px-3 py-2">
+          <Trash2 className="h-4 w-4 text-danger" />
+          <span className="text-sm font-semibold text-danger">
+            Delete {deleteCount} lead{deleteCount === 1 ? "" : "s"}? This can’t be undone.
+          </span>
+          <div className="ml-auto flex items-center gap-2">
+            <Button
+              variant="danger"
+              size="sm"
+              className="gap-1.5"
+              disabled={busy}
+              onClick={confirmDelete}
+            >
+              {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+              Delete
+            </Button>
+            <button
+              type="button"
+              onClick={() => {
+                setPendingDelete(null);
+                setErr("");
+              }}
+              className="text-xs font-medium text-muted-foreground hover:text-foreground"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Bulk action bar */}
+      {!pendingDelete && selected.size > 0 && (
         <div className="flex flex-wrap items-center gap-2 rounded-xl border border-primary/30 bg-primary-soft/40 px-3 py-2">
           <span className="text-sm font-semibold text-primary">{selected.size} selected</span>
-          <span className="text-sm text-muted-foreground">Assign to</span>
-          <select
-            value={assignTo}
-            onChange={(e) => setAssignTo(e.target.value)}
-            className="h-8 rounded-lg border border-border bg-background px-2 text-sm focus-visible:border-primary/50 focus-visible:outline-none"
-          >
-            <option value="">Choose…</option>
-            {campaigns.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name}
-              </option>
-            ))}
-            <option value="none">— Remove from campaign —</option>
-          </select>
-          <Button size="sm" className="gap-1.5" disabled={!assignTo || busy} onClick={assign}>
-            {busy && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-            Apply
-          </Button>
+          {campaigns.length > 0 && (
+            <>
+              <span className="text-sm text-muted-foreground">Assign to</span>
+              <select
+                value={assignTo}
+                onChange={(e) => setAssignTo(e.target.value)}
+                className="h-8 rounded-lg border border-border bg-background px-2 text-sm focus-visible:border-primary/50 focus-visible:outline-none"
+              >
+                <option value="">Choose…</option>
+                {campaigns.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
+                ))}
+                <option value="none">— Remove from campaign —</option>
+              </select>
+              <Button size="sm" className="gap-1.5" disabled={!assignTo || busy} onClick={assign}>
+                {busy && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                Apply
+              </Button>
+            </>
+          )}
+          {canManage && (
+            <Button
+              variant="danger"
+              size="sm"
+              className="gap-1.5"
+              onClick={() => setPendingDelete([...selected])}
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+              Delete
+            </Button>
+          )}
           <button
             type="button"
             onClick={() => setSelected(new Set())}
-            className="text-xs font-medium text-muted-foreground hover:text-foreground"
+            className="ml-auto text-xs font-medium text-muted-foreground hover:text-foreground"
           >
             Clear
           </button>
         </div>
       )}
 
+      {err && <p className="text-sm font-medium text-danger">{err}</p>}
+
       <div className="overflow-hidden rounded-2xl border border-border/60 surface-glass">
         <div className="overflow-x-auto">
           <table className="w-full min-w-[900px] text-sm">
             <thead>
               <tr className="border-b border-border/70 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                {campaigns.length > 0 && (
+                {selectable && (
                   <th className="px-4 py-3">
                     <input
                       type="checkbox"
@@ -221,7 +310,7 @@ export function LeadsTable({
                     transition={{ delay: Math.min(i, 14) * 0.025, duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
                     className={cn("group transition-colors hover:bg-muted/50", isSel && "bg-primary-soft/30")}
                   >
-                    {campaigns.length > 0 && (
+                    {selectable && (
                       <td className="px-4 py-3">
                         <input
                           type="checkbox"
@@ -296,18 +385,30 @@ export function LeadsTable({
                         {l.aiScore ?? "—"}
                       </span>
                     </td>
-                    <td className="px-4 py-3 text-right">
-                      <Link
-                        href="/dialer"
-                        className={buttonVariants({
-                          size: "sm",
-                          variant: "ghost",
-                          className: "gap-1.5 opacity-0 group-hover:opacity-100",
-                        })}
-                      >
-                        <PhoneCall className="h-3.5 w-3.5" />
-                        Call
-                      </Link>
+                    <td className="px-4 py-3">
+                      <div className="flex items-center justify-end gap-1">
+                        <Link
+                          href="/dialer"
+                          className={buttonVariants({
+                            size: "sm",
+                            variant: "ghost",
+                            className: "gap-1.5 opacity-0 group-hover:opacity-100",
+                          })}
+                        >
+                          <PhoneCall className="h-3.5 w-3.5" />
+                          Call
+                        </Link>
+                        {canManage && (
+                          <button
+                            type="button"
+                            onClick={() => setPendingDelete([l.id])}
+                            aria-label={`Delete ${name}`}
+                            className="flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground opacity-0 transition-colors hover:bg-danger/10 hover:text-danger group-hover:opacity-100"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        )}
+                      </div>
                     </td>
                   </motion.tr>
                 );
