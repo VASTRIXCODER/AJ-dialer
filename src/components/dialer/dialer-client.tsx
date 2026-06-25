@@ -1,10 +1,10 @@
 "use client";
 
-import { AlertTriangle, Megaphone, Settings } from "lucide-react";
+import { AlertTriangle, Loader2, Megaphone, Settings, Users } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
 import { Card } from "@/components/ui/card";
-import { buttonVariants } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import type { AiLockReason } from "@/lib/org/settings";
 import type { Lead } from "@/lib/types";
 import { useDialer } from "@/lib/use-dialer";
@@ -13,7 +13,7 @@ import { LeadPanel } from "./lead-panel";
 import { QualifyPanel } from "./qualify-panel";
 
 export function DialerClient({
-  queue,
+  queue: initialQueue,
   campaigns = [],
   initialCampaign = "",
   voiceConfigured,
@@ -34,6 +34,39 @@ export function DialerClient({
   /** Why AI is locked, to tailor the message ("premium" plan vs "role"). */
   aiLockReason?: AiLockReason;
 }) {
+  // The queue is held in state so the "Load leads" button can pull the latest
+  // shared pool into the dialer on demand (the page ships an initial copy).
+  const [queue, setQueue] = useState<Lead[]>(initialQueue);
+  const [loadingLeads, setLoadingLeads] = useState(false);
+  const [loadMsg, setLoadMsg] = useState<string | null>(null);
+
+  async function loadLeads() {
+    setLoadingLeads(true);
+    setLoadMsg(null);
+    try {
+      const res = await fetch("/api/leads/queue", { cache: "no-store" });
+      const json = (await res.json().catch(() => ({}))) as {
+        leads?: Lead[];
+        total?: number;
+      };
+      const leads = Array.isArray(json.leads) ? json.leads : [];
+      setQueue(leads);
+      if (leads.length) {
+        setLoadMsg(`Loaded ${leads.length} lead${leads.length === 1 ? "" : "s"} into the dialer.`);
+      } else if ((json.total ?? 0) > 0) {
+        setLoadMsg(
+          `Found ${json.total} leads, but none are ready to dial yet — they need a New / No-answer / Callback status and a valid phone number.`,
+        );
+      } else {
+        setLoadMsg("No leads found — import a CSV on the Leads tab first.");
+      }
+    } catch {
+      setLoadMsg("Couldn’t load leads. Check your connection and try again.");
+    } finally {
+      setLoadingLeads(false);
+    }
+  }
+
   // Filter the dialing queue to a campaign (client-side; the page ships the full
   // queue). Only changeable between calls so the active session isn't disrupted.
   const [campaignFilter, setCampaignFilter] = useState(
@@ -85,30 +118,50 @@ export function DialerClient({
         </Card>
       )}
 
-      {campaigns.length > 0 && (
-        <div className="flex flex-wrap items-center gap-2.5">
-          <span className="flex items-center gap-1.5 text-sm font-medium text-muted-foreground">
-            <Megaphone className="h-4 w-4" />
-            Campaign
-          </span>
-          <select
-            value={campaignFilter}
-            onChange={(e) => setCampaignFilter(e.target.value)}
-            disabled={state.status !== "idle"}
-            className="h-9 rounded-xl border border-border bg-background/60 px-2.5 text-sm font-medium transition-colors focus-visible:border-primary/50 focus-visible:outline-none disabled:opacity-50"
-          >
-            <option value="">All leads</option>
-            {campaigns.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name}
-              </option>
-            ))}
-          </select>
-          <span className="text-xs text-muted-foreground">
-            {queueForDialer.length} lead{queueForDialer.length === 1 ? "" : "s"} queued
-          </span>
-        </div>
-      )}
+      {/* Load leads into the dialer on demand + campaign filter */}
+      <div className="flex flex-wrap items-center gap-2.5">
+        <Button
+          size="sm"
+          variant="outline"
+          className="gap-2"
+          onClick={loadLeads}
+          disabled={loadingLeads || state.status !== "idle"}
+        >
+          {loadingLeads ? (
+            <Loader2 className="h-4 w-4 animate-spin" />
+          ) : (
+            <Users className="h-4 w-4" />
+          )}
+          Load leads
+        </Button>
+        <span className="text-xs font-medium text-muted-foreground tabular">
+          {queueForDialer.length} lead{queueForDialer.length === 1 ? "" : "s"} ready to dial
+        </span>
+        {campaigns.length > 0 && (
+          <>
+            <span className="ml-1 flex items-center gap-1.5 text-sm font-medium text-muted-foreground">
+              <Megaphone className="h-4 w-4" />
+              Campaign
+            </span>
+            <select
+              value={campaignFilter}
+              onChange={(e) => setCampaignFilter(e.target.value)}
+              disabled={state.status !== "idle"}
+              className="h-9 rounded-xl border border-border bg-background/60 px-2.5 text-sm font-medium transition-colors focus-visible:border-primary/50 focus-visible:outline-none disabled:opacity-50"
+            >
+              <option value="">All leads</option>
+              {campaigns.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
+            </select>
+          </>
+        )}
+        {loadMsg && (
+          <span className="basis-full text-xs text-muted-foreground">{loadMsg}</span>
+        )}
+      </div>
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-12">
         <Card className="overflow-hidden lg:col-span-3">
@@ -122,6 +175,8 @@ export function DialerClient({
             onNext={dialer.nextLead}
             onSelect={dialer.selectLead}
             navDisabled={state.status !== "idle"}
+            onLoadLeads={loadLeads}
+            loadingLeads={loadingLeads}
           />
         </Card>
 

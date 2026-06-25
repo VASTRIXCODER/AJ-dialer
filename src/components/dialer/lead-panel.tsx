@@ -6,6 +6,7 @@ import {
   Car,
   ChevronLeft,
   ChevronRight,
+  Loader2,
   Mail,
   MapPin,
   Phone,
@@ -19,6 +20,7 @@ import {
 import { useMemo, useState } from "react";
 import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Portal } from "@/components/ui/portal";
 import { Ring } from "@/components/ui/progress";
 import type { Lead } from "@/lib/types";
@@ -34,6 +36,8 @@ export function LeadPanel({
   onNext,
   onSelect,
   navDisabled = false,
+  onLoadLeads,
+  loadingLeads = false,
 }: {
   lead: Lead | null;
   upNext: Lead[];
@@ -44,6 +48,9 @@ export function LeadPanel({
   onNext?: () => void;
   onSelect?: (leadId: string) => void;
   navDisabled?: boolean;
+  /** Pull the shared lead pool into the dialer on demand. */
+  onLoadLeads?: () => void;
+  loadingLeads?: boolean;
 }) {
   const [browseOpen, setBrowseOpen] = useState(false);
 
@@ -90,7 +97,25 @@ export function LeadPanel({
             <Phone className="h-6 w-6 text-muted-foreground" />
           </div>
           <p className="text-sm text-muted-foreground">
-            No lead selected. Import leads or dial a specific number.
+            No leads loaded yet. Pull your shared lead list into the dialer to start.
+          </p>
+          {onLoadLeads && (
+            <Button
+              size="sm"
+              className="gap-2"
+              onClick={onLoadLeads}
+              disabled={loadingLeads}
+            >
+              {loadingLeads ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Users className="h-4 w-4" />
+              )}
+              Load leads
+            </Button>
+          )}
+          <p className="text-xs text-muted-foreground">
+            …or dial a specific number from the keypad.
           </p>
         </div>
       ) : (
