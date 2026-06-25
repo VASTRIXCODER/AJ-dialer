@@ -11,6 +11,8 @@
 // agreed on the call.
 // ─────────────────────────────────────────────────────────────────────────────
 
+import type { CallOutcome } from "../types";
+
 const WEEKDAYS = [
   "sunday",
   "monday",
@@ -200,7 +202,8 @@ interface DayHit {
 }
 
 /** The LAST day reference in the text, resolved to an offset from today. */
-function findDay(text: string, todayDow: number): DayHit | null {
+function findDay(text: string, today: Parts): DayHit | null {
+  const todayDow = today.dow;
   const hits: DayHit[] = [];
 
   for (const m of text.matchAll(/\bday after tomorrow\b/gi))
@@ -242,9 +245,45 @@ function findDay(text: string, todayDow: number): DayHit | null {
     if (n > 0 && n < 60) hits.push({ idx: m.index ?? 0, off: n });
   }
 
+  // Explicit calendar dates: "June 29", "June 29th", "29 June", "29th of June",
+  // "6/29". Resolved to the next occurrence on/after today.
+  const MON_RE = "(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*";
+  const monIdx = (name: string) =>
+    MON_SHORT.findIndex((s) => s.toLowerCase() === name.toLowerCase().slice(0, 3));
+  for (const m of text.matchAll(
+    new RegExp(`\\b${MON_RE}\\s+(\\d{1,2})(?:st|nd|rd|th)?\\b`, "gi"),
+  )) {
+    const off = dateOffset(today, monIdx(m[1]) + 1, Number(m[2]));
+    if (off != null) hits.push({ idx: m.index ?? 0, off });
+  }
+  for (const m of text.matchAll(
+    new RegExp(`\\b(\\d{1,2})(?:st|nd|rd|th)?\\s+(?:of\\s+)?${MON_RE}\\b`, "gi"),
+  )) {
+    const off = dateOffset(today, monIdx(m[2]) + 1, Number(m[1]));
+    if (off != null) hits.push({ idx: m.index ?? 0, off });
+  }
+  for (const m of text.matchAll(/\b(\d{1,2})\/(\d{1,2})(?:\/\d{2,4})?\b/g)) {
+    const off = dateOffset(today, Number(m[1]), Number(m[2]));
+    if (off != null) hits.push({ idx: m.index ?? 0, off });
+  }
+
   if (!hits.length) return null;
   hits.sort((a, b) => a.idx - b.idx);
   return hits[hits.length - 1];
+}
+
+/** Days from `today` to the next occurrence of month/day (this year or next). */
+function dateOffset(today: Parts, month: number, day: number): number | null {
+  if (month < 1 || month > 12 || day < 1 || day > 31) return null;
+  const todayUTC = Date.UTC(today.year, today.month - 1, today.day);
+  let year = today.year;
+  let tUTC = Date.UTC(year, month - 1, day);
+  if (tUTC < todayUTC) {
+    year++;
+    tUTC = Date.UTC(year, month - 1, day);
+  }
+  const off = Math.round((tUTC - todayUTC) / 86400000);
+  return off >= 0 && off < 400 ? off : null;
 }
 
 export interface ResolvedAppointment {
@@ -278,7 +317,7 @@ export function resolveAppointment(
   const today = partsInTz(now, tz);
   const time = findTime(transcript);
   if (!time) return empty; // no concrete time → nothing bookable
-  const day = findDay(transcript, today.dow);
+  const day = findDay(transcript, today);
 
   // Day: use the explicit reference; otherwise infer (today if the time is still
   // ahead of now, else tomorrow).
@@ -339,5 +378,126 @@ export function currentDateContext(
     tomorrowDay: WD_LABEL[tom.dow],
     tomorrowDate: longDate(tom.y, tom.m, tom.d, tom.dow),
     iso: `${t.year}-${pad(t.month)}-${pad(t.day)}`,
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Speaker-aware transcript reading.
+//
+// The disposition MUST be based on what the HOMEOWNER said, not on the agent's
+// own filler. The agent says "perfect", "great", and — crucially — "you're all
+// set" in her close; reading those as the customer's words is exactly what made a
+// booked appointment get filed as "not interested". So we split the transcript by
+// speaker and read intent from each side correctly: declines/DNC/callbacks come
+// from the customer; the booking confirmation comes from the agent. This runs in
+// BOTH demo mode (the simulator) and live mode (a deterministic safety net over
+// the model's answer), so an obvious booking is never mis-filed.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** A transcript split into concatenated customer text vs agent text. */
+export function splitSpeakers(transcript: string): { customer: string; agent: string } {
+  const customer: string[] = [];
+  const agent: string[] = [];
+  for (const line of (transcript || "").split("\n")) {
+    const m = line.match(/^\s*([a-z_]+)\s*:\s*(.*)$/i);
+    if (!m) continue; // unlabeled line → ignore (never let it pollute either side)
+    const role = m[1].toLowerCase();
+    const isAgent =
+      role.startsWith("agent") ||
+      role.startsWith("assistant") ||
+      role === "ai" ||
+      role === "bot" ||
+      role === "emily";
+    (isAgent ? agent : customer).push(m[2]);
+  }
+  return { customer: customer.join("  "), agent: agent.join("  ") };
+}
+
+export interface CallRead {
+  dnc: boolean;
+  declined: boolean;
+  callback: boolean;
+  accepted: boolean;
+  /** The agent confirmed a booking (she only does this AFTER the customer agrees). */
+  agentConfirmedBooking: boolean;
+  /** A real appointment was agreed. */
+  booked: boolean;
+  appointment: ResolvedAppointment;
+  outcome: CallOutcome;
+  sentiment: "positive" | "neutral" | "negative";
+}
+
+/**
+ * Deterministically read a connected call's disposition from its transcript,
+ * speaker-aware. Used by the demo simulator and as a high-precision override in
+ * the live pipeline (a clear booking/DNC in the words beats a mislabeled result).
+ */
+export function readCall(
+  transcript: string,
+  now: Date = new Date(),
+  tz?: string,
+): CallRead {
+  const { customer, agent } = splitSpeakers(transcript);
+  const c = ` ${customer.toLowerCase()} `;
+  const a = ` ${agent.toLowerCase()} `;
+
+  const dnc =
+    /\b(do not call|don'?t call (?:me|us)(?: again)?|take me off|remove me from|stop calling me|lose my number|unsubscribe)\b/.test(
+      c,
+    );
+  // Hard, unambiguous declines from the CUSTOMER only.
+  const declined =
+    /\b(not interested|no thanks|no thank you|i'?m not interested|we'?re not interested|i'?m good|we'?re good|don'?t need (?:this|it|that)|do not need|leave me alone|waste of (?:my )?time|not gonna happen)\b/.test(
+      c,
+    );
+  const callback =
+    /\b(call (?:me )?back|another time|some other time|reschedul|busy right now|not a good time|catch me later|try (?:me|again) later|circle back)\b/.test(
+      c,
+    );
+  // Loose acceptance (incl. bare "yes/yeah") — used for SENTIMENT only.
+  const accepted =
+    /\b(that works|works for me|sounds (?:good|great|fine)|that'?s (?:good|fine|perfect|great)|\byes\b|\byeah\b|\byep\b|\bsure\b|\bokay\b|\bok\b|let'?s do (?:it|that)|book it|see you (?:then|there)|noon works)\b/.test(
+      c,
+    );
+  // Strong acceptance — required (with a concrete slot) to BOOK off the customer
+  // alone, so a bare "yeah" to an unrelated question can't fake an appointment.
+  const acceptedStrong =
+    /\b(that works|works for me|that'?ll work|that would work|sounds (?:good|great|fine)|that'?s (?:good|fine|perfect|great)|let'?s do (?:it|that)|book it|set it up|see you (?:then|there)|that time works|noon works|that day works)\b/.test(
+      c,
+    );
+  // The agent confirms ONLY after agreement (per script), so this is a strong
+  // booking signal on its own.
+  const agentConfirmedBooking =
+    /\b(got you (?:in|down)|i'?ve got you (?:in|down)|you'?re all set|all set for|booked you|i'?ll get you (?:in|down)|down for (?:today|tomorrow|monday|tuesday|wednesday|thursday|friday|saturday|sunday|the)|locked? (?:it|that) in|see you (?:then|on) )\b/.test(
+      a,
+    );
+
+  const appointment = resolveAppointment(transcript, now, tz);
+  const booked =
+    !dnc && (agentConfirmedBooking || (acceptedStrong && appointment.when !== ""));
+
+  const outcome: CallOutcome = dnc
+    ? "do_not_call"
+    : booked
+      ? "appointment_booked"
+      : declined
+        ? "not_interested"
+        : callback
+          ? "callback_scheduled"
+          : "qualified";
+
+  const sentiment: CallRead["sentiment"] =
+    dnc || declined ? "negative" : booked || accepted ? "positive" : "neutral";
+
+  return {
+    dnc,
+    declined,
+    callback,
+    accepted,
+    agentConfirmedBooking,
+    booked,
+    appointment,
+    outcome,
+    sentiment,
   };
 }

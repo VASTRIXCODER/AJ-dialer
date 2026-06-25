@@ -104,10 +104,7 @@ export async function resolveAgentContextByPhone(
       candidates.find((r) => last10(String(r.phone)) === digits) ?? null;
 
     let orgLike: AgentOrgLike | null = null;
-    let dynamicVariables: Record<string, string | number | boolean> =
-      currentDateVariables();
     if (leadRow) {
-      dynamicVariables = agentVariablesForLead(rowToLead(leadRow));
       const ownerId = String(leadRow.owner_id ?? "");
       if (ownerId) {
         const { data: prof } = await admin
@@ -125,6 +122,11 @@ export async function resolveAgentContextByPhone(
         }
       }
     }
+    // Build the personalization variables once the org is known, so the agent
+    // brands itself with the calling organization (e.g. "UNRG").
+    const dynamicVariables = leadRow
+      ? agentVariablesForLead(rowToLead(leadRow), { company: orgLike?.name })
+      : currentDateVariables();
     return { dynamicVariables, agentConfig: resolveAgentConfig(orgLike) };
   } catch {
     return {

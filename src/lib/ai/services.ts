@@ -253,10 +253,24 @@ export function analyzeConversation(input: {
         system: SYSTEM,
         prompt:
           "Analyze this completed AI sales call transcript carefully — base every field on what was " +
-          "actually said, never on assumptions. Extract the disposition, sentiment, " +
-          "qualification data (USD/month; use 0 when not stated), whether an appointment was genuinely " +
-          "agreed (only true if the homeowner accepted a specific time — not merely offered one) and " +
-          "exactly when, and follow-ups.\n\n" +
+          "actually said, never on assumptions.\n" +
+          "The transcript is labeled by speaker: lines starting with 'agent:' are the AI rep (Emily); " +
+          "lines starting with 'user:' (or any non-agent label) are the HOMEOWNER.\n" +
+          "CRITICAL disposition rules:\n" +
+          "- Judge the disposition from the HOMEOWNER's words, NOT the agent's. The agent routinely says " +
+          "'perfect', 'great', and 'you're all set' — those are her script, never evidence the homeowner " +
+          "declined or agreed.\n" +
+          "- appointment.requested = true ONLY if the homeowner accepted a SPECIFIC time (a weekday/date + " +
+          "time), or the agent confirmed a specific time and the homeowner did not object. Merely OFFERING " +
+          "a time is not enough.\n" +
+          "- If an appointment was booked, outcome MUST be 'appointment_booked' — never 'qualified' or " +
+          "'not_interested'. These must agree.\n" +
+          "- Use 'not_interested' ONLY if the homeowner clearly refused the review. A homeowner who asks " +
+          "skeptical questions (\"is this a scam?\", \"who are you?\") but still books is 'appointment_booked', " +
+          "not negative. Refusing to answer ONE qualifying question is not a decline.\n" +
+          "- 'do_not_call' only if they asked to stop being called / be removed.\n" +
+          "Also extract sentiment, qualification data (USD/month; use 0 when not stated), the exact agreed " +
+          "time, and follow-ups.\n\n" +
           `${dateLine}\n\n` +
           (input.lead ? `Lead context: ${leadContext(input.lead)}\n\n` : "") +
           `Transcript:\n${input.transcript.slice(0, 8000)}`,

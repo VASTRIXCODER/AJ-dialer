@@ -96,10 +96,18 @@ export function currentDateVariables(tz?: string): Record<string, string> {
  */
 export function agentVariablesForLead(
   lead: Lead,
+  opts?: { company?: string },
 ): Record<string, string | number | boolean> {
   const homeAddress =
     [lead.address, lead.city, lead.state].filter(Boolean).join(", ") +
     (lead.zip ? ` ${lead.zip}` : "");
+  // The brand the agent introduces itself with = the CALLING organization (e.g.
+  // "UNRG"), not the homeowner's installer. Falls back to the lead's solar
+  // provider, then "Sunrun" for the demo. We expose it as {{company}} AND alias
+  // {{solar_provider}} to it, so the agent only ever names the calling company —
+  // and any prompt still using {{solar_provider}} keeps working unchanged.
+  const brand =
+    (opts?.company || "").trim() || lead.solarProvider?.trim() || "Sunrun";
   return {
     ...currentDateVariables(lead.timezone || undefined),
     customer_name: `${lead.firstName} ${lead.lastName}`.trim(),
@@ -109,7 +117,8 @@ export function agentVariablesForLead(
     home_address: homeAddress || lead.city || "your home",
     city: lead.city,
     state: lead.state,
-    solar_provider: lead.solarProvider || "Sunrun",
+    company: brand,
+    solar_provider: brand,
     utility_provider: lead.utilityProvider || "your utility",
     utility_bill: lead.utilityBill ?? "",
     solar_payment: lead.solarPayment ?? "",

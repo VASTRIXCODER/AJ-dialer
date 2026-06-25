@@ -193,7 +193,7 @@ export async function POST(req: Request) {
   try {
     const result = await placeOutboundCall({
       toNumber: dialTarget,
-      dynamicVariables: agentVariablesForLead(lead),
+      dynamicVariables: agentVariablesForLead(lead, { company: viewer.org?.name }),
       promptOverride: agent.systemPrompt,
       firstMessage: agent.firstMessage,
       language: agent.language,

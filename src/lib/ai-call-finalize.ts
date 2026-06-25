@@ -1,7 +1,7 @@
 import "server-only";
 
 import { getAICall, updateAICall } from "./ai-call-store";
-import { resolveAppointment } from "./ai/appointment";
+import { readCall, resolveAppointment } from "./ai/appointment";
 import { analyzeConversation } from "./ai/services";
 import { dispositionBlurb, unconnectedOutcome } from "./call-disposition";
 import { getLeadById } from "./db/leads";
@@ -105,6 +105,28 @@ export async function finalizeAIConversation(input: {
     }
     qualification = analysis.qualification;
     score = analysis.confidence;
+
+    // Deterministic safety net (speaker-aware): a clear booking or DNC in the
+    // actual words beats a mislabeled disposition. This is what stops a booked
+    // appointment from being filed as "not interested" when the analyzer keys off
+    // the agent's own "you're all set". High precision — only unambiguous signals.
+    const read = readCall(transcript, now, tz);
+    if (read.dnc && outcome !== "do_not_call") {
+      outcome = "do_not_call";
+      sentiment = "negative";
+    } else if (read.booked && outcome !== "appointment_booked") {
+      outcome = "appointment_booked";
+      if (sentiment === "negative") sentiment = "neutral";
+      if (!appointment) {
+        appointment = {
+          when: read.appointment.when || analysis.appointment.when,
+          iso: read.appointment.iso || undefined,
+          notes: read.appointment.notes || analysis.appointment.notes,
+        };
+      }
+    }
+    // If an appointment was genuinely agreed, the disposition must reflect it.
+    if (appointment && outcome !== "do_not_call") outcome = "appointment_booked";
   } else {
     outcome = unconnectedOutcome(
       input.terminationReason ?? input.status ?? "",

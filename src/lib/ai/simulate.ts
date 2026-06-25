@@ -1,5 +1,5 @@
 import type { CallOutcome, Lead, MetricSummary } from "@/lib/types";
-import { resolveAppointment } from "./appointment";
+import { readCall } from "./appointment";
 import type {
   CallCopilot,
   CallSummary,
@@ -357,72 +357,29 @@ export function simulateConversationAnalysis(input: {
 }): ConversationAnalysis {
   const lead = input.lead ?? null;
   const raw = input.transcript ?? "";
-  const t = raw.toLowerCase();
-  const seed = hash((lead?.id ?? "conv") + t.slice(0, 48));
-  const bill = lead?.utilityBill ?? extractBill(t) ?? 0;
+  // Read disposition from the CUSTOMER's words only (the agent's own "perfect" /
+  // "you're all set" must never be read as the customer declining or agreeing).
+  const read = readCall(raw, input.now ?? new Date(), input.tz);
+  // Qualification still scans the whole transcript (facts are stated by both).
+  const customerText = raw.toLowerCase();
+  const seed = hash((lead?.id ?? "conv") + customerText.slice(0, 48));
+  const bill = lead?.utilityBill ?? extractBill(customerText) ?? 0;
   const solar = lead?.solarPayment ?? 0;
 
-  // Resolve the concrete appointment the customer agreed to (if any).
-  const slot = resolveAppointment(raw, input.now ?? new Date(), input.tz);
+  const { outcome, sentiment, booked, appointment: slot } = read;
 
-  const dnc =
-    /\b(do not call|don'?t call(?: me)?(?: again)?|take me off|remove me|stop calling)\b/.test(
-      t,
-    );
-  const declined =
-    /\b(not interested|no thank|we'?re good|all set|happy with|leave me alone|not right now|don'?t need)\b/.test(
-      t,
-    );
-  const accepted =
-    /\b(works|sounds good|sounds great|that works|that'?s (?:good|fine|perfect|great)|perfect|great|yeah|yes|sure|okay|ok|let'?s do|book it|set it up|see you|that time)\b/.test(
-      t,
-    );
-  const callback =
-    /\b(call.{0,8}back|another time|later this|reschedul|busy right now|catch me later|not a good time|try me|circle back)\b/.test(
-      t,
-    );
-  // The agent only says these AFTER the customer agrees (per the script), so they
-  // confirm a booking even when the customer's "yes" was a quiet "mm-hmm".
-  const bookedSignal =
-    /\b(got you (?:in|down)|i'?ve got you|booked you|see you (?:then|tomorrow|on)|locked? (?:it|that) in)\b/.test(
-      t,
-    );
-
-  // A booking requires a concrete slot, an acceptance or the agent's confirmation
-  // (not merely an offered time), and no hard decline.
-  const wantsAppt =
-    !dnc && !declined && slot.when !== "" && (accepted || bookedSignal);
-
-  const outcome: CallOutcome = dnc
-    ? "do_not_call"
-    : wantsAppt
-      ? "appointment_booked"
-      : declined
-        ? "not_interested"
-        : callback
-          ? "callback_scheduled"
-          : "qualified";
-
-  const sentiment: ConversationAnalysis["sentiment"] =
-    dnc || declined
-      ? "negative"
-      : wantsAppt || (accepted && !callback)
-        ? "positive"
-        : "neutral";
-
-  const summary = lead
-    ? `${lead.firstName} discussed a combined ~$${bill + solar}/mo energy spend. ${
-        wantsAppt
-          ? `Booked a no-cost account review for ${slot.when}.`
-          : outcome === "callback_scheduled"
-            ? "Asked to be called back — follow-up scheduled."
-            : outcome === "not_interested"
-              ? "Not interested at this time."
-              : outcome === "do_not_call"
-                ? "Asked to be placed on the do-not-call list."
-                : "Warm — follow-up recommended."
-      }`
-    : "The AI agent qualified the homeowner against the solar resolution script.";
+  const who = lead?.firstName || "The homeowner";
+  const summary = `${who} discussed a combined ~$${bill + solar}/mo energy spend. ${
+    booked
+      ? `Booked a no-cost account review for ${slot.when}.`
+      : outcome === "callback_scheduled"
+        ? "Asked to be called back — follow-up scheduled."
+        : outcome === "not_interested"
+          ? "Not interested at this time."
+          : outcome === "do_not_call"
+            ? "Asked to be placed on the do-not-call list."
+            : "Engaged and qualified — follow-up recommended."
+  }`;
 
   return {
     summary,
@@ -434,16 +391,16 @@ export function simulateConversationAnalysis(input: {
     qualification: {
       utilityBill: bill || null,
       solarPayment: solar || null,
-      hasEV: lead?.hasEV ?? /\bev\b|electric vehicle|tesla/.test(t),
-      hasPool: lead?.hasPool ?? /pool/.test(t),
-      hasBattery: lead?.hasBattery ?? /battery|powerwall|storage/.test(t),
+      hasEV: lead?.hasEV ?? /\bev\b|electric vehicle|tesla/.test(customerText),
+      hasPool: lead?.hasPool ?? /pool/.test(customerText),
+      hasBattery: lead?.hasBattery ?? /battery|powerwall|storage/.test(customerText),
     },
     appointment: {
-      requested: wantsAppt,
-      when: wantsAppt ? slot.when : "",
-      notes: wantsAppt ? slot.notes : "",
+      requested: booked,
+      when: booked ? slot.when : "",
+      notes: booked ? slot.notes : "",
     },
-    followUps: wantsAppt
+    followUps: booked
       ? ["Send calendar invite + confirmation", "Reminder call ~1h before"]
       : outcome === "callback_scheduled"
         ? ["Call back at the requested time"]
