@@ -103,9 +103,19 @@ export async function getLeads(): Promise<Lead[]> {
 }
 
 /**
- * Delete leads by id. Scoped + authorized by RLS (a member can only delete leads
- * in their own org, and only supervisors may delete). Returns how many were
- * removed. Their call records are kept (lead_id is set null) so reports stay intact.
+ * Delete leads by id (individual or bulk, up to thousands at a time).
+ *
+ * Two things make a large bulk delete reliable:
+ *  1. BATCHING. A single `.in("id", [...])` puts every id into the PostgREST
+ *     request URL; a few hundred UUIDs overflow the server's URL-length limit and
+ *     the whole call fails with a 400 ("bad request"). We delete in small chunks
+ *     so each request URL stays well within limits, run in bounded-parallel waves.
+ *  2. SCOPE. The leads write RLS is owner-only, but a supervisor can SEE (and
+ *     should be able to clear) the whole shared org pool. So when the viewer is in
+ *     an org and a service role is available, we delete with the admin client
+ *     scoped IN CODE to "this org's leads OR my own" — never another org's.
+ *
+ * Call records are preserved (lead_id is set null on delete) so reports stay intact.
  */
 export async function deleteLeads(
   leadIds: string[],
@@ -118,15 +128,52 @@ export async function deleteLeads(
       data: { user },
     } = await supabase.auth.getUser();
     if (!user) return { deleted: 0, error: "You must be signed in." };
-    const ids = leadIds.filter((id) => UUID.test(id));
+
+    // De-dupe + keep only well-formed UUIDs (defends the PostgREST filter too).
+    const ids = [...new Set(leadIds.filter((id) => UUID.test(id)))];
     if (!ids.length) return { deleted: 0, error: "No valid leads selected." };
-    const { data, error } = await supabase
-      .from("leads")
-      .delete()
-      .in("id", ids)
-      .select("id");
-    if (error) return { deleted: 0, error: error.message };
-    return { deleted: data?.length ?? 0 };
+
+    // Resolve the viewer's org so we can clear the SHARED pool, not just leads
+    // this user personally owns. With an org + service role, use the admin client
+    // and scope deletes in code; otherwise the session client (RLS → own leads).
+    const { data: prof } = await supabase
+      .from("profiles")
+      .select("org_id")
+      .eq("id", user.id)
+      .maybeSingle();
+    const orgId = prof?.org_id ? String(prof.org_id) : null;
+    const scopeByOrg = Boolean(orgId && UUID.test(orgId)) && isAdminConfigured();
+    const client = scopeByOrg ? createAdminClient() : supabase;
+
+    const CHUNK = 100; // keep each request URL small (≈4KB) — never hits the limit
+    const WAVE = 8; // bounded parallelism so big deletes stay fast but safe
+    const batches: string[][] = [];
+    for (let i = 0; i < ids.length; i += CHUNK) batches.push(ids.slice(i, i + CHUNK));
+
+    let deleted = 0;
+    let firstError: string | null = null;
+    for (let w = 0; w < batches.length && !firstError; w += WAVE) {
+      const wave = batches.slice(w, w + WAVE);
+      const results = await Promise.all(
+        wave.map((batch) => {
+          const q = client.from("leads").delete().in("id", batch);
+          // Admin client bypasses RLS, so scope to the viewer's reach in code.
+          const scoped = scopeByOrg
+            ? q.or(`org_id.eq.${orgId},owner_id.eq.${user.id}`)
+            : q;
+          return scoped.select("id");
+        }),
+      );
+      for (const r of results) {
+        if (r.error) firstError = firstError ?? r.error.message;
+        else deleted += r.data?.length ?? 0;
+      }
+    }
+
+    if (firstError && deleted === 0) return { deleted: 0, error: firstError };
+    if (firstError)
+      return { deleted, error: `Deleted ${deleted}, then hit an error: ${firstError}` };
+    return { deleted };
   } catch (e) {
     return { deleted: 0, error: e instanceof Error ? e.message : "Delete failed." };
   }
