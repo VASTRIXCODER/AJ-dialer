@@ -81,14 +81,20 @@ export async function getLeads(): Promise<Lead[]> {
       return (data ?? []).map(rowToLead);
     }
 
-    // Two simple queries (no .or — maximally compatible): the org pool, plus the
-    // viewer's own leads that predate the org_id backfill (null org_id).
+    // Two simple queries (no .or — maximally compatible): the org pool, plus
+    // ALL of the viewer's own leads regardless of org_id. The owner_id query is
+    // the safety net — it restores the original owner-scoped behavior, so the
+    // importer NEVER loses leads even if a lead's org_id is null or belongs to a
+    // different org. Results are merged + deduped by id.
     const [orgRes, ownRes] = await Promise.all([
       reader.from("leads").select("*").eq("org_id", orgId),
-      reader.from("leads").select("*").is("org_id", null).eq("owner_id", user.id),
+      reader.from("leads").select("*").eq("owner_id", user.id),
     ]);
-    const rows = [...(orgRes.data ?? []), ...(ownRes.data ?? [])];
-    return rows
+    const byId = new Map<string, Row>();
+    for (const r of [...(orgRes.data ?? []), ...(ownRes.data ?? [])]) {
+      byId.set(String((r as Row).id), r as Row);
+    }
+    return [...byId.values()]
       .map(rowToLead)
       .sort((a, b) => (b.aiScore ?? 0) - (a.aiScore ?? 0));
   } catch {
