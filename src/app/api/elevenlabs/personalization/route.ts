@@ -8,6 +8,7 @@ import {
 } from "@/lib/ai-call-store";
 import { leads } from "@/lib/data";
 import { markAIConversationActive } from "@/lib/db/records";
+import { elevenLabsConfig } from "@/lib/elevenlabs";
 
 export const dynamic = "force-dynamic";
 
@@ -56,16 +57,22 @@ export async function POST(req: Request) {
   const { dynamicVariables, agentConfig } =
     await resolveAgentContextByPhone(calledNumber);
 
-  return NextResponse.json({
+  // Always return the personalization variables. Only return a prompt/voice
+  // override when NOT in dashboard-prompt mode — a disallowed override here makes
+  // ElevenLabs terminate the call the moment it connects.
+  const payload: Record<string, unknown> = {
     type: "conversation_initiation_client_data",
     dynamic_variables: dynamicVariables,
-    conversation_config_override: {
+  };
+  if (!elevenLabsConfig.useDashboardPrompt) {
+    payload.conversation_config_override = {
       agent: {
         prompt: { prompt: agentConfig.systemPrompt },
         first_message: agentConfig.firstMessage,
         language: agentConfig.language,
       },
       tts: { speed: agentConfig.voiceSpeed },
-    },
-  });
+    };
+  }
+  return NextResponse.json(payload);
 }

@@ -32,6 +32,21 @@ export const elevenLabsConfig = {
    * listen live by joining the room muted — exactly like human calls, no relay.
    */
   bridgeNumber: process.env.TWILIO_AI_BRIDGE_NUMBER ?? "",
+  /**
+   * Dashboard-prompt mode. When true, the app does NOT override the agent's
+   * prompt / first message / language / voice per call — it sends ONLY the
+   * personalization variables and lets the agent run the script configured in
+   * the ElevenLabs dashboard. Use this when you keep the script in ElevenLabs
+   * (the "overrides" security toggles are OFF) instead of in the app.
+   *
+   * Why it matters: ElevenLabs TERMINATES the call the instant it receives a
+   * conversation_config_override the agent isn't allowed to accept. So if the
+   * overrides toggles are off but the app still sends a prompt override, the
+   * call connects and then immediately ends. This flag must match the agent's
+   * override settings: overrides ON → leave this false (app injects the script);
+   * overrides OFF → set this true (agent uses its own dashboard script).
+   */
+  useDashboardPrompt: process.env.ELEVENLABS_USE_DASHBOARD_PROMPT === "true",
 };
 
 /** True when the AI agent can place outbound calls. */
@@ -193,14 +208,20 @@ export async function placeOutboundCall(opts: {
   const initData: Record<string, unknown> = {};
   if (opts.dynamicVariables) initData.dynamic_variables = opts.dynamicVariables;
 
-  const agent: Record<string, unknown> = {};
-  if (opts.firstMessage) agent.first_message = opts.firstMessage;
-  if (opts.promptOverride) agent.prompt = { prompt: opts.promptOverride };
-  if (opts.language) agent.language = opts.language;
-  const override: Record<string, unknown> = {};
-  if (Object.keys(agent).length) override.agent = agent;
-  if (typeof opts.voiceSpeed === "number") override.tts = { speed: opts.voiceSpeed };
-  if (Object.keys(override).length) initData.conversation_config_override = override;
+  // Dashboard-prompt mode: send ONLY the personalization variables and let the
+  // agent use its own configured prompt/first-message/voice. We must NOT send a
+  // conversation_config_override the agent can't accept — that makes ElevenLabs
+  // end the call on connect (the "it calls then immediately hangs up" symptom).
+  if (!elevenLabsConfig.useDashboardPrompt) {
+    const agent: Record<string, unknown> = {};
+    if (opts.firstMessage) agent.first_message = opts.firstMessage;
+    if (opts.promptOverride) agent.prompt = { prompt: opts.promptOverride };
+    if (opts.language) agent.language = opts.language;
+    const override: Record<string, unknown> = {};
+    if (Object.keys(agent).length) override.agent = agent;
+    if (typeof opts.voiceSpeed === "number") override.tts = { speed: opts.voiceSpeed };
+    if (Object.keys(override).length) initData.conversation_config_override = override;
+  }
 
   const res = await el("/v1/convai/twilio/outbound-call", {
     method: "POST",

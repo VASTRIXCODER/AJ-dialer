@@ -22,6 +22,7 @@ Set these where the app runs (`.env.local` / your host):
 | `ELEVENLABS_AGENT_PHONE_NUMBER_ID` | The **phone number ID** of your imported Twilio number (NOT the raw number — see §4). Pasting the raw E.164 number also works; the app resolves it. |
 | `ELEVENLABS_WEBHOOK_SECRET` | Post-call webhook signing secret (§7) |
 | `ELEVENLABS_TRANSFER_NUMBER` | E.164 number the "Transfer" button bridges a live call to (default `+14693018199`) |
+| `ELEVENLABS_USE_DASHBOARD_PROMPT` | `true` = run the script pasted in the ElevenLabs dashboard; the app sends only personalization variables, no prompt override. Leave unset/`false` to have the app inject the script per call. **Must match your agent's override toggles** (§2a). |
 
 Tip: visit `/api/elevenlabs/phone-numbers` in the app to list your imported
 numbers and their IDs.
@@ -50,16 +51,38 @@ Agent → **Voice**:
 
 ## 2. ⭐ The 3 required toggles
 
-### (a) Enable overrides — so the app can personalize each call
-Agent → **Security** (a.k.a. "Overrides" / "Advanced").
-Turn **ON** the ability to override:
-- ✅ System prompt
-- ✅ First message
-- ✅ Language
-- ✅ TTS / Voice settings
+### (a) Choose ONE prompt mode — and make the app match it
 
-> Without this, our per-call override (Emily script + filled `{{variables}}` +
-> 0.9 speed) is ignored and the agent falls back to its dashboard prompt.
+There are two valid setups. Pick one; they must agree, or calls break.
+
+> ⚠️ **The auto-end gotcha:** ElevenLabs *terminates the call the instant it
+> connects* if it receives a `conversation_config_override` the agent isn't
+> allowed to accept. So "the agent calls me and immediately hangs up" = the app
+> is sending a prompt override while the override toggles are OFF. The two modes
+> below keep the app and the dashboard in sync so that never happens.
+
+**Mode A — App injects the script (overrides ON).** Most powerful: per-lead,
+per-org prompts straight from the app.
+- Agent → **Security** → turn **ON**: ✅ System prompt · ✅ First message ·
+  ✅ Language · ✅ TTS / Voice settings.
+- App env: leave `ELEVENLABS_USE_DASHBOARD_PROMPT` unset (or `false`).
+- You can leave the dashboard System prompt blank — the app overrides it per call.
+
+**Mode B — Agent runs its own dashboard script (overrides OFF).** Simplest, and
+the single source of truth is the dashboard. Recommended if the override toggles
+give you trouble.
+- Agent → **Security** → the override toggles can all be **OFF**.
+- Paste the Emily script (§8 → copy from **Admin → Organization → AI → System
+  prompt → Copy**) into the agent's **System prompt**.
+- Set the agent's **First message** to `Hey — is this {{first_name}}?` and
+  **Voice → Speed** to `0.9`.
+- App env: set **`ELEVENLABS_USE_DASHBOARD_PROMPT=true`** and redeploy. The app
+  now sends only personalization variables (name, address, …), so `{{first_name}}`
+  and friends still fill in — but it sends NO prompt override, so the call won't
+  auto-end.
+
+> Either way, the `{{variables}}` are filled from the lead on every call. The only
+> difference is *where the script text lives* — in the app (A) or the dashboard (B).
 
 ### (b) Enable the End Call tool — so Emily can hang up
 Agent → **Tools** → **Add tool** → **System tools** → **End call** → Save.
