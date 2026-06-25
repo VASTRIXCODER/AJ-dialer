@@ -442,7 +442,7 @@ export function readCall(
   const a = ` ${agent.toLowerCase()} `;
 
   const dnc =
-    /\b(do not call|don'?t call (?:me|us)(?: again)?|take me off|remove me from|stop calling me|lose my number|unsubscribe)\b/.test(
+    /\b(do not call|don'?t call(?: me| us)?(?: again| back| anymore)?|take me off|remove me|stop calling|lose my number|unsubscribe)\b/.test(
       c,
     );
   // Hard, unambiguous declines from the CUSTOMER only.
