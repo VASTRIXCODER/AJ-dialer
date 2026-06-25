@@ -73,7 +73,12 @@ export default async function LeadsPage() {
         <MetricCard label="Avg AI score" value={String(avgScore)} icon={Sparkles} accent="warning" />
       </div>
 
-      <LeadsTable leads={leads} campaigns={campaignList} canManage={canManage} />
+      <LeadsTable
+        leads={leads}
+        campaigns={campaignList}
+        canManage={canManage}
+        meId={viewer.user?.id ?? null}
+      />
     </PageContainer>
   );
 }

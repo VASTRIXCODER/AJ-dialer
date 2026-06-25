@@ -53,6 +53,10 @@ export interface Lead {
   /** Qualification confidence 0-100 produced by the AI agent */
   aiScore?: number;
   timezone: string;
+  /** The account (user id) that uploaded this lead — drives per-uploader scoping. */
+  ownerId?: string;
+  /** Uploader's display name, resolved for the supervisor's sectioned view. */
+  ownerName?: string;
 }
 
 export interface Rep {

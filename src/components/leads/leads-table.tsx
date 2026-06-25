@@ -8,11 +8,12 @@ import {
   PhoneCall,
   Search,
   Trash2,
+  UploadCloud,
   Waves,
 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useMemo, useState } from "react";
+import { Fragment, useMemo, useState } from "react";
 import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -33,11 +34,14 @@ export function LeadsTable({
   leads,
   campaigns = [],
   canManage = false,
+  meId = null,
 }: {
   leads: Lead[];
   campaigns?: { id: string; name: string }[];
   /** Whether the viewer can delete leads (managers+). Gates the delete UI. */
   canManage?: boolean;
+  /** Viewer's user id — labels their own uploader section "Your uploads". */
+  meId?: string | null;
 }) {
   const router = useRouter();
   const [query, setQuery] = useState("");
@@ -135,6 +139,29 @@ export function LeadsTable({
   }
 
   const deleteCount = pendingDelete?.length ?? 0;
+
+  // Group leads into per-uploader sections. Reps only ever see their own uploads
+  // (one group → headers stay hidden); supervisors see every account's leads
+  // split into labeled sections so it's clear who owns what.
+  const groups = useMemo(() => {
+    const m = new Map<string, { key: string; label: string; leads: Lead[] }>();
+    for (const l of filtered) {
+      const key = l.ownerId ?? "__none__";
+      let g = m.get(key);
+      if (!g) {
+        const label =
+          meId && l.ownerId === meId
+            ? "Your uploads"
+            : l.ownerName?.trim() || (l.ownerId ? "Teammate" : "Unattributed");
+        g = { key, label, leads: [] };
+        m.set(key, g);
+      }
+      g.leads.push(l);
+    }
+    return [...m.values()].sort((a, b) => b.leads.length - a.leads.length);
+  }, [filtered, meId]);
+  const sectioned = groups.length > 1;
+  const colSpan = selectable ? 9 : 8;
 
   return (
     <div className="space-y-4">
@@ -298,11 +325,29 @@ export function LeadsTable({
               </tr>
             </thead>
             <tbody className="divide-y divide-border">
-              {filtered.map((l, i) => {
-                const name = `${l.firstName} ${l.lastName}`;
-                const cfg = leadStatusConfig[l.status];
-                const isSel = selected.has(l.id);
-                return (
+              {(sectioned
+                ? groups
+                : [{ key: "all", label: "", leads: filtered }]
+              ).map((group) => (
+                <Fragment key={group.key}>
+                  {sectioned && (
+                    <tr className="border-t border-border bg-muted/40">
+                      <td colSpan={colSpan} className="px-4 py-2.5">
+                        <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wide text-muted-foreground">
+                          <UploadCloud className="h-3.5 w-3.5" />
+                          {group.label}
+                          <span className="rounded-full bg-background px-2 py-0.5 tabular text-foreground">
+                            {group.leads.length}
+                          </span>
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                  {group.leads.map((l, i) => {
+                    const name = `${l.firstName} ${l.lastName}`;
+                    const cfg = leadStatusConfig[l.status];
+                    const isSel = selected.has(l.id);
+                    return (
                   <motion.tr
                     key={l.id}
                     initial={{ opacity: 0, y: 6 }}
@@ -411,8 +456,10 @@ export function LeadsTable({
                       </div>
                     </td>
                   </motion.tr>
-                );
-              })}
+                    );
+                  })}
+                </Fragment>
+              ))}
             </tbody>
           </table>
         </div>

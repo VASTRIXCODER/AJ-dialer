@@ -45,7 +45,13 @@ function rowToLead(r: Row): Lead {
     timezone: (r.timezone as string) ?? "America/Los_Angeles",
     lastContactedAt: (r.last_contacted_at as string) ?? undefined,
     createdAt: (r.created_at as string) ?? new Date().toISOString(),
+    ownerId: (r.owner_id as string) ?? undefined,
   };
+}
+
+/** Is this profile role a supervisor (sees the whole org, not just own leads)? */
+function isSupervisorRole(role: unknown): boolean {
+  return ["owner", "admin", "manager"].includes(String(role ?? "rep"));
 }
 
 export async function getLeads(): Promise<Lead[]> {
@@ -60,20 +66,18 @@ export async function getLeads(): Promise<Lead[]> {
     if (!user) return [];
     const { data: prof } = await supabase
       .from("profiles")
-      .select("org_id")
+      .select("org_id, role")
       .eq("id", user.id)
       .maybeSingle();
     const orgId = prof?.org_id ? String(prof.org_id) : null;
+    const supervisor =
+      Boolean(orgId) && isSupervisorRole(prof?.role) && isAdminConfigured();
 
-    // Read the SHARED org pool with the service-role client so every member sees
-    // the same leads immediately, independent of RLS migration state. Scoped to
-    // the viewer's org in app code (a user only ever gets their own org's leads).
-    // Falls back to the session client (RLS, own leads) when no org / no service
-    // role is configured.
-    const reader = orgId && isAdminConfigured() ? createAdminClient() : supabase;
-
-    if (!orgId) {
-      const { data } = await reader
+    // Leads are SEPARATED BY UPLOADER. A rep sees only the leads they uploaded;
+    // a supervisor (owner/admin/manager) sees the whole org, attributed to each
+    // uploader so the Leads tab can group them into per-account sections.
+    if (!supervisor) {
+      const { data } = await supabase
         .from("leads")
         .select("*")
         .eq("owner_id", user.id)
@@ -81,21 +85,34 @@ export async function getLeads(): Promise<Lead[]> {
       return (data ?? []).map(rowToLead);
     }
 
-    // Two simple queries (no .or — maximally compatible): the org pool, plus
-    // ALL of the viewer's own leads regardless of org_id. The owner_id query is
-    // the safety net — it restores the original owner-scoped behavior, so the
-    // importer NEVER loses leads even if a lead's org_id is null or belongs to a
-    // different org. Results are merged + deduped by id.
-    const [orgRes, ownRes] = await Promise.all([
-      reader.from("leads").select("*").eq("org_id", orgId),
-      reader.from("leads").select("*").eq("owner_id", user.id),
+    // Supervisor: the org pool + their own leads (covers any legacy null-org
+    // rows), deduped, with each uploader's display name resolved for sections.
+    const admin = createAdminClient();
+    const [orgRes, ownRes, memberRes] = await Promise.all([
+      admin.from("leads").select("*").eq("org_id", orgId as string),
+      admin.from("leads").select("*").eq("owner_id", user.id),
+      admin
+        .from("organization_members")
+        .select("user_id,name")
+        .eq("org_id", orgId as string)
+        .eq("status", "active"),
     ]);
+    const nameById = new Map(
+      ((memberRes.data ?? []) as Row[]).map((m) => [
+        String(m.user_id),
+        String(m.name ?? ""),
+      ]),
+    );
     const byId = new Map<string, Row>();
     for (const r of [...(orgRes.data ?? []), ...(ownRes.data ?? [])]) {
       byId.set(String((r as Row).id), r as Row);
     }
     return [...byId.values()]
       .map(rowToLead)
+      .map((l) => ({
+        ...l,
+        ownerName: l.ownerId ? nameById.get(l.ownerId) || "" : "",
+      }))
       .sort((a, b) => (b.aiScore ?? 0) - (a.aiScore ?? 0));
   } catch {
     return [];
@@ -237,14 +254,58 @@ export async function getLeadByPhoneAdmin(phone: string): Promise<Lead | null> {
 }
 
 export async function getDialQueue(): Promise<Lead[]> {
-  const all = await getLeads();
-  // Show every lead with a plausibly-dialable number (10+ digits) so imported
-  // leads reliably appear on the dialer. Exact E.164 normalization happens at
-  // dial time (toE164); a genuinely un-dialable number is rejected there with a
-  // clear message rather than being silently hidden from the rep here.
-  return all
-    .filter((l) => DIALABLE.includes(l.status) && l.phone.replace(/\D/g, "").length >= 10)
-    .sort((a, b) => (b.aiScore ?? 0) - (a.aiScore ?? 0));
+  // The power dialer is ALWAYS own-only — every person dials only the leads they
+  // uploaded, so reps never dial each other's leads (supervisors included). The
+  // Leads tab is where supervisors get the cross-account overview. Any lead with
+  // a plausibly-dialable number (10+ digits) and a dialable status is included;
+  // exact E.164 normalization happens at dial time.
+  const dialable = (leads: Lead[]) =>
+    leads
+      .filter(
+        (l) =>
+          DIALABLE.includes(l.status) && l.phone.replace(/\D/g, "").length >= 10,
+      )
+      .sort((a, b) => (b.aiScore ?? 0) - (a.aiScore ?? 0));
+
+  if (!isSupabaseConfigured()) return dialable(fallbackLeads);
+  try {
+    const supabase = await createClient();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) return [];
+    const { data } = await supabase
+      .from("leads")
+      .select("*")
+      .eq("owner_id", user.id)
+      .order("ai_score", { ascending: false, nullsFirst: false });
+    return dialable((data ?? []).map(rowToLead));
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Count the viewer's OWN leads (every status) — the denominator for the dialer's
+ * "you have N leads but none are ready to dial" hint. Own-scoped to match the
+ * own-only dial queue, so a supervisor's count isn't inflated by the whole org.
+ */
+export async function getMyLeadsCount(): Promise<number> {
+  if (!isSupabaseConfigured()) return fallbackLeads.length;
+  try {
+    const supabase = await createClient();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) return 0;
+    const { count } = await supabase
+      .from("leads")
+      .select("id", { count: "exact", head: true })
+      .eq("owner_id", user.id);
+    return count ?? 0;
+  } catch {
+    return 0;
+  }
 }
 
 export interface LeadInput {
