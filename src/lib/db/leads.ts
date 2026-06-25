@@ -1,6 +1,7 @@
 import "server-only";
 
 import { leads as fallbackLeads, getLeadById as fallbackById } from "../data";
+import { createAdminClient, isAdminConfigured } from "../supabase/admin";
 import { isSupabaseConfigured } from "../supabase/config";
 import { createClient } from "../supabase/server";
 import type { Lead, LeadStatus } from "../types";
@@ -57,28 +58,39 @@ export async function getLeads(): Promise<Lead[]> {
       data: { user },
     } = await supabase.auth.getUser();
     if (!user) return [];
-    // Shared org pool: read every lead in the viewer's organization, not just
-    // the ones they personally imported. RLS lets any active org member read the
-    // org's leads; solo users (no org) fall back to their own leads.
     const { data: prof } = await supabase
       .from("profiles")
       .select("org_id")
       .eq("id", user.id)
       .maybeSingle();
     const orgId = prof?.org_id ? String(prof.org_id) : null;
-    const base = supabase.from("leads").select("*");
-    // Match the whole org pool OR the viewer's own leads. The owner_id fallback
-    // is essential: leads imported before org_id was backfilled have a null
-    // org_id, and an org-only filter would hide them from their importer.
-    const scoped = orgId
-      ? base.or(`org_id.eq.${orgId},owner_id.eq.${user.id}`)
-      : base.eq("owner_id", user.id);
-    const { data, error } = await scoped.order("ai_score", {
-      ascending: false,
-      nullsFirst: false,
-    });
-    if (error || !data) return [];
-    return data.map(rowToLead);
+
+    // Read the SHARED org pool with the service-role client so every member sees
+    // the same leads immediately, independent of RLS migration state. Scoped to
+    // the viewer's org in app code (a user only ever gets their own org's leads).
+    // Falls back to the session client (RLS, own leads) when no org / no service
+    // role is configured.
+    const reader = orgId && isAdminConfigured() ? createAdminClient() : supabase;
+
+    if (!orgId) {
+      const { data } = await reader
+        .from("leads")
+        .select("*")
+        .eq("owner_id", user.id)
+        .order("ai_score", { ascending: false, nullsFirst: false });
+      return (data ?? []).map(rowToLead);
+    }
+
+    // Two simple queries (no .or — maximally compatible): the org pool, plus the
+    // viewer's own leads that predate the org_id backfill (null org_id).
+    const [orgRes, ownRes] = await Promise.all([
+      reader.from("leads").select("*").eq("org_id", orgId),
+      reader.from("leads").select("*").is("org_id", null).eq("owner_id", user.id),
+    ]);
+    const rows = [...(orgRes.data ?? []), ...(ownRes.data ?? [])];
+    return rows
+      .map(rowToLead)
+      .sort((a, b) => (b.aiScore ?? 0) - (a.aiScore ?? 0));
   } catch {
     return [];
   }
