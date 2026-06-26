@@ -693,3 +693,64 @@ export async function getAIConversationsForMonitor(): Promise<{
     return { active: [], recent: [] };
   }
 }
+
+// ── Manual-call transcript (read scoped to the viewer, cached on the record) ──
+export interface CallTranscriptRef {
+  /** Already-cached transcript, if one exists. */
+  transcript: string | null;
+  /** Raw stored Twilio recording URL (carries the RE… SID), if any. */
+  recordingUrl: string | null;
+}
+
+/**
+ * Read a call record's transcript + recording URL, scoped to the viewer via RLS
+ * (owner or an active member of the call's org). Returns null when the viewer
+ * can't see the record — the caller turns that into a 404.
+ */
+export async function getCallTranscriptRef(
+  id: string,
+): Promise<CallTranscriptRef | null> {
+  if (!isSupabaseConfigured() || !UUID.test(id)) return null;
+  try {
+    const supabase = await createClient();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) return null;
+    // Select * (not the named columns) so a deployment where the optional
+    // `transcript` column hasn't been migrated yet degrades gracefully (the field
+    // is simply absent) instead of 400-ing on an unknown column.
+    const { data } = await supabase
+      .from("call_records")
+      .select("*")
+      .eq("id", id)
+      .maybeSingle();
+    if (!data) return null;
+    return {
+      transcript: (data.transcript as string) ?? null,
+      recordingUrl: (data.recording_url as string) ?? null,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Persist a generated transcript onto a call record. Uses the service-role
+ * client when available so a supervisor can cache the transcript of a teammate's
+ * call (the write RLS is owner-only); falls back to the session client.
+ */
+export async function saveCallTranscript(
+  id: string,
+  transcript: string,
+): Promise<void> {
+  if (!isSupabaseConfigured() || !UUID.test(id)) return;
+  try {
+    const client = isAdminConfigured()
+      ? createAdminClient()
+      : await createClient();
+    await client.from("call_records").update({ transcript }).eq("id", id);
+  } catch {
+    /* best-effort */
+  }
+}

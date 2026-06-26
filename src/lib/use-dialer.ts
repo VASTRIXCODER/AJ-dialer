@@ -215,7 +215,12 @@ export function useDialer(queue: Lead[], aiConfigured = false) {
           // and hand it to the Device before each expiry so dialing never stalls.
           const refreshToken = async () => {
             try {
-              const r = await fetch("/api/twilio/token", { cache: "no-store" });
+              // Reuse the current identity so the refreshed token stays bound to
+              // this same registered Device.
+              const r = await fetch(
+                `/api/twilio/token?identity=${encodeURIComponent(identityRef.current)}`,
+                { cache: "no-store" },
+              );
               const d = (await r.json()) as { token?: string };
               if (d.token) device.updateToken(d.token);
             } catch {

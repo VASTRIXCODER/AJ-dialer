@@ -12,12 +12,18 @@ export const dynamic = "force-dynamic";
  * Returns `{ mode: "demo" }` with no token when Twilio isn't configured,
  * which puts the dialer into its fully-interactive simulation mode.
  */
-export async function GET() {
+export async function GET(req: Request) {
   if (!isVoiceConfigured()) {
     return NextResponse.json({ mode: "offline" });
   }
 
-  const identity = `agent-${Date.now().toString(36)}`;
+  // On a token REFRESH the browser passes its current identity so the new token
+  // stays bound to the same Device (updateToken must keep the identity stable);
+  // a first mint gets a fresh one. Validated to a safe shape — never trusted raw.
+  const requested = new URL(req.url).searchParams.get("identity") ?? "";
+  const identity = /^agent-[a-z0-9]{1,40}$/i.test(requested)
+    ? requested
+    : `agent-${Date.now().toString(36)}`;
   const token = await createVoiceToken(identity);
 
   if (!token) {

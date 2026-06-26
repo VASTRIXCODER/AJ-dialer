@@ -361,6 +361,90 @@ export async function getConversationAudio(id: string): Promise<Response> {
   });
 }
 
+interface SttWord {
+  text?: string;
+  type?: string;
+  speaker_id?: string;
+}
+
+/**
+ * Render a Speech-to-Text result as a readable, speaker-attributed transcript.
+ * When diarization tagged each word with a speaker, group consecutive words into
+ * turns ("Speaker 1: …"); otherwise fall back to the flat text. We don't claim
+ * which speaker is the rep — the two-party labelling stays honest.
+ */
+function formatSttTranscript(json: {
+  text?: string;
+  words?: SttWord[];
+}): string {
+  const words = Array.isArray(json.words) ? json.words : [];
+  const speakers = new Set(
+    words.map((w) => w.speaker_id).filter((s): s is string => Boolean(s)),
+  );
+  const flat = (json.text ?? "").trim();
+  if (speakers.size < 2) return flat;
+
+  // Stable "speaker_0" → "Speaker 1" mapping in first-heard order.
+  const order: string[] = [];
+  const label = (id: string) => {
+    if (!order.includes(id)) order.push(id);
+    return `Speaker ${order.indexOf(id) + 1}`;
+  };
+
+  const turns: string[] = [];
+  let current: string | null = null;
+  let buf = "";
+  const flush = () => {
+    const text = buf.trim();
+    if (current && text) turns.push(`${label(current)}: ${text}`);
+    buf = "";
+  };
+  for (const w of words) {
+    if (w.type === "spacing") {
+      buf += w.text ?? " ";
+      continue;
+    }
+    const spk: string = w.speaker_id ?? current ?? "speaker_0";
+    if (spk !== current) {
+      flush();
+      current = spk;
+    }
+    buf += w.text ?? "";
+  }
+  flush();
+  return turns.join("\n") || flat;
+}
+
+/**
+ * Transcribe call audio with ElevenLabs Speech-to-Text (the `scribe_v1` model).
+ * Returns a readable transcript, or null when STT isn't configured. Throws on a
+ * hard API error so the caller can decide whether to retry/surface it.
+ */
+export async function speechToText(audio: Blob): Promise<string | null> {
+  if (!elevenLabsConfig.apiKey) return null;
+  const form = new FormData();
+  form.append("model_id", "scribe_v1");
+  form.append("diarize", "true");
+  form.append("file", audio, "recording.mp3");
+  // NB: no content-type header — fetch sets the multipart boundary from FormData.
+  const res = await fetch(`${API}/v1/speech-to-text`, {
+    method: "POST",
+    cache: "no-store",
+    headers: { "xi-api-key": elevenLabsConfig.apiKey },
+    body: form,
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`ElevenLabs STT → ${res.status}: ${text.slice(0, 300)}`);
+  }
+  const json = (await res.json().catch(() => ({}))) as {
+    text?: string;
+    words?: SttWord[];
+  };
+  const transcript = formatSttTranscript(json);
+  return transcript || null;
+}
+
 /**
  * Verify the HMAC signature on a post-call webhook.
  * Header `elevenlabs-signature` looks like `t=<unix>,v0=<hex hmac>`, where the

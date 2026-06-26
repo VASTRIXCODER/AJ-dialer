@@ -60,6 +60,8 @@ export interface RecentCall {
   conversationId?: string | null;
   /** The AI/auto-generated executive summary, when one exists. */
   summary?: string | null;
+  /** Cached call transcript (AI calls + transcribed manual calls), when present. */
+  transcript?: string | null;
   hasSummary: boolean;
   hasRecording: boolean;
 }
@@ -354,6 +356,9 @@ export async function getReportingData(): Promise<ReportingData> {
         recordingUrl,
         conversationId,
         summary,
+        // Transcript is fetched lazily by the manual-call detail (via the
+        // transcribe route, which serves the cache) — kept out of this select so
+        // Reports never breaks if the optional `transcript` column isn't migrated.
         hasSummary: Boolean(summary),
         hasRecording,
       };
