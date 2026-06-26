@@ -142,7 +142,9 @@ function apptWhen(a: Row): string {
     : "Scheduled";
 }
 
-export async function getReportingData(): Promise<ReportingData> {
+export async function getReportingData(
+  rangeDays: number | null = null,
+): Promise<ReportingData> {
   if (!isSupabaseConfigured()) return fallbackReporting();
   try {
     const supabase = await createClient();
@@ -227,16 +229,34 @@ export async function getReportingData(): Promise<ReportingData> {
     const outcomeOf = (r: Row) => (r.outcome as CallOutcome) ?? null;
     const isConnected = isConnectedRow;
 
+    // Optional date-range scope for the "period" figures (KPIs, dispositions,
+    // funnel, channel split, recent calls). The 30-day trend + today's hourly
+    // chart keep their own fixed windows. null ⇒ all-time (default).
+    const rangeStart =
+      rangeDays && rangeDays > 0
+        ? (() => {
+            const d = new Date();
+            d.setHours(0, 0, 0, 0);
+            d.setDate(d.getDate() - (rangeDays - 1));
+            return d;
+          })()
+        : null;
+    const periodCalls = rangeStart
+      ? calls.filter(
+          (c) => c.started_at && new Date(String(c.started_at)) >= rangeStart,
+        )
+      : calls;
+
     const startToday = new Date();
     startToday.setHours(0, 0, 0, 0);
     const onDay = (r: Row, field = "started_at") =>
       r[field] ? new Date(String(r[field])) >= startToday : false;
 
-    // ── Counts ────────────────────────────────────────────────────────────────
-    const totalCalls = calls.length;
-    const connections = calls.filter(isConnected).length;
+    // ── Counts (period-scoped) ──────────────────────────────────────────────────
+    const totalCalls = periodCalls.length;
+    const connections = periodCalls.filter(isConnected).length;
     const byOutcome = {} as Record<CallOutcome, number>;
-    for (const c of calls) {
+    for (const c of periodCalls) {
       const o = outcomeOf(c);
       if (o) byOutcome[o] = (byOutcome[o] ?? 0) + 1;
     }
@@ -244,8 +264,10 @@ export async function getReportingData(): Promise<ReportingData> {
     const callbackOutcome = byOutcome.callback_scheduled ?? 0;
     const noAnswerOutcome = (byOutcome.no_answer ?? 0) + (byOutcome.voicemail ?? 0);
 
+    // Today's calls stay anchored to today (callsToday KPI + hourly chart),
+    // independent of the selected range.
     const todays = calls.filter((c) => onDay(c));
-    const durations = calls
+    const durations = periodCalls
       .map((c) => Number(c.duration_sec ?? 0))
       .filter((n) => n > 0);
 
@@ -320,16 +342,16 @@ export async function getReportingData(): Promise<ReportingData> {
       });
     }
 
-    // ── Dispositions (all of them), channel split, funnel ───────────────────────
-    const dispositions = dispositionBreakdown(calls);
-    const channelStats = channelBreakdown(calls);
-    const funnel = funnelOf(calls);
+    // ── Dispositions (all of them), channel split, funnel — period-scoped ───────
+    const dispositions = dispositionBreakdown(periodCalls);
+    const channelStats = channelBreakdown(periodCalls);
+    const funnel = funnelOf(periodCalls);
     const outcomeBreakdown = dispositions
       .filter((d) => d.count > 0)
       .map((d) => ({ name: d.label, value: Math.round(d.rate), color: d.color }));
 
-    // ── Recent calls ────────────────────────────────────────────────────────────
-    const recentCalls: RecentCall[] = calls.slice(0, supervisor ? 25 : 12).map((r, i) => {
+    // ── Recent calls (period-scoped) ────────────────────────────────────────────
+    const recentCalls: RecentCall[] = periodCalls.slice(0, supervisor ? 25 : 12).map((r, i) => {
       const outcome = outcomeOf(r);
       const channel = r.channel === "human" ? "human" : "ai";
       const recordingUrl =
