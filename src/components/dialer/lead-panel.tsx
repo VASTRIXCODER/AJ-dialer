@@ -24,7 +24,11 @@ import { Button } from "@/components/ui/button";
 import { Portal } from "@/components/ui/portal";
 import { Ring } from "@/components/ui/progress";
 import type { Lead } from "@/lib/types";
-import { formatCurrency, formatPhone, initials } from "@/lib/utils";
+import { formatCurrency, formatNumber, formatPhone, initials } from "@/lib/utils";
+
+// How many search results the browse sheet renders at once. Large queues stay
+// reachable via the search box; this just caps the DOM so it never janks.
+const BROWSE_CAP = 300;
 
 export function LeadPanel({
   lead,
@@ -340,35 +344,43 @@ function LeadBrowser({
               No leads match “{q.trim()}”.
             </p>
           ) : (
-            results.slice(0, 200).map((l) => (
-              <button
-                key={l.id}
-                type="button"
-                onClick={() => onPick(l.id)}
-                className={`flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left transition-colors hover:bg-muted/60 ${
-                  l.id === currentId ? "bg-primary-soft" : ""
-                }`}
-              >
-                <Avatar
-                  initials={initials(`${l.firstName} ${l.lastName}`)}
-                  color="#0EA5E9"
-                  size="sm"
-                />
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-semibold">
-                    {l.firstName} {l.lastName}
-                  </p>
-                  <p className="truncate text-xs text-muted-foreground tabular">
-                    {formatPhone(l.phone)} · {[l.city, l.state].filter(Boolean).join(", ")}
-                  </p>
-                </div>
-                {l.aiScore != null && (
-                  <span className="shrink-0 text-xs font-bold text-muted-foreground tabular">
-                    {l.aiScore}
-                  </span>
-                )}
-              </button>
-            ))
+            <>
+              {results.slice(0, BROWSE_CAP).map((l) => (
+                <button
+                  key={l.id}
+                  type="button"
+                  onClick={() => onPick(l.id)}
+                  className={`flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left transition-colors hover:bg-muted/60 ${
+                    l.id === currentId ? "bg-primary-soft" : ""
+                  }`}
+                >
+                  <Avatar
+                    initials={initials(`${l.firstName} ${l.lastName}`)}
+                    color="#0EA5E9"
+                    size="sm"
+                  />
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-semibold">
+                      {l.firstName} {l.lastName}
+                    </p>
+                    <p className="truncate text-xs text-muted-foreground tabular">
+                      {formatPhone(l.phone)} · {[l.city, l.state].filter(Boolean).join(", ")}
+                    </p>
+                  </div>
+                  {l.aiScore != null && (
+                    <span className="shrink-0 text-xs font-bold text-muted-foreground tabular">
+                      {l.aiScore}
+                    </span>
+                  )}
+                </button>
+              ))}
+              {results.length > BROWSE_CAP && (
+                <p className="px-3 py-3 text-center text-xs text-muted-foreground">
+                  Showing the first {formatNumber(BROWSE_CAP)} of{" "}
+                  {formatNumber(results.length)} — type to narrow your search.
+                </p>
+              )}
+            </>
           )}
         </div>
       </motion.div>

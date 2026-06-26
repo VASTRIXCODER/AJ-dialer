@@ -4,6 +4,7 @@ import { reconcileOwnerActiveCalls } from "../ai-call-reconcile";
 import { statsForCampaign, type CampaignStats } from "../campaign-stats";
 import { createAdminClient, isAdminConfigured } from "../supabase/admin";
 import { isSupabaseConfigured } from "../supabase/config";
+import { fetchAllRows } from "../supabase/paginate";
 import { createClient } from "../supabase/server";
 import { canActOn, getScope } from "./scope";
 
@@ -69,13 +70,27 @@ export async function getCampaigns(): Promise<CampaignRow[]> {
     const reader = useOrg ? createAdminClient() : await createClient();
     const col = useOrg ? "org_id" : "owner_id";
     const val = useOrg ? (scope.orgId as string) : scope.userId;
-    const [cRes, lRes, callRes] = await Promise.all([
+    // Campaign stats tally per-campaign leads + calls. Both reads page past the
+    // 1,000-row ceiling so a campaign with thousands of leads counts them all.
+    const [cRes, leads, calls] = await Promise.all([
       reader.from("campaigns").select("*").eq(col, val).order("created_at", { ascending: false }),
-      reader.from("leads").select("campaign_id,status").eq(col, val),
-      reader.from("call_records").select("campaign_id,outcome").eq(col, val),
+      fetchAllRows<Row>((from, to) =>
+        reader
+          .from("leads")
+          .select("id,campaign_id,status")
+          .eq(col, val)
+          .order("id", { ascending: true })
+          .range(from, to),
+      ),
+      fetchAllRows<Row>((from, to) =>
+        reader
+          .from("call_records")
+          .select("id,campaign_id,outcome")
+          .eq(col, val)
+          .order("id", { ascending: true })
+          .range(from, to),
+      ),
     ]);
-    const leads = (lRes.data ?? []) as Row[];
-    const calls = (callRes.data ?? []) as Row[];
     return ((cRes.data ?? []) as Row[]).map((r) => ({
       id: s(r.id),
       name: s(r.name),

@@ -3,6 +3,7 @@ import "server-only";
 import { leads as fallbackLeads, getLeadById as fallbackById } from "../data";
 import { createAdminClient, isAdminConfigured } from "../supabase/admin";
 import { isSupabaseConfigured } from "../supabase/config";
+import { fetchAllRows } from "../supabase/paginate";
 import { createClient } from "../supabase/server";
 import type { Lead, LeadStatus } from "../types";
 import { normalizePhone } from "../utils";
@@ -77,20 +78,40 @@ export async function getLeads(): Promise<Lead[]> {
     // a supervisor (owner/admin/manager) sees the whole org, attributed to each
     // uploader so the Leads tab can group them into per-account sections.
     if (!supervisor) {
-      const { data } = await supabase
-        .from("leads")
-        .select("*")
-        .eq("owner_id", user.id)
-        .order("ai_score", { ascending: false, nullsFirst: false });
-      return (data ?? []).map(rowToLead);
+      // Page past PostgREST's 1,000-row ceiling so every uploaded lead is read.
+      const data = await fetchAllRows<Row>((from, to) =>
+        supabase
+          .from("leads")
+          .select("*")
+          .eq("owner_id", user.id)
+          .order("ai_score", { ascending: false, nullsFirst: false })
+          .order("id", { ascending: true })
+          .range(from, to),
+      );
+      return data.map(rowToLead);
     }
 
     // Supervisor: the org pool + their own leads (covers any legacy null-org
     // rows), deduped, with each uploader's display name resolved for sections.
+    // Both lead reads page past the 1,000-row ceiling.
     const admin = createAdminClient();
-    const [orgRes, ownRes, memberRes] = await Promise.all([
-      admin.from("leads").select("*").eq("org_id", orgId as string),
-      admin.from("leads").select("*").eq("owner_id", user.id),
+    const [orgRows, ownRows, memberRes] = await Promise.all([
+      fetchAllRows<Row>((from, to) =>
+        admin
+          .from("leads")
+          .select("*")
+          .eq("org_id", orgId as string)
+          .order("id", { ascending: true })
+          .range(from, to),
+      ),
+      fetchAllRows<Row>((from, to) =>
+        admin
+          .from("leads")
+          .select("*")
+          .eq("owner_id", user.id)
+          .order("id", { ascending: true })
+          .range(from, to),
+      ),
       admin
         .from("organization_members")
         .select("user_id,name")
@@ -104,8 +125,8 @@ export async function getLeads(): Promise<Lead[]> {
       ]),
     );
     const byId = new Map<string, Row>();
-    for (const r of [...(orgRes.data ?? []), ...(ownRes.data ?? [])]) {
-      byId.set(String((r as Row).id), r as Row);
+    for (const r of [...orgRows, ...ownRows]) {
+      byId.set(String(r.id), r);
     }
     return [...byId.values()]
       .map(rowToLead)
@@ -338,12 +359,18 @@ export async function getDialQueue(): Promise<Lead[]> {
       data: { user },
     } = await supabase.auth.getUser();
     if (!user) return [];
-    const { data } = await supabase
-      .from("leads")
-      .select("*")
-      .eq("owner_id", user.id)
-      .order("ai_score", { ascending: false, nullsFirst: false });
-    return dialable((data ?? []).map(rowToLead));
+    // Page past the 1,000-row ceiling so the dialer queue holds EVERY dialable
+    // lead — not just the first 1,000 (which silently dropped the rest).
+    const data = await fetchAllRows<Row>((from, to) =>
+      supabase
+        .from("leads")
+        .select("*")
+        .eq("owner_id", user.id)
+        .order("ai_score", { ascending: false, nullsFirst: false })
+        .order("id", { ascending: true })
+        .range(from, to),
+    );
+    return dialable(data.map(rowToLead));
   } catch {
     return [];
   }

@@ -4,6 +4,8 @@ import { motion } from "framer-motion";
 import {
   BatteryCharging,
   Car,
+  ChevronLeft,
+  ChevronRight,
   Loader2,
   PhoneCall,
   Search,
@@ -13,13 +15,17 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Fragment, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import type { Lead, LeadStatus } from "@/lib/types";
 import { leadStatusConfig } from "@/lib/status";
-import { cn, formatCurrency, formatPhone, initials } from "@/lib/utils";
+import { cn, formatCurrency, formatNumber, formatPhone, initials } from "@/lib/utils";
+
+// Render leads a page at a time — a single account can hold thousands, and
+// mounting every animated row at once is both slow and unnavigable.
+const PAGE_SIZE = 100;
 
 const FILTERS: Array<{ value: LeadStatus | "all"; label: string }> = [
   { value: "all", label: "All" },
@@ -215,6 +221,29 @@ export function LeadsTable({
   }, [filtered, meId]);
   const sectioned = groups.length > 1;
   const colSpan = selectable ? 9 : 8;
+
+  // Flatten to display order (grouped for supervisors, score-sorted otherwise),
+  // then paginate. Section headers re-emit at each page boundary so a group that
+  // spans pages stays labeled.
+  const ordered = useMemo(
+    () => (sectioned ? groups.flatMap((g) => g.leads) : filtered),
+    [sectioned, groups, filtered],
+  );
+  const groupMeta = useMemo(() => {
+    const m = new Map<string, { label: string; count: number }>();
+    for (const g of groups) m.set(g.key, { label: g.label, count: g.leads.length });
+    return m;
+  }, [groups]);
+
+  const [page, setPage] = useState(0);
+  const pageCount = Math.max(1, Math.ceil(ordered.length / PAGE_SIZE));
+  // Snap back to page one whenever the result set changes under us.
+  useEffect(() => {
+    setPage(0);
+  }, [query, filter, campaignFilter, uploaderFilter]);
+  const safePage = Math.min(page, pageCount - 1);
+  const pageStart = safePage * PAGE_SIZE;
+  const pageLeads = ordered.slice(pageStart, pageStart + PAGE_SIZE);
 
   return (
     <div className="space-y-4">
@@ -421,29 +450,33 @@ export function LeadsTable({
               </tr>
             </thead>
             <tbody className="divide-y divide-border">
-              {(sectioned
-                ? groups
-                : [{ key: "all", label: "", leads: filtered }]
-              ).map((group) => (
-                <Fragment key={group.key}>
-                  {sectioned && (
+              {(() => {
+                // Walk the current page; emit a section header whenever the
+                // uploader changes (so groups stay labeled across page breaks).
+                let lastKey: string | null = null;
+                return pageLeads.map((l, i) => {
+                  const groupKey = l.ownerId ?? "__none__";
+                  const showHeader = sectioned && groupKey !== lastKey;
+                  lastKey = groupKey;
+                  const meta = groupMeta.get(groupKey);
+                  const name = `${l.firstName} ${l.lastName}`;
+                  const cfg = leadStatusConfig[l.status];
+                  const isSel = selected.has(l.id);
+                  return (
+                  <Fragment key={l.id}>
+                  {showHeader && (
                     <tr className="border-t border-border bg-muted/40">
                       <td colSpan={colSpan} className="px-4 py-2.5">
                         <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wide text-muted-foreground">
                           <UploadCloud className="h-3.5 w-3.5" />
-                          {group.label}
+                          {meta?.label}
                           <span className="rounded-full bg-background px-2 py-0.5 tabular text-foreground">
-                            {group.leads.length}
+                            {meta?.count}
                           </span>
                         </div>
                       </td>
                     </tr>
                   )}
-                  {group.leads.map((l, i) => {
-                    const name = `${l.firstName} ${l.lastName}`;
-                    const cfg = leadStatusConfig[l.status];
-                    const isSel = selected.has(l.id);
-                    return (
                   <motion.tr
                     key={l.id}
                     initial={{ opacity: 0, y: 6 }}
@@ -556,10 +589,10 @@ export function LeadsTable({
                       </div>
                     </td>
                   </motion.tr>
-                    );
-                  })}
-                </Fragment>
-              ))}
+                  </Fragment>
+                  );
+                });
+              })()}
             </tbody>
           </table>
         </div>
@@ -569,9 +602,48 @@ export function LeadsTable({
           </div>
         )}
       </div>
-      <p className="text-xs text-muted-foreground">
-        Showing {filtered.length} of {leads.length} leads
-      </p>
+
+      {/* Footer: range summary + page navigation */}
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <p className="text-xs text-muted-foreground tabular">
+          {ordered.length === 0
+            ? "No leads"
+            : `Showing ${formatNumber(pageStart + 1)}–${formatNumber(
+                Math.min(pageStart + PAGE_SIZE, ordered.length),
+              )} of ${formatNumber(ordered.length)}${
+                ordered.length !== leads.length
+                  ? ` (filtered from ${formatNumber(leads.length)})`
+                  : ""
+              }`}
+        </p>
+        {pageCount > 1 && (
+          <div className="flex items-center gap-1.5">
+            <Button
+              variant="outline"
+              size="sm"
+              className="gap-1"
+              disabled={safePage === 0}
+              onClick={() => setPage(Math.max(0, safePage - 1))}
+            >
+              <ChevronLeft className="h-4 w-4" />
+              Prev
+            </Button>
+            <span className="px-2 text-xs font-medium text-muted-foreground tabular">
+              Page {safePage + 1} of {formatNumber(pageCount)}
+            </span>
+            <Button
+              variant="outline"
+              size="sm"
+              className="gap-1"
+              disabled={safePage >= pageCount - 1}
+              onClick={() => setPage(Math.min(pageCount - 1, safePage + 1))}
+            >
+              Next
+              <ChevronRight className="h-4 w-4" />
+            </Button>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
