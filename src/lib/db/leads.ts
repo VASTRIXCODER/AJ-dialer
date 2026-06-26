@@ -442,11 +442,25 @@ export async function insertLeads(
     if (!payload.length)
       return { inserted: 0, invalidPhone, error: "No valid rows found." };
 
-    const { error, count } = await supabase
-      .from("leads")
-      .insert(payload, { count: "exact" });
-    if (error) return { inserted: 0, invalidPhone, error: error.message };
-    return { inserted: count ?? payload.length, invalidPhone };
+    // Batch inserts so large imports (thousands of rows) don't overflow Supabase's
+    // request body limit. Same pattern as deleteLeads: small chunks, bounded waves.
+    const CHUNK = 500;
+    const WAVE = 4;
+    const batches = [];
+    for (let i = 0; i < payload.length; i += CHUNK) batches.push(payload.slice(i, i + CHUNK));
+
+    let inserted = 0;
+    for (let w = 0; w < batches.length; w += WAVE) {
+      const wave = batches.slice(w, w + WAVE);
+      const results = await Promise.all(
+        wave.map((batch) => supabase.from("leads").insert(batch, { count: "exact" })),
+      );
+      for (const r of results) {
+        if (r.error) return { inserted, invalidPhone, error: r.error.message };
+        inserted += r.count ?? (r.data as unknown[] | null)?.length ?? 0;
+      }
+    }
+    return { inserted, invalidPhone };
   } catch (e) {
     return {
       inserted: 0,
