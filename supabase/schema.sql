@@ -751,17 +751,26 @@ create policy "leads delete" on public.leads for delete using (
     or (org_id is not null and public.app_is_org_supervisor(org_id)))));
 
 -- ─────────────────────────────────────────────────────────────────────────────
--- PART 9 — Caller-ID rotation
+-- PART 9 — Caller-ID rotation  (per-rep, shared-pool)
 --
--- A shared, atomic per-org counter so manual + AI calls cycle through the org's
--- pool of outbound numbers together (the pool + cadence live in
--- organizations.settings.dialing). app_next_dial_seq() returns the next value
--- atomically, so concurrent power-dials never collide on the same sequence.
+-- A generic atomic counter keyed by an arbitrary string. The dialer keys it by
+-- the rep's USER id, so every rep cycles the shared pool of outbound numbers on
+-- their OWN sequence (rep A's calls never advance rep B's number). The pool +
+-- cadence live in organizations.settings.dialing (or env vars). The function
+-- returns the next value atomically, so concurrent power-dials never collide.
 -- ─────────────────────────────────────────────────────────────────────────────
-alter table public.organizations
-  add column if not exists dial_seq bigint not null default 0;
+create table if not exists public.dial_counters (
+  key text primary key,
+  seq bigint not null default 0
+);
+-- Service-role only (RLS on, no policies) — only the server engine touches it.
+alter table public.dial_counters enable row level security;
 
-create or replace function public.app_next_dial_seq(p_org uuid)
+-- Replace the old per-org (uuid) counter with the keyed (text) one.
+drop function if exists public.app_next_dial_seq(uuid);
+alter table public.organizations drop column if exists dial_seq;
+
+create or replace function public.app_next_dial_seq(p_key text)
 returns bigint
 language plpgsql
 security definer
@@ -769,13 +778,12 @@ set search_path = public
 as $$
 declare v bigint;
 begin
-  update public.organizations
-     set dial_seq = coalesce(dial_seq, 0) + 1
-   where id = p_org
-   returning dial_seq into v;
-  return coalesce(v, 0);
+  insert into public.dial_counters (key, seq) values (p_key, 1)
+  on conflict (key) do update set seq = public.dial_counters.seq + 1
+  returning seq into v;
+  return coalesce(v, 1);
 end;
 $$;
 
-grant execute on function public.app_next_dial_seq(uuid)
+grant execute on function public.app_next_dial_seq(text)
   to anon, authenticated, service_role;

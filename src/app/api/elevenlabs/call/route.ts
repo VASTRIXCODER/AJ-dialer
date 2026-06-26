@@ -187,9 +187,9 @@ export async function POST(req: Request) {
 
   const agent = resolveAgentConfig(viewer.org);
 
-  // Caller-ID rotation: one number per call, from the org's shared pool. The
-  // same counter drives manual + AI so the whole org rotates together.
-  const rotatedFrom = await nextCallerId(viewer.org?.id, viewer.org?.settings);
+  // Caller-ID rotation: one number per call from the org's shared pool, advanced
+  // on THIS rep's own counter (per-rep rotation) — manual + AI share it.
+  const rotatedFrom = await nextCallerId(viewer.user?.id, viewer.org?.settings);
 
   // Bridge mode: route the agent through our Twilio number so the call lives in
   // a conference anyone can listen to. The agent dials the bridge; we move it

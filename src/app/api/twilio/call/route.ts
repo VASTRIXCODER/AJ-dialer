@@ -71,10 +71,10 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Twilio unavailable" }, { status: 503 });
   }
 
-  // Resolve the caller's org so manual legs rotate through the same caller-ID
-  // pool (and shared counter) as AI calls.
+  // Resolve the caller so manual legs rotate through the org's shared caller-ID
+  // pool on THIS rep's own counter (per-rep), same as AI calls.
   const viewer = await getViewer();
-  const orgId = viewer.org?.id ?? null;
+  const repKey = viewer.user?.id ?? null;
   const orgSettings = viewer.org?.settings ?? null;
 
   // Only attach a StatusCallback when we have a publicly-reachable origin —
@@ -92,8 +92,8 @@ export async function POST(req: Request) {
   const placed = await Promise.all(
     leads.map(async (leg) => {
       try {
-        // One rotated caller ID per leg (atomic counter → distinct seq each).
-        const from = (await nextCallerId(orgId, orgSettings)) || twilioConfig.callerId;
+        // One rotated caller ID per leg (this rep's atomic counter → distinct seq).
+        const from = (await nextCallerId(repKey, orgSettings)) || twilioConfig.callerId;
         const call = await client.calls.create({
           to: leg.to,
           from,

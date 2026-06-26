@@ -17,32 +17,59 @@ export interface RotationPlan {
   rotateEvery: number;
 }
 
-/**
- * Resolve the rotation pool + cadence from org settings, falling back to the
- * single configured caller ID (settings.callerId) or the provided env default
- * when no pool is set. Always returns a usable plan (possibly an empty pool).
- */
-export function resolveRotation(
-  settings: OrgSettings | null | undefined,
-  envFallback = "",
-): RotationPlan {
-  const d = settings?.dialing;
-  const raw = Array.isArray(d?.callerIds) ? d.callerIds : [];
-  const pool = raw
+/** Env-supplied fallbacks (so the pool can be configured without the Admin UI). */
+export interface RotationEnv {
+  /** Pool from TWILIO_CALLER_IDS (deployment-wide fallback). */
+  envPool?: string[];
+  /** Cadence from DIAL_ROTATE_EVERY. */
+  envRotateEvery?: number;
+  /** Single caller ID from TWILIO_CALLER_ID (last-resort). */
+  envSingle?: string;
+}
+
+const clampEvery = (v: unknown): number =>
+  Math.max(1, Math.floor(Number(v)) || 1);
+
+const normPool = (arr: unknown): string[] =>
+  (Array.isArray(arr) ? arr : [])
     .map((n) => normalizePhone(String(n ?? "")))
     .filter((n): n is string => Boolean(n));
 
-  if (pool.length === 0) {
+/**
+ * Resolve the rotation pool + cadence. Precedence (most specific first):
+ *   1. Admin UI pool  (org settings.dialing.callerIds) + its rotateEvery
+ *   2. Env pool       (TWILIO_CALLER_IDS) + DIAL_ROTATE_EVERY
+ *   3. Single number  (settings.callerId or TWILIO_CALLER_ID), no real rotation
+ * The cadence follows whichever source provides the pool. Always returns a
+ * usable plan (possibly an empty pool, when nothing is configured at all).
+ */
+export function resolveRotation(
+  settings: OrgSettings | null | undefined,
+  env: RotationEnv = {},
+): RotationPlan {
+  const d = settings?.dialing;
+  const settingsPool = normPool(d?.callerIds);
+  const envPool = normPool(env.envPool);
+
+  let pool: string[];
+  let rotateEvery: number;
+  if (settingsPool.length) {
+    pool = settingsPool;
+    rotateEvery = clampEvery(d?.rotateEvery);
+  } else if (envPool.length) {
+    pool = envPool;
+    rotateEvery = clampEvery(env.envRotateEvery ?? d?.rotateEvery);
+  } else {
     const single =
-      normalizePhone(String(d?.callerId ?? "")) || normalizePhone(envFallback);
-    if (single) pool.push(single);
+      normalizePhone(String(d?.callerId ?? "")) ||
+      normalizePhone(String(env.envSingle ?? ""));
+    pool = single ? [single] : [];
+    rotateEvery = clampEvery(d?.rotateEvery ?? env.envRotateEvery);
   }
 
   // De-dupe while preserving order so rotation is stable + predictable.
   const seen = new Set<string>();
   const unique = pool.filter((n) => (seen.has(n) ? false : (seen.add(n), true)));
-
-  const rotateEvery = Math.max(1, Math.floor(Number(d?.rotateEvery ?? 1)) || 1);
   return { pool: unique, rotateEvery };
 }
 
