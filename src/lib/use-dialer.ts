@@ -753,6 +753,25 @@ export function useDialer(
         // the real answer, and a no-answer cleanly wraps the attempt up.
         attachCallHandlers(call);
         stopPoll();
+        // Hard cap on how long we wait for an answer. Homeowner legs ring for
+        // ~30s (Twilio `timeout`), so if nothing has answered/ended by 45s the
+        // status read is stuck (e.g. a leg reported "unknown" from a failed
+        // fetch, or the call failed without a clean terminal status). Settle it
+        // as a no-answer so the rep isn't stranded in an empty conference and —
+        // critically — the Live Monitor's "ringing" presence is cleared.
+        const pollStartedAt = Date.now();
+        const MAX_RING_MS = 45_000;
+        const settleUnanswered = () => {
+          const call = callRef.current;
+          callRef.current = null;
+          stopPoll();
+          try {
+            call?.disconnect();
+          } catch {
+            /* noop */
+          }
+          settleNoAnswer();
+        };
         const pollAnswered = async () => {
           try {
             const a = await fetch("/api/twilio/answered", {
@@ -770,21 +789,17 @@ export function useDialer(
             if (answeredLeadId) {
               const lead = leads.find((l) => l.id === answeredLeadId) ?? leads[0];
               connectLine(lead); // connectLine stops the poll + starts the timer
-            } else if (done) {
-              // Nobody answered — release the rep from the empty conference and
-              // settle the attempt as a no-answer (logged + auto-advanced). Claim
-              // the settle first so the leg's disconnect event is a clean no-op.
-              const call = callRef.current;
-              callRef.current = null;
-              stopPoll();
-              try {
-                call.disconnect();
-              } catch {
-                /* noop */
-              }
-              settleNoAnswer();
+            } else if (done || Date.now() - pollStartedAt > MAX_RING_MS) {
+              // Nobody answered (or we hit the ring cap) — release the rep from
+              // the empty conference and settle as a no-answer (logged +
+              // auto-advanced, and the monitor presence is cleared).
+              settleUnanswered();
             }
           } catch {
+            // Even if the status read keeps failing, the cap still settles us.
+            if (callRef.current && !connectedRef.current && Date.now() - pollStartedAt > MAX_RING_MS) {
+              settleUnanswered();
+            }
             /* keep polling */
           }
         };
