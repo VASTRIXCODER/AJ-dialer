@@ -9,8 +9,10 @@ import {
   Loader2,
   PhoneCall,
   Search,
+  Tag,
   Trash2,
   UploadCloud,
+  UserPlus,
   Waves,
 } from "lucide-react";
 import Link from "next/link";
@@ -36,12 +38,22 @@ const FILTERS: Array<{ value: LeadStatus | "all"; label: string }> = [
   { value: "appointment", label: "Appointment" },
 ];
 
+// Statuses a supervisor can bulk-apply for list hygiene (mirrors the server's
+// BULK_SETTABLE_STATUSES — kept local since that module is server-only).
+const BULK_STATUSES: Array<{ value: LeadStatus; label: string }> = [
+  { value: "new", label: "New" },
+  { value: "contacted", label: "Contacted" },
+  { value: "not_interested", label: "Not interested" },
+  { value: "dnc", label: "Do not call" },
+];
+
 export function LeadsTable({
   leads,
   campaigns = [],
   canManage = false,
   meId = null,
   members = [],
+  poolMode = false,
 }: {
   leads: Lead[];
   campaigns?: { id: string; name: string }[];
@@ -51,6 +63,8 @@ export function LeadsTable({
   meId?: string | null;
   /** Org members (id = user id) — targets for reassigning leads between accounts. */
   members?: { id: string; name: string }[];
+  /** Org-pool browse (reps): enables selection + the "Assign to me" claim action. */
+  poolMode?: boolean;
 }) {
   const router = useRouter();
   const [query, setQuery] = useState("");
@@ -60,13 +74,15 @@ export function LeadsTable({
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [assignTo, setAssignTo] = useState("");
   const [reassignTo, setReassignTo] = useState("");
+  const [statusTo, setStatusTo] = useState("");
   const [busy, setBusy] = useState(false);
   // Ids queued for deletion, awaiting confirmation (individual = 1, bulk = many).
   const [pendingDelete, setPendingDelete] = useState<string[] | null>(null);
   const [err, setErr] = useState("");
 
-  // Checkboxes are useful for bulk-assign (campaigns) and bulk-delete (canManage).
-  const selectable = canManage || campaigns.length > 0;
+  // Checkboxes are useful for bulk-assign (campaigns), bulk-manage (canManage),
+  // and claiming from the org pool (poolMode).
+  const selectable = canManage || campaigns.length > 0 || poolMode;
 
   const campaignName = useMemo(
     () => new Map(campaigns.map((c) => [c.id, c.name])),
@@ -164,6 +180,64 @@ export function LeadsTable({
       router.refresh();
     } catch {
       setErr("Network error while reassigning.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // Claim the selected leads to my own name (org-pool browse). Pulls them into
+  // my dial queue + my Leads-tab section.
+  async function claim() {
+    if (selected.size === 0) return;
+    setBusy(true);
+    setErr("");
+    try {
+      const res = await fetch("/api/leads/claim", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ leadIds: [...selected] }),
+      });
+      const json = (await res.json().catch(() => ({}))) as {
+        updated?: number;
+        error?: string;
+      };
+      if (!res.ok || json.error) {
+        setErr(json.error ?? "Couldn’t claim those leads.");
+        return;
+      }
+      setSelected(new Set());
+      router.refresh();
+    } catch {
+      setErr("Network error while claiming.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // Bulk-set a status on the selected leads (list hygiene).
+  async function bulkStatus() {
+    if (selected.size === 0 || !statusTo) return;
+    setBusy(true);
+    setErr("");
+    try {
+      const res = await fetch("/api/leads/status", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ leadIds: [...selected], status: statusTo }),
+      });
+      const json = (await res.json().catch(() => ({}))) as {
+        updated?: number;
+        error?: string;
+      };
+      if (!res.ok || json.error) {
+        setErr(json.error ?? "Couldn’t update those leads.");
+        return;
+      }
+      setSelected(new Set());
+      setStatusTo("");
+      router.refresh();
+    } catch {
+      setErr("Network error while updating.");
     } finally {
       setBusy(false);
     }
@@ -350,6 +424,12 @@ export function LeadsTable({
       {!pendingDelete && selected.size > 0 && (
         <div className="flex flex-wrap items-center gap-2 rounded-xl border border-primary/30 bg-primary-soft/40 px-3 py-2">
           <span className="text-sm font-semibold text-primary">{selected.size} selected</span>
+          {poolMode && (
+            <Button size="sm" className="gap-1.5" disabled={busy} onClick={claim}>
+              {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <UserPlus className="h-3.5 w-3.5" />}
+              Assign to me
+            </Button>
+          )}
           {campaigns.length > 0 && (
             <>
               <span className="text-sm text-muted-foreground">Assign to</span>
@@ -397,6 +477,37 @@ export function LeadsTable({
               >
                 {busy && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
                 Reassign
+              </Button>
+            </>
+          )}
+          {canManage && (
+            <>
+              <span className="flex items-center gap-1 text-sm text-muted-foreground">
+                <Tag className="h-3.5 w-3.5" />
+                Set status
+              </span>
+              <select
+                value={statusTo}
+                onChange={(e) => setStatusTo(e.target.value)}
+                aria-label="Set status for selected leads"
+                className="h-8 rounded-lg border border-border bg-background px-2 text-sm focus-visible:border-primary/50 focus-visible:outline-none"
+              >
+                <option value="">Choose…</option>
+                {BULK_STATUSES.map((s) => (
+                  <option key={s.value} value={s.value}>
+                    {s.label}
+                  </option>
+                ))}
+              </select>
+              <Button
+                size="sm"
+                variant="outline"
+                className="gap-1.5"
+                disabled={!statusTo || busy}
+                onClick={bulkStatus}
+              >
+                {busy && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                Apply
               </Button>
             </>
           )}
