@@ -228,6 +228,7 @@ export async function generateOrgBlueprint(
       aiDialer: spec.features?.aiDialer ?? true,
       manualDialer: spec.features?.manualDialer ?? true,
       leads: spec.features?.leads ?? true,
+      leadsRepAccess: spec.features?.leadsRepAccess ?? true,
       appointments: spec.features?.appointments ?? true,
       callbacks: spec.features?.callbacks ?? true,
       liveMonitor: spec.features?.liveMonitor ?? true,

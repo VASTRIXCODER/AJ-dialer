@@ -40,6 +40,7 @@ const FEATURE_LABEL: Record<keyof OrgFeatures, string> = {
   aiDialer: "Power dialer",
   manualDialer: "Manual dialing",
   leads: "Leads",
+  leadsRepAccess: "Leads (rep access)",
   appointments: "Appointments",
   callbacks: "Callbacks",
   liveMonitor: "Live monitor",

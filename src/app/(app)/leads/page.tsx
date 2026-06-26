@@ -1,5 +1,6 @@
 import { Download, FolderOpen, User as UserIcon, Users } from "lucide-react";
 import Link from "next/link";
+import { redirect } from "next/navigation";
 import { LeadsTable } from "@/components/leads/leads-table";
 import { CsvImport } from "@/components/leads/csv-import";
 import { MetricCard } from "@/components/dashboard/metric-card";
@@ -28,6 +29,14 @@ export default async function LeadsPage({
   // Lead management (delete / reassign) is for managers+ (leads.import). Pull the
   // org's members so a supervisor can reassign leads between accounts.
   const canManage = viewer.permissions.includes("leads.import");
+
+  // Org-level gate: when leadsRepAccess is false, reps are blocked from the
+  // Leads tab entirely (managers+ are unaffected). All other orgs leave this
+  // flag at its default of true so nothing changes for them.
+  const leadsRepAccess = viewer.org?.settings.features.leadsRepAccess !== false;
+  if (!leadsRepAccess && !canManage) {
+    redirect("/dashboard");
+  }
   // Reps see their own leads by default but can browse the shared "Org pool" to
   // claim leads to their own name. Supervisors already see the org-wide pool.
   const isRep = !canManage && Boolean(viewer.org);

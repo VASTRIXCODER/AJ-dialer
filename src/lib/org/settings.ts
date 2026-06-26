@@ -15,6 +15,12 @@ export interface OrgFeatures {
   /** Browser-based manual (human) dialing. Off ⇒ AI-only workspace. */
   manualDialer: boolean;
   leads: boolean;
+  /**
+   * When false, reps cannot access the Leads tab — managers and above can still
+   * see and manage leads. Useful for orgs where reps only dial; all other orgs
+   * leave this true (the default) so nothing changes for them.
+   */
+  leadsRepAccess: boolean;
   appointments: boolean;
   callbacks: boolean;
   liveMonitor: boolean;
@@ -106,6 +112,7 @@ export const DEFAULT_FEATURES: OrgFeatures = {
   aiDialer: true,
   manualDialer: true,
   leads: true,
+  leadsRepAccess: true,
   appointments: true,
   callbacks: true,
   liveMonitor: true,
