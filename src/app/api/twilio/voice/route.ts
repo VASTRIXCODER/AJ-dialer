@@ -58,6 +58,8 @@ export async function POST(req: Request) {
     const monitor = String(form.get("Monitor") ?? "") === "true";
     const monitorToken = String(form.get("Token") ?? "");
     const record = String(form.get("record") ?? "false") === "true";
+    // Org whose hold-music playlist the rep should hear while waiting for pickup.
+    const holdOrg = String(form.get("HoldOrg") ?? "").trim();
 
     // ── AI bridge: the ElevenLabs agent dialed our bridge number. Hold the leg
     // briefly; /api/elevenlabs/call moves it into the conference room by REST. ──
@@ -95,8 +97,14 @@ export async function POST(req: Request) {
           ? ` record="record-from-start" recordingStatusCallback="${escapeXml(recordingCb)}"`
           : ' record="record-from-start"'
         : "";
+      // Custom wait/hold music: while the rep waits alone for the homeowner to
+      // answer, play the org's playlist instead of Twilio's default tone.
+      const waitAttr =
+        holdOrg && base
+          ? ` waitUrl="${escapeXml(`${base}/api/twilio/hold?org=${encodeURIComponent(holdOrg)}`)}" waitMethod="GET"`
+          : "";
       return twiml(
-        `<Dial><Conference startConferenceOnEnter="true" endConferenceOnExit="true" beep="false"${recordAttr}>${room}</Conference></Dial>`,
+        `<Dial><Conference startConferenceOnEnter="true" endConferenceOnExit="true" beep="false"${recordAttr}${waitAttr}>${room}</Conference></Dial>`,
       );
     }
 

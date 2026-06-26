@@ -86,7 +86,11 @@ function manualLead(e164: string): Lead {
   };
 }
 
-export function useDialer(queue: Lead[], aiConfigured = false) {
+export function useDialer(
+  queue: Lead[],
+  aiConfigured = false,
+  holdOrgId: string | null = null,
+) {
   const [state, setState] = useState<DialerState>({
     status: "idle",
     lines: [],
@@ -134,6 +138,9 @@ export function useDialer(queue: Lead[], aiConfigured = false) {
   // Late-bound startCall so the no-answer auto-advance can re-dial without a
   // declaration cycle (startCall is defined after the handlers that need it).
   const startCallRef = useRef<(() => void) | null>(null);
+  // Org id for custom hold/wait music, passed into the rep's conference leg.
+  const holdOrgRef = useRef<string | null>(holdOrgId);
+  holdOrgRef.current = holdOrgId;
 
   const patch = useCallback((p: Partial<DialerState>) => {
     setState((s) => ({ ...s, ...p }));
@@ -727,8 +734,15 @@ export function useDialer(queue: Lead[], aiConfigured = false) {
         }
 
         // Join the rep's browser into the same room (and record the conference).
+        // HoldOrg, when set, makes the voice webhook play the org's custom wait
+        // music while the rep waits for the homeowner to answer.
         const call = await deviceRef.current.connect({
-          params: { Conference: room, record: "true", MonitorId: humanId },
+          params: {
+            Conference: room,
+            record: "true",
+            MonitorId: humanId,
+            ...(holdOrgRef.current ? { HoldOrg: holdOrgRef.current } : {}),
+          },
         });
 
         // The rep's browser is now in the conference, but the CALL is NOT

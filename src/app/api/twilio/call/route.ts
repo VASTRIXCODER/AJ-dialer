@@ -83,11 +83,21 @@ export async function POST(req: Request) {
   // connects, it just won't auto-cancel the losing legs.
   const base = getPublicBaseUrl(req);
 
+  // Custom hold/wait music: when the org configured a playlist, point the
+  // conference waitUrl at our hold endpoint so the homeowner hears it (while
+  // waiting / on hold) instead of Twilio's default tone. Needs a public base URL.
+  const orgId = viewer.org?.id ?? null;
+  const hasHoldMusic = (orgSettings?.dialing?.holdMusicUrls ?? []).length > 0;
+  const waitAttr =
+    base && orgId && hasHoldMusic
+      ? ` waitUrl="${base.replace(/&/g, "&amp;")}/api/twilio/hold?org=${encodeURIComponent(orgId)}" waitMethod="GET"`
+      : "";
+
   // For a single call, the homeowner hanging up should end the call (matching a
   // direct dial). For parallel, the losing legs are force-released, so they must
   // NOT end the conference on exit — only the rep's leg does that.
   const endOnExit = leads.length === 1 ? "true" : "false";
-  const conferenceTwiml = `<?xml version="1.0" encoding="UTF-8"?><Response><Dial><Conference startConferenceOnEnter="true" endConferenceOnExit="${endOnExit}" beep="false">${room}</Conference></Dial></Response>`;
+  const conferenceTwiml = `<?xml version="1.0" encoding="UTF-8"?><Response><Dial><Conference startConferenceOnEnter="true" endConferenceOnExit="${endOnExit}" beep="false"${waitAttr}>${room}</Conference></Dial></Response>`;
 
   const placed = await Promise.all(
     leads.map(async (leg) => {

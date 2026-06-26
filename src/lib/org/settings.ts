@@ -63,6 +63,12 @@ export interface OrgSettings {
     callerIds: string[];
     /** Switch to the next pool number after this many calls (min 1). */
     rotateEvery: number;
+    /**
+     * Hold / wait music — a playlist of public audio URLs (mp3/wav) played to a
+     * homeowner while they wait alone in the conference (and on hold). Looped in
+     * order. Empty ⇒ Twilio's default hold music.
+     */
+    holdMusicUrls: string[];
   };
   hours: {
     startHour: number; // 0–23 local to the org timezone
@@ -131,6 +137,7 @@ export const DEFAULT_ORG_SETTINGS: OrgSettings = {
     callerId: "",
     callerIds: [],
     rotateEvery: 1,
+    holdMusicUrls: [],
   },
   hours: { startHour: 8, endHour: 20, days: [1, 2, 3, 4, 5] },
   ai: {

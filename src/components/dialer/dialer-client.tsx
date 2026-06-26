@@ -21,6 +21,7 @@ export function DialerClient({
   manualEnabled = true,
   aiEnabled = true,
   aiLockReason = null,
+  holdOrgId = null,
 }: {
   queue: Lead[];
   campaigns?: { id: string; name: string }[];
@@ -33,6 +34,8 @@ export function DialerClient({
   aiEnabled?: boolean;
   /** Why AI is locked, to tailor the message ("premium" plan vs "role"). */
   aiLockReason?: AiLockReason;
+  /** Org id to source custom hold/wait music from (null = Twilio default). */
+  holdOrgId?: string | null;
 }) {
   // The queue is held in state so the "Load leads" button can pull the latest
   // shared pool into the dialer on demand (the page ships an initial copy).
@@ -77,7 +80,7 @@ export function DialerClient({
     : queue;
   // AI is usable only when the agent is configured AND this viewer is allowed it.
   const aiUsable = aiAgentConfigured && aiEnabled;
-  const dialer = useDialer(queueForDialer, aiUsable);
+  const dialer = useDialer(queueForDialer, aiUsable, holdOrgId);
   const { state } = dialer;
 
   // Which lead the side panels describe right now (null when the queue is empty

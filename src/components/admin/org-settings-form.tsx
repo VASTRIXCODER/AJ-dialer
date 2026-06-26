@@ -424,6 +424,28 @@ export function OrgSettingsForm({
             Twilio (and, for AI calls, imported into ElevenLabs).
           </p>
         </div>
+        <div className="mt-4">
+          <Field label="Hold music playlist">
+            <Textarea
+              value={(dialing.holdMusicUrls ?? []).join("\n")}
+              placeholder={"https://example.com/track1.mp3\nhttps://…  (one audio URL per line)"}
+              onChange={(e) =>
+                setDialing({
+                  ...dialing,
+                  holdMusicUrls: e.target.value
+                    .split(/[\n,]/)
+                    .map((s) => s.trim())
+                    .filter(Boolean),
+                })
+              }
+            />
+          </Field>
+          <p className="mt-1.5 text-xs text-muted-foreground">
+            Public MP3/WAV URLs, one per line — played (and looped) to the rep
+            while a call connects and to the homeowner while they’re on hold.
+            Leave empty for Twilio’s default hold music.
+          </p>
+        </div>
         <div className="mt-3 space-y-3">
           <Toggle
             label="Record calls"
