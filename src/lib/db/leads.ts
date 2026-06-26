@@ -196,6 +196,70 @@ export async function deleteLeads(
   }
 }
 
+/**
+ * Reassign leads to a different uploader (move them between accounts). Supervisor-
+ * only and strictly scoped to the viewer's org — you can never move another org's
+ * leads, and the target must be an active member of your org. Batched like delete
+ * so big moves don't overflow the request URL. Changes owner_id, so the leads
+ * move into the target's dial queue + their Leads-tab section.
+ */
+export async function reassignLeads(
+  leadIds: string[],
+  toUserId: string,
+): Promise<{ updated: number; error?: string }> {
+  if (!isSupabaseConfigured())
+    return { updated: 0, error: "Connect Supabase to manage leads." };
+  try {
+    const supabase = await createClient();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) return { updated: 0, error: "You must be signed in." };
+    const ids = [...new Set(leadIds.filter((id) => UUID.test(id)))];
+    if (!ids.length) return { updated: 0, error: "No valid leads selected." };
+    if (!UUID.test(toUserId))
+      return { updated: 0, error: "Pick a teammate to reassign to." };
+
+    const { data: prof } = await supabase
+      .from("profiles")
+      .select("org_id, role")
+      .eq("id", user.id)
+      .maybeSingle();
+    const orgId = prof?.org_id ? String(prof.org_id) : null;
+    if (!orgId || !isSupervisorRole(prof?.role) || !isAdminConfigured())
+      return { updated: 0, error: "Only supervisors can reassign leads." };
+
+    const admin = createAdminClient();
+    // The target must be an active member of THIS org.
+    const { data: member } = await admin
+      .from("organization_members")
+      .select("user_id")
+      .eq("org_id", orgId)
+      .eq("user_id", toUserId)
+      .eq("status", "active")
+      .maybeSingle();
+    if (!member)
+      return { updated: 0, error: "That person isn't a member of your organization." };
+
+    let updated = 0;
+    const CHUNK = 100;
+    for (let i = 0; i < ids.length; i += CHUNK) {
+      const batch = ids.slice(i, i + CHUNK);
+      const { data, error } = await admin
+        .from("leads")
+        .update({ owner_id: toUserId, org_id: orgId })
+        .in("id", batch)
+        .eq("org_id", orgId) // never move leads outside the viewer's org
+        .select("id");
+      if (error) return { updated, error: error.message };
+      updated += data?.length ?? 0;
+    }
+    return { updated };
+  } catch (e) {
+    return { updated: 0, error: e instanceof Error ? e.message : "Reassign failed." };
+  }
+}
+
 export async function getLeadById(id: string): Promise<Lead | null> {
   if (!isSupabaseConfigured()) return fallbackById(id) ?? null;
   try {

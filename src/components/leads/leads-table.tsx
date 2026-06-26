@@ -35,20 +35,25 @@ export function LeadsTable({
   campaigns = [],
   canManage = false,
   meId = null,
+  members = [],
 }: {
   leads: Lead[];
   campaigns?: { id: string; name: string }[];
-  /** Whether the viewer can delete leads (managers+). Gates the delete UI. */
+  /** Whether the viewer can delete/reassign leads (managers+). Gates that UI. */
   canManage?: boolean;
   /** Viewer's user id — labels their own uploader section "Your uploads". */
   meId?: string | null;
+  /** Org members (id = user id) — targets for reassigning leads between accounts. */
+  members?: { id: string; name: string }[];
 }) {
   const router = useRouter();
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<LeadStatus | "all">("all");
   const [campaignFilter, setCampaignFilter] = useState<string>("all");
+  const [uploaderFilter, setUploaderFilter] = useState<string>("all");
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [assignTo, setAssignTo] = useState("");
+  const [reassignTo, setReassignTo] = useState("");
   const [busy, setBusy] = useState(false);
   // Ids queued for deletion, awaiting confirmation (individual = 1, bulk = many).
   const [pendingDelete, setPendingDelete] = useState<string[] | null>(null);
@@ -62,12 +67,30 @@ export function LeadsTable({
     [campaigns],
   );
 
+  // Distinct uploaders present in the data — powers the "Uploaded by" filter
+  // (only meaningful for supervisors, who see more than one).
+  const uploaders = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const l of leads) {
+      if (!l.ownerId) continue;
+      m.set(
+        l.ownerId,
+        meId && l.ownerId === meId
+          ? "Your uploads"
+          : l.ownerName?.trim() || "Teammate",
+      );
+    }
+    return [...m.entries()].map(([id, name]) => ({ id, name }));
+  }, [leads, meId]);
+
   const filtered = useMemo(() => {
     return leads.filter((l) => {
       const matchesFilter = filter === "all" || l.status === filter;
       const matchesCampaign =
         campaignFilter === "all" ||
         (campaignFilter === "none" ? !l.campaignId : l.campaignId === campaignFilter);
+      const matchesUploader =
+        uploaderFilter === "all" || l.ownerId === uploaderFilter;
       const q = query.trim().toLowerCase();
       const matchesQuery =
         !q ||
@@ -75,9 +98,9 @@ export function LeadsTable({
         l.city.toLowerCase().includes(q) ||
         l.phone.includes(q) ||
         l.utilityProvider.toLowerCase().includes(q);
-      return matchesFilter && matchesCampaign && matchesQuery;
+      return matchesFilter && matchesCampaign && matchesUploader && matchesQuery;
     });
-  }, [leads, filter, campaignFilter, query]);
+  }, [leads, filter, campaignFilter, uploaderFilter, query]);
 
   const allSelected = filtered.length > 0 && filtered.every((l) => selected.has(l.id));
   const toggleAll = () =>
@@ -105,6 +128,36 @@ export function LeadsTable({
       setSelected(new Set());
       setAssignTo("");
       router.refresh();
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // Move the selected leads to another account (uploader). Changes who owns them,
+  // so they shift into that rep's dial queue + Leads-tab section.
+  async function reassign() {
+    if (selected.size === 0 || !reassignTo) return;
+    setBusy(true);
+    setErr("");
+    try {
+      const res = await fetch("/api/leads/reassign", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ leadIds: [...selected], toUserId: reassignTo }),
+      });
+      const json = (await res.json().catch(() => ({}))) as {
+        updated?: number;
+        error?: string;
+      };
+      if (!res.ok || json.error) {
+        setErr(json.error ?? "Couldn’t reassign those leads.");
+        return;
+      }
+      setSelected(new Set());
+      setReassignTo("");
+      router.refresh();
+    } catch {
+      setErr("Network error while reassigning.");
     } finally {
       setBusy(false);
     }
@@ -176,6 +229,21 @@ export function LeadsTable({
           />
         </div>
         <div className="flex flex-wrap items-center gap-1.5">
+          {uploaders.length > 1 && (
+            <select
+              value={uploaderFilter}
+              onChange={(e) => setUploaderFilter(e.target.value)}
+              aria-label="Filter by uploader"
+              className="h-9 rounded-lg border border-border bg-background/60 px-2.5 text-sm font-medium focus-visible:border-primary/50 focus-visible:outline-none"
+            >
+              <option value="all">All uploaders</option>
+              {uploaders.map((u) => (
+                <option key={u.id} value={u.id}>
+                  {u.name}
+                </option>
+              ))}
+            </select>
+          )}
           {campaigns.length > 0 && (
             <select
               value={campaignFilter}
@@ -272,6 +340,34 @@ export function LeadsTable({
               <Button size="sm" className="gap-1.5" disabled={!assignTo || busy} onClick={assign}>
                 {busy && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
                 Apply
+              </Button>
+            </>
+          )}
+          {canManage && members.length > 0 && (
+            <>
+              <span className="text-sm text-muted-foreground">Reassign to</span>
+              <select
+                value={reassignTo}
+                onChange={(e) => setReassignTo(e.target.value)}
+                aria-label="Reassign selected leads to"
+                className="h-8 rounded-lg border border-border bg-background px-2 text-sm focus-visible:border-primary/50 focus-visible:outline-none"
+              >
+                <option value="">Choose teammate…</option>
+                {members.map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.id === meId ? "Me" : m.name || "Member"}
+                  </option>
+                ))}
+              </select>
+              <Button
+                size="sm"
+                variant="outline"
+                className="gap-1.5"
+                disabled={!reassignTo || busy}
+                onClick={reassign}
+              >
+                {busy && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                Reassign
               </Button>
             </>
           )}

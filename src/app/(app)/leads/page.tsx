@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { CalendarCheck, Sparkles, Zap } from "lucide-react";
 import { getLeads } from "@/lib/db/leads";
 import { getCampaigns } from "@/lib/db/pipeline";
-import { getViewer } from "@/lib/org/membership";
+import { getViewer, listMembers } from "@/lib/org/membership";
 import { formatNumber } from "@/lib/utils";
 
 export const metadata = { title: "Leads" };
@@ -20,8 +20,13 @@ export default async function LeadsPage() {
     getCampaigns(),
     getViewer(),
   ]);
-  // Lead management (delete) is for managers+ (anyone who can import leads).
+  // Lead management (delete / reassign) is for managers+ (leads.import). Pull the
+  // org's members so a supervisor can reassign leads between accounts.
   const canManage = viewer.permissions.includes("leads.import");
+  const members =
+    canManage && viewer.org
+      ? (await listMembers(viewer.org.id)).map((m) => ({ id: m.userId, name: m.name }))
+      : [];
   const campaignList = campaigns
     .filter((c) => c.status !== "completed")
     .map((c) => ({ id: c.id, name: c.name }));
@@ -78,6 +83,7 @@ export default async function LeadsPage() {
         campaigns={campaignList}
         canManage={canManage}
         meId={viewer.user?.id ?? null}
+        members={members}
       />
     </PageContainer>
   );
