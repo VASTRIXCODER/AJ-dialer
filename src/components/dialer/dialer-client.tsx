@@ -1,6 +1,6 @@
 "use client";
 
-import { AlertTriangle, Loader2, Megaphone, Settings, Users } from "lucide-react";
+import { AlertTriangle, Loader2, Megaphone, Settings, StopCircle, Users } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
 import { Card } from "@/components/ui/card";
@@ -137,6 +137,20 @@ export function DialerClient({
         <span className="text-xs font-medium text-muted-foreground tabular">
           {queueForDialer.length} lead{queueForDialer.length === 1 ? "" : "s"} ready to dial
         </span>
+        {/* Stop the manual power-dial loop mid-session. AI auto-dial has its own
+            stop control in the AI session panel; this covers manual dialing,
+            where the auto-dial toggle (idle screen) isn't reachable on a call. */}
+        {!state.aiMode && state.autoDial && state.status !== "idle" && (
+          <Button
+            size="sm"
+            variant="danger"
+            className="gap-2"
+            onClick={() => dialer.setAutoDial(false)}
+          >
+            <StopCircle className="h-4 w-4" />
+            Stop auto-dial
+          </Button>
+        )}
         {campaigns.length > 0 && (
           <>
             <span className="ml-1 flex items-center gap-1.5 text-sm font-medium text-muted-foreground">
