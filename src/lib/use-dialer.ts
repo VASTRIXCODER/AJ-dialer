@@ -126,6 +126,14 @@ export function useDialer(queue: Lead[], aiConfigured = false) {
   const humanIdRef = useRef<string | null>(null);
   // Whether manual PSTN dialing is possible (a Twilio caller ID is configured).
   const canDialOutRef = useRef(true);
+  // Did the CURRENT human attempt reach a live conversation? Decides whether a
+  // leg ending means "disposition this call" (connected) or "no answer, advance".
+  const connectedRef = useRef(false);
+  // Primary lead of the current attempt — used to log an auto no-answer record.
+  const attemptLeadRef = useRef<Lead | null>(null);
+  // Late-bound startCall so the no-answer auto-advance can re-dial without a
+  // declaration cycle (startCall is defined after the handlers that need it).
+  const startCallRef = useRef<(() => void) | null>(null);
 
   const patch = useCallback((p: Partial<DialerState>) => {
     setState((s) => ({ ...s, ...p }));
@@ -194,7 +202,28 @@ export function useDialer(queue: Lead[], aiConfigured = false) {
         if (cancelled) return;
         if (data.token) {
           const { Device } = await import("@twilio/voice-sdk");
-          const device = new Device(data.token, { logLevel: "error" });
+          // tokenRefreshMs: fire `tokenWillExpire` a full 60s before the JWT
+          // lapses, leaving ample room to re-mint even on a slow network.
+          const device = new Device(data.token, {
+            logLevel: "error",
+            tokenRefreshMs: 60_000,
+          });
+
+          // Voice tokens are short-lived (1h ttl). A long power-dial session
+          // (≈40+ calls) outlives the token; once it expires, device.connect()
+          // silently fails and "calls stop going through". Re-mint a fresh token
+          // and hand it to the Device before each expiry so dialing never stalls.
+          const refreshToken = async () => {
+            try {
+              const r = await fetch("/api/twilio/token", { cache: "no-store" });
+              const d = (await r.json()) as { token?: string };
+              if (d.token) device.updateToken(d.token);
+            } catch {
+              /* a later refresh tick / call attempt will surface real issues */
+            }
+          };
+          device.on("tokenWillExpire", () => void refreshToken());
+
           await device.register();
           if (cancelled) {
             device.destroy();
@@ -248,6 +277,7 @@ export function useDialer(queue: Lead[], aiConfigured = false) {
     (lead: Lead) => {
       stopPoll();
       postHuman("connect");
+      connectedRef.current = true; // a real conversation is underway
       setState((s) => ({
         ...s,
         status: "live",
@@ -273,30 +303,132 @@ export function useDialer(queue: Lead[], aiConfigured = false) {
     patch({ status: "idle", lines: [], connectedLead: null, durationSec: 0 });
   }, [clearHumanPresence, patch, stopTick, stopPoll]);
 
-  const endCall = useCallback(() => {
+  // Persist a human-call disposition so EVERY call is logged (reports + metrics),
+  // not just ones the rep manually dispositions. Fire-and-forget.
+  const logHumanCall = useCallback(
+    (
+      lead: Lead,
+      outcome: CallOutcome,
+      durationSec: number,
+      callSid: string | null = null,
+      room: string | null = null,
+    ) => {
+      fetch("/api/calls", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          leadId: lead.id,
+          leadName: `${lead.firstName} ${lead.lastName}`.trim() || formatPhone(lead.phone),
+          phone: lead.phone,
+          durationSec,
+          outcome,
+          callSid,
+          room,
+        }),
+      }).catch(() => {});
+    },
+    [],
+  );
+
+  // A dial attempt that never connected (nobody answered / busy / released): log
+  // it as a no-answer and move on — in auto-dial, re-dial the next lead so the
+  // session never stalls waiting for a manual disposition on an unanswered call.
+  const settleNoAnswer = useCallback(() => {
     stopTick();
     stopPoll();
     clearHumanPresence();
-    const sid = callRef.current?.parameters?.CallSid ?? null;
+    const lead = attemptLeadRef.current;
+    if (lead) logHumanCall(lead, "no_answer", 0);
+    if (queue.length) {
+      queueIndexRef.current =
+        (queueIndexRef.current + parallelRef.current) % queue.length;
+    }
+    patch({
+      status: "idle",
+      lines: [],
+      connectedLead: null,
+      durationSec: 0,
+      lastOutcome: "no_answer",
+      queueIndex: queueIndexRef.current,
+    });
+    if (autoDialRef.current && queue.length) {
+      setTimeout(() => startCallRef.current?.(), 900);
+    }
+  }, [clearHumanPresence, logHumanCall, patch, queue.length, stopPoll, stopTick]);
+
+  // The rep ends a live call → go to wrap-up to disposition (which logs it).
+  // Idempotent: claims the settle by nulling callRef BEFORE disconnecting, so the
+  // Twilio `disconnect` event that follows is a no-op (never double-fires / nulls
+  // the SID). This is the fix for "the call widget won't close when I hang up".
+  const endCall = useCallback(() => {
+    const call = callRef.current;
+    if (!call) return;
+    const sid = call.parameters?.CallSid ?? null;
+    callRef.current = null;
+    stopTick();
+    stopPoll();
+    clearHumanPresence();
     try {
-      callRef.current?.disconnect();
+      call.disconnect();
     } catch {
       /* noop */
     }
-    callRef.current = null;
     patch({ status: "wrapup", callSid: sid });
   }, [clearHumanPresence, patch, stopTick, stopPoll]);
+
+  // A leg ended on its OWN (homeowner hung up, conference closed, leg released).
+  // Connected → wrap-up for disposition; never connected → no-answer + advance.
+  // No-ops if an explicit End/Skip already settled this attempt (callRef null).
+  const handleLegEnded = useCallback(() => {
+    const call = callRef.current;
+    if (!call) return;
+    const sid = call.parameters?.CallSid ?? null;
+    callRef.current = null;
+    if (connectedRef.current) {
+      stopTick();
+      stopPoll();
+      clearHumanPresence();
+      patch({ status: "wrapup", callSid: sid });
+    } else {
+      settleNoAnswer();
+    }
+  }, [clearHumanPresence, patch, settleNoAnswer, stopPoll, stopTick]);
+
+  // A leg raised an error. A connected call still goes to wrap-up so it can be
+  // dispositioned + logged; an error before connect returns to idle with a clear
+  // message (and pauses auto-dial) rather than silently burning the queue.
+  const handleLegError = useCallback(() => {
+    const call = callRef.current;
+    if (!call) return;
+    const sid = call.parameters?.CallSid ?? null;
+    callRef.current = null;
+    stopTick();
+    stopPoll();
+    clearHumanPresence();
+    if (connectedRef.current) {
+      patch({ status: "wrapup", callSid: sid });
+    } else {
+      patch({
+        status: "idle",
+        lines: [],
+        connectedLead: null,
+        durationSec: 0,
+        error: "The call ended unexpectedly. Press Start to try again.",
+      });
+    }
+  }, [clearHumanPresence, patch, stopPoll, stopTick]);
 
   const attachCallHandlers = useCallback(
     (call: Call, onAccept?: () => void) => {
       callRef.current = call;
+      connectedRef.current = false; // fresh attempt — not yet a live conversation
       if (onAccept) call.on("accept", onAccept);
-      call.on("disconnect", () => endCall());
-      call.on("cancel", () => resetToIdle());
-      call.on("reject", () => resetToIdle());
-      call.on("error", () => resetToIdle());
+      call.on("disconnect", () => handleLegEnded());
+      call.on("cancel", () => handleLegEnded());
+      call.on("reject", () => handleLegEnded());
+      call.on("error", () => handleLegError());
     },
-    [endCall, resetToIdle],
+    [handleLegEnded, handleLegError],
   );
 
   // ── Lead navigation (browse the queue without calling) ────────────────────
@@ -519,6 +651,7 @@ export function useDialer(queue: Lead[], aiConfigured = false) {
       // Register live presence for the Live Monitor. The conference room is
       // derived from this id so supervisors can join it to listen.
       const lead0 = leads[0];
+      attemptLeadRef.current = lead0; // log target if this attempt goes unanswered
       const humanId = `h-${Date.now().toString(36)}-${Math.random()
         .toString(36)
         .slice(2, 7)}`;
@@ -612,17 +745,25 @@ export function useDialer(queue: Lead[], aiConfigured = false) {
               answeredLeadId: string | null;
               done?: boolean;
             };
+            // Overlapping ticks (a fetch slower than the 2s interval) must not
+            // double-settle: bail if this attempt is already connected or gone.
+            if (!callRef.current || connectedRef.current) return;
             if (answeredLeadId) {
               const lead = leads.find((l) => l.id === answeredLeadId) ?? leads[0];
               connectLine(lead); // connectLine stops the poll + starts the timer
             } else if (done) {
-              // Nobody answered — release the rep from the empty conference.
+              // Nobody answered — release the rep from the empty conference and
+              // settle the attempt as a no-answer (logged + auto-advanced). Claim
+              // the settle first so the leg's disconnect event is a clean no-op.
+              const call = callRef.current;
+              callRef.current = null;
               stopPoll();
               try {
-                callRef.current?.disconnect();
+                call.disconnect();
               } catch {
-                /* the disconnect handler wraps up */
+                /* noop */
               }
+              settleNoAnswer();
             }
           } catch {
             /* keep polling */
@@ -635,7 +776,16 @@ export function useDialer(queue: Lead[], aiConfigured = false) {
         resetToIdle();
       }
     },
-    [attachCallHandlers, clearHumanPresence, connectLine, nextLeads, patch, resetToIdle, stopPoll],
+    [
+      attachCallHandlers,
+      clearHumanPresence,
+      connectLine,
+      nextLeads,
+      patch,
+      resetToIdle,
+      settleNoAnswer,
+      stopPoll,
+    ],
   );
 
   // The Start button + auto-dial route through here, honoring the current mode.
@@ -649,6 +799,9 @@ export function useDialer(queue: Lead[], aiConfigured = false) {
     },
     [startAISession, startHumanCall],
   );
+
+  // Keep the late-bound ref current so no-answer auto-advance can re-dial.
+  startCallRef.current = startCall;
 
   const dialNumber = useCallback(
     (raw: string) => {
@@ -682,15 +835,18 @@ export function useDialer(queue: Lead[], aiConfigured = false) {
   );
 
   const skip = useCallback(() => {
+    // Claim the settle (null callRef BEFORE disconnect) so the leg's terminal
+    // event is a clean no-op and can't double-advance the queue.
+    const call = callRef.current;
+    callRef.current = null;
     stopTick();
     stopPoll();
     clearHumanPresence();
     try {
-      callRef.current?.disconnect();
+      call?.disconnect();
     } catch {
       /* noop */
     }
-    callRef.current = null;
     advanceQueue();
     if (autoDialRef.current && queue.length) {
       setTimeout(() => startCall(), 400);
