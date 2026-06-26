@@ -14,6 +14,20 @@ export const dynamic = "force-dynamic";
  */
 export async function GET(req: Request) {
   if (!isVoiceConfigured()) {
+    // Log which vars are absent so Vercel Function Logs pinpoint the gap fast.
+    const missing = (
+      [
+        ["TWILIO_ACCOUNT_SID", process.env.TWILIO_ACCOUNT_SID],
+        ["TWILIO_API_KEY_SID", process.env.TWILIO_API_KEY_SID],
+        ["TWILIO_API_KEY_SECRET", process.env.TWILIO_API_KEY_SECRET],
+        ["TWILIO_TWIML_APP_SID", process.env.TWILIO_TWIML_APP_SID],
+      ] as [string, string | undefined][]
+    )
+      .filter(([, v]) => !v)
+      .map(([k]) => k);
+    if (missing.length) {
+      console.error("[twilio/token] offline — missing env vars:", missing.join(", "));
+    }
     return NextResponse.json({ mode: "offline" });
   }
 
