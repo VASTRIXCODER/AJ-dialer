@@ -12,8 +12,9 @@ import { chooseFromPool, resolveRotation } from "./rotation";
 // Backed by an atomic keyed Postgres counter (dial_counters via the
 // app_next_dial_seq RPC); falls back to an in-memory counter in demo mode.
 //
-// The pool + cadence come from the Admin UI (org settings) OR env vars
-// (TWILIO_CALLER_IDS / DIAL_ROTATE_EVERY) as a deployment-wide fallback.
+// PLATFORM LOCK: when TWILIO_CALLER_IDS is set, it acts as the authoritative
+// pool for ALL orgs and takes priority over any org-level settings. Only a
+// platform admin changing the env var can modify these numbers.
 // ─────────────────────────────────────────────────────────────────────────────
 
 const ENV_POOL = (process.env.TWILIO_CALLER_IDS ?? "")
@@ -21,6 +22,9 @@ const ENV_POOL = (process.env.TWILIO_CALLER_IDS ?? "")
   .map((s) => s.trim())
   .filter(Boolean);
 const ENV_ROTATE_EVERY = Math.floor(Number(process.env.DIAL_ROTATE_EVERY)) || 0;
+
+/** True when TWILIO_CALLER_IDS is set — the pool is platform-locked. */
+export const PLATFORM_POOL_LOCKED = ENV_POOL.length > 0;
 
 const memSeq = new Map<string, number>();
 
@@ -61,8 +65,59 @@ export async function nextCallerId(
     envPool: ENV_POOL,
     envRotateEvery: ENV_ROTATE_EVERY,
     envSingle: twilioConfig.callerId,
+    platformPriority: PLATFORM_POOL_LOCKED,
   });
   if (pool.length <= 1) return pool[0] ?? "";
   const seq = await nextDialSeq(repKey);
   return chooseFromPool(pool, seq, rotateEvery);
+}
+
+export interface CallerIdInfo {
+  callerId: string;
+  pool: string[];
+  poolIndex: number;
+  rotateEvery: number;
+}
+
+/**
+ * Same as nextCallerId but also returns pool metadata so the UI can show which
+ * number is active and when it will rotate.
+ */
+export async function nextCallerIdWithInfo(
+  repKey: string | null | undefined,
+  settings: OrgSettings | null | undefined,
+): Promise<CallerIdInfo> {
+  const { pool, rotateEvery } = resolveRotation(settings, {
+    envPool: ENV_POOL,
+    envRotateEvery: ENV_ROTATE_EVERY,
+    envSingle: twilioConfig.callerId,
+    platformPriority: PLATFORM_POOL_LOCKED,
+  });
+  if (!pool.length) {
+    return { callerId: "", pool: [], poolIndex: 0, rotateEvery: 1 };
+  }
+  if (pool.length === 1) {
+    return { callerId: pool[0], pool, poolIndex: 0, rotateEvery };
+  }
+  const seq = await nextDialSeq(repKey);
+  const idx = Math.floor((seq - 1) / Math.max(1, rotateEvery)) % pool.length;
+  return { callerId: pool[idx], pool, poolIndex: idx, rotateEvery };
+}
+
+/**
+ * Returns the platform rotation pool info WITHOUT advancing the counter.
+ * Safe to call for display purposes only.
+ */
+export function getPlatformPool(settings: OrgSettings | null | undefined): {
+  pool: string[];
+  rotateEvery: number;
+  isLocked: boolean;
+} {
+  const { pool, rotateEvery } = resolveRotation(settings, {
+    envPool: ENV_POOL,
+    envRotateEvery: ENV_ROTATE_EVERY,
+    envSingle: twilioConfig.callerId,
+    platformPriority: PLATFORM_POOL_LOCKED,
+  });
+  return { pool, rotateEvery, isLocked: PLATFORM_POOL_LOCKED };
 }

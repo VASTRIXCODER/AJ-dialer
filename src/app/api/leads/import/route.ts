@@ -76,7 +76,7 @@ export async function POST(req: Request) {
 
   // Assign the whole batch to the chosen campaign (if any).
   const rows: LeadInput[] = leads
-    .slice(0, 10000)
+    .slice(0, 5000)
     .map((r) => (body.campaignId ? { ...r, campaignId: body.campaignId } : { ...r }));
 
   const result = await insertLeads(rows);

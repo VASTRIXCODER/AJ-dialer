@@ -4,14 +4,12 @@ import { motion } from "framer-motion";
 import {
   CalendarCheck,
   ClipboardList,
-  Loader2,
-  MessageSquareText,
   Phone,
   Play,
   User,
   X,
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Portal } from "@/components/ui/portal";
@@ -39,49 +37,6 @@ export function ManualCallDetail({
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
-
-  // Transcript: serve the cached one immediately; otherwise generate it from the
-  // recording on open (ElevenLabs Speech-to-Text), then it's cached server-side.
-  const [transcript, setTranscript] = useState<string | null>(call.transcript ?? null);
-  const [transcribing, setTranscribing] = useState(false);
-  const [transcriptNote, setTranscriptNote] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (transcript || !call.hasRecording) return;
-    let cancelled = false;
-    setTranscribing(true);
-    setTranscriptNote(null);
-    (async () => {
-      try {
-        const res = await fetch("/api/twilio/transcribe", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ id: call.id }),
-        });
-        const json = (await res.json().catch(() => ({}))) as {
-          transcript?: string | null;
-          pending?: boolean;
-          error?: string;
-        };
-        if (cancelled) return;
-        if (json.transcript) setTranscript(json.transcript);
-        else
-          setTranscriptNote(
-            json.pending
-              ? "Transcript will appear once Twilio finishes processing the recording."
-              : json.error ?? "No transcript could be generated for this call.",
-          );
-      } catch {
-        if (!cancelled) setTranscriptNote("Couldn’t generate a transcript right now.");
-      } finally {
-        if (!cancelled) setTranscribing(false);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-    // Run once per opened call.
-  }, [call.id, call.hasRecording, transcript]);
 
   const cfg = call.outcome ? outcomeConfig[call.outcome] : null;
   const name = call.leadName || "Homeowner";
@@ -195,37 +150,6 @@ export function ManualCallDetail({
                   ? "No recording — the call didn't connect."
                   : "Recording will appear here once Twilio finishes processing it."}
               </p>
-            )}
-
-            {/* Transcript — generated from the recording on first view, cached after. */}
-            {(transcript || transcribing || (call.hasRecording && transcriptNote)) && (
-              <div className="rounded-xl border border-border/60 bg-surface/60 p-4">
-                <p className="mb-2 flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wide text-muted-foreground">
-                  <MessageSquareText className="h-3.5 w-3.5" />
-                  Transcript
-                </p>
-                {transcript ? (
-                  <div className="max-h-72 space-y-1.5 overflow-y-auto whitespace-pre-wrap text-sm leading-relaxed">
-                    {transcript.split("\n").map((line, i) => {
-                      const m = /^(Speaker \d+):\s*(.*)$/.exec(line);
-                      if (!m) return line ? <p key={i}>{line}</p> : null;
-                      return (
-                        <p key={i}>
-                          <span className="font-semibold text-foreground">{m[1]}:</span>{" "}
-                          <span className="text-muted-foreground">{m[2]}</span>
-                        </p>
-                      );
-                    })}
-                  </div>
-                ) : transcribing ? (
-                  <p className="flex items-center gap-2 text-sm text-muted-foreground">
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                    Generating transcript…
-                  </p>
-                ) : (
-                  <p className="text-sm text-muted-foreground">{transcriptNote}</p>
-                )}
-              </div>
             )}
           </div>
         </motion.div>

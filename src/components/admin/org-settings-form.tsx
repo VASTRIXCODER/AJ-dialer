@@ -6,7 +6,9 @@ import {
   CheckCircle2,
   Copy,
   KeyRound,
+  Lock,
   Loader2,
+  Phone,
   Plus,
   RotateCcw,
   Save,
@@ -42,9 +44,19 @@ const FEATURE_FLAGS: { key: keyof OrgSettings["features"]; label: string }[] = [
 export function OrgSettingsForm({
   org,
   canDelete,
+  isSuperadmin = false,
+  hasAiPermission = false,
+  platformPool = [],
+  platformRotateEvery = 1,
+  platformPoolLocked = false,
 }: {
   org: OrgFull;
   canDelete: boolean;
+  isSuperadmin?: boolean;
+  hasAiPermission?: boolean;
+  platformPool?: string[];
+  platformRotateEvery?: number;
+  platformPoolLocked?: boolean;
 }) {
   const router = useRouter();
   const [busy, setBusy] = useState<string | null>(null);
@@ -398,53 +410,64 @@ export function OrgSettingsForm({
           />
         </div>
         <div className="mt-4">
-          <Field label="Caller ID rotation pool">
-            <Textarea
-              value={(dialing.callerIds ?? []).join("\n")}
-              placeholder={"+13466456704\n+1…  (one number per line)"}
-              onChange={(e) =>
-                setDialing({
-                  ...dialing,
-                  callerIds: e.target.value
-                    .split(/[\n,]/)
-                    .map((s) => s.trim())
-                    .filter(Boolean),
-                })
-              }
-            />
-          </Field>
-          <p className="mt-1.5 text-xs text-muted-foreground">
-            One E.164 number per line. The dialer cycles through these for both
-            manual and AI calls, switching every{" "}
-            <span className="font-semibold tabular">
-              {Math.max(1, dialing.rotateEvery || 1)}
-            </span>{" "}
-            call{(dialing.rotateEvery || 1) === 1 ? "" : "s"}. Leave empty to always
-            use the single Caller ID above. Each number must be one you own in
-            Twilio (and, for AI calls, imported into ElevenLabs).
-          </p>
-        </div>
-        <div className="mt-4">
-          <Field label="Hold music playlist">
-            <Textarea
-              value={(dialing.holdMusicUrls ?? []).join("\n")}
-              placeholder={"https://example.com/track1.mp3\nhttps://…  (one audio URL per line)"}
-              onChange={(e) =>
-                setDialing({
-                  ...dialing,
-                  holdMusicUrls: e.target.value
-                    .split(/[\n,]/)
-                    .map((s) => s.trim())
-                    .filter(Boolean),
-                })
-              }
-            />
-          </Field>
-          <p className="mt-1.5 text-xs text-muted-foreground">
-            Public MP3/WAV URLs, one per line — played (and looped) to the rep
-            while a call connects and to the homeowner while they’re on hold.
-            Leave empty for Twilio’s default hold music.
-          </p>
+          {platformPoolLocked && !isSuperadmin ? (
+            /* Non-superadmin sees the platform pool as read-only. */
+            <div className="rounded-xl border border-border bg-muted/30 p-4">
+              <p className="mb-2 flex items-center gap-2 text-xs font-bold uppercase tracking-wide text-muted-foreground">
+                <Lock className="h-3.5 w-3.5" />
+                Platform caller ID pool — managed by platform administrator
+              </p>
+              <div className="space-y-1">
+                {platformPool.map((n) => (
+                  <div key={n} className="flex items-center gap-2 text-sm">
+                    <Phone className="h-3.5 w-3.5 text-primary" />
+                    <span className="font-mono">{n}</span>
+                  </div>
+                ))}
+              </div>
+              <p className="mt-3 text-xs text-muted-foreground">
+                Rotates every{" "}
+                <span className="font-semibold">{Math.max(1, platformRotateEvery)}</span>{" "}
+                call{platformRotateEvery === 1 ? "" : "s"} per rep. Contact{" "}
+                <span className="font-semibold">anasupalle17@gmail.com</span> to modify the pool.
+              </p>
+            </div>
+          ) : (
+            /* Superadmin or no platform lock — fully editable. */
+            <>
+              {isSuperadmin && platformPoolLocked && (
+                <p className="mb-2 flex items-center gap-1.5 rounded-lg bg-warning/10 px-3 py-2 text-xs font-medium text-warning">
+                  <Lock className="h-3.5 w-3.5" />
+                  Platform pool is active (TWILIO_CALLER_IDS env var). Org-level overrides are
+                  ignored while the env var is set — change it in Vercel to modify the pool.
+                </p>
+              )}
+              <Field label="Caller ID rotation pool">
+                <Textarea
+                  value={(dialing.callerIds ?? []).join("\n")}
+                  placeholder={"+13466456704\n+1…  (one number per line)"}
+                  onChange={(e) =>
+                    setDialing({
+                      ...dialing,
+                      callerIds: e.target.value
+                        .split(/[\n,]/)
+                        .map((s) => s.trim())
+                        .filter(Boolean),
+                    })
+                  }
+                />
+              </Field>
+              <p className="mt-1.5 text-xs text-muted-foreground">
+                One E.164 number per line. The dialer cycles through these for both manual and AI
+                calls, switching every{" "}
+                <span className="font-semibold tabular">
+                  {Math.max(1, dialing.rotateEvery || 1)}
+                </span>{" "}
+                call{(dialing.rotateEvery || 1) === 1 ? "" : "s"}. Leave empty to always use the
+                single Caller ID above.
+              </p>
+            </>
+          )}
         </div>
         <div className="mt-3 space-y-3">
           <Toggle
@@ -532,79 +555,110 @@ export function OrgSettingsForm({
         title="AI agent"
         description="The voice, persona, and behavior of your AI caller."
       >
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <Field label="Agent name">
-            <Input value={ai.agentName} onChange={(e) => setAi({ ...ai, agentName: e.target.value })} />
-          </Field>
-          <Field label="Voice">
-            <Input value={ai.voice} onChange={(e) => setAi({ ...ai, voice: e.target.value })} />
-          </Field>
-          <Field label="Transfer number">
-            <Input
-              value={ai.transferNumber}
-              placeholder="+1…"
-              onChange={(e) => setAi({ ...ai, transferNumber: e.target.value })}
-            />
-          </Field>
-          <Field label="Language">
-            <Input value={ai.language} onChange={(e) => setAi({ ...ai, language: e.target.value })} />
-          </Field>
-          <NumberField
-            label="Max AI talk time (min)"
-            value={ai.maxTalkMin}
-            onChange={(n) => setAi({ ...ai, maxTalkMin: n })}
-          />
-          <Field label="Voice speed (0.7 slow – 1.2 fast)">
-            <Input
-              type="number"
-              step="0.05"
-              min="0.7"
-              max="1.2"
-              value={ai.voiceSpeed}
-              onChange={(e) => setAi({ ...ai, voiceSpeed: Number(e.target.value) })}
-            />
-          </Field>
-          <Field label="Persona / instructions" className="sm:col-span-2">
-            <Textarea value={ai.persona} onChange={(e) => setAi({ ...ai, persona: e.target.value })} />
-          </Field>
-          <Field label="Opening greeting" className="sm:col-span-2">
-            <Textarea
-              value={ai.greeting}
-              onChange={(e) => setAi({ ...ai, greeting: e.target.value })}
-              placeholder="Use {agent} and {org} as placeholders."
-            />
-          </Field>
-          <div className="sm:col-span-2">
-            <div className="mb-1.5 flex items-center justify-between">
-              <Label className="mb-0">System prompt (paste this into ElevenLabs)</Label>
-              <button
-                type="button"
-                onClick={() => navigator.clipboard?.writeText(ai.systemPrompt)}
-                className="inline-flex items-center gap-1.5 rounded-lg border border-border px-2 py-1 text-xs font-semibold text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
-              >
-                <Copy className="h-3.5 w-3.5" />
-                Copy
-              </button>
+        {!features.aiDialer || !hasAiPermission ? (
+          /* Locked when the org has aiDialer off (premium gate) or the viewer lacks dialer.ai */
+          <div className="flex flex-col items-center gap-4 rounded-xl border border-dashed border-border/70 px-6 py-10 text-center">
+            <span className="flex h-14 w-14 items-center justify-center rounded-2xl border border-border bg-muted/40">
+              <Lock className="h-6 w-6 text-muted-foreground" />
+            </span>
+            <div>
+              <p className="text-sm font-semibold">
+                {!features.aiDialer ? "AI calling — Premium Feature" : "AI calling is not enabled for your organization"}
+              </p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                {!features.aiDialer ? (
+                  <>
+                    Your organization does not have access to AI calling. Contact{" "}
+                    <span className="font-semibold text-foreground">anasupalle17@gmail.com</span> to
+                    unlock AI calling for your account.
+                  </>
+                ) : (
+                  <>
+                    AI agent configuration requires the <span className="font-semibold">AI Dialer</span>{" "}
+                    permission. Contact your organization owner or platform administrator to unlock AI
+                    calling for this account.
+                  </>
+                )}
+              </p>
             </div>
-            <Textarea
-              value={ai.systemPrompt}
-              onChange={(e) => setAi({ ...ai, systemPrompt: e.target.value })}
-              placeholder="Leave blank to use the built-in script for this vertical (Sunrun uses the Emily resolution script)."
-              className="min-h-[140px] font-mono text-xs"
-            />
           </div>
-        </div>
-        <div className="mt-3">
-          <Toggle
-            label="AI-first dialing"
-            hint="The AI agent calls first; reps take over on request."
-            checked={ai.aiFirst}
-            onChange={(v) => setAi({ ...ai, aiFirst: v })}
-          />
-        </div>
-        <div className="mt-4 flex justify-end">
-          <SaveBtn k="ai" onClick={() => save({ settings: { ai } }, "ai")} />
-        </div>
+        ) : (
+          <>
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <Field label="Agent name">
+                <Input value={ai.agentName} onChange={(e) => setAi({ ...ai, agentName: e.target.value })} />
+              </Field>
+              <Field label="Voice">
+                <Input value={ai.voice} onChange={(e) => setAi({ ...ai, voice: e.target.value })} />
+              </Field>
+              <Field label="Transfer number">
+                <Input
+                  value={ai.transferNumber}
+                  placeholder="+1…"
+                  onChange={(e) => setAi({ ...ai, transferNumber: e.target.value })}
+                />
+              </Field>
+              <Field label="Language">
+                <Input value={ai.language} onChange={(e) => setAi({ ...ai, language: e.target.value })} />
+              </Field>
+              <NumberField
+                label="Max AI talk time (min)"
+                value={ai.maxTalkMin}
+                onChange={(n) => setAi({ ...ai, maxTalkMin: n })}
+              />
+              <Field label="Voice speed (0.7 slow – 1.2 fast)">
+                <Input
+                  type="number"
+                  step="0.05"
+                  min="0.7"
+                  max="1.2"
+                  value={ai.voiceSpeed}
+                  onChange={(e) => setAi({ ...ai, voiceSpeed: Number(e.target.value) })}
+                />
+              </Field>
+              <Field label="Persona / instructions" className="sm:col-span-2">
+                <Textarea value={ai.persona} onChange={(e) => setAi({ ...ai, persona: e.target.value })} />
+              </Field>
+              <Field label="Opening greeting" className="sm:col-span-2">
+                <Textarea
+                  value={ai.greeting}
+                  onChange={(e) => setAi({ ...ai, greeting: e.target.value })}
+                  placeholder="Use {agent} and {org} as placeholders."
+                />
+              </Field>
+              <div className="sm:col-span-2">
+                <div className="mb-1.5 flex items-center justify-between">
+                  <Label className="mb-0">System prompt (paste this into ElevenLabs)</Label>
+                  <button
+                    type="button"
+                    onClick={() => navigator.clipboard?.writeText(ai.systemPrompt)}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-border px-2 py-1 text-xs font-semibold text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
+                  >
+                    <Copy className="h-3.5 w-3.5" />
+                    Copy
+                  </button>
+                </div>
+                <Textarea
+                  value={ai.systemPrompt}
+                  onChange={(e) => setAi({ ...ai, systemPrompt: e.target.value })}
+                  placeholder="Leave blank to use the built-in script for this vertical (Sunrun uses the Emily resolution script)."
+                  className="min-h-[140px] font-mono text-xs"
+                />
+              </div>
+            </div>
+            <div className="mt-3">
+              <Toggle
+                label="AI-first dialing"
+                hint="The AI agent calls first; reps take over on request."
+                checked={ai.aiFirst}
+                onChange={(v) => setAi({ ...ai, aiFirst: v })}
+              />
+            </div>
+            <div className="mt-4 flex justify-end">
+              <SaveBtn k="ai" onClick={() => save({ settings: { ai } }, "ai")} />
+            </div>
+          </>
+        )}
       </SectionCard>
 
       {/* Compliance */}

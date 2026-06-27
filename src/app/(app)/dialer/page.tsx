@@ -34,12 +34,6 @@ export default async function DialerPage({
   const dialCampaigns = campaigns
     .filter((c) => c.status !== "completed")
     .map((c) => ({ id: c.id, name: c.name }));
-  // When the org has a hold-music playlist, hand the dialer its org id so the
-  // rep's conference leg plays it as wait music (instead of Twilio's default).
-  const holdOrgId =
-    (viewer.org?.settings.dialing.holdMusicUrls?.length ?? 0) > 0
-      ? viewer.org?.id ?? null
-      : null;
 
   return (
     <PageContainer>
@@ -69,7 +63,6 @@ export default async function DialerPage({
         manualEnabled={manualEnabled}
         aiEnabled={aiEnabled}
         aiLockReason={aiLockReason}
-        holdOrgId={holdOrgId}
       />
     </PageContainer>
   );

@@ -25,6 +25,12 @@ export interface RotationEnv {
   envRotateEvery?: number;
   /** Single caller ID from TWILIO_CALLER_ID (last-resort). */
   envSingle?: string;
+  /**
+   * When true AND envPool is non-empty, the env pool is treated as a locked
+   * platform default that takes priority over any org-level pool. Non-superadmin
+   * org admins cannot override it — only a platform admin changing the env var can.
+   */
+  platformPriority?: boolean;
 }
 
 const clampEvery = (v: unknown): number =>
@@ -37,11 +43,14 @@ const normPool = (arr: unknown): string[] =>
 
 /**
  * Resolve the rotation pool + cadence. Precedence (most specific first):
- *   1. Admin UI pool  (org settings.dialing.callerIds) + its rotateEvery
- *   2. Env pool       (TWILIO_CALLER_IDS) + DIAL_ROTATE_EVERY
- *   3. Single number  (settings.callerId or TWILIO_CALLER_ID), no real rotation
- * The cadence follows whichever source provides the pool. Always returns a
- * usable plan (possibly an empty pool, when nothing is configured at all).
+ *   Platform-priority mode (env.platformPriority = true):
+ *     1. Env pool  (TWILIO_CALLER_IDS) — locked platform default
+ *     2. Single number (TWILIO_CALLER_ID) — last resort
+ *   Normal mode:
+ *     1. Admin UI pool  (org settings.dialing.callerIds) + its rotateEvery
+ *     2. Env pool       (TWILIO_CALLER_IDS) + DIAL_ROTATE_EVERY
+ *     3. Single number  (settings.callerId or TWILIO_CALLER_ID), no real rotation
+ * Always returns a usable plan (possibly an empty pool, when nothing is configured).
  */
 export function resolveRotation(
   settings: OrgSettings | null | undefined,
@@ -53,7 +62,12 @@ export function resolveRotation(
 
   let pool: string[];
   let rotateEvery: number;
-  if (settingsPool.length) {
+
+  if (env.platformPriority && envPool.length) {
+    // Platform-locked: env pool is the authoritative source; org settings are ignored.
+    pool = envPool;
+    rotateEvery = clampEvery(env.envRotateEvery ?? d?.rotateEvery);
+  } else if (settingsPool.length) {
     pool = settingsPool;
     rotateEvery = clampEvery(d?.rotateEvery);
   } else if (envPool.length) {

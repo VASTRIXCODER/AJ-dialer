@@ -74,6 +74,10 @@ export function AdminConsole({
   integrations,
   audit,
   demo,
+  isSuperadmin = false,
+  platformPool = [],
+  platformRotateEvery = 1,
+  platformPoolLocked = false,
 }: {
   org: OrgFull;
   role: OrgRole;
@@ -84,6 +88,10 @@ export function AdminConsole({
   integrations: Integration[];
   audit: AuditEntry[];
   demo: boolean;
+  isSuperadmin?: boolean;
+  platformPool?: string[];
+  platformRotateEvery?: number;
+  platformPoolLocked?: boolean;
 }) {
   const has = (p: string) => permissions.includes(p);
 
@@ -133,7 +141,15 @@ export function AdminConsole({
         <MembersTab org={org} role={role} permissions={permissions} members={members} />
       )}
       {tab === "organization" && (
-        <OrgSettingsForm org={org} canDelete={has("org.delete")} />
+        <OrgSettingsForm
+          org={org}
+          canDelete={has("org.delete")}
+          isSuperadmin={isSuperadmin}
+          hasAiPermission={has("dialer.ai") && org.settings?.features?.aiDialer !== false}
+          platformPool={platformPool}
+          platformRotateEvery={platformRotateEvery}
+          platformPoolLocked={platformPoolLocked}
+        />
       )}
       {tab === "companies" && (
         <CompaniesTab companies={companies} />

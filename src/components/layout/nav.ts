@@ -14,7 +14,6 @@ import {
 } from "lucide-react";
 import { DEMO_DATA } from "@/lib/demo";
 import type { OrgFeatures } from "@/lib/org/settings";
-import type { OrgRole } from "@/lib/permissions";
 import type { Permission } from "@/lib/permissions";
 
 export interface NavItem {
@@ -28,13 +27,6 @@ export interface NavItem {
   feature?: keyof OrgFeatures;
   /** When set, the item shows if the org has ANY of these features enabled. */
   anyFeature?: (keyof OrgFeatures)[];
-  /**
-   * When set, the item is hidden for viewers whose role rank is below `minRole`
-   * BUT ONLY when the referenced feature flag is false. When the feature is true
-   * (or absent) the role restriction does not apply, so all other orgs are
-   * completely unaffected.
-   */
-  featureMinRole?: { feature: keyof OrgFeatures; minRole: OrgRole };
 }
 
 export interface NavGroup {
@@ -55,13 +47,7 @@ export const navGroups: NavGroup[] = [
         anyFeature: ["manualDialer", "aiDialer"],
         ...(DEMO_DATA ? { badge: "Live" } : {}),
       },
-      {
-        label: "Leads",
-        href: "/leads",
-        icon: Users,
-        feature: "leads",
-        featureMinRole: { feature: "leadsRepAccess", minRole: "manager" },
-      },
+      { label: "Leads", href: "/leads", icon: Users, feature: "leads" },
       { label: "Appointments", href: "/appointments", icon: CalendarCheck, feature: "appointments" },
       { label: "Callbacks", href: "/callbacks", icon: PhoneIncoming, feature: "callbacks" },
     ],

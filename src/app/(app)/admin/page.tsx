@@ -5,10 +5,12 @@ import { PageContainer, PageHeader } from "@/components/shared/page-header";
 import { isAIConfigured } from "@/lib/ai/claude";
 import { listAuditLog } from "@/lib/db/app-control";
 import { getLeadStats } from "@/lib/db/leads";
+import { getPlatformPool } from "@/lib/dialer/rotation-server";
 import { isElevenLabsConfigured } from "@/lib/elevenlabs";
 import { listMembers, listOrgCompanies, getViewer } from "@/lib/org/membership";
 import { isAdminConfigured } from "@/lib/supabase/admin";
 import { isSupabaseConfigured } from "@/lib/supabase/config";
+import { isSuperadmin } from "@/lib/superadmin";
 import { isRestConfigured, isVoiceConfigured } from "@/lib/twilio";
 
 export const metadata = { title: "Admin" };
@@ -32,7 +34,7 @@ export default async function AdminPage() {
     );
   }
 
-  const [members, companies, leadStats, audit] = await Promise.all([
+  const [members, companies, leadStats, audit, superadmin] = await Promise.all([
     viewer.permissions.includes("members.view")
       ? listMembers(viewer.org.id)
       : Promise.resolve([]),
@@ -43,7 +45,10 @@ export default async function AdminPage() {
     viewer.permissions.includes("members.view")
       ? listAuditLog(viewer.org.id)
       : Promise.resolve([]),
+    isSuperadmin(),
   ]);
+
+  const platformPool = getPlatformPool(viewer.org.settings);
 
   const integrations = [
     { name: "Supabase (accounts + database)", ok: isSupabaseConfigured(), detail: "Auth + per-account data persistence" },
@@ -69,6 +74,10 @@ export default async function AdminPage() {
         integrations={integrations}
         audit={audit}
         demo={viewer.isDemo}
+        isSuperadmin={superadmin}
+        platformPool={platformPool.pool}
+        platformRotateEvery={platformPool.rotateEvery}
+        platformPoolLocked={platformPool.isLocked}
       />
     </PageContainer>
   );

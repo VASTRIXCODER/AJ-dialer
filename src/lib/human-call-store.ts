@@ -41,14 +41,7 @@ interface StartInput {
 }
 
 const TABLE = "live_calls";
-// Connected calls can run long (talk time), so they linger up to this TTL.
 const TTL_MS = 30 * 60_000;
-// A RINGING call is different: a real leg rings ≤30s before Twilio marks it
-// no-answer. If the rep's browser never sends an explicit "end" (failed call,
-// closed tab, lost network), the row would otherwise sit at "Ringing" for the
-// full 30-min TTL. Age ringing rows out fast so the monitor never shows a
-// phantom "Ringing" for a call that already failed.
-const RINGING_TTL_MS = 90_000;
 
 type Row = Record<string, unknown>;
 
@@ -70,10 +63,7 @@ function rowToCall(r: Row): HumanCall {
 const mem = new Map<string, HumanCall>();
 function memSweep() {
   const now = Date.now();
-  for (const [id, c] of mem) {
-    const ttl = c.state === "connected" ? TTL_MS : RINGING_TTL_MS;
-    if (now - c.startedAt > ttl) mem.delete(id);
-  }
+  for (const [id, c] of mem) if (now - c.startedAt > TTL_MS) mem.delete(id);
 }
 
 export async function startHumanCall(input: StartInput): Promise<void> {
@@ -160,40 +150,20 @@ export async function listActiveHumanCallsForOrg(
   if (isAdminConfigured()) {
     try {
       const admin = createAdminClient();
-      const now = Date.now();
-      const cutoff = new Date(now - TTL_MS).toISOString();
-      const ringingCutoff = new Date(now - RINGING_TTL_MS).toISOString();
+      const cutoff = new Date(Date.now() - TTL_MS).toISOString();
       // Best-effort tidy of rows from calls that never sent an explicit end
-      // (e.g. a tab killed mid-call, or a failed leg). Two sweeps: anything past
-      // the long TTL, and any still-"ringing" row past the short ringing TTL —
-      // the latter is what stops a failed call from showing "Ringing" forever.
-      // Fire-and-forget; never blocks the read.
+      // (e.g. a tab killed mid-call). Fire-and-forget; never blocks the read.
       admin.from(TABLE).delete().lt("started_at", cutoff).then(
         () => {},
         () => {},
       );
-      admin
-        .from(TABLE)
-        .delete()
-        .eq("state", "ringing")
-        .lt("started_at", ringingCutoff)
-        .then(
-          () => {},
-          () => {},
-        );
       const { data } = await admin
         .from(TABLE)
         .select("*")
         .eq("org_id", orgId)
         .gte("started_at", cutoff)
         .order("started_at", { ascending: false });
-      // Filter ring-aware so a phantom "ringing" row is hidden the instant it's
-      // stale, even before the fire-and-forget delete lands.
-      return ((data ?? []) as Row[])
-        .map(rowToCall)
-        .filter((c) =>
-          c.state === "connected" ? true : now - c.startedAt < RINGING_TTL_MS,
-        );
+      return ((data ?? []) as Row[]).map(rowToCall);
     } catch {
       /* fall through */
     }

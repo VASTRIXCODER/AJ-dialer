@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { chatComplete, isAIConfigured } from "@/lib/ai/claude";
+import { getUser } from "@/lib/auth";
 import { getLeadStats } from "@/lib/db/leads";
 import { getReportingData } from "@/lib/db/metrics";
 
@@ -71,6 +72,11 @@ function demoReply(ctx: Awaited<ReturnType<typeof buildContext>>, last: string):
 }
 
 export async function POST(req: Request) {
+  const user = await getUser();
+  if (!user) {
+    return NextResponse.json({ reply: "Sign in to use the AI assistant.", source: "demo" });
+  }
+
   const { messages } = (await req.json().catch(() => ({}))) as {
     messages?: ChatMsg[];
   };

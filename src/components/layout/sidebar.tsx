@@ -9,7 +9,7 @@ import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Wordmark } from "@/components/brand/logo";
 import type { OrgFeatures } from "@/lib/org/settings";
-import { ROLE_LABEL, ROLE_RANK, type OrgRole, isOrgRole } from "@/lib/permissions";
+import { ROLE_LABEL, type OrgRole, isOrgRole } from "@/lib/permissions";
 import { cn } from "@/lib/utils";
 import { navGroups } from "./nav";
 
@@ -53,15 +53,7 @@ export function Sidebar({
           (!it.feature || !features || features[it.feature] !== false) &&
           (!it.anyFeature ||
             !features ||
-            it.anyFeature.some((f) => features[f] !== false)) &&
-          // featureMinRole: when the referenced flag is false, hide the item for
-          // viewers whose role rank is below minRole. Other orgs (flag = true)
-          // are completely unaffected.
-          (!it.featureMinRole ||
-            !features ||
-            features[it.featureMinRole.feature] !== false ||
-            !orgRole ||
-            ROLE_RANK[orgRole] >= ROLE_RANK[it.featureMinRole.minRole]),
+            it.anyFeature.some((f) => features[f] !== false)),
       ),
     }))
     .filter((g) => g.items.length > 0);

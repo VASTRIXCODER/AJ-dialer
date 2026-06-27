@@ -1,64 +1,101 @@
-import { mergeSettings } from "@/lib/org/settings";
-import { createAdminClient, isAdminConfigured } from "@/lib/supabase/admin";
+import { NextResponse } from "next/server";
+import { getPublicBaseUrl, getRestClient, isRestConfigured } from "@/lib/twilio";
 
 export const dynamic = "force-dynamic";
 
-// Twilio's classic hold music — the fallback when an org hasn't set its own.
-const DEFAULT_HOLD =
-  "http://com.twilio.music.classical.s3.amazonaws.com/BusyStrings.mp3";
-
-const escapeXml = (s: string) =>
-  s
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&apos;");
-
-/** Only ever emit well-formed public http(s) media URLs into the TwiML. */
-function isPlayableUrl(value: string): boolean {
-  try {
-    const u = new URL(value);
-    return u.protocol === "https:" || u.protocol === "http:";
-  } catch {
-    return false;
-  }
-}
-
-function twiml(body: string) {
-  return new Response(`<?xml version="1.0" encoding="UTF-8"?>\n<Response>${body}</Response>`, {
-    headers: { "Content-Type": "text/xml" },
-  });
-}
-
 /**
- * Conference wait/hold music. Set as the `waitUrl` on the homeowner's conference
- * leg, so while they wait alone (or are placed on hold) they hear the org's own
- * playlist instead of Twilio's default tone. Twilio re-requests this when the
- * playlist finishes, so the list loops. `?org=<id>` selects whose playlist to
- * play; this endpoint is hit by Twilio (no session), so it resolves the org via
- * the service-role client.
+ * Hold or unhold the homeowner participant(s) in a Twilio conference.
+ * When held, Twilio calls the hold-music endpoint and plays hold music to the
+ * homeowner while the rep is still in the conference (muted to the homeowner).
+ *
+ * Body: { room: string, sids: string[], hold: boolean }
+ *   room  — the conference friendly name (e.g. "hc-h-abc123")
+ *   sids  — outbound call SIDs for the homeowner legs to hold/unhold
+ *   hold  — true = put on hold, false = resume
  */
-export async function GET(req: Request) {
-  const orgId = new URL(req.url).searchParams.get("org");
-  let urls: string[] = [];
-  if (orgId && isAdminConfigured()) {
-    try {
-      const { data } = await createAdminClient()
-        .from("organizations")
-        .select("settings")
-        .eq("id", orgId)
-        .maybeSingle();
-      const settings = mergeSettings(data?.settings);
-      urls = (settings.dialing.holdMusicUrls ?? []).filter(isPlayableUrl);
-    } catch {
-      /* fall through to default */
-    }
+export async function POST(req: Request) {
+  if (!isRestConfigured()) {
+    return NextResponse.json({ ok: false, error: "Twilio not configured" }, { status: 503 });
   }
-  const playlist = urls.length ? urls : [DEFAULT_HOLD];
-  const body = playlist.map((u) => `<Play>${escapeXml(u)}</Play>`).join("");
-  return twiml(body);
-}
 
-// Twilio may issue the waitUrl request as POST depending on configuration.
-export const POST = GET;
+  const body = (await req.json().catch(() => ({}))) as {
+    room?: string;
+    sids?: string[];
+    hold?: boolean;
+  };
+
+  const room = body.room?.trim();
+  const sids = (body.sids ?? []).filter(Boolean);
+  const hold = body.hold ?? true;
+
+  if (!room) {
+    return NextResponse.json({ ok: false, error: "room is required" }, { status: 400 });
+  }
+
+  const client = await getRestClient();
+  if (!client) {
+    return NextResponse.json({ ok: false, error: "Twilio unavailable" }, { status: 503 });
+  }
+
+  try {
+    // Find the active conference by its friendly name.
+    const conferences = await client.conferences.list({
+      friendlyName: room,
+      status: "in-progress",
+      limit: 1,
+    });
+
+    if (!conferences.length) {
+      return NextResponse.json({ ok: false, error: "Conference not found" }, { status: 404 });
+    }
+
+    const confSid = conferences[0].sid;
+    const base = getPublicBaseUrl(req);
+    const holdUrl = base ? `${base}/api/twilio/hold-music` : undefined;
+
+    if (sids.length) {
+      // Hold/unhold the specific homeowner call SIDs.
+      await Promise.all(
+        sids.map((sid) =>
+          client
+            .conferences(confSid)
+            .participants(sid)
+            .update(
+              hold
+                ? { hold: true, ...(holdUrl ? { holdUrl, holdMethod: "GET" } : {}) }
+                : { hold: false },
+            )
+            .catch((err: Error) =>
+              console.error(`[twilio/hold] participant ${sid}:`, err.message),
+            ),
+        ),
+      );
+    } else {
+      // No specific SIDs: hold/unhold all non-coach participants.
+      const participants = await client.conferences(confSid).participants.list();
+      await Promise.all(
+        participants
+          .filter((p) => !p.coaching)
+          .map((p) =>
+            client
+              .conferences(confSid)
+              .participants(p.callSid)
+              .update(
+                hold
+                  ? { hold: true, ...(holdUrl ? { holdUrl, holdMethod: "GET" } : {}) }
+                  : { hold: false },
+              )
+              .catch((err: Error) =>
+                console.error(`[twilio/hold] participant ${p.callSid}:`, err.message),
+              ),
+          ),
+      );
+    }
+
+    return NextResponse.json({ ok: true, hold, room, confSid });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error("[twilio/hold]", msg);
+    return NextResponse.json({ ok: false, error: msg }, { status: 500 });
+  }
+}

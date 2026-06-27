@@ -696,12 +696,6 @@ create table if not exists public.pending_recordings (
 -- Service-role only (no policies) — written by the webhook, claimed on insert.
 alter table public.pending_recordings enable row level security;
 
--- ── Manual-call transcripts ──────────────────────────────────────────────────
--- AI calls get a transcript from ElevenLabs; manual (Twilio) calls didn't. The
--- recording is transcribed (ElevenLabs Speech-to-Text) on first view and cached
--- here so Reports shows the same depth — a transcript — for both channels.
-alter table public.call_records add column if not exists transcript text;
-
 -- ═════════════════════════════════════════════════════════════════════════════
 -- PART 7 — SHARED ORG LEAD POOL  (idempotent; safe to re-run)
 --

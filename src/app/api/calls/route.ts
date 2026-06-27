@@ -30,9 +30,13 @@ export async function POST(req: Request) {
     room: body.room ?? null,
   });
 
+  if (!recordId) {
+    return NextResponse.json({ ok: false, error: "Failed to save call record." }, { status: 500 });
+  }
+
   // Fire-and-forget: generate an AI summary from lead context + outcome and
   // back-fill it onto the record. Doesn't block the disposition response.
-  if (recordId && body.leadId && body.outcome && isSupabaseConfigured()) {
+  if (body.leadId && body.outcome && isSupabaseConfigured()) {
     (async () => {
       try {
         const supabase = await createClient();
@@ -80,5 +84,5 @@ export async function POST(req: Request) {
     })();
   }
 
-  return NextResponse.json({ ok: true });
+  return NextResponse.json({ ok: true, id: recordId });
 }

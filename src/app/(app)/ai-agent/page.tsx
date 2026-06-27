@@ -9,6 +9,7 @@ import {
   GraduationCap,
   Headphones,
   Lightbulb,
+  Lock,
   Search,
   Sparkles,
   TrendingUp,
@@ -23,6 +24,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { isAIConfigured } from "@/lib/ai/claude";
 import { isElevenLabsConfigured } from "@/lib/elevenlabs";
+import { getViewer } from "@/lib/org/membership";
 import { cn } from "@/lib/utils";
 
 export const metadata = { title: "AI Command Center" };
@@ -59,9 +61,50 @@ const tips = [
   "“Summarize my upcoming appointments and due callbacks.”",
 ];
 
-export default function AiAgentPage() {
+export default async function AiAgentPage() {
+  const viewer = await getViewer();
   const aiLive = isAIConfigured();
   const voiceLive = isElevenLabsConfigured();
+  const aiOrgEnabled =
+    viewer.org?.settings?.features?.aiDialer !== false &&
+    viewer.org?.settings?.features?.aiAgent !== false;
+
+  if (!aiOrgEnabled) {
+    return (
+      <PageContainer>
+        <PageHeader
+          title="AI Command Center"
+          description="Your central AI assistant — it briefs you, oversees the floor, and powers the whole solar-resolution intelligence layer."
+        />
+        <Card className="flex flex-col items-center gap-6 px-8 py-16 text-center">
+          <span className="flex h-20 w-20 items-center justify-center rounded-3xl border-2 border-dashed border-border bg-muted/40">
+            <Lock className="h-9 w-9 text-muted-foreground/60" />
+          </span>
+          <div className="max-w-md">
+            <p className="text-xl font-bold tracking-tight">AI Command Center — Premium Feature</p>
+            <p className="mt-2 text-sm text-muted-foreground">
+              Your organization does not have access to AI calling or the intelligence layer. Contact{" "}
+              <span className="font-semibold text-foreground">anasupalle17@gmail.com</span> to
+              unlock AI calling for your account.
+            </p>
+          </div>
+          <div className="flex flex-wrap justify-center gap-3">
+            {["AI Voice Agent", "Live Copilot", "Call Summaries", "Lead Intelligence", "Semantic Search"].map(
+              (f) => (
+                <span
+                  key={f}
+                  className="flex items-center gap-1.5 rounded-full border border-border/60 bg-muted/30 px-3 py-1 text-xs font-medium text-muted-foreground"
+                >
+                  <Lock className="h-3 w-3" />
+                  {f}
+                </span>
+              ),
+            )}
+          </div>
+        </Card>
+      </PageContainer>
+    );
+  }
 
   return (
     <PageContainer>

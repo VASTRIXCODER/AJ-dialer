@@ -1,7 +1,6 @@
 import {
   BarChart3,
   Battery,
-  CalendarRange,
   Car,
   Clock,
   Filter,
@@ -11,7 +10,6 @@ import {
   Waves,
   Zap,
 } from "lucide-react";
-import Link from "next/link";
 import { AiExecReport } from "@/components/ai/exec-report";
 import { HourlyBarChart, OutcomeDonut, TrendAreaChart } from "@/components/dashboard/charts";
 import { MetricCard } from "@/components/dashboard/metric-card";
@@ -30,32 +28,15 @@ import { EmptyState } from "@/components/shared/empty-state";
 import { PageContainer, PageHeader } from "@/components/shared/page-header";
 import { SectionCard } from "@/components/shared/section-card";
 import { Badge } from "@/components/ui/badge";
-import { buttonVariants } from "@/components/ui/button";
 import { getReportingData, getTeamLeaderboard } from "@/lib/db/metrics";
 import { getViewer } from "@/lib/org/membership";
 import { outcomeConfig } from "@/lib/status";
-import { cn, formatCurrency, formatDuration, formatNumber, formatPercent } from "@/lib/utils";
+import { formatCurrency, formatDuration, formatNumber, formatPercent } from "@/lib/utils";
 
 export const metadata = { title: "Reports" };
 export const dynamic = "force-dynamic";
 
-// Date-range presets for the period KPIs / dispositions / recent calls.
-const RANGES = [
-  { key: "today", label: "Today", days: 1 },
-  { key: "7d", label: "7 days", days: 7 },
-  { key: "30d", label: "30 days", days: 30 },
-  { key: "all", label: "All time", days: null },
-] as const;
-
-export default async function ReportsPage({
-  searchParams,
-}: {
-  searchParams: Promise<{ range?: string }>;
-}) {
-  const { range } = await searchParams;
-  const rangeKey = RANGES.some((r) => r.key === range) ? range! : "all";
-  const rangeDays = RANGES.find((r) => r.key === rangeKey)?.days ?? null;
-
+export default async function ReportsPage() {
   const [
     {
       metrics,
@@ -71,32 +52,7 @@ export default async function ReportsPage({
     },
     { reps },
     viewer,
-  ] = await Promise.all([
-    getReportingData(rangeDays),
-    getTeamLeaderboard(),
-    getViewer(),
-  ]);
-
-  // Date-range switch (period KPIs / dispositions / recent calls react to it;
-  // the 30-day trend + today's hourly chart keep their own fixed windows).
-  const rangeBar = (
-    <div className="flex w-fit items-center gap-1 rounded-xl border border-border bg-card p-1">
-      <span className="flex items-center gap-1 px-2 text-xs font-medium text-muted-foreground">
-        <CalendarRange className="h-3.5 w-3.5" />
-      </span>
-      {RANGES.map((r) => (
-        <Link
-          key={r.key}
-          href={r.key === "all" ? "/reports" : `/reports?range=${r.key}`}
-          className={cn(
-            buttonVariants({ size: "sm", variant: rangeKey === r.key ? "primary" : "ghost" }),
-          )}
-        >
-          {r.label}
-        </Link>
-      ))}
-    </div>
-  );
+  ] = await Promise.all([getReportingData(), getTeamLeaderboard(), getViewer()]);
 
   // Manual-only orgs (e.g. Donny) have no AI calls, so drop the AI-vs-human
   // split and the AI executive report — every call here is a human call.
@@ -109,20 +65,11 @@ export default async function ReportsPage({
           title="Reports"
           description="Full visibility into calls, connect rates, every disposition, and team performance."
         />
-        {rangeBar}
         <EmptyState
           icon={BarChart3}
-          title={rangeKey === "all" ? "No report data yet" : "No calls in this range"}
-          description={
-            rangeKey === "all"
-              ? "Call volume, connect rates, dispositions, channel split, and recordings appear here once dialing begins."
-              : "Try widening the date range — there are no calls in the selected window."
-          }
-          action={
-            rangeKey === "all"
-              ? { label: "Open the dialer", href: "/dialer" }
-              : { label: "View all time", href: "/reports" }
-          }
+          title="No report data yet"
+          description="Call volume, connect rates, dispositions, channel split, and recordings appear here once dialing begins."
+          action={{ label: "Open the dialer", href: "/dialer" }}
         />
       </PageContainer>
     );
@@ -168,8 +115,6 @@ export default async function ReportsPage({
         </Badge>
         <ExportReportButton filename="aiatwork-report.csv" sections={csvSections} />
       </PageHeader>
-
-      {rangeBar}
 
       {/* KPI row */}
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">

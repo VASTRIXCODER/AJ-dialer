@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { registerRoom } from "@/lib/call-registry";
-import { nextCallerId } from "@/lib/dialer/rotation-server";
+import { type CallerIdInfo, nextCallerIdWithInfo } from "@/lib/dialer/rotation-server";
 import { getViewer } from "@/lib/org/membership";
 import {
   getPublicBaseUrl,
@@ -83,27 +83,23 @@ export async function POST(req: Request) {
   // connects, it just won't auto-cancel the losing legs.
   const base = getPublicBaseUrl(req);
 
-  // Custom hold/wait music: when the org configured a playlist, point the
-  // conference waitUrl at our hold endpoint so the homeowner hears it (while
-  // waiting / on hold) instead of Twilio's default tone. Needs a public base URL.
-  const orgId = viewer.org?.id ?? null;
-  const hasHoldMusic = (orgSettings?.dialing?.holdMusicUrls ?? []).length > 0;
-  const waitAttr =
-    base && orgId && hasHoldMusic
-      ? ` waitUrl="${base.replace(/&/g, "&amp;")}/api/twilio/hold?org=${encodeURIComponent(orgId)}" waitMethod="GET"`
-      : "";
-
   // For a single call, the homeowner hanging up should end the call (matching a
   // direct dial). For parallel, the losing legs are force-released, so they must
   // NOT end the conference on exit — only the rep's leg does that.
   const endOnExit = leads.length === 1 ? "true" : "false";
-  const conferenceTwiml = `<?xml version="1.0" encoding="UTF-8"?><Response><Dial><Conference startConferenceOnEnter="true" endConferenceOnExit="${endOnExit}" beep="false"${waitAttr}>${room}</Conference></Dial></Response>`;
+  const conferenceTwiml = `<?xml version="1.0" encoding="UTF-8"?><Response><Dial><Conference startConferenceOnEnter="true" endConferenceOnExit="${endOnExit}" beep="false">${room}</Conference></Dial></Response>`;
+
+  // Resolve caller ID info for the first leg so we can return it for display.
+  // Subsequent legs each advance the counter individually.
+  let poolInfo: CallerIdInfo | null = null;
 
   const placed = await Promise.all(
-    leads.map(async (leg) => {
+    leads.map(async (leg, i) => {
       try {
         // One rotated caller ID per leg (this rep's atomic counter → distinct seq).
-        const from = (await nextCallerId(repKey, orgSettings)) || twilioConfig.callerId;
+        const info = await nextCallerIdWithInfo(repKey, orgSettings);
+        if (i === 0) poolInfo = info;
+        const from = info.callerId || twilioConfig.callerId;
         const call = await client.calls.create({
           to: leg.to,
           from,
@@ -116,18 +112,21 @@ export async function POST(req: Request) {
               }
             : {}),
         });
-        return { leadId: leg.leadId, to: leg.to, sid: call.sid, error: null };
+        return { leadId: leg.leadId, to: leg.to, sid: call.sid, from, error: null };
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         console.error(`[twilio/call] calls.create failed for ${leg.to}:`, msg);
-        return { leadId: leg.leadId, to: leg.to, sid: null, error: msg };
+        return { leadId: leg.leadId, to: leg.to, sid: null, from: null, error: msg };
       }
     }),
   );
 
   registerRoom(room, placed);
 
+  // Snapshot poolInfo to a const so TypeScript narrows it correctly below.
+  const callerIdInfo: CallerIdInfo | null = poolInfo;
+
   // Collect errors from failed legs so the client can surface the real reason.
   const errors = placed.filter((p) => !p.sid && p.error).map((p) => p.error);
-  return NextResponse.json({ room, calls: placed, errors });
+  return NextResponse.json({ room, calls: placed, errors, callerIdInfo });
 }

@@ -8,6 +8,7 @@ import {
   CheckCircle2,
   ChevronDown,
   Copy,
+  Lock,
   Loader2,
   Plus,
   Save,
@@ -306,6 +307,8 @@ function OrgDrawer({ orgId, onChanged }: { orgId: string; onChanged: () => void 
       )}
 
       <OrgEditor detail={detail} onSaved={() => { load(); onChanged(); }} />
+
+      <OrgFeaturesEditor detail={detail} onSaved={() => { load(); onChanged(); }} />
 
       <OrgBillingEditor detail={detail} onSaved={() => { load(); onChanged(); }} />
 
@@ -635,6 +638,72 @@ function OrgBillingEditor({ detail, onSaved }: { detail: OrgDetail; onSaved: () 
             <Save className="h-4 w-4" />
           )}
           {saved ? "Saved" : "Save billing"}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+const FEATURE_FLAGS: { key: keyof OrgFeatures; label: string; premium?: boolean }[] = [
+  { key: "aiDialer", label: "Power dialer (AI calling)", premium: true },
+  { key: "aiAgent", label: "AI Agent page", premium: true },
+  { key: "manualDialer", label: "Manual dialing" },
+  { key: "leads", label: "Leads" },
+  { key: "appointments", label: "Appointments" },
+  { key: "callbacks", label: "Callbacks" },
+  { key: "liveMonitor", label: "Live monitor" },
+  { key: "leaderboard", label: "Leaderboard" },
+  { key: "campaigns", label: "Campaigns" },
+  { key: "reports", label: "Reports" },
+];
+
+function OrgFeaturesEditor({ detail, onSaved }: { detail: OrgDetail; onSaved: () => void }) {
+  const [f, setF] = useState<OrgFeatures>({ ...detail.settings.features });
+  const [busy, setBusy] = useState(false);
+  const [saved, setSaved] = useState(false);
+
+  async function save() {
+    setBusy(true);
+    const j = await api("PATCH", { id: detail.id, settings: { features: f } });
+    setBusy(false);
+    if (j.ok) {
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2000);
+      onSaved();
+    }
+  }
+
+  return (
+    <div className="rounded-xl border border-border bg-card p-4">
+      <p className="mb-3 text-sm font-semibold">Feature flags</p>
+      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+        {FEATURE_FLAGS.map(({ key, label, premium }) => (
+          <label
+            key={key}
+            className="flex cursor-pointer items-center justify-between gap-2 rounded-lg border border-border bg-background/40 px-3 py-2 text-sm"
+          >
+            <span className="flex items-center gap-1.5">
+              {premium && <Lock className="h-3 w-3 text-muted-foreground" />}
+              {label}
+            </span>
+            <input
+              type="checkbox"
+              checked={f[key]}
+              onChange={(e) => setF({ ...f, [key]: e.target.checked })}
+            />
+          </label>
+        ))}
+      </div>
+      <div className="mt-3 flex justify-end">
+        <Button size="sm" className="gap-2" disabled={busy} onClick={save}>
+          {busy ? (
+            <Loader2 className="h-4 w-4 animate-spin" />
+          ) : saved ? (
+            <CheckCircle2 className="h-4 w-4" />
+          ) : (
+            <Save className="h-4 w-4" />
+          )}
+          {saved ? "Saved" : "Save features"}
         </Button>
       </div>
     </div>

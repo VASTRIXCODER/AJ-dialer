@@ -12,7 +12,7 @@ export const dynamic = "force-dynamic";
 
 export async function GET() {
   const me = await getUser();
-  if (!me) return NextResponse.json({ members: [] });
+  if (!me) return NextResponse.json({ ok: false, error: "Sign in first." }, { status: 401 });
   return NextResponse.json({ members: await listTeamMembers() });
 }
 

@@ -3,7 +3,6 @@ import "server-only";
 import { leads as fallbackLeads, getLeadById as fallbackById } from "../data";
 import { createAdminClient, isAdminConfigured } from "../supabase/admin";
 import { isSupabaseConfigured } from "../supabase/config";
-import { fetchAllRows } from "../supabase/paginate";
 import { createClient } from "../supabase/server";
 import type { Lead, LeadStatus } from "../types";
 import { normalizePhone } from "../utils";
@@ -78,40 +77,20 @@ export async function getLeads(): Promise<Lead[]> {
     // a supervisor (owner/admin/manager) sees the whole org, attributed to each
     // uploader so the Leads tab can group them into per-account sections.
     if (!supervisor) {
-      // Page past PostgREST's 1,000-row ceiling so every uploaded lead is read.
-      const data = await fetchAllRows<Row>((from, to) =>
-        supabase
-          .from("leads")
-          .select("*")
-          .eq("owner_id", user.id)
-          .order("ai_score", { ascending: false, nullsFirst: false })
-          .order("id", { ascending: true })
-          .range(from, to),
-      );
-      return data.map(rowToLead);
+      const { data } = await supabase
+        .from("leads")
+        .select("*")
+        .eq("owner_id", user.id)
+        .order("ai_score", { ascending: false, nullsFirst: false });
+      return (data ?? []).map(rowToLead);
     }
 
     // Supervisor: the org pool + their own leads (covers any legacy null-org
     // rows), deduped, with each uploader's display name resolved for sections.
-    // Both lead reads page past the 1,000-row ceiling.
     const admin = createAdminClient();
-    const [orgRows, ownRows, memberRes] = await Promise.all([
-      fetchAllRows<Row>((from, to) =>
-        admin
-          .from("leads")
-          .select("*")
-          .eq("org_id", orgId as string)
-          .order("id", { ascending: true })
-          .range(from, to),
-      ),
-      fetchAllRows<Row>((from, to) =>
-        admin
-          .from("leads")
-          .select("*")
-          .eq("owner_id", user.id)
-          .order("id", { ascending: true })
-          .range(from, to),
-      ),
+    const [orgRes, ownRes, memberRes] = await Promise.all([
+      admin.from("leads").select("*").eq("org_id", orgId as string),
+      admin.from("leads").select("*").eq("owner_id", user.id),
       admin
         .from("organization_members")
         .select("user_id,name")
@@ -125,8 +104,8 @@ export async function getLeads(): Promise<Lead[]> {
       ]),
     );
     const byId = new Map<string, Row>();
-    for (const r of [...orgRows, ...ownRows]) {
-      byId.set(String(r.id), r);
+    for (const r of [...(orgRes.data ?? []), ...(ownRes.data ?? [])]) {
+      byId.set(String((r as Row).id), r as Row);
     }
     return [...byId.values()]
       .map(rowToLead)
@@ -137,176 +116,6 @@ export async function getLeads(): Promise<Lead[]> {
       .sort((a, b) => (b.aiScore ?? 0) - (a.aiScore ?? 0));
   } catch {
     return [];
-  }
-}
-
-/**
- * The whole org's shared lead pool, for ANY active member (reps included) — the
- * "Org pool" view where a rep can browse leads and claim ones to their own name.
- * Reads are org-scoped and attributed with each uploader's display name. A rep's
- * DEFAULT Leads view stays own-only (getLeads); this is the opt-in pool browse.
- */
-export async function getOrgPoolLeads(): Promise<Lead[]> {
-  if (!isSupabaseConfigured()) return [];
-  try {
-    const supabase = await createClient();
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-    if (!user) return [];
-    const { data: prof } = await supabase
-      .from("profiles")
-      .select("org_id")
-      .eq("id", user.id)
-      .maybeSingle();
-    const orgId = prof?.org_id ? String(prof.org_id) : null;
-    if (!orgId) return [];
-
-    // Org members can read the shared pool under RLS; use the admin client when
-    // available for the org-wide read + uploader names (same as the supervisor
-    // path), otherwise fall back to the RLS-scoped session client.
-    const admin = isAdminConfigured() ? createAdminClient() : null;
-    const reader = admin ?? supabase;
-    const [rows, memberRes] = await Promise.all([
-      fetchAllRows<Row>((from, to) =>
-        reader
-          .from("leads")
-          .select("*")
-          .eq("org_id", orgId)
-          .order("id", { ascending: true })
-          .range(from, to),
-      ),
-      admin
-        ? admin
-            .from("organization_members")
-            .select("user_id,name")
-            .eq("org_id", orgId)
-            .eq("status", "active")
-        : Promise.resolve({ data: [] as Row[] }),
-    ]);
-    const nameById = new Map(
-      ((memberRes.data ?? []) as Row[]).map((m) => [
-        String(m.user_id),
-        String(m.name ?? ""),
-      ]),
-    );
-    return rows
-      .map(rowToLead)
-      .map((l) => ({
-        ...l,
-        ownerName: l.ownerId ? nameById.get(l.ownerId) || "" : "",
-      }))
-      .sort((a, b) => (b.aiScore ?? 0) - (a.aiScore ?? 0));
-  } catch {
-    return [];
-  }
-}
-
-/**
- * Claim leads to the signed-in user (assign them to my own name). Available to
- * ANY active org member — RLS permits an org member to set owner_id to themselves
- * on a lead in their org — so a rep can pull shared-pool leads into their own
- * queue. Scoped to the caller's org; batched like reassign so big claims don't
- * overflow the request URL.
- */
-export async function claimLeads(
-  leadIds: string[],
-): Promise<{ updated: number; error?: string }> {
-  if (!isSupabaseConfigured())
-    return { updated: 0, error: "Connect Supabase to manage leads." };
-  try {
-    const supabase = await createClient();
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-    if (!user) return { updated: 0, error: "You must be signed in." };
-    const ids = [...new Set(leadIds.filter((id) => UUID.test(id)))];
-    if (!ids.length) return { updated: 0, error: "No valid leads selected." };
-
-    const { data: prof } = await supabase
-      .from("profiles")
-      .select("org_id")
-      .eq("id", user.id)
-      .maybeSingle();
-    const orgId = prof?.org_id ? String(prof.org_id) : null;
-    if (!orgId)
-      return { updated: 0, error: "Join an organization to claim leads." };
-
-    let updated = 0;
-    const CHUNK = 100;
-    for (let i = 0; i < ids.length; i += CHUNK) {
-      const batch = ids.slice(i, i + CHUNK);
-      const { data, error } = await supabase
-        .from("leads")
-        .update({ owner_id: user.id, org_id: orgId })
-        .in("id", batch)
-        .eq("org_id", orgId) // never claim leads outside my org
-        .select("id");
-      if (error) return { updated, error: error.message };
-      updated += data?.length ?? 0;
-    }
-    return { updated };
-  } catch (e) {
-    return { updated: 0, error: e instanceof Error ? e.message : "Claim failed." };
-  }
-}
-
-// Statuses a supervisor may bulk-set for list hygiene. (Pipeline statuses like
-// "appointment" come from real dispositions, never a bulk action.)
-export const BULK_SETTABLE_STATUSES: LeadStatus[] = [
-  "new",
-  "contacted",
-  "not_interested",
-  "dnc",
-];
-
-/**
- * Bulk-set a status on the selected leads (list hygiene — e.g. mark Do Not Call
- * or reset to New). Supervisor action; scoped like deleteLeads to "this org's
- * leads OR my own" via the admin client, batched so big updates never overflow
- * the request URL.
- */
-export async function setLeadsStatus(
-  leadIds: string[],
-  status: LeadStatus,
-): Promise<{ updated: number; error?: string }> {
-  if (!isSupabaseConfigured())
-    return { updated: 0, error: "Connect Supabase to manage leads." };
-  if (!BULK_SETTABLE_STATUSES.includes(status))
-    return { updated: 0, error: "That status can't be set in bulk." };
-  try {
-    const supabase = await createClient();
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-    if (!user) return { updated: 0, error: "You must be signed in." };
-    const ids = [...new Set(leadIds.filter((id) => UUID.test(id)))];
-    if (!ids.length) return { updated: 0, error: "No valid leads selected." };
-
-    const { data: prof } = await supabase
-      .from("profiles")
-      .select("org_id")
-      .eq("id", user.id)
-      .maybeSingle();
-    const orgId = prof?.org_id ? String(prof.org_id) : null;
-    const scopeByOrg = Boolean(orgId && UUID.test(orgId)) && isAdminConfigured();
-    const client = scopeByOrg ? createAdminClient() : supabase;
-
-    let updated = 0;
-    const CHUNK = 100;
-    for (let i = 0; i < ids.length; i += CHUNK) {
-      const batch = ids.slice(i, i + CHUNK);
-      const q = client.from("leads").update({ status }).in("id", batch);
-      const scoped = scopeByOrg
-        ? q.or(`org_id.eq.${orgId},owner_id.eq.${user.id}`)
-        : q;
-      const { data, error } = await scoped.select("id");
-      if (error) return { updated, error: error.message };
-      updated += data?.length ?? 0;
-    }
-    return { updated };
-  } catch (e) {
-    return { updated: 0, error: e instanceof Error ? e.message : "Update failed." };
   }
 }
 
@@ -529,18 +338,12 @@ export async function getDialQueue(): Promise<Lead[]> {
       data: { user },
     } = await supabase.auth.getUser();
     if (!user) return [];
-    // Page past the 1,000-row ceiling so the dialer queue holds EVERY dialable
-    // lead — not just the first 1,000 (which silently dropped the rest).
-    const data = await fetchAllRows<Row>((from, to) =>
-      supabase
-        .from("leads")
-        .select("*")
-        .eq("owner_id", user.id)
-        .order("ai_score", { ascending: false, nullsFirst: false })
-        .order("id", { ascending: true })
-        .range(from, to),
-    );
-    return dialable(data.map(rowToLead));
+    const { data } = await supabase
+      .from("leads")
+      .select("*")
+      .eq("owner_id", user.id)
+      .order("ai_score", { ascending: false, nullsFirst: false });
+    return dialable((data ?? []).map(rowToLead));
   } catch {
     return [];
   }
@@ -639,25 +442,11 @@ export async function insertLeads(
     if (!payload.length)
       return { inserted: 0, invalidPhone, error: "No valid rows found." };
 
-    // Batch inserts so large imports (thousands of rows) don't overflow Supabase's
-    // request body limit. Same pattern as deleteLeads: small chunks, bounded waves.
-    const CHUNK = 500;
-    const WAVE = 4;
-    const batches = [];
-    for (let i = 0; i < payload.length; i += CHUNK) batches.push(payload.slice(i, i + CHUNK));
-
-    let inserted = 0;
-    for (let w = 0; w < batches.length; w += WAVE) {
-      const wave = batches.slice(w, w + WAVE);
-      const results = await Promise.all(
-        wave.map((batch) => supabase.from("leads").insert(batch, { count: "exact" })),
-      );
-      for (const r of results) {
-        if (r.error) return { inserted, invalidPhone, error: r.error.message };
-        inserted += r.count ?? (r.data as unknown[] | null)?.length ?? 0;
-      }
-    }
-    return { inserted, invalidPhone };
+    const { error, count } = await supabase
+      .from("leads")
+      .insert(payload, { count: "exact" });
+    if (error) return { inserted: 0, invalidPhone, error: error.message };
+    return { inserted: count ?? payload.length, invalidPhone };
   } catch (e) {
     return {
       inserted: 0,

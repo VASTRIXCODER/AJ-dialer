@@ -1,3 +1,4 @@
+import { getUser } from "@/lib/auth";
 import { getConversationAudio, isElevenLabsConfigured } from "@/lib/elevenlabs";
 
 export const dynamic = "force-dynamic";
@@ -7,6 +8,8 @@ export async function GET(
   _req: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
+  const user = await getUser();
+  if (!user) return new Response("Unauthorized", { status: 401 });
   if (!isElevenLabsConfigured()) {
     return new Response("ElevenLabs not configured", { status: 503 });
   }

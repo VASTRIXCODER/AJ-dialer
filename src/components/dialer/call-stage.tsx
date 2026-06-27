@@ -12,9 +12,11 @@ import {
   Mic,
   MicOff,
   Pause,
+  Phone,
   PhoneOff,
   Play,
   Radio,
+  RotateCcw,
   SkipForward,
   Sparkles,
   StopCircle,
@@ -148,8 +150,8 @@ export function CallStage({
   return (
     <div className="flex h-full flex-col">
       {/* Session bar */}
-      <div className="flex items-center justify-between border-b border-border px-5 py-3">
-        <div className="flex items-center gap-4 text-sm">
+      <div className="flex flex-wrap items-center justify-between gap-y-1.5 border-b border-border px-5 py-3">
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
           <span className="flex items-center gap-1.5 font-semibold">
             <Radio className="h-4 w-4 text-primary" />
             Session
@@ -160,6 +162,25 @@ export function CallStage({
           <span className="text-muted-foreground">
             <b className="font-bold text-foreground tabular">{state.connectsThisSession}</b> connects
           </span>
+          {/* Caller-ID rotation indicator */}
+          {state.callerIdInfo && state.callerIdInfo.pool.length > 0 && (
+            <span
+              title={`Pool: ${state.callerIdInfo.pool.join(", ")} · rotates every ${state.callerIdInfo.rotateEvery} call${state.callerIdInfo.rotateEvery === 1 ? "" : "s"}`}
+              className="flex items-center gap-1 rounded-md border border-border/60 bg-muted/50 px-2 py-0.5 text-[11px] font-medium text-muted-foreground"
+            >
+              <Phone className="h-3 w-3 text-primary" />
+              {state.callerIdInfo.callerId.replace(/^\+1/, "")}
+              {state.callerIdInfo.pool.length > 1 && (
+                <>
+                  <span className="text-muted-foreground/60">·</span>
+                  <RotateCcw className="h-3 w-3" />
+                  <span>
+                    {state.callerIdInfo.poolIndex + 1}/{state.callerIdInfo.pool.length}
+                  </span>
+                </>
+              )}
+            </span>
+          )}
         </div>
         <span
           className={cn(
