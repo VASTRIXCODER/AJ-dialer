@@ -132,7 +132,11 @@ export default async function CallbacksPage() {
                       </p>
                     )}
                     <Link
-                      href="/dialer"
+                      href={
+                        cb.phone
+                          ? `/dialer?dial=${encodeURIComponent(cb.phone)}&name=${encodeURIComponent(cb.leadName)}`
+                          : "/dialer"
+                      }
                       className={buttonVariants({
                         size: "sm",
                         variant: group.key === "overdue" ? "primary" : "outline",

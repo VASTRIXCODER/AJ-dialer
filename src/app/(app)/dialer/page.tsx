@@ -15,9 +15,9 @@ export const dynamic = "force-dynamic";
 export default async function DialerPage({
   searchParams,
 }: {
-  searchParams: Promise<{ campaign?: string }>;
+  searchParams: Promise<{ campaign?: string; dial?: string; name?: string }>;
 }) {
-  const [{ campaign }, queue, campaigns, viewer] = await Promise.all([
+  const [{ campaign, dial, name }, queue, campaigns, viewer] = await Promise.all([
     searchParams,
     getDialQueue(),
     getCampaigns(),
@@ -34,6 +34,10 @@ export default async function DialerPage({
   const dialCampaigns = campaigns
     .filter((c) => c.status !== "completed")
     .map((c) => ({ id: c.id, name: c.name }));
+
+  // Sanitise callback params — only digits/+ allowed in phone to prevent injection.
+  const callbackPhone = dial ? dial.replace(/[^\d+]/g, "") : undefined;
+  const callbackName = name ? decodeURIComponent(name).slice(0, 80) : undefined;
 
   return (
     <PageContainer>
@@ -63,6 +67,8 @@ export default async function DialerPage({
         manualEnabled={manualEnabled}
         aiEnabled={aiEnabled}
         aiLockReason={aiLockReason}
+        callbackPhone={callbackPhone}
+        callbackName={callbackName}
       />
     </PageContainer>
   );

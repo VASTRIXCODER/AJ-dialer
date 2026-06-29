@@ -699,13 +699,19 @@ export function useDialer(queue: Lead[], aiConfigured = false) {
   );
 
   const dialNumber = useCallback(
-    (raw: string) => {
+    (raw: string, displayName?: string) => {
       const e164 = toE164(raw);
       if (e164.replace(/\D/g, "").length < 10) {
         patch({ error: "Enter a valid phone number." });
         return;
       }
-      void startHumanCall([manualLead(e164)]); // manual dial is always human
+      const lead = manualLead(e164);
+      if (displayName) {
+        const parts = displayName.trim().split(/\s+/);
+        lead.firstName = parts[0] ?? lead.firstName;
+        lead.lastName = parts.slice(1).join(" ");
+      }
+      void startHumanCall([lead]); // manual dial is always human
     },
     [patch, startHumanCall],
   );

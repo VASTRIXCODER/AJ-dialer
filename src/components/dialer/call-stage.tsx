@@ -105,7 +105,7 @@ export function CallStage({
   aiEnabled?: boolean;
   aiLockReason?: AiLockReason;
   onStart: () => void;
-  onManualDial: (number: string) => void;
+  onManualDial: (number: string, name?: string) => void;
   onAiDialNumber: (phone: string, known: KnownInfo) => void;
   onEnd: () => void;
   onSkip: () => void;

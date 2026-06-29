@@ -1,8 +1,8 @@
 "use client";
 
-import { AlertTriangle, Loader2, Megaphone, Settings, Users } from "lucide-react";
+import { AlertTriangle, Loader2, Megaphone, Phone, Settings, Users } from "lucide-react";
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Card } from "@/components/ui/card";
 import { Button, buttonVariants } from "@/components/ui/button";
 import type { AiLockReason } from "@/lib/org/settings";
@@ -21,6 +21,8 @@ export function DialerClient({
   manualEnabled = true,
   aiEnabled = true,
   aiLockReason = null,
+  callbackPhone,
+  callbackName,
 }: {
   queue: Lead[];
   campaigns?: { id: string; name: string }[];
@@ -33,6 +35,9 @@ export function DialerClient({
   aiEnabled?: boolean;
   /** Why AI is locked, to tailor the message ("premium" plan vs "role"). */
   aiLockReason?: AiLockReason;
+  /** When set, auto-dial this number (from the Callbacks page "Call back" link). */
+  callbackPhone?: string;
+  callbackName?: string;
 }) {
   // The queue is held in state so the "Load leads" button can pull the latest
   // shared pool into the dialer on demand (the page ships an initial copy).
@@ -80,6 +85,16 @@ export function DialerClient({
   const dialer = useDialer(queueForDialer, aiUsable);
   const { state } = dialer;
 
+  // Auto-dial a callback number as soon as the Twilio device is live and idle.
+  const callbackFiredRef = useRef(false);
+  useEffect(() => {
+    if (!callbackPhone || callbackFiredRef.current) return;
+    if (state.mode === "live" && state.status === "idle" && !state.aiMode) {
+      callbackFiredRef.current = true;
+      dialer.dialNumber(callbackPhone, callbackName);
+    }
+  }, [state.mode, state.status, state.aiMode, callbackPhone, callbackName, dialer]);
+
   // Which lead the side panels describe right now (null when the queue is empty
   // and no call is active — production ships with no placeholder lead).
   const focusLead: Lead | null =
@@ -115,6 +130,25 @@ export function DialerClient({
             <Settings className="h-4 w-4" />
             Connect Twilio
           </Link>
+        </Card>
+      )}
+
+      {/* Callback auto-dial banner — shown until the call fires */}
+      {callbackPhone && !callbackFiredRef.current && state.status === "idle" && (
+        <Card className="flex flex-col items-start gap-3 border-accent/30 bg-accent/5 p-4 sm:flex-row sm:items-center">
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-accent/15 text-accent">
+            <Phone className="h-5 w-5" />
+          </div>
+          <div className="flex-1">
+            <p className="text-sm font-semibold">
+              Callback ready{callbackName ? ` — ${callbackName}` : ""}
+            </p>
+            <p className="text-sm text-muted-foreground">
+              {state.mode === "live"
+                ? "Dialing now…"
+                : "Connecting to Twilio — will dial automatically once ready."}
+            </p>
+          </div>
         </Card>
       )}
 
