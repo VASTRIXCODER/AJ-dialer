@@ -42,6 +42,7 @@ const FEATURE_LABEL: Record<keyof OrgFeatures, string> = {
   leads: "Leads",
   appointments: "Appointments",
   callbacks: "Callbacks",
+  billsFine: "Bills are fine",
   liveMonitor: "Live monitor",
   leaderboard: "Leaderboard",
   campaigns: "Campaigns",

@@ -3,6 +3,7 @@
 import { motion } from "framer-motion";
 import {
   BatteryCharging,
+  Bot,
   Car,
   ChevronLeft,
   ChevronRight,
@@ -10,6 +11,7 @@ import {
   Mail,
   MapPin,
   Phone,
+  PhoneCall,
   Search,
   Users,
   Sun,
@@ -17,14 +19,16 @@ import {
   X,
   Zap,
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Portal } from "@/components/ui/portal";
 import { Ring } from "@/components/ui/progress";
 import type { Lead } from "@/lib/types";
-import { formatCurrency, formatPhone, initials } from "@/lib/utils";
+import { outcomeConfig } from "@/lib/status";
+import type { CallOutcome } from "@/lib/types";
+import { formatCurrency, formatDuration, formatPhone, initials, relativeTime } from "@/lib/utils";
 
 export function LeadPanel({
   lead,
@@ -239,6 +243,8 @@ function LeadDetail({ lead, upNext }: { lead: Lead; upNext: Lead[] }) {
         )}
       </div>
 
+      <CallHistory leadId={lead.id} />
+
       <div className={upNext.length ? "flex-1 p-5" : "hidden"}>
         <p className="mb-2.5 text-xs font-bold uppercase tracking-wide text-muted-foreground">
           Up next in queue
@@ -269,6 +275,70 @@ function LeadDetail({ lead, upNext }: { lead: Lead; upNext: Lead[] }) {
         </ul>
       </div>
     </>
+  );
+}
+
+// ── Per-lead call history (prevents accidental double-dialing) ───────────────
+interface HistoryCall {
+  id: string;
+  startedAt: string;
+  durationSec: number;
+  outcome: string | null;
+  channel: string;
+}
+
+function CallHistory({ leadId }: { leadId: string }) {
+  const [calls, setCalls] = useState<HistoryCall[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    setLoading(true);
+    fetch(`/api/leads/history?leadId=${encodeURIComponent(leadId)}`)
+      .then((r) => r.json())
+      .then((j) => setCalls((j.calls ?? []) as HistoryCall[]))
+      .catch(() => setCalls([]))
+      .finally(() => setLoading(false));
+  }, [leadId]);
+
+  if (loading || calls.length === 0) return null;
+
+  return (
+    <div className="border-t border-border px-5 py-4">
+      <p className="mb-2.5 flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide text-muted-foreground">
+        <PhoneCall className="h-3.5 w-3.5" />
+        Call history ({calls.length})
+      </p>
+      <ul className="space-y-1.5">
+        {calls.map((c) => {
+          const cfg = c.outcome ? outcomeConfig[c.outcome as CallOutcome] : null;
+          return (
+            <li key={c.id} className="flex items-center gap-2">
+              {c.channel === "ai" ? (
+                <Bot className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+              ) : (
+                <Phone className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+              )}
+              <span className="text-xs text-muted-foreground tabular">
+                {relativeTime(c.startedAt)}
+              </span>
+              {c.durationSec > 0 && (
+                <span className="text-xs text-muted-foreground tabular">
+                  {formatDuration(c.durationSec)}
+                </span>
+              )}
+              {cfg && (
+                <Badge
+                  tone={cfg.tone === "success" ? "success" : cfg.tone === "danger" ? "danger" : cfg.tone === "warning" ? "warning" : "neutral"}
+                  className="ml-auto text-[10px] px-1.5 py-0.5"
+                >
+                  {cfg.label}
+                </Badge>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+    </div>
   );
 }
 

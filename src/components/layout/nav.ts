@@ -1,6 +1,7 @@
 import {
   BarChart3,
   CalendarCheck,
+  CheckCircle2,
   LayoutDashboard,
   type LucideIcon,
   Megaphone,
@@ -50,6 +51,7 @@ export const navGroups: NavGroup[] = [
       { label: "Leads", href: "/leads", icon: Users, feature: "leads" },
       { label: "Appointments", href: "/appointments", icon: CalendarCheck, feature: "appointments" },
       { label: "Callbacks", href: "/callbacks", icon: PhoneIncoming, feature: "callbacks" },
+      { label: "Bills are fine", href: "/bills-fine", icon: CheckCircle2, feature: "billsFine" },
     ],
   },
   {

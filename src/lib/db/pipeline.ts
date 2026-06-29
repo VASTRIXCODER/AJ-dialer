@@ -265,6 +265,53 @@ export async function getAppointments(): Promise<AppointmentRow[]> {
   }
 }
 
+// ── Bills are fine ───────────────────────────────────────────────────────────
+export interface BillsFineRow {
+  id: string;
+  leadName: string;
+  phone: string;
+  address: string;
+  utilityBill: number | null;
+  solarPayment: number | null;
+  utilityProvider: string;
+  lastContactedAt: string | null;
+  createdAt: string;
+  repName?: string;
+  teamWide: boolean;
+}
+
+export async function getBillsFine(): Promise<BillsFineRow[]> {
+  if (!isSupabaseConfigured()) return [];
+  try {
+    const scope = await getScope();
+    if (!scope) return [];
+    const orgWide = scope.supervisor && isAdminConfigured() && Boolean(scope.orgId);
+    const reader = orgWide ? createAdminClient() : await createClient();
+    const { data } = await reader
+      .from("leads")
+      .select("id,first_name,last_name,phone,address,utility_bill,solar_payment,utility_provider,last_contacted_at,created_at,owner_id")
+      .eq(orgWide ? "org_id" : "owner_id", orgWide ? scope.orgId : scope.userId)
+      .eq("status", "bills_fine")
+      .order("last_contacted_at", { ascending: false });
+    const names = orgWide ? await memberNames(scope.orgId as string) : null;
+    return ((data ?? []) as Row[]).map((r) => ({
+      id: s(r.id),
+      leadName: `${s(r.first_name)} ${s(r.last_name)}`.trim() || "Homeowner",
+      phone: s(r.phone),
+      address: s(r.address),
+      utilityBill: r.utility_bill == null ? null : Number(r.utility_bill),
+      solarPayment: r.solar_payment == null ? null : Number(r.solar_payment),
+      utilityProvider: s(r.utility_provider),
+      lastContactedAt: r.last_contacted_at ? s(r.last_contacted_at) : null,
+      createdAt: s(r.created_at),
+      repName: names ? names.get(s(r.owner_id)) || "Rep" : undefined,
+      teamWide: orgWide,
+    }));
+  } catch {
+    return [];
+  }
+}
+
 // ── Callbacks ────────────────────────────────────────────────────────────────
 export interface CallbackRow {
   id: string;

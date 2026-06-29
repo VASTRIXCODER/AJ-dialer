@@ -276,6 +276,7 @@ export const outcomeOptions: OutcomeOption[] = [
   { value: "callback_scheduled", label: "Callback", description: "Homeowner asked to be called back", tone: "warning" },
   { value: "qualified", label: "Qualified", description: "Good fit, continue nurturing", tone: "success" },
   { value: "not_interested", label: "Not interested", description: "Declined further contact", tone: "neutral" },
+  { value: "bills_fine", label: "Bills are fine", description: "Happy with current bills — revisit later", tone: "warning" },
   { value: "no_answer", label: "No answer", description: "Rang out, no pickup", tone: "neutral" },
   { value: "voicemail", label: "Voicemail", description: "Left a voicemail", tone: "neutral" },
   { value: "wrong_number", label: "Wrong number", description: "Number does not reach lead", tone: "danger" },

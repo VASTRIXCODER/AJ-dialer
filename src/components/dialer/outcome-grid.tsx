@@ -4,6 +4,7 @@ import { motion } from "framer-motion";
 import {
   Ban,
   CalendarCheck,
+  CheckCircle2,
   PhoneMissed,
   PhoneOff,
   ThumbsDown,
@@ -21,6 +22,7 @@ const icons: Record<CallOutcome, LucideIcon> = {
   callback_scheduled: PhoneMissed,
   qualified: ThumbsUp,
   not_interested: ThumbsDown,
+  bills_fine: CheckCircle2,
   no_answer: PhoneOff,
   voicemail: Voicemail,
   wrong_number: XCircle,

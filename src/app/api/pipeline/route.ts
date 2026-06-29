@@ -19,6 +19,7 @@ const OUTCOMES: CallOutcome[] = [
   "callback_scheduled",
   "qualified",
   "not_interested",
+  "bills_fine",
   "no_answer",
   "voicemail",
   "wrong_number",

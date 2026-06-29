@@ -26,6 +26,7 @@ const OUTCOME_TO_STATUS: Record<CallOutcome, string> = {
   callback_scheduled: "callback",
   qualified: "qualified",
   not_interested: "not_interested",
+  bills_fine: "bills_fine",
   no_answer: "no_answer",
   voicemail: "no_answer",
   wrong_number: "no_answer",

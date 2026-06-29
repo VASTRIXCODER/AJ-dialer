@@ -10,6 +10,7 @@ export type LeadStatus =
   | "callback"
   | "not_interested"
   | "no_answer"
+  | "bills_fine"
   | "dnc";
 
 export type CallOutcome =
@@ -17,6 +18,7 @@ export type CallOutcome =
   | "callback_scheduled"
   | "qualified"
   | "not_interested"
+  | "bills_fine"
   | "no_answer"
   | "voicemail"
   | "wrong_number"

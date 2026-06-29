@@ -230,6 +230,7 @@ export async function generateOrgBlueprint(
       leads: spec.features?.leads ?? true,
       appointments: spec.features?.appointments ?? true,
       callbacks: spec.features?.callbacks ?? true,
+      billsFine: spec.features?.billsFine ?? true,
       liveMonitor: spec.features?.liveMonitor ?? true,
       leaderboard: spec.features?.leaderboard ?? true,
       campaigns: spec.features?.campaigns ?? true,

@@ -26,7 +26,7 @@ export function RowActions({
   leadId,
   statusOptions,
 }: {
-  kind: "appointment" | "callback";
+  kind: "appointment" | "callback" | "lead";
   id: string;
   leadId: string | null;
   statusOptions: StatusOption[];
@@ -66,6 +66,14 @@ export function RowActions({
       window.removeEventListener("keydown", onKey);
     };
   }, [open]);
+
+  function buildBody(extra: Record<string, unknown>): Record<string, unknown> {
+    if (kind === "lead") {
+      // For lead rows, status changes are dispositions (outcome re-files the lead).
+      return { action: "disposition", leadId: id, outcome: extra.status ?? extra.outcome };
+    }
+    return { action: kind, id, ...extra };
+  }
 
   async function post(body: Record<string, unknown>) {
     setBusy(true);
@@ -124,7 +132,7 @@ export function RowActions({
               Set status
             </p>
             {statusOptions.map((o) => (
-              <button key={o.value} type="button" className={item} onClick={() => post({ action: kind, id, status: o.value })}>
+              <button key={o.value} type="button" className={item} onClick={() => post(buildBody({ status: o.value }))}>
                 {o.label}
               </button>
             ))}

@@ -10,6 +10,7 @@ export const leadStatusConfig: Record<LeadStatus, { label: string; tone: Tone }>
   callback: { label: "Callback", tone: "warning" },
   not_interested: { label: "Not interested", tone: "neutral" },
   no_answer: { label: "No answer", tone: "neutral" },
+  bills_fine: { label: "Bills are fine", tone: "warning" },
   dnc: { label: "Do not call", tone: "danger" },
 };
 
@@ -29,6 +30,7 @@ export const outcomeConfig: Record<CallOutcome, { label: string; tone: Tone }> =
   callback_scheduled: { label: "Callback", tone: "warning" },
   qualified: { label: "Qualified", tone: "success" },
   not_interested: { label: "Not interested", tone: "neutral" },
+  bills_fine: { label: "Bills are fine", tone: "warning" },
   no_answer: { label: "No answer", tone: "neutral" },
   voicemail: { label: "Voicemail", tone: "neutral" },
   wrong_number: { label: "Wrong number", tone: "danger" },

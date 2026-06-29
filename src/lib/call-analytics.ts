@@ -23,6 +23,7 @@ export const OUTCOME_META: Record<CallOutcome, { label: string; color: string }>
   callback_scheduled: { label: "Callback scheduled", color: "var(--color-chart-1)" },
   qualified: { label: "Qualified", color: "var(--color-chart-2)" },
   not_interested: { label: "Not interested", color: "var(--color-chart-5)" },
+  bills_fine: { label: "Bills are fine", color: "var(--color-warning)" },
   voicemail: { label: "Voicemail", color: "var(--color-chart-4)" },
   no_answer: { label: "No answer", color: "var(--color-muted-foreground)" },
   wrong_number: { label: "Wrong number", color: "var(--color-chart-5)" },

@@ -17,6 +17,7 @@ export interface OrgFeatures {
   leads: boolean;
   appointments: boolean;
   callbacks: boolean;
+  billsFine: boolean;
   liveMonitor: boolean;
   leaderboard: boolean;
   campaigns: boolean;
@@ -102,6 +103,7 @@ export const DEFAULT_FEATURES: OrgFeatures = {
   leads: true,
   appointments: true,
   callbacks: true,
+  billsFine: true,
   liveMonitor: true,
   leaderboard: true,
   campaigns: true,
