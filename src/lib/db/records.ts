@@ -102,6 +102,8 @@ export async function insertCallRecord(input: {
   callSid?: string | null;
   /** Conference room (`hc-<id>`) for manual calls — links the recording. */
   room?: string | null;
+  /** Rep's free-text call notes — persisted back to leads.notes. */
+  notes?: string;
 }): Promise<string | null> {
   if (!isSupabaseConfigured()) return null;
   try {
@@ -171,6 +173,7 @@ export async function insertCallRecord(input: {
         .update({
           status: OUTCOME_TO_STATUS[input.outcome] ?? "contacted",
           last_contacted_at: new Date().toISOString(),
+          ...(input.notes != null ? { notes: input.notes } : {}),
         })
         .eq("id", leadUuid);
     }

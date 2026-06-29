@@ -17,6 +17,7 @@ export async function POST(req: Request) {
     outcome?: CallOutcome;
     callSid?: string;
     room?: string;
+    notes?: string;
   };
 
   const recordId = await insertCallRecord({
@@ -28,6 +29,7 @@ export async function POST(req: Request) {
     channel: "human",
     callSid: body.callSid ?? null,
     room: body.room ?? null,
+    notes: body.notes,
   });
 
   if (!recordId) {

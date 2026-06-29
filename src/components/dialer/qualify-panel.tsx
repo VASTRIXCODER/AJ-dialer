@@ -40,9 +40,16 @@ function Toggle({
   );
 }
 
-export function QualifyPanel({ lead }: { lead: Lead | null }) {
+export function QualifyPanel({
+  lead,
+  onNotesChange,
+}: {
+  lead: Lead | null;
+  onNotesChange?: (notes: string) => void;
+}) {
   const [utility, setUtility] = useState("");
   const [solar, setSolar] = useState("");
+  const [notes, setNotes] = useState(lead?.notes ?? "");
   const [flags, setFlags] = useState({
     ev: lead?.hasEV ?? false,
     pool: lead?.hasPool ?? false,
@@ -124,7 +131,14 @@ export function QualifyPanel({ lead }: { lead: Lead | null }) {
         <p className="mb-2.5 text-xs font-bold uppercase tracking-wide text-muted-foreground">
           Notes
         </p>
-        <Textarea placeholder="Lifestyle changes, objections, follow-ups…" />
+        <Textarea
+          placeholder="Lifestyle changes, objections, follow-ups…"
+          value={notes}
+          onChange={(e) => {
+            setNotes(e.target.value);
+            onNotesChange?.(e.target.value);
+          }}
+        />
       </div>
     </div>
   );

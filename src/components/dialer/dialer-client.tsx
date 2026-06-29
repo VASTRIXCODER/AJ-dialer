@@ -85,6 +85,22 @@ export function DialerClient({
   const dialer = useDialer(queueForDialer, aiUsable);
   const { state } = dialer;
 
+  // Track the rep's in-call notes so they can be saved with the disposition.
+  const notesRef = useRef<string>("");
+  const focusLeadId = (
+    state.connectedLead ??
+    state.lines[0]?.lead ??
+    (queueForDialer.length ? queueForDialer[state.queueIndex % queueForDialer.length] : null)
+  )?.id;
+  useEffect(() => {
+    const lead = state.connectedLead ??
+      state.lines[0]?.lead ??
+      (queueForDialer.length ? queueForDialer[state.queueIndex % queueForDialer.length] : null);
+    notesRef.current = lead?.notes ?? "";
+  // Reset notes to the lead's saved notes whenever the active lead changes.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusLeadId]);
+
   // Auto-dial a callback number as soon as the Twilio device is live and idle.
   const callbackFiredRef = useRef(false);
   useEffect(() => {
@@ -241,6 +257,7 @@ export function DialerClient({
                     outcome: o,
                     callSid: state.callSid,
                     room: state.room,
+                    notes: notesRef.current || undefined,
                   }),
                 }).catch(() => {});
               }
@@ -267,7 +284,11 @@ export function DialerClient({
             </p>
           </div>
           <div className="p-5">
-            <QualifyPanel key={focusLead?.id ?? "none"} lead={focusLead} />
+            <QualifyPanel
+              key={focusLead?.id ?? "none"}
+              lead={focusLead}
+              onNotesChange={(n) => { notesRef.current = n; }}
+            />
           </div>
         </Card>
       </div>
