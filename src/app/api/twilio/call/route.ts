@@ -87,7 +87,11 @@ export async function POST(req: Request) {
   // direct dial). For parallel, the losing legs are force-released, so they must
   // NOT end the conference on exit — only the rep's leg does that.
   const endOnExit = leads.length === 1 ? "true" : "false";
-  const conferenceTwiml = `<?xml version="1.0" encoding="UTF-8"?><Response><Dial><Conference startConferenceOnEnter="true" endConferenceOnExit="${endOnExit}" beep="false">${room}</Conference></Dial></Response>`;
+  // waitUrl="" suppresses Twilio's default hold music. Without it, the default
+  // Twilio music plays between when the homeowner picks up and the conference
+  // becomes "active" — and on some accounts this delays or blocks the audio
+  // bridge from establishing correctly.
+  const conferenceTwiml = `<?xml version="1.0" encoding="UTF-8"?><Response><Dial><Conference startConferenceOnEnter="true" endConferenceOnExit="${endOnExit}" beep="false" waitUrl="">${room}</Conference></Dial></Response>`;
 
   // Resolve caller ID info for the first leg so we can return it for display.
   // Subsequent legs each advance the counter individually.

@@ -96,7 +96,7 @@ export async function POST(req: Request) {
           : ' record="record-from-start"'
         : "";
       return twiml(
-        `<Dial><Conference startConferenceOnEnter="true" endConferenceOnExit="true" beep="false"${recordAttr}>${room}</Conference></Dial>`,
+        `<Dial><Conference startConferenceOnEnter="true" endConferenceOnExit="true" beep="false" waitUrl=""${recordAttr}>${room}</Conference></Dial>`,
       );
     }
 

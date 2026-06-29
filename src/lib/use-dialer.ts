@@ -209,8 +209,29 @@ export function useDialer(queue: Lead[], aiConfigured = false) {
         };
         if (cancelled) return;
         if (data.token) {
-          const { Device } = await import("@twilio/voice-sdk");
-          const device = new Device(data.token, { logLevel: "error" });
+          // Request mic permission BEFORE creating the Device. Browsers block
+          // audio silently when permission is first asked mid-call; doing it here
+          // (during the page load flow) shows the prompt while the user is still
+          // actively setting up. We release the stream immediately — the SDK
+          // re-acquires it when a call actually starts.
+          try {
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            stream.getTracks().forEach((t) => t.stop());
+          } catch {
+            // Permission denied or no mic — Device will still register; a real
+            // call will fail at connect() and surface an actionable SDK error.
+          }
+
+          if (cancelled) return;
+
+          const { Device, Call } = await import("@twilio/voice-sdk");
+          const device = new Device(data.token, {
+            logLevel: "error",
+            // Prefer Opus (wideband, packet-loss resilient) then fall back to
+            // PCMU. Without this the SDK may pick a codec that works for
+            // signalling but produces no audio on certain browser/network paths.
+            codecPreferences: [Call.Codec.Opus, Call.Codec.PCMU],
+          });
           await device.register();
           if (cancelled) {
             device.destroy();
