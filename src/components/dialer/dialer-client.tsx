@@ -23,6 +23,7 @@ export function DialerClient({
   aiLockReason = null,
   callbackPhone,
   callbackName,
+  userId,
 }: {
   queue: Lead[];
   campaigns?: { id: string; name: string }[];
@@ -38,6 +39,8 @@ export function DialerClient({
   /** When set, auto-dial this number (from the Callbacks page "Call back" link). */
   callbackPhone?: string;
   callbackName?: string;
+  /** Signed-in user id — keys the persisted "dials today" counter per rep. */
+  userId?: string;
 }) {
   // The queue is held in state so the "Load leads" button can pull the latest
   // shared pool into the dialer on demand (the page ships an initial copy).
@@ -82,7 +85,7 @@ export function DialerClient({
     : queue;
   // AI is usable only when the agent is configured AND this viewer is allowed it.
   const aiUsable = aiAgentConfigured && aiEnabled;
-  const dialer = useDialer(queueForDialer, aiUsable);
+  const dialer = useDialer(queueForDialer, aiUsable, userId);
   const { state } = dialer;
 
   // Track the rep's in-call notes so they can be saved with the disposition.
@@ -273,6 +276,7 @@ export function DialerClient({
             onLaunchNextAI={dialer.launchNextAI}
             onStopAICampaign={dialer.stopAICampaign}
             onEndAISession={dialer.endAISession}
+            onReconnect={dialer.reconnect}
           />
         </Card>
 

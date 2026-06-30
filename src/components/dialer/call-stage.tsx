@@ -96,6 +96,7 @@ export function CallStage({
   onLaunchNextAI,
   onStopAICampaign,
   onEndAISession,
+  onReconnect,
 }: {
   state: DialerState;
   focusLead: Lead | null;
@@ -120,6 +121,7 @@ export function CallStage({
   onLaunchNextAI: () => void;
   onStopAICampaign: () => void;
   onEndAISession: () => void;
+  onReconnect: () => void;
 }) {
   const [showKeypad, setShowKeypad] = useState(false);
   const [manualOpen, setManualOpen] = useState(!hasQueue);
@@ -162,6 +164,14 @@ export function CallStage({
           <span className="text-muted-foreground">
             <b className="font-bold text-foreground tabular">{state.connectsThisSession}</b> connects
           </span>
+          {/* Daily total — persists across refresh/logout so reps keep a running
+              count for the whole day, not just the current session. */}
+          <span
+            title="Total dials today — saved on this device through the whole day, even if you refresh or log out."
+            className="text-muted-foreground"
+          >
+            <b className="font-bold text-primary tabular">{state.dialsToday}</b> today
+          </span>
           {/* Caller-ID rotation indicator */}
           {state.callerIdInfo && state.callerIdInfo.pool.length > 0 && (
             <span
@@ -182,15 +192,34 @@ export function CallStage({
             </span>
           )}
         </div>
-        <span
-          className={cn(
-            "inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold",
-            modeBadge.cls,
+        <div className="flex items-center gap-2">
+          {/* When the device drops (token lapse, network blip, Safari quirk) the
+              rep gets a one-tap recovery instead of having to reload — reloading
+              didn't reliably fix it. */}
+          {state.mode === "offline" && (
+            <button
+              type="button"
+              onClick={onReconnect}
+              className="inline-flex items-center gap-1.5 rounded-full border border-border bg-surface px-2.5 py-1 text-[11px] font-semibold text-foreground transition-colors hover:bg-muted active:scale-95"
+            >
+              <RotateCcw className="h-3 w-3" />
+              Reconnect
+            </button>
           )}
-        >
-          <span className="h-1.5 w-1.5 rounded-full bg-current" />
-          {modeBadge.label}
-        </span>
+          <span
+            className={cn(
+              "inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold",
+              modeBadge.cls,
+            )}
+          >
+            {state.mode === "connecting" ? (
+              <Loader2 className="h-3 w-3 animate-spin" />
+            ) : (
+              <span className="h-1.5 w-1.5 rounded-full bg-current" />
+            )}
+            {modeBadge.label}
+          </span>
+        </div>
       </div>
 
       <div className="flex flex-1 flex-col items-center justify-center p-6">

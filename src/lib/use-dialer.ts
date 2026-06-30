@@ -58,6 +58,8 @@ export interface DialerState {
   mode: DialerMode;
   callsThisSession: number;
   connectsThisSession: number;
+  /** Running dial total for the whole local day — persists across refresh/logout. */
+  dialsToday: number;
   queueIndex: number;
   error: string | null;
   callSid: string | null;
@@ -71,6 +73,62 @@ export interface DialerState {
   aiMode: boolean;
   aiCalls: AiLaunch[];
   aiCampaign: "idle" | "running" | "done";
+}
+
+// ── Daily dial counter (persists across refresh / logout) ─────────────────────
+// Reps wanted a running "dials today" total that survives closing the app or
+// logging out — the per-session counter resets on every reload. We keep it in
+// localStorage keyed by user + local calendar day, so it carries through the
+// whole day on the same device and naturally resets at midnight.
+const DIAL_KEY_PREFIX = "aj:dials:";
+
+function localDayStr(): string {
+  const d = new Date();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${d.getFullYear()}-${m}-${day}`;
+}
+
+function dialStorageKey(userId?: string): string {
+  return `${DIAL_KEY_PREFIX}${userId || "anon"}:${localDayStr()}`;
+}
+
+function readDialsToday(userId?: string): number {
+  if (typeof window === "undefined") return 0;
+  try {
+    return Number(window.localStorage.getItem(dialStorageKey(userId))) || 0;
+  } catch {
+    return 0;
+  }
+}
+
+function writeDialsToday(userId: string | undefined, value: number): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(dialStorageKey(userId), String(value));
+  } catch {
+    /* storage full / disabled — counter just won't persist */
+  }
+}
+
+/** Drop dial-counter keys from previous days so storage doesn't grow. Only
+ *  prunes keys whose day suffix isn't today, so a different user's same-day
+ *  count on a shared device is left intact. */
+function sweepOldDialKeys(): void {
+  if (typeof window === "undefined") return;
+  try {
+    const today = localDayStr();
+    const toRemove: string[] = [];
+    for (let i = 0; i < window.localStorage.length; i++) {
+      const k = window.localStorage.key(i);
+      if (k && k.startsWith(DIAL_KEY_PREFIX) && !k.endsWith(`:${today}`)) {
+        toRemove.push(k);
+      }
+    }
+    toRemove.forEach((k) => window.localStorage.removeItem(k));
+  } catch {
+    /* best-effort */
+  }
 }
 
 /** Build a lightweight Lead for an ad-hoc manual dial (not a queued lead). */
@@ -97,7 +155,7 @@ function manualLead(e164: string): Lead {
   };
 }
 
-export function useDialer(queue: Lead[], aiConfigured = false) {
+export function useDialer(queue: Lead[], aiConfigured = false, userId?: string) {
   const [state, setState] = useState<DialerState>({
     status: "idle",
     lines: [],
@@ -112,6 +170,7 @@ export function useDialer(queue: Lead[], aiConfigured = false) {
     mode: "connecting",
     callsThisSession: 0,
     connectsThisSession: 0,
+    dialsToday: 0,
     queueIndex: 0,
     error: null,
     callSid: null,
@@ -142,9 +201,23 @@ export function useDialer(queue: Lead[], aiConfigured = false) {
   const sessionGenRef = useRef(0);
   // Whether manual PSTN dialing is possible (a Twilio caller ID is configured).
   const canDialOutRef = useRef(true);
+  // Daily dial counter — ref is the source of truth (seeded from localStorage),
+  // mirrored to state.dialsToday for display. userIdRef keys the storage per rep.
+  const dialsTodayRef = useRef(0);
+  const userIdRef = useRef(userId);
+  // Bumped on every device (re-)setup so async callbacks from a torn-down or
+  // superseded Device can detect they're stale and bail instead of fighting.
+  const deviceGenRef = useRef(0);
 
   const patch = useCallback((p: Partial<DialerState>) => {
     setState((s) => ({ ...s, ...p }));
+  }, []);
+
+  // Increment the persisted daily dial total by n. Updates the ref + localStorage
+  // synchronously; callers mirror dialsTodayRef.current into state for display.
+  const recordDials = useCallback((n: number) => {
+    dialsTodayRef.current += n;
+    writeDialsToday(userIdRef.current, dialsTodayRef.current);
   }, []);
 
   // ── Human-call live presence (Live Monitor) ───────────────────────────────
@@ -195,69 +268,163 @@ export function useDialer(queue: Lead[], aiConfigured = false) {
     aiTimerRef.current = null;
   }, []);
 
-  // ── Initialize Twilio device, or go offline (no simulation) ───────────────
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const res = await fetch("/api/twilio/token");
-        const data = (await res.json()) as {
-          token?: string;
-          identity?: string;
-          mode: string;
-          canDialOut?: boolean;
-        };
-        if (cancelled) return;
-        if (data.token) {
-          // Request mic permission BEFORE creating the Device. Browsers block
-          // audio silently when permission is first asked mid-call; doing it here
-          // (during the page load flow) shows the prompt while the user is still
-          // actively setting up. We release the stream immediately — the SDK
-          // re-acquires it when a call actually starts.
-          try {
-            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-            stream.getTracks().forEach((t) => t.stop());
-          } catch {
-            // Permission denied or no mic — Device will still register; a real
-            // call will fail at connect() and surface an actionable SDK error.
-          }
+  // Fetch a fresh short-lived Voice access token from the server.
+  const fetchVoiceToken = useCallback(async () => {
+    try {
+      const res = await fetch("/api/twilio/token", { cache: "no-store" });
+      return (await res.json()) as {
+        token?: string;
+        identity?: string;
+        mode: string;
+        canDialOut?: boolean;
+      };
+    } catch {
+      return null;
+    }
+  }, []);
 
-          if (cancelled) return;
-
-          const { Device, Call } = await import("@twilio/voice-sdk");
-          const device = new Device(data.token, {
-            logLevel: "error",
-            // Prefer Opus (wideband, packet-loss resilient) then fall back to
-            // PCMU. Without this the SDK may pick a codec that works for
-            // signalling but produces no audio on certain browser/network paths.
-            codecPreferences: [Call.Codec.Opus, Call.Codec.PCMU],
-          });
-          await device.register();
-          if (cancelled) {
-            device.destroy();
-            return;
-          }
-          deviceRef.current = device;
-          identityRef.current = data.identity ?? "agent";
-          canDialOutRef.current = data.canDialOut !== false;
-          modeRef.current = "live";
-          patch({ mode: "live" });
-        } else {
-          modeRef.current = "offline";
-          patch({ mode: "offline" });
-        }
-      } catch {
-        if (!cancelled) {
-          modeRef.current = "offline";
-          patch({ mode: "offline" });
-        }
-      }
-    })();
-    return () => {
-      cancelled = true;
+  // ── Initialize (or re-initialize) the Twilio device ───────────────────────
+  // Tokens are short-lived (1h). Without renewal the device silently goes dead
+  // mid-shift — the homeowner-reported "dialer just stops letting me dial, even
+  // after refresh." setupDevice() builds the Device AND wires its full lifecycle:
+  //   • tokenWillExpire → fetch a new token and updateToken() in place (no drop)
+  //   • error 20104/31205 (token expired/invalid) → full rebuild
+  //   • unregistered → re-register
+  // It's also the manual reconnect path, so a wedged device is always one tap
+  // from recovery rather than requiring a reload (which Safari didn't always fix).
+  const setupDevice = useCallback(async () => {
+    const gen = ++deviceGenRef.current;
+    try {
       deviceRef.current?.destroy();
+    } catch {
+      /* noop */
+    }
+    deviceRef.current = null;
+    modeRef.current = "connecting";
+    patch({ mode: "connecting", error: null });
+
+    const data = await fetchVoiceToken();
+    if (deviceGenRef.current !== gen) return;
+    if (!data?.token) {
+      modeRef.current = "offline";
+      patch({ mode: "offline" });
+      return;
+    }
+
+    // Request mic permission BEFORE creating the Device. Browsers (Safari most
+    // strictly) block audio silently when permission is first asked mid-call;
+    // doing it now, during setup, surfaces the prompt at a sane moment. We
+    // release the stream immediately — the SDK re-acquires it per call.
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      stream.getTracks().forEach((t) => t.stop());
+    } catch {
+      /* denied / no mic — register anyway; connect() will surface a real error */
+    }
+    if (deviceGenRef.current !== gen) return;
+
+    try {
+      const { Device, Call } = await import("@twilio/voice-sdk");
+      const device = new Device(data.token, {
+        logLevel: "error",
+        // Prefer Opus (wideband, packet-loss resilient) then fall back to PCMU.
+        // Without this the SDK may pick a codec that works for signalling but
+        // produces no audio on certain browser/network paths.
+        codecPreferences: [Call.Codec.Opus, Call.Codec.PCMU],
+      });
+
+      // Renew the token ~30s before it lapses so the device stays live all day.
+      device.on("tokenWillExpire", async () => {
+        if (deviceGenRef.current !== gen) return;
+        const fresh = await fetchVoiceToken();
+        if (deviceGenRef.current !== gen) return;
+        if (fresh?.token) {
+          try {
+            device.updateToken(fresh.token);
+          } catch {
+            /* updateToken can throw if the device is mid-teardown */
+          }
+        }
+      });
+
+      device.on("registered", () => {
+        if (deviceGenRef.current !== gen) return;
+        modeRef.current = "live";
+        patch({ mode: "live" });
+      });
+
+      device.on("unregistered", () => {
+        // A network blip or token lapse dropped the registration. Don't disturb
+        // an active call; otherwise try to bring it back so dialing recovers.
+        if (deviceGenRef.current !== gen || callRef.current) return;
+        device.register().catch(() => {});
+      });
+
+      device.on("error", (err: { code?: number }) => {
+        if (deviceGenRef.current !== gen) return;
+        // Access token expired/invalid → rebuild from a fresh token.
+        if (err?.code === 20104 || err?.code === 31205) {
+          void setupDeviceRef.current?.();
+          return;
+        }
+        // Other fatal errors with no live call → mark offline so the UI offers
+        // the Reconnect button instead of looking falsely "live".
+        if (!callRef.current) {
+          modeRef.current = "offline";
+          patch({ mode: "offline" });
+        }
+      });
+
+      await device.register();
+      if (deviceGenRef.current !== gen) {
+        device.destroy();
+        return;
+      }
+      deviceRef.current = device;
+      identityRef.current = data.identity ?? "agent";
+      canDialOutRef.current = data.canDialOut !== false;
+      modeRef.current = "live";
+      patch({ mode: "live" });
+    } catch {
+      if (deviceGenRef.current !== gen) return;
+      modeRef.current = "offline";
+      patch({ mode: "offline" });
+    }
+  }, [fetchVoiceToken, patch]);
+
+  // Stable indirection so lifecycle handlers can re-invoke the latest setup.
+  const setupDeviceRef = useRef(setupDevice);
+  useEffect(() => {
+    setupDeviceRef.current = setupDevice;
+  }, [setupDevice]);
+
+  // Manual recovery — surfaced as a "Reconnect" button when the device is offline.
+  const reconnect = useCallback(() => {
+    void setupDevice();
+  }, [setupDevice]);
+
+  useEffect(() => {
+    void setupDevice();
+    return () => {
+      // Invalidate in-flight callbacks and tear the device down on unmount.
+      deviceGenRef.current += 1;
+      try {
+        deviceRef.current?.destroy();
+      } catch {
+        /* noop */
+      }
+      deviceRef.current = null;
     };
-  }, [patch]);
+  }, [setupDevice]);
+
+  // ── Seed the daily dial counter from storage (per rep, per local day) ──────
+  useEffect(() => {
+    userIdRef.current = userId;
+    const n = readDialsToday(userId);
+    dialsTodayRef.current = n;
+    setState((s) => ({ ...s, dialsToday: n }));
+    sweepOldDialKeys();
+  }, [userId]);
 
   useEffect(
     () => () => {
@@ -386,12 +553,14 @@ export function useDialer(queue: Lead[], aiConfigured = false) {
       leadName: `${l.firstName} ${l.lastName}`.trim() || formatPhone(l.phone),
     }));
 
+    recordDials(leads.length);
     setState((s) => ({
       ...s,
       status: "ai",
       error: null,
       queueIndex: queueIndexRef.current,
       callsThisSession: s.callsThisSession + leads.length,
+      dialsToday: dialsTodayRef.current,
       aiCampaign: autoDialRef.current ? "running" : "idle",
       aiCalls: [...pending, ...s.aiCalls].slice(0, 40),
     }));
@@ -446,7 +615,7 @@ export function useDialer(queue: Lead[], aiConfigured = false) {
     } else if (aiCursorRef.current >= queue.length) {
       patch({ aiCampaign: "done" });
     }
-  }, [patch, queue, stopAITimer]);
+  }, [patch, queue, recordDials, stopAITimer]);
 
   const startAISession = useCallback(() => {
     stopAITimer();
@@ -475,12 +644,14 @@ export function useDialer(queue: Lead[], aiConfigured = false) {
       const name =
         `${known.firstName ?? ""} ${known.lastName ?? ""}`.trim() ||
         formatPhone(e164);
+      recordDials(1);
       setState((s) => ({
         ...s,
         status: "ai",
         error: null,
         aiCampaign: "idle",
         callsThisSession: s.callsThisSession + 1,
+        dialsToday: dialsTodayRef.current,
         aiCalls: [{ conversationId: null, leadId: tempId, leadName: name }],
       }));
       try {
@@ -514,7 +685,7 @@ export function useDialer(queue: Lead[], aiConfigured = false) {
         }));
       }
     },
-    [patch, stopAITimer],
+    [patch, recordDials, stopAITimer],
   );
 
   // ── Human (Twilio) call attempt ───────────────────────────────────────────
@@ -563,7 +734,12 @@ export function useDialer(queue: Lead[], aiConfigured = false) {
         room: null,
         outboundSids: [],
       });
-      setState((s) => ({ ...s, callsThisSession: s.callsThisSession + 1 }));
+      recordDials(1);
+      setState((s) => ({
+        ...s,
+        callsThisSession: s.callsThisSession + 1,
+        dialsToday: dialsTodayRef.current,
+      }));
 
       // Register live presence for the Live Monitor. The conference room is
       // derived from this id so supervisors can join it to listen.
@@ -704,7 +880,7 @@ export function useDialer(queue: Lead[], aiConfigured = false) {
         resetToIdle();
       }
     },
-    [attachCallHandlers, clearHumanPresence, connectLine, nextLeads, patch, resetToIdle, stopPoll],
+    [attachCallHandlers, clearHumanPresence, connectLine, nextLeads, patch, recordDials, resetToIdle, stopPoll],
   );
 
   // The Start button + auto-dial route through here, honoring the current mode.
@@ -884,5 +1060,6 @@ export function useDialer(queue: Lead[], aiConfigured = false) {
     nextLead,
     prevLead,
     selectLead,
+    reconnect,
   };
 }

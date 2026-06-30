@@ -3,7 +3,7 @@ import "server-only";
 import type { OrgSettings } from "../org/settings";
 import { createAdminClient, isAdminConfigured } from "../supabase/admin";
 import { twilioConfig } from "../twilio";
-import { chooseFromPool, resolveRotation } from "./rotation";
+import { chooseFromPool, poolOffsetForKey, resolveRotation } from "./rotation";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Server-side caller-ID rotation. The pool is shared across the org, but the
@@ -69,7 +69,7 @@ export async function nextCallerId(
   });
   if (pool.length <= 1) return pool[0] ?? "";
   const seq = await nextDialSeq(repKey);
-  return chooseFromPool(pool, seq, rotateEvery);
+  return chooseFromPool(pool, seq, rotateEvery, poolOffsetForKey(repKey, pool.length));
 }
 
 export interface CallerIdInfo {
@@ -100,7 +100,9 @@ export async function nextCallerIdWithInfo(
     return { callerId: pool[0], pool, poolIndex: 0, rotateEvery };
   }
   const seq = await nextDialSeq(repKey);
-  const idx = Math.floor((seq - 1) / Math.max(1, rotateEvery)) % pool.length;
+  const off = poolOffsetForKey(repKey, pool.length);
+  const idx =
+    (Math.floor((seq - 1) / Math.max(1, rotateEvery)) + off) % pool.length;
   return { callerId: pool[idx], pool, poolIndex: idx, rotateEvery };
 }
 

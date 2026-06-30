@@ -95,8 +95,12 @@ export async function POST(req: Request) {
           ? ` record="record-from-start" recordingStatusCallback="${escapeXml(recordingCb)}"`
           : ' record="record-from-start"'
         : "";
+      // No waitUrl override → Twilio plays its standard hold music to the rep
+      // while the homeowner's line rings. The music stops automatically the
+      // instant the homeowner joins the conference (two participants = active),
+      // so it never interferes with the two-way audio bridge.
       return twiml(
-        `<Dial><Conference startConferenceOnEnter="true" endConferenceOnExit="true" beep="false" waitUrl=""${recordAttr}>${room}</Conference></Dial>`,
+        `<Dial><Conference startConferenceOnEnter="true" endConferenceOnExit="true" beep="false"${recordAttr}>${room}</Conference></Dial>`,
       );
     }
 

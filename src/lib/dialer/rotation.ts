@@ -91,15 +91,39 @@ export function resolveRotation(
  * Pure: pick the pool member for a 1-based monotonic sequence number. The number
  * switches every `rotateEvery` calls and wraps around the pool. Example with a
  * 2-number pool and rotateEvery=3: calls 1-3 → #0, 4-6 → #1, 7-9 → #0, …
+ *
+ * `offset` shifts the starting index. Reps each pass a stable per-rep offset so
+ * they don't all begin on pool[0] — that would concentrate the whole team's
+ * first calls on one number and trip carrier spam detection, the exact problem
+ * rotation exists to prevent.
  */
 export function chooseFromPool(
   pool: string[],
   seq: number,
   rotateEvery: number,
+  offset = 0,
 ): string {
   if (!pool.length) return "";
   const every = Math.max(1, Math.floor(rotateEvery) || 1);
   const s = Math.max(1, Math.floor(seq) || 1);
-  const idx = Math.floor((s - 1) / every) % pool.length;
+  const off = ((Math.floor(offset) % pool.length) + pool.length) % pool.length;
+  const idx = (Math.floor((s - 1) / every) + off) % pool.length;
   return pool[idx];
+}
+
+/**
+ * Stable 0..poolLen-1 starting offset derived from a rep's key, so different
+ * reps spread across the pool from their very first call. Same key → same
+ * offset (deterministic), so a rep's rotation stays predictable.
+ */
+export function poolOffsetForKey(
+  key: string | null | undefined,
+  poolLen: number,
+): number {
+  if (!key || poolLen <= 1) return 0;
+  let h = 0;
+  for (let i = 0; i < key.length; i++) {
+    h = (Math.imul(h, 31) + key.charCodeAt(i)) >>> 0;
+  }
+  return h % poolLen;
 }

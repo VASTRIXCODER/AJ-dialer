@@ -69,6 +69,7 @@ export default async function DialerPage({
         aiLockReason={aiLockReason}
         callbackPhone={callbackPhone}
         callbackName={callbackName}
+        userId={viewer.user?.id}
       />
     </PageContainer>
   );
