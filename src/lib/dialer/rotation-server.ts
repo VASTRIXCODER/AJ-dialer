@@ -3,7 +3,12 @@ import "server-only";
 import type { OrgSettings } from "../org/settings";
 import { createAdminClient, isAdminConfigured } from "../supabase/admin";
 import { twilioConfig } from "../twilio";
-import { chooseFromPool, poolOffsetForKey, resolveRotation } from "./rotation";
+import {
+  chooseFromPool,
+  localPresenceMatches,
+  poolOffsetForKey,
+  resolveRotation,
+} from "./rotation";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Server-side caller-ID rotation. The pool is shared across the org, but the
@@ -56,10 +61,12 @@ export async function nextDialSeq(
  *
  * @param repKey  the rep's user id — their personal rotation counter key
  * @param settings the org settings (shared number pool + cadence)
+ * @param destNumber the number being dialed — enables local-presence matching
  */
 export async function nextCallerId(
   repKey: string | null | undefined,
   settings: OrgSettings | null | undefined,
+  destNumber?: string | null,
 ): Promise<string> {
   const { pool, rotateEvery } = resolveRotation(settings, {
     envPool: ENV_POOL,
@@ -67,7 +74,20 @@ export async function nextCallerId(
     envSingle: twilioConfig.callerId,
     platformPriority: PLATFORM_POOL_LOCKED,
   });
-  if (pool.length <= 1) return pool[0] ?? "";
+  if (!pool.length) return "";
+
+  // Local presence: if enabled and a pool number shares the lead's area code,
+  // dial from it (rotating among same-area-code numbers if there's more than
+  // one). This makes the call look local and lifts pickup rate.
+  if (settings?.dialing?.localPresence && destNumber) {
+    const matches = localPresenceMatches(pool, destNumber);
+    if (matches.length) {
+      const seq = await nextDialSeq(repKey);
+      return chooseFromPool(matches, seq, rotateEvery, poolOffsetForKey(repKey, matches.length));
+    }
+  }
+
+  if (pool.length === 1) return pool[0];
   const seq = await nextDialSeq(repKey);
   return chooseFromPool(pool, seq, rotateEvery, poolOffsetForKey(repKey, pool.length));
 }
@@ -77,6 +97,8 @@ export interface CallerIdInfo {
   pool: string[];
   poolIndex: number;
   rotateEvery: number;
+  /** True when this number was chosen by area-code (local presence) match. */
+  localPresence: boolean;
 }
 
 /**
@@ -86,6 +108,7 @@ export interface CallerIdInfo {
 export async function nextCallerIdWithInfo(
   repKey: string | null | undefined,
   settings: OrgSettings | null | undefined,
+  destNumber?: string | null,
 ): Promise<CallerIdInfo> {
   const { pool, rotateEvery } = resolveRotation(settings, {
     envPool: ENV_POOL,
@@ -94,16 +117,38 @@ export async function nextCallerIdWithInfo(
     platformPriority: PLATFORM_POOL_LOCKED,
   });
   if (!pool.length) {
-    return { callerId: "", pool: [], poolIndex: 0, rotateEvery: 1 };
+    return { callerId: "", pool: [], poolIndex: 0, rotateEvery: 1, localPresence: false };
   }
+
+  // Local presence wins when enabled and a same-area-code number exists.
+  if (settings?.dialing?.localPresence && destNumber) {
+    const matches = localPresenceMatches(pool, destNumber);
+    if (matches.length) {
+      const seq = await nextDialSeq(repKey);
+      const chosen = chooseFromPool(
+        matches,
+        seq,
+        rotateEvery,
+        poolOffsetForKey(repKey, matches.length),
+      );
+      return {
+        callerId: chosen,
+        pool,
+        poolIndex: Math.max(0, pool.indexOf(chosen)),
+        rotateEvery,
+        localPresence: true,
+      };
+    }
+  }
+
   if (pool.length === 1) {
-    return { callerId: pool[0], pool, poolIndex: 0, rotateEvery };
+    return { callerId: pool[0], pool, poolIndex: 0, rotateEvery, localPresence: false };
   }
   const seq = await nextDialSeq(repKey);
   const off = poolOffsetForKey(repKey, pool.length);
   const idx =
     (Math.floor((seq - 1) / Math.max(1, rotateEvery)) + off) % pool.length;
-  return { callerId: pool[idx], pool, poolIndex: idx, rotateEvery };
+  return { callerId: pool[idx], pool, poolIndex: idx, rotateEvery, localPresence: false };
 }
 
 /**

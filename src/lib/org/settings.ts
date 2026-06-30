@@ -64,6 +64,12 @@ export interface OrgSettings {
     callerIds: string[];
     /** Switch to the next pool number after this many calls (min 1). */
     rotateEvery: number;
+    /**
+     * Local presence: prefer a pool number whose area code matches the lead's,
+     * so the call looks local and gets answered more. Falls back to normal
+     * rotation when no pool number shares the lead's area code.
+     */
+    localPresence: boolean;
   };
   hours: {
     startHour: number; // 0–23 local to the org timezone
@@ -133,6 +139,7 @@ export const DEFAULT_ORG_SETTINGS: OrgSettings = {
     callerId: "",
     callerIds: [],
     rotateEvery: 1,
+    localPresence: false,
   },
   hours: { startHour: 8, endHour: 20, days: [1, 2, 3, 4, 5] },
   ai: {

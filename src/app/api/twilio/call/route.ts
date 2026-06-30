@@ -101,7 +101,8 @@ export async function POST(req: Request) {
     leads.map(async (leg, i) => {
       try {
         // One rotated caller ID per leg (this rep's atomic counter → distinct seq).
-        const info = await nextCallerIdWithInfo(repKey, orgSettings);
+        // Pass the homeowner's number so local presence can match its area code.
+        const info = await nextCallerIdWithInfo(repKey, orgSettings, leg.to);
         if (i === 0) poolInfo = info;
         const from = info.callerId || twilioConfig.callerId;
         const call = await client.calls.create({

@@ -127,3 +127,29 @@ export function poolOffsetForKey(
   }
   return h % poolLen;
 }
+
+/**
+ * The 3-digit NANP area code of a phone number, or null for non-NANP/garbage.
+ * Accepts E.164 (+1AAANXXXXXX), 11-digit 1-led, or bare 10-digit US numbers.
+ */
+export function areaCodeOf(phone: string | null | undefined): string | null {
+  const digits = String(phone ?? "").replace(/\D/g, "");
+  if (digits.length === 11 && digits.startsWith("1")) return digits.slice(1, 4);
+  if (digits.length === 10) return digits.slice(0, 3);
+  return null;
+}
+
+/**
+ * Local presence: the pool numbers whose area code matches the lead's, in pool
+ * order. Empty when the lead isn't NANP or no pool number shares its area code.
+ * A lead is far more likely to answer a call that looks local, which is the
+ * single biggest lever on pickup rate after not being spam-flagged.
+ */
+export function localPresenceMatches(
+  pool: string[],
+  destNumber: string | null | undefined,
+): string[] {
+  const ac = areaCodeOf(destNumber);
+  if (!ac) return [];
+  return pool.filter((n) => areaCodeOf(n) === ac);
+}

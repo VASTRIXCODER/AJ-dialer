@@ -471,6 +471,12 @@ export function OrgSettingsForm({
         </div>
         <div className="mt-3 space-y-3">
           <Toggle
+            label="Local presence"
+            hint="Dial from a pool number matching the lead's area code when one is available — looks local, lifts pickup. Falls back to rotation otherwise. Add numbers in the area codes you call most."
+            checked={dialing.localPresence ?? false}
+            onChange={(v) => setDialing({ ...dialing, localPresence: v })}
+          />
+          <Toggle
             label="Record calls"
             checked={dialing.recording}
             onChange={(v) => setDialing({ ...dialing, recording: v })}
