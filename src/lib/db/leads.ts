@@ -350,6 +350,59 @@ export async function getDialQueue(): Promise<Lead[]> {
 }
 
 /**
+ * Leads eligible for UNATTENDED auto-dialing across a whole org: dialable status,
+ * a valid phone, and NOT contacted within `cooldownHours`. Ordered oldest-
+ * contacted first (nulls first) so the scheduler works evenly through the list.
+ * Admin-scoped (no user session) — used only by the cron auto-dialer.
+ */
+export async function getAutoDialLeadsForOrg(
+  orgId: string,
+  opts: { cooldownHours: number; limit: number },
+): Promise<Lead[]> {
+  if (!orgId || !isAdminConfigured()) return [];
+  try {
+    const admin = createAdminClient();
+    const cutoff = new Date(
+      Date.now() - Math.max(0, opts.cooldownHours) * 3_600_000,
+    ).toISOString();
+    const { data, error } = await admin
+      .from("leads")
+      .select("*")
+      .eq("org_id", orgId)
+      .in("status", DIALABLE)
+      // Never dialed, or last dialed before the cooldown cutoff.
+      .or(`last_contacted_at.is.null,last_contacted_at.lt.${cutoff}`)
+      .order("last_contacted_at", { ascending: true, nullsFirst: true })
+      .limit(Math.max(1, opts.limit));
+    if (error) return [];
+    return (data ?? [])
+      .map((r) => rowToLead(r as Row))
+      .filter((l) => l.phone.replace(/\D/g, "").length >= 10);
+  } catch {
+    return [];
+  }
+}
+
+/** Stamp a lead as just-contacted so the auto-dialer won't immediately re-pick it. */
+export async function touchLeadContacted(
+  orgId: string,
+  leadId: string,
+  iso: string,
+): Promise<void> {
+  if (!orgId || !UUID.test(leadId) || !isAdminConfigured()) return;
+  try {
+    const admin = createAdminClient();
+    await admin
+      .from("leads")
+      .update({ last_contacted_at: iso })
+      .eq("id", leadId)
+      .eq("org_id", orgId);
+  } catch {
+    /* best-effort */
+  }
+}
+
+/**
  * Count the viewer's OWN leads (every status) — the denominator for the dialer's
  * "you have N leads but none are ready to dial" hint. Own-scoped to match the
  * own-only dial queue, so a supervisor's count isn't inflated by the whole org.

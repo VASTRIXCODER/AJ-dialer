@@ -453,6 +453,24 @@ export async function getOrgById(id: string): Promise<OrgFull | null> {
   }
 }
 
+/**
+ * Every active org with full settings — admin-scoped (no user session). Used by
+ * the cron auto-dialer to find orgs whose automation window is currently open.
+ */
+export async function listActiveOrgsWithSettings(): Promise<OrgFull[]> {
+  if (!isAdminConfigured()) return [];
+  try {
+    const admin = createAdminClient();
+    const { data } = await admin
+      .from("organizations")
+      .select("*")
+      .eq("status", "active");
+    return ((data ?? []) as Row[]).map(mapOrg);
+  } catch {
+    return [];
+  }
+}
+
 /** Public directory of joinable orgs (name + member count) for onboarding. */
 export async function listJoinableOrgs(): Promise<
   { id: string; name: string; industry: string; slug: string; requireApproval: boolean }[]

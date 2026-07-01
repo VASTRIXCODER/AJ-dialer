@@ -21,6 +21,7 @@ import { SectionCard } from "@/components/shared/section-card";
 import { Button } from "@/components/ui/button";
 import { Input, Label, Select, Textarea } from "@/components/ui/input";
 import { EMILY_SYSTEM_PROMPT } from "@/lib/ai/agent-prompt";
+import { describeDays, describeWindows } from "@/lib/dialer/schedule";
 import type { OrgFull, OrgSettings, OrgUpdate } from "@/lib/org/membership";
 import { DIALER_TEMPLATES } from "@/lib/org/templates";
 import { ROLE_LABEL } from "@/lib/permissions";
@@ -83,6 +84,9 @@ export function OrgSettingsForm({
   const [joinCode, setJoinCode] = useState(org.joinCode);
   const [timezone, setTimezone] = useState(org.timezone);
   const [dialing, setDialing] = useState<OrgSettings["dialing"]>(org.settings.dialing);
+  const [automation, setAutomation] = useState<OrgSettings["automation"]>(
+    org.settings.automation,
+  );
   const [hours, setHours] = useState<OrgSettings["hours"]>(org.settings.hours);
   const [ai, setAi] = useState<OrgSettings["ai"]>(() => {
     // Surface the built-in solar (Emily) script so it's visible/editable/copyable.
@@ -495,6 +499,158 @@ export function OrgSettingsForm({
         </div>
         <div className="mt-4 flex justify-end">
           <SaveBtn k="dialing" onClick={() => save({ settings: { dialing } }, "dialing")} />
+        </div>
+      </SectionCard>
+
+      {/* Automated (unattended) AI calling */}
+      <SectionCard
+        title="Automated calling"
+        description="Let the AI agent place calls on a schedule — no rep or open browser required. Requires the AI agent + a deployed cron (see docs)."
+      >
+        <Toggle
+          label="Enable automated calling"
+          hint="When on, the server places AI calls to your dialable leads during the windows below."
+          checked={automation.enabled}
+          onChange={(v) => setAutomation({ ...automation, enabled: v })}
+        />
+
+        <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-3">
+          <Field label="Timezone" className="sm:col-span-3">
+            <Input
+              value={automation.timezone}
+              placeholder="America/Chicago"
+              onChange={(e) => setAutomation({ ...automation, timezone: e.target.value })}
+            />
+          </Field>
+          <NumberField
+            label="Calls per minute"
+            value={automation.callsPerRun}
+            onChange={(n) =>
+              setAutomation({ ...automation, callsPerRun: Math.max(1, Math.min(30, n)) })
+            }
+          />
+          <NumberField
+            label="Daily cap (0 = none)"
+            value={automation.dailyCap}
+            onChange={(n) => setAutomation({ ...automation, dailyCap: Math.max(0, n) })}
+          />
+          <NumberField
+            label="Re-dial cooldown (hrs)"
+            value={automation.cooldownHours}
+            onChange={(n) => setAutomation({ ...automation, cooldownHours: Math.max(0, n) })}
+          />
+        </div>
+
+        <div className="mt-4">
+          <Label>Calling days</Label>
+          <div className="flex flex-wrap gap-1.5">
+            {DAYS.map((d, i) => {
+              const on = automation.days.includes(i);
+              return (
+                <button
+                  key={d}
+                  type="button"
+                  onClick={() =>
+                    setAutomation({
+                      ...automation,
+                      days: on
+                        ? automation.days.filter((x) => x !== i)
+                        : [...automation.days, i].sort((a, b) => a - b),
+                    })
+                  }
+                  className={cn(
+                    "h-9 w-12 rounded-lg border text-xs font-semibold transition-colors",
+                    on
+                      ? "border-primary bg-primary-soft text-primary"
+                      : "border-border text-muted-foreground hover:bg-muted/60",
+                  )}
+                >
+                  {d}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        <div className="mt-4">
+          <Label>Call windows (24-hour, end is exclusive)</Label>
+          <div className="space-y-2">
+            {automation.windows.map((w, i) => (
+              <div key={i} className="flex items-center gap-2">
+                <Input
+                  className="w-20"
+                  type="number"
+                  min={0}
+                  max={23}
+                  value={w.start}
+                  onChange={(e) => {
+                    const start = Math.max(0, Math.min(23, Number(e.target.value) || 0));
+                    setAutomation({
+                      ...automation,
+                      windows: automation.windows.map((x, j) => (j === i ? { ...x, start } : x)),
+                    });
+                  }}
+                />
+                <span className="text-sm text-muted-foreground">to</span>
+                <Input
+                  className="w-20"
+                  type="number"
+                  min={1}
+                  max={24}
+                  value={w.end}
+                  onChange={(e) => {
+                    const end = Math.max(1, Math.min(24, Number(e.target.value) || 1));
+                    setAutomation({
+                      ...automation,
+                      windows: automation.windows.map((x, j) => (j === i ? { ...x, end } : x)),
+                    });
+                  }}
+                />
+                <button
+                  type="button"
+                  aria-label="Remove window"
+                  onClick={() =>
+                    setAutomation({
+                      ...automation,
+                      windows: automation.windows.filter((_, j) => j !== i),
+                    })
+                  }
+                  className="flex h-9 w-9 items-center justify-center rounded-lg border border-border text-muted-foreground hover:bg-muted/60"
+                >
+                  <Trash2 className="h-4 w-4" />
+                </button>
+              </div>
+            ))}
+            <button
+              type="button"
+              onClick={() =>
+                setAutomation({
+                  ...automation,
+                  windows: [...automation.windows, { start: 9, end: 10 }],
+                })
+              }
+              className="inline-flex items-center gap-1.5 rounded-lg border border-dashed border-border px-3 py-1.5 text-sm font-medium text-muted-foreground hover:bg-muted/60"
+            >
+              <Plus className="h-4 w-4" />
+              Add window
+            </button>
+          </div>
+          <p className="mt-2 text-xs text-muted-foreground">
+            Calls{" "}
+            <span className="font-semibold text-foreground">{describeDays(automation.days)}</span>{" "}
+            at{" "}
+            <span className="font-semibold text-foreground">
+              {describeWindows(automation.windows)}
+            </span>{" "}
+            ({automation.timezone}). Keep windows inside 8am–9pm local to stay TCPA-compliant.
+          </p>
+        </div>
+
+        <div className="mt-4 flex justify-end">
+          <SaveBtn
+            k="automation"
+            onClick={() => save({ settings: { automation } }, "automation")}
+          />
         </div>
       </SectionCard>
 

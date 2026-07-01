@@ -25,6 +25,30 @@ export interface OrgFeatures {
   aiAgent: boolean;
 }
 
+/** One inclusive-start, exclusive-end hour window, e.g. {start:8,end:9} = 8–9am. */
+export interface AutomationWindow {
+  start: number;
+  end: number;
+}
+
+/** Unattended AI-calling schedule (server-side cron places the calls). */
+export interface AutomationSettings {
+  /** Master switch — nothing auto-dials unless this is on. */
+  enabled: boolean;
+  /** IANA timezone the windows/days are evaluated in, e.g. "America/Chicago". */
+  timezone: string;
+  /** Days of week to run, 0 (Sun) – 6 (Sat). */
+  days: number[];
+  /** Hour windows to call within (local to `timezone`). */
+  windows: AutomationWindow[];
+  /** Calls placed per scheduler tick (~one tick/min → ~calls per minute). */
+  callsPerRun: number;
+  /** Max auto calls per day per org (0 = unlimited). */
+  dailyCap: number;
+  /** Don't re-dial a lead contacted within this many hours. */
+  cooldownHours: number;
+}
+
 /**
  * Per-organization paywall, controlled by the platform owner (superadmin). There
  * is no payment processor — the owner sets the price and flips `active` to grant
@@ -71,6 +95,12 @@ export interface OrgSettings {
      */
     localPresence: boolean;
   };
+  /**
+   * Unattended AI calling schedule. When enabled, a server-side cron places AI
+   * calls to the org's dialable leads during the configured windows — no rep or
+   * open browser required. Off by default so no org auto-dials unexpectedly.
+   */
+  automation: AutomationSettings;
   hours: {
     startHour: number; // 0–23 local to the org timezone
     endHour: number;
@@ -141,6 +171,20 @@ export const DEFAULT_ORG_SETTINGS: OrgSettings = {
     rotateEvery: 1,
     localPresence: false,
   },
+  automation: {
+    enabled: false,
+    timezone: "America/Chicago",
+    days: [0, 1, 2, 3, 4, 5, 6],
+    // 8–9am, 11am–3pm, 5–7pm (end hour is exclusive).
+    windows: [
+      { start: 8, end: 9 },
+      { start: 11, end: 15 },
+      { start: 17, end: 19 },
+    ],
+    callsPerRun: 3,
+    dailyCap: 500,
+    cooldownHours: 6,
+  },
   hours: { startHour: 8, endHour: 20, days: [1, 2, 3, 4, 5] },
   ai: {
     agentName: "Aria",
@@ -208,6 +252,17 @@ export function mergeSettings(raw: unknown): OrgSettings {
   const s = (raw ?? {}) as Partial<OrgSettings>;
   return {
     dialing: { ...DEFAULT_ORG_SETTINGS.dialing, ...(s.dialing ?? {}) },
+    automation: {
+      ...DEFAULT_ORG_SETTINGS.automation,
+      ...(s.automation ?? {}),
+      // Arrays must be replaced wholesale, not spread-merged.
+      days: Array.isArray(s.automation?.days)
+        ? s.automation!.days
+        : DEFAULT_ORG_SETTINGS.automation.days,
+      windows: Array.isArray(s.automation?.windows)
+        ? s.automation!.windows
+        : DEFAULT_ORG_SETTINGS.automation.windows,
+    },
     hours: { ...DEFAULT_ORG_SETTINGS.hours, ...(s.hours ?? {}) },
     ai: { ...DEFAULT_ORG_SETTINGS.ai, ...(s.ai ?? {}) },
     compliance: { ...DEFAULT_ORG_SETTINGS.compliance, ...(s.compliance ?? {}) },
