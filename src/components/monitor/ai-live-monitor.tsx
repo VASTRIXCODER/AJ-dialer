@@ -20,6 +20,7 @@ import { SpotlightCard } from "@/components/motion";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { CONNECTED_OUTCOMES } from "@/lib/call-analytics";
 import type { CallOutcome } from "@/lib/types";
 import { outcomeConfig } from "@/lib/status";
 import { cn, formatDuration } from "@/lib/utils";
@@ -49,15 +50,6 @@ const sentimentMeta: Record<Sentiment, { icon: typeof Smile; tone: string; label
   neutral: { icon: Meh, tone: "text-muted-foreground", label: "Neutral" },
   negative: { icon: Frown, tone: "text-danger", label: "Negative" },
 };
-
-// Outcomes where a real conversation took place (for the connect-rate KPI).
-const CONNECTED = new Set<CallOutcome>([
-  "appointment_booked",
-  "callback_scheduled",
-  "qualified",
-  "not_interested",
-  "do_not_call",
-]);
 
 const statTones = {
   primary: "bg-primary-soft text-primary",
@@ -179,7 +171,7 @@ export function AiLiveMonitor({
     );
   }
 
-  const connectedCount = recent.filter((c) => c.outcome && CONNECTED.has(c.outcome)).length;
+  const connectedCount = recent.filter((c) => c.outcome && CONNECTED_OUTCOMES.has(c.outcome)).length;
   const kpis = {
     live: active.length,
     completed: recent.length,

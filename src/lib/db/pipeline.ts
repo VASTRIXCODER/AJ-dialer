@@ -70,10 +70,22 @@ export async function getCampaigns(): Promise<CampaignRow[]> {
     const col = useOrg ? "org_id" : "owner_id";
     const val = useOrg ? (scope.orgId as string) : scope.userId;
     const [cRes, lRes, callRes] = await Promise.all([
-      reader.from("campaigns").select("*").eq(col, val).order("created_at", { ascending: false }),
-      reader.from("leads").select("campaign_id,status").eq(col, val),
-      reader.from("call_records").select("campaign_id,outcome").eq(col, val),
+      reader
+        .from("campaigns")
+        .select("*")
+        .eq(col, val)
+        .order("created_at", { ascending: false })
+        .limit(useOrg ? 2000 : 500),
+      reader.from("leads").select("campaign_id,status").eq(col, val).limit(useOrg ? 50000 : 5000),
+      reader
+        .from("call_records")
+        .select("campaign_id,outcome")
+        .eq(col, val)
+        .limit(useOrg ? 20000 : 2000),
     ]);
+    if (cRes.error) console.error("[pipeline] getCampaigns campaigns query failed:", cRes.error.message);
+    if (lRes.error) console.error("[pipeline] getCampaigns leads query failed:", lRes.error.message);
+    if (callRes.error) console.error("[pipeline] getCampaigns call_records query failed:", callRes.error.message);
     const leads = (lRes.data ?? []) as Row[];
     const calls = (callRes.data ?? []) as Row[];
     return ((cRes.data ?? []) as Row[]).map((r) => ({
@@ -86,7 +98,8 @@ export async function getCampaigns(): Promise<CampaignRow[]> {
       ownerId: r.owner_id ? s(r.owner_id) : null,
       stats: statsForCampaign(s(r.id), leads, calls),
     }));
-  } catch {
+  } catch (e) {
+    console.error("[pipeline] getCampaigns failed:", e instanceof Error ? e.message : e);
     return [];
   }
 }
@@ -222,11 +235,13 @@ export async function getAppointments(): Promise<AppointmentRow[]> {
     await reconcileOwnerActiveCalls();
     const orgWide = scope.supervisor && isAdminConfigured() && Boolean(scope.orgId);
     const reader = orgWide ? createAdminClient() : await createClient();
-    const { data } = await reader
+    const { data, error } = await reader
       .from("appointments")
       .select("*")
       .eq(orgWide ? "org_id" : "owner_id", orgWide ? scope.orgId : scope.userId)
-      .order("created_at", { ascending: false });
+      .order("created_at", { ascending: false })
+      .limit(orgWide ? 5000 : 500);
+    if (error) console.error("[pipeline] getAppointments query failed:", error.message);
     const rows = (data ?? []) as Row[];
     const names = orgWide ? await memberNames(scope.orgId as string) : null;
 
@@ -260,7 +275,8 @@ export async function getAppointments(): Promise<AppointmentRow[]> {
         teamWide: orgWide,
       };
     });
-  } catch {
+  } catch (e) {
+    console.error("[pipeline] getAppointments failed:", e instanceof Error ? e.message : e);
     return [];
   }
 }
@@ -287,12 +303,14 @@ export async function getBillsFine(): Promise<BillsFineRow[]> {
     if (!scope) return [];
     const orgWide = scope.supervisor && isAdminConfigured() && Boolean(scope.orgId);
     const reader = orgWide ? createAdminClient() : await createClient();
-    const { data } = await reader
+    const { data, error } = await reader
       .from("leads")
       .select("id,first_name,last_name,phone,address,utility_bill,solar_payment,utility_provider,last_contacted_at,created_at,owner_id")
       .eq(orgWide ? "org_id" : "owner_id", orgWide ? scope.orgId : scope.userId)
       .eq("status", "bills_fine")
-      .order("last_contacted_at", { ascending: false });
+      .order("last_contacted_at", { ascending: false })
+      .limit(orgWide ? 50000 : 5000);
+    if (error) console.error("[pipeline] getBillsFine query failed:", error.message);
     const names = orgWide ? await memberNames(scope.orgId as string) : null;
     return ((data ?? []) as Row[]).map((r) => ({
       id: s(r.id),
@@ -307,7 +325,8 @@ export async function getBillsFine(): Promise<BillsFineRow[]> {
       repName: names ? names.get(s(r.owner_id)) || "Rep" : undefined,
       teamWide: orgWide,
     }));
-  } catch {
+  } catch (e) {
+    console.error("[pipeline] getBillsFine failed:", e instanceof Error ? e.message : e);
     return [];
   }
 }
@@ -335,11 +354,13 @@ export async function getCallbacks(): Promise<CallbackRow[]> {
     await reconcileOwnerActiveCalls();
     const orgWide = scope.supervisor && isAdminConfigured() && Boolean(scope.orgId);
     const reader = orgWide ? createAdminClient() : await createClient();
-    const { data } = await reader
+    const { data, error } = await reader
       .from("callbacks")
       .select("*")
       .eq(orgWide ? "org_id" : "owner_id", orgWide ? scope.orgId : scope.userId)
-      .order("created_at", { ascending: false });
+      .order("created_at", { ascending: false })
+      .limit(orgWide ? 5000 : 500);
+    if (error) console.error("[pipeline] getCallbacks query failed:", error.message);
     const names = orgWide ? await memberNames(scope.orgId as string) : null;
     return (data ?? []).map((r: Row) => ({
       id: s(r.id),
@@ -353,7 +374,8 @@ export async function getCallbacks(): Promise<CallbackRow[]> {
       repName: names ? names.get(s(r.owner_id)) || "Rep" : undefined,
       teamWide: orgWide,
     }));
-  } catch {
+  } catch (e) {
+    console.error("[pipeline] getCallbacks failed:", e instanceof Error ? e.message : e);
     return [];
   }
 }

@@ -1,6 +1,7 @@
 import {
   BarChart3,
   Battery,
+  CalendarRange,
   Car,
   Clock,
   Filter,
@@ -10,6 +11,7 @@ import {
   Waves,
   Zap,
 } from "lucide-react";
+import Link from "next/link";
 import { AiExecReport } from "@/components/ai/exec-report";
 import { HourlyBarChart, OutcomeDonut, TrendAreaChart } from "@/components/dashboard/charts";
 import { MetricCard } from "@/components/dashboard/metric-card";
@@ -28,15 +30,33 @@ import { EmptyState } from "@/components/shared/empty-state";
 import { PageContainer, PageHeader } from "@/components/shared/page-header";
 import { SectionCard } from "@/components/shared/section-card";
 import { Badge } from "@/components/ui/badge";
+import { buttonVariants } from "@/components/ui/button";
 import { getReportingData, getTeamLeaderboard } from "@/lib/db/metrics";
 import { getViewer } from "@/lib/org/membership";
 import { outcomeConfig } from "@/lib/status";
-import { formatCurrency, formatDuration, formatNumber, formatPercent } from "@/lib/utils";
+import { cn, formatCurrency, formatDuration, formatNumber, formatPercent } from "@/lib/utils";
 
 export const metadata = { title: "Reports" };
 export const dynamic = "force-dynamic";
 
-export default async function ReportsPage() {
+// Date-range presets for the period KPIs / dispositions / recent calls. The
+// 7d/30d trend and today's hourly chart always keep their own fixed windows.
+const RANGES = [
+  { key: "today", label: "Today", days: 1 },
+  { key: "7d", label: "7 days", days: 7 },
+  { key: "30d", label: "30 days", days: 30 },
+  { key: "all", label: "All time", days: null },
+] as const;
+
+export default async function ReportsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ range?: string }>;
+}) {
+  const { range } = await searchParams;
+  const rangeKey = RANGES.some((r) => r.key === range) ? range! : "all";
+  const rangeDays = RANGES.find((r) => r.key === rangeKey)?.days ?? null;
+
   const [
     {
       metrics,
@@ -52,11 +72,32 @@ export default async function ReportsPage() {
     },
     { reps },
     viewer,
-  ] = await Promise.all([getReportingData(), getTeamLeaderboard(), getViewer()]);
+  ] = await Promise.all([getReportingData(rangeDays), getTeamLeaderboard(), getViewer()]);
 
   // Manual-only orgs (e.g. Donny) have no AI calls, so drop the AI-vs-human
   // split and the AI executive report — every call here is a human call.
   const aiDialerEnabled = viewer.org?.settings.features.aiDialer !== false;
+
+  // Date-range switch — period figures react to it; the 30-day trend and
+  // today's hourly chart keep their own fixed windows regardless.
+  const rangeBar = (
+    <div className="flex w-fit items-center gap-1 rounded-xl border border-border bg-card p-1">
+      <span className="flex items-center gap-1 px-2 text-xs font-medium text-muted-foreground">
+        <CalendarRange className="h-3.5 w-3.5" />
+      </span>
+      {RANGES.map((r) => (
+        <Link
+          key={r.key}
+          href={r.key === "all" ? "/reports" : `/reports?range=${r.key}`}
+          className={cn(
+            buttonVariants({ size: "sm", variant: rangeKey === r.key ? "primary" : "ghost" }),
+          )}
+        >
+          {r.label}
+        </Link>
+      ))}
+    </div>
+  );
 
   if (metrics.totalCalls === 0 && recentCalls.length === 0) {
     return (
@@ -65,11 +106,20 @@ export default async function ReportsPage() {
           title="Reports"
           description="Full visibility into calls, connect rates, every disposition, and team performance."
         />
+        {rangeBar}
         <EmptyState
           icon={BarChart3}
-          title="No report data yet"
-          description="Call volume, connect rates, dispositions, channel split, and recordings appear here once dialing begins."
-          action={{ label: "Open the dialer", href: "/dialer" }}
+          title={rangeKey === "all" ? "No report data yet" : "No calls in this range"}
+          description={
+            rangeKey === "all"
+              ? "Call volume, connect rates, dispositions, channel split, and recordings appear here once dialing begins."
+              : "Try widening the date range — there are no calls in the selected window."
+          }
+          action={
+            rangeKey === "all"
+              ? { label: "Open the dialer", href: "/dialer" }
+              : { label: "View all time", href: "/reports" }
+          }
         />
       </PageContainer>
     );
@@ -116,12 +166,19 @@ export default async function ReportsPage() {
         <ExportReportButton filename="aiatwork-report.csv" sections={csvSections} />
       </PageHeader>
 
+      {rangeBar}
+
       {/* KPI row */}
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">
         <MetricCard label="Total calls" value={formatNumber(metrics.totalCalls)} icon={PhoneCall} accent="primary" />
         <MetricCard label="Connect rate" value={formatPercent(metrics.connectRate, 1)} icon={Zap} accent="accent" />
         <MetricCard label="Connections" value={formatNumber(metrics.connections)} icon={Users} accent="primary" />
-        <MetricCard label="Appointments" value={formatNumber(funnel.appointments)} icon={Target} accent="success" />
+        {/* Same field Dashboard's "Appointments" KPI uses (live appointments-
+            table row count) — NOT funnel.appointments, which counts historical
+            call_records outcomes and never shrinks even after a lead is
+            re-dispositioned and its appointment row is removed. Using the same
+            source here keeps the two screens from ever disagreeing. */}
+        <MetricCard label="Appointments" value={formatNumber(metrics.appointmentsBooked)} icon={Target} accent="success" />
         <MetricCard label="Avg talk time" value={formatDuration(metrics.avgCallLenSec)} icon={Clock} accent="warning" />
       </div>
 
@@ -163,7 +220,7 @@ export default async function ReportsPage() {
       {teamWide && reps.length > 0 && (
         <SectionCard
           title="Rep performance"
-          description="This month, ranked by performance score"
+          description="Last 30 days, ranked by performance score — its own fixed window, independent of the date range above"
           bodyClassName="p-0"
         >
           <RepPerformance reps={reps} />

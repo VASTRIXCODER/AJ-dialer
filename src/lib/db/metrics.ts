@@ -1,6 +1,5 @@
 import "server-only";
 
-import { userDisplay } from "../auth";
 import {
   activeCalls as sampleActive,
   appointments as sampleAppts,
@@ -22,6 +21,7 @@ import {
   type DispositionRow,
   type Funnel,
 } from "../call-analytics";
+import { zonedDayHour, zonedDayKey } from "../dialer/schedule";
 import { composeLeaderboard } from "../leaderboard";
 import { createAdminClient, isAdminConfigured } from "../supabase/admin";
 import { isSupabaseConfigured } from "../supabase/config";
@@ -32,9 +32,7 @@ import type {
   LeaderboardEntry,
   LeaderboardStat,
   MetricSummary,
-  Rep,
 } from "../types";
-import { initials } from "../utils";
 import { getAIConversationsForMonitor } from "./records";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -105,7 +103,6 @@ export interface ReportingData {
   recentCalls: RecentCall[];
   liveCalls: LiveCall[];
   appointments: ApptLite[];
-  leaderboard: Rep[];
   /** "org" when the viewer is a supervisor (team-wide) else "own". */
   scope: "org" | "own";
 }
@@ -139,7 +136,13 @@ function apptWhen(a: Row): string {
     : "Scheduled";
 }
 
-export async function getReportingData(): Promise<ReportingData> {
+export async function getReportingData(
+  /** Optional day count to scope KPIs/dispositions/funnel/recent-calls to
+   *  (e.g. 7 = last 7 days). null ⇒ all-time (default; unchanged for callers
+   *  that don't pass it). The 7d/30d trend and today's hourly chart always
+   *  keep their own fixed windows regardless of this param. */
+  rangeDays: number | null = null,
+): Promise<ReportingData> {
   if (!isSupabaseConfigured()) return fallbackReporting();
   try {
     const supabase = await createClient();
@@ -170,7 +173,7 @@ export async function getReportingData(): Promise<ReportingData> {
     const scopeCol = supervisor ? "org_id" : "owner_id";
     const scopeVal = (supervisor ? orgId : user.id) as string;
 
-    const [callsRes, apptsRes, leadsRes, monitor, memberRes] = await Promise.all([
+    const [callsRes, apptsRes, leadsRes, monitor, memberRes, orgRes] = await Promise.all([
       reader
         .from("call_records")
         .select(
@@ -198,7 +201,23 @@ export async function getReportingData(): Promise<ReportingData> {
             .eq("org_id", orgId)
             .eq("status", "active")
         : Promise.resolve({ data: [] as Row[] }),
+      // Org timezone drives every "day" boundary below (today, hourly, trend
+      // buckets, the range cutoff) — a server-local (UTC) boundary rolls
+      // "today" over at the wrong wall-clock hour for any non-UTC org.
+      orgId
+        ? supabase.from("organizations").select("timezone").eq("id", orgId).maybeSingle()
+        : Promise.resolve({ data: null as { timezone?: string } | null }),
     ]);
+
+    // Errors here would otherwise silently coerce to an empty array below,
+    // rendering as "no activity yet" — indistinguishable from a genuinely new
+    // account. Log so a real fetch failure is at least visible server-side.
+    if (callsRes.error)
+      console.error("[metrics] getReportingData call_records query failed:", callsRes.error.message);
+    if (apptsRes.error)
+      console.error("[metrics] getReportingData appointments query failed:", apptsRes.error.message);
+    if (leadsRes.error)
+      console.error("[metrics] getReportingData leads query failed:", leadsRes.error.message);
 
     const calls = (callsRes.data ?? []) as Row[];
     const appts = (apptsRes.data ?? []) as Row[];
@@ -206,20 +225,44 @@ export async function getReportingData(): Promise<ReportingData> {
     const nameById = new Map(
       ((memberRes.data ?? []) as Row[]).map((m) => [String(m.user_id), String(m.name ?? "")]),
     );
+    const timezone = (orgRes.data?.timezone as string) || "UTC";
 
     const outcomeOf = (r: Row) => (r.outcome as CallOutcome) ?? null;
     const isConnected = isConnectedRow;
 
-    const startToday = new Date();
-    startToday.setHours(0, 0, 0, 0);
-    const onDay = (r: Row, field = "started_at") =>
-      r[field] ? new Date(String(r[field])) >= startToday : false;
+    // Optional date-range scope for the "period" figures (KPIs, dispositions,
+    // funnel, channel split, recent calls). The 7d/30d trend + today's hourly
+    // chart keep their own fixed windows. Compared by day-KEY (YYYY-MM-DD,
+    // lexicographically sortable) in the org's timezone rather than a raw
+    // Date boundary, so the cutoff lands on the org's own calendar day.
+    const rangeStartKey =
+      rangeDays && rangeDays > 0
+        ? (() => {
+            const d = new Date();
+            d.setDate(d.getDate() - (rangeDays - 1));
+            return zonedDayKey(d, timezone);
+          })()
+        : null;
+    const periodCalls = rangeStartKey
+      ? calls.filter(
+          (c) =>
+            c.started_at &&
+            zonedDayKey(new Date(String(c.started_at)), timezone) >= rangeStartKey,
+        )
+      : calls;
 
-    // ── Counts ────────────────────────────────────────────────────────────────
-    const totalCalls = calls.length;
-    const connections = calls.filter(isConnected).length;
+    // "Today" is evaluated in the org's own timezone — a server-local (UTC)
+    // boundary rolls "today" over at the wrong wall-clock hour for any
+    // non-UTC org, miscategorizing evening calls into the wrong day.
+    const todayKey = zonedDayKey(new Date(), timezone);
+    const onDay = (r: Row, field = "started_at") =>
+      r[field] ? zonedDayKey(new Date(String(r[field])), timezone) === todayKey : false;
+
+    // ── Counts (period-scoped) ──────────────────────────────────────────────
+    const totalCalls = periodCalls.length;
+    const connections = periodCalls.filter(isConnected).length;
     const byOutcome = {} as Record<CallOutcome, number>;
-    for (const c of calls) {
+    for (const c of periodCalls) {
       const o = outcomeOf(c);
       if (o) byOutcome[o] = (byOutcome[o] ?? 0) + 1;
     }
@@ -227,8 +270,10 @@ export async function getReportingData(): Promise<ReportingData> {
     const callbackOutcome = byOutcome.callback_scheduled ?? 0;
     const noAnswerOutcome = (byOutcome.no_answer ?? 0) + (byOutcome.voicemail ?? 0);
 
+    // Today's calls stay anchored to today (callsToday KPI + hourly chart),
+    // independent of the selected range.
     const todays = calls.filter((c) => onDay(c));
-    const durations = calls
+    const durations = periodCalls
       .map((c) => Number(c.duration_sec ?? 0))
       .filter((n) => n > 0);
 
@@ -259,20 +304,17 @@ export async function getReportingData(): Promise<ReportingData> {
       batteryOwnership: pct(leads.filter((l) => l.has_battery).length, leads.length),
     };
 
-    // ── Trends (7-day weekday view + 30-day view) ───────────────────────────────
+    // ── Trends (7-day weekday view + 30-day view) — bucketed by org-local day ──
     const buildSeries = (days: number): KpiPoint[] => {
       const out: KpiPoint[] = [];
       for (let i = days - 1; i >= 0; i--) {
         const d = new Date();
-        d.setHours(0, 0, 0, 0);
         d.setDate(d.getDate() - i);
-        const next = new Date(d);
-        next.setDate(d.getDate() + 1);
-        const dayCalls = calls.filter((c) => {
-          if (!c.started_at) return false;
-          const t = new Date(String(c.started_at));
-          return t >= d && t < next;
-        });
+        const dayKey = zonedDayKey(d, timezone);
+        const dayCalls = calls.filter(
+          (c) =>
+            c.started_at && zonedDayKey(new Date(String(c.started_at)), timezone) === dayKey,
+        );
         const conv = dayCalls.filter(isConnected).length;
         out.push({
           label: d.toLocaleDateString(
@@ -290,11 +332,12 @@ export async function getReportingData(): Promise<ReportingData> {
     const kpiSeries = buildSeries(7);
     const trend30 = buildSeries(30);
 
-    // ── Hourly (today, business window) ─────────────────────────────────────────
+    // ── Hourly (today, business window, org-local hour) ─────────────────────────
     const hourlyCalls: { hour: string; calls: number; connects: number }[] = [];
     for (let h = 8; h <= 18; h++) {
       const inHour = todays.filter(
-        (c) => new Date(String(c.started_at)).getHours() === h,
+        (c) =>
+          c.started_at && zonedDayHour(new Date(String(c.started_at)), timezone).hour === h,
       );
       hourlyCalls.push({
         hour: fmtHour(h),
@@ -303,16 +346,16 @@ export async function getReportingData(): Promise<ReportingData> {
       });
     }
 
-    // ── Dispositions (all of them), channel split, funnel ───────────────────────
-    const dispositions = dispositionBreakdown(calls);
-    const channelStats = channelBreakdown(calls);
-    const funnel = funnelOf(calls);
+    // ── Dispositions (all of them), channel split, funnel — period-scoped ───────
+    const dispositions = dispositionBreakdown(periodCalls);
+    const channelStats = channelBreakdown(periodCalls);
+    const funnel = funnelOf(periodCalls);
     const outcomeBreakdown = dispositions
       .filter((d) => d.count > 0)
       .map((d) => ({ name: d.label, value: Math.round(d.rate), color: d.color }));
 
-    // ── Recent calls ────────────────────────────────────────────────────────────
-    const recentCalls: RecentCall[] = calls.slice(0, supervisor ? 25 : 12).map((r, i) => {
+    // ── Recent calls (period-scoped) ────────────────────────────────────────────
+    const recentCalls: RecentCall[] = periodCalls.slice(0, supervisor ? 25 : 12).map((r, i) => {
       const outcome = outcomeOf(r);
       const channel = r.channel === "human" ? "human" : "ai";
       const recordingUrl =
@@ -363,32 +406,6 @@ export async function getReportingData(): Promise<ReportingData> {
         state: c.state,
       }));
 
-    // ── Leaderboard (legacy single-account field; UIs use getTeamLeaderboard) ───
-    const disp = userDisplay(user);
-    const profile = prof as Row | null;
-    const name = (profile?.full_name as string) || disp.name;
-    const apptsToday = appts.filter((a) => onDay(a, "created_at")).length;
-    const convToday = todays.filter(isConnected).length;
-    const you: Rep = {
-      id: user.id,
-      name,
-      email: user.email ?? "",
-      avatarColor: (profile?.avatar_color as string) || "#3B82F6",
-      initials: initials(name) || disp.initials,
-      role: "manager",
-      status: "available",
-      team: "AIATWORK",
-      callsToday: todays.length,
-      conversationsToday: convToday,
-      appointmentsToday: apptsToday,
-      talkTimeMin: Math.round(
-        todays.reduce((a, c) => a + Number(c.duration_sec ?? 0), 0) / 60,
-      ),
-      connectRate: Math.round(metrics.connectRate),
-      score: clamp(metrics.connectRate * 0.5 + metrics.appointmentRate * 4 + apptsToday * 2),
-    };
-    const leaderboard = totalCalls > 0 || apptsToday > 0 ? [you] : [];
-
     return {
       metrics,
       kpiSeries,
@@ -401,10 +418,10 @@ export async function getReportingData(): Promise<ReportingData> {
       recentCalls,
       liveCalls,
       appointments,
-      leaderboard,
       scope: supervisor ? "org" : "own",
     };
-  } catch {
+  } catch (e) {
+    console.error("[metrics] getReportingData failed:", e instanceof Error ? e.message : e);
     return fallbackReporting();
   }
 }
@@ -458,7 +475,6 @@ function fallbackReporting(): ReportingData {
       source: a.source,
       status: a.status,
     })),
-    leaderboard: sampleLeaderboard,
   };
 }
 
@@ -472,31 +488,57 @@ function fallbackReporting(): ReportingData {
 // The pure aggregation lives in ../leaderboard (composeLeaderboard).
 // ─────────────────────────────────────────────────────────────────────────────
 
-async function aggregateTeamLeaderboard(orgId: string): Promise<LeaderboardEntry[]> {
-  if (!isAdminConfigured()) return [];
+async function aggregateTeamLeaderboard(
+  orgId: string,
+  timezone: string,
+): Promise<LeaderboardEntry[]> {
+  // Missing service-role key is a DISTINCT condition from "no data yet" — it
+  // means the leaderboard can never populate for this org until it's set, not
+  // that no one has dialed. Logged so that's diagnosable instead of reading as
+  // a silently-permanent empty state.
+  if (!isAdminConfigured()) {
+    console.error(
+      "[metrics] aggregateTeamLeaderboard: SUPABASE_SERVICE_ROLE_KEY not configured — " +
+        "the team leaderboard cannot be computed.",
+    );
+    return [];
+  }
   const admin = createAdminClient();
 
-  const { data: memberRows } = await admin
+  const { data: memberRows, error: memberErr } = await admin
     .from("organization_members")
     .select("user_id,name,role")
     .eq("org_id", orgId)
     .eq("status", "active");
+  if (memberErr) {
+    console.error("[metrics] aggregateTeamLeaderboard members query failed:", memberErr.message);
+    return [];
+  }
   const members = (memberRows ?? []) as Row[];
   if (!members.length) return [];
   const ids = members.map((m) => String(m.user_id));
 
   const sinceMonth = new Date(Date.now() - 30 * 86_400_000).toISOString();
-  const [{ data: profRows }, { data: callRows }] = await Promise.all([
-    admin.from("profiles").select("id,full_name,avatar_color,team").in("id", ids),
-    admin
-      .from("call_records")
-      .select("owner_id,outcome,duration_sec,channel,started_at")
-      .eq("org_id", orgId)
-      .gte("started_at", sinceMonth)
-      .limit(50000),
-  ]);
+  const [{ data: profRows, error: profErr }, { data: callRows, error: callErr }] =
+    await Promise.all([
+      admin.from("profiles").select("id,full_name,avatar_color,team").in("id", ids),
+      admin
+        .from("call_records")
+        .select("owner_id,outcome,duration_sec,channel,started_at")
+        .eq("org_id", orgId)
+        .gte("started_at", sinceMonth)
+        // Without an explicit order, a result set past the 50000-row cap comes
+        // back in a non-deterministic subset — silently and unpredictably
+        // dropping calls (and the dropped set can change between loads) for
+        // any org with high enough 30-day volume. Most-recent-first ensures a
+        // truncation always drops the OLDEST calls, deterministically.
+        .order("started_at", { ascending: false })
+        .limit(50000),
+    ]);
+  if (profErr) console.error("[metrics] aggregateTeamLeaderboard profiles query failed:", profErr.message);
+  if (callErr) console.error("[metrics] aggregateTeamLeaderboard call_records query failed:", callErr.message);
   const profById = new Map(((profRows ?? []) as Row[]).map((p) => [String(p.id), p]));
-  return composeLeaderboard(members, profById, (callRows ?? []) as Row[], Date.now());
+  return composeLeaderboard(members, profById, (callRows ?? []) as Row[], Date.now(), timezone);
 }
 
 /** The org-wide leaderboard for the current viewer's organization, + their id. */
@@ -518,8 +560,15 @@ export async function getTeamLeaderboard(): Promise<{
       .maybeSingle();
     const orgId = prof?.org_id ? String(prof.org_id) : null;
     if (!orgId) return { reps: [], meId: user.id };
-    return { reps: await aggregateTeamLeaderboard(orgId), meId: user.id };
-  } catch {
+    const { data: org } = await supabase
+      .from("organizations")
+      .select("timezone")
+      .eq("id", orgId)
+      .maybeSingle();
+    const timezone = (org?.timezone as string) || "UTC";
+    return { reps: await aggregateTeamLeaderboard(orgId, timezone), meId: user.id };
+  } catch (e) {
+    console.error("[metrics] getTeamLeaderboard failed:", e instanceof Error ? e.message : e);
     return { reps: fallbackLeaderboard(), meId: null };
   }
 }

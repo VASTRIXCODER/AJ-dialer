@@ -1,3 +1,4 @@
+import { CONNECTED_OUTCOMES } from "./call-analytics";
 import type { CallOutcome } from "./types";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -8,13 +9,6 @@ import type { CallOutcome } from "./types";
 
 type Row = Record<string, unknown>;
 
-const CONNECTED = new Set<CallOutcome>([
-  "appointment_booked",
-  "callback_scheduled",
-  "qualified",
-  "not_interested",
-  "do_not_call",
-]);
 const DIALABLE = new Set(["new", "no_answer", "callback"]);
 const pct = (n: number, d: number) => (d > 0 ? Math.round((n / d) * 1000) / 10 : 0);
 
@@ -62,7 +56,7 @@ export function statsForCampaign(
   const calls_ = myCalls.length;
   const connects = myCalls.filter((c) => {
     const o = c.outcome as CallOutcome | null;
-    return o != null && CONNECTED.has(o);
+    return o != null && CONNECTED_OUTCOMES.has(o);
   }).length;
   const appointments = myCalls.filter((c) => c.outcome === "appointment_booked").length;
   return {

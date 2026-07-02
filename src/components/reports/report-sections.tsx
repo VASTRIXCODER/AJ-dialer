@@ -154,7 +154,9 @@ export function RepPerformance({ reps }: { reps: LeaderboardEntry[] }) {
             <th className="px-4 py-2 text-right">Calls</th>
             <th className="px-4 py-2 text-right">Connect</th>
             <th className="px-4 py-2 text-right">Appts</th>
-            <th className="px-4 py-2 text-right">Conv</th>
+            <th className="px-4 py-2 text-right" title="Appointments booked, as a share of connected calls">
+              Conv
+            </th>
             <th className="px-4 py-2 text-right">Score</th>
           </tr>
         </thead>

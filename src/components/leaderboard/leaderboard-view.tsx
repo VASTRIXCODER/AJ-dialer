@@ -257,7 +257,9 @@ export function LeaderboardView({
           <span className="w-16 text-right">Connect</span>
           <span className="w-16 text-right">Talk</span>
           <span className="w-16 text-right">Appts</span>
-          <span className="w-16 text-right">Conv</span>
+          <span className="w-16 text-right" title="Appointments booked, as a share of connected calls">
+            Conv
+          </span>
           <span className="w-14 text-right">Score</span>
         </div>
         <div className="divide-y divide-border">

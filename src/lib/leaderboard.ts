@@ -1,3 +1,5 @@
+import { CONNECTED_OUTCOMES } from "./call-analytics";
+import { zonedDayKey } from "./dialer/schedule";
 import type { CallOutcome, LeaderboardEntry, LeaderboardStat } from "./types";
 import { initials } from "./utils";
 
@@ -10,15 +12,6 @@ import { initials } from "./utils";
 type Row = Record<string, unknown>;
 
 const DAY_MS = 86_400_000;
-
-// Outcomes that mean a real conversation took place.
-const CONNECTED = new Set<CallOutcome>([
-  "appointment_booked",
-  "callback_scheduled",
-  "qualified",
-  "not_interested",
-  "do_not_call",
-]);
 
 const pct = (n: number, d: number) => (d > 0 ? Math.round((n / d) * 1000) / 10 : 0);
 const clamp = (n: number, lo = 0, hi = 100) => Math.max(lo, Math.min(hi, Math.round(n)));
@@ -67,12 +60,14 @@ export function composeLeaderboard(
   profById: Map<string, Row>,
   calls: Row[],
   now: number = Date.now(),
+  /** Org's IANA timezone — determines the "daily" bucket boundary. Weekly and
+   *  monthly are rolling windows (not calendar-boundary-sensitive the way a
+   *  single day is), so they stay in plain epoch math. Defaults to UTC. */
+  timezone: string = "UTC",
 ): LeaderboardEntry[] {
-  const dayStart = new Date(now);
-  dayStart.setHours(0, 0, 0, 0);
-  const dayMs = dayStart.getTime();
   const weekMs = now - 7 * DAY_MS;
   const monthMs = now - 30 * DAY_MS;
+  const todayKey = zonedDayKey(new Date(now), timezone);
 
   const buckets = new Map<string, { daily: Acc; weekly: Acc; monthly: Acc }>();
   for (const m of members)
@@ -82,7 +77,7 @@ export function composeLeaderboard(
     const b = buckets.get(String(c.owner_id));
     if (!b) continue;
     const o = (c.outcome as CallOutcome) ?? null;
-    const connected = o != null && CONNECTED.has(o);
+    const connected = o != null && CONNECTED_OUTCOMES.has(o);
     const dur = Number(c.duration_sec ?? 0);
     const human = c.channel === "human";
     const t = c.started_at ? new Date(String(c.started_at)).getTime() : 0;
@@ -98,7 +93,13 @@ export function composeLeaderboard(
     if (t < monthMs) continue; // older than the 30-day window — ignore
     apply(b.monthly);
     if (t >= weekMs) apply(b.weekly);
-    if (t >= dayMs) apply(b.daily);
+    // "Today" is a calendar-day boundary, so it's evaluated in the org's own
+    // timezone — a plain epoch cutoff (fine for the rolling weekly/monthly
+    // windows) rolls "today" over at UTC midnight, misclassifying evening
+    // calls into the wrong day for any non-UTC org.
+    if (c.started_at && zonedDayKey(new Date(String(c.started_at)), timezone) === todayKey) {
+      apply(b.daily);
+    }
   }
 
   return members.map((m) => {

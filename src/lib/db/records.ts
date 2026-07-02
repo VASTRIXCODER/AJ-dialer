@@ -1,5 +1,6 @@
 import "server-only";
 
+import { CONNECTED_OUTCOMES } from "../call-analytics";
 import { createAdminClient, isAdminConfigured } from "../supabase/admin";
 import { isSupabaseConfigured } from "../supabase/config";
 import { createClient } from "../supabase/server";
@@ -8,17 +9,6 @@ import type { CallOutcome } from "../types";
 const UUID =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const asUuid = (v?: string | null) => (v && UUID.test(v) ? v : null);
-
-// Outcomes that mean a real two-way conversation took place (vs. no-answer /
-// voicemail / wrong-number). Used to decide when a later, better disposition is
-// allowed to upgrade an earlier "didn't connect" one.
-const CONNECTED_OUTCOMES: CallOutcome[] = [
-  "appointment_booked",
-  "callback_scheduled",
-  "qualified",
-  "not_interested",
-  "do_not_call",
-];
 
 // outcome → lead status (shared by every disposition path).
 const OUTCOME_TO_STATUS: Record<CallOutcome, string> = {
@@ -278,9 +268,9 @@ export async function completeAIConversation(input: {
     const prevConnected =
       prevState === "completed" &&
       prevOutcome != null &&
-      CONNECTED_OUTCOMES.includes(prevOutcome);
+      CONNECTED_OUTCOMES.has(prevOutcome);
     const newConnected =
-      input.state !== "failed" && CONNECTED_OUTCOMES.includes(input.outcome);
+      input.state !== "failed" && CONNECTED_OUTCOMES.has(input.outcome);
     if (isFinal && !(newConnected && !prevConnected)) return;
     const upgrading = isFinal;
 
@@ -655,12 +645,35 @@ export async function getAIConversationsForMonitor(): Promise<{
       data: { user },
     } = await supabase.auth.getUser();
     if (!user) return { active: [], recent: [] };
-    const { data } = await supabase
+
+    // Supervisors (owner/admin/manager) see the whole org's AI calls, same
+    // scoping every other monitor/reporting query in this app uses — this was
+    // previously owner_id-only unconditionally, so a manager only ever saw
+    // calls THEY personally placed, never their reps'. RLS already permits an
+    // org supervisor to read org-wide rows via the session client (see the
+    // "ai_conversations read" policy in schema.sql), so no service role
+    // is required here.
+    const { data: prof } = await supabase
+      .from("profiles")
+      .select("org_id, role")
+      .eq("id", user.id)
+      .maybeSingle();
+    const orgId = prof?.org_id ? String(prof.org_id) : null;
+    const supervisor =
+      Boolean(orgId) && ["owner", "admin", "manager"].includes(String(prof?.role ?? "rep"));
+
+    const base = supabase
       .from("ai_conversations")
       .select("*")
-      .eq("owner_id", user.id)
       .order("started_at", { ascending: false })
-      .limit(50);
+      .limit(supervisor ? 100 : 50);
+    const { data, error } = supervisor
+      ? await base.eq("org_id", orgId as string)
+      : await base.eq("owner_id", user.id);
+    if (error) {
+      console.error("[records] getAIConversationsForMonitor failed:", error.message);
+      return { active: [], recent: [] };
+    }
 
     const map = (r: Record<string, unknown>): MonitorAICall => {
       const state = String(r.state ?? "completed") as MonitorAICall["state"];
