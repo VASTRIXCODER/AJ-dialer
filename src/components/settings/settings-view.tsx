@@ -199,10 +199,6 @@ export function SettingsView({
               <Label>Team</Label>
               <Input value={team} onChange={(e) => setTeam(e.target.value)} />
             </div>
-            <div>
-              <Label>Caller ID</Label>
-              <Input defaultValue="" placeholder="+1 (555) 000-0000" />
-            </div>
           </div>
           <div className="mt-4 flex items-center justify-end gap-3">
             {saved && <span className="text-xs font-medium text-success">Saved ✓</span>}

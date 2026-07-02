@@ -6,7 +6,7 @@ import {
   registerAICall,
   updateAICall,
 } from "@/lib/ai-call-store";
-import { leads } from "@/lib/data";
+import { getLeadByPhoneAdmin } from "@/lib/db/leads";
 import { markAIConversationActive } from "@/lib/db/records";
 import { elevenLabsConfig } from "@/lib/elevenlabs";
 
@@ -31,7 +31,9 @@ export async function POST(req: Request) {
   const callSid = String(body.call_sid ?? body.callSid ?? "");
   const conversationId = String(body.conversation_id ?? body.conversationId ?? "");
 
-  const lead = leads.find((l) => last10(l.phone) === last10(calledNumber)) ?? null;
+  // DB-backed (admin client, no user session needed) — this webhook only ever
+  // fires for a real call ElevenLabs just placed, so there's nothing to "demo."
+  const lead = await getLeadByPhoneAdmin(calledNumber);
 
   // Keep the live monitor in sync.
   if (callSid) {
