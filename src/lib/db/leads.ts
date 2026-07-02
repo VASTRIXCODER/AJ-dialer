@@ -6,6 +6,7 @@ import { isSupabaseConfigured } from "../supabase/config";
 import { createClient } from "../supabase/server";
 import type { Lead, LeadStatus } from "../types";
 import { normalizePhone } from "../utils";
+import { canActOn, getScope } from "./scope";
 
 // Account-scoped lead access. When Supabase is configured and the user is signed
 // in, reads come from their `leads` table (RLS-enforced); otherwise it falls
@@ -257,6 +258,115 @@ export async function reassignLeads(
     return { updated };
   } catch (e) {
     return { updated: 0, error: e instanceof Error ? e.message : "Reassign failed." };
+  }
+}
+
+export interface LeadPatch {
+  firstName?: string;
+  lastName?: string;
+  phone?: string;
+  /** null clears the field. */
+  email?: string | null;
+  address?: string;
+  city?: string;
+  state?: string;
+  zip?: string;
+  utilityProvider?: string;
+  solarProvider?: string;
+  /** "appointment" / "callback" are rejected here — those need routeDisposition()
+   *  (via the disposition-override flow) so the appointments/callbacks table
+   *  stays in sync with the lead's status. */
+  status?: LeadStatus;
+  /** null clears the field. */
+  utilityBill?: number | null;
+  /** null clears the field. */
+  solarPayment?: number | null;
+  hasEV?: boolean;
+  hasPool?: boolean;
+  hasBattery?: boolean;
+  multipleSystems?: boolean;
+  /** null clears the field. */
+  notes?: string | null;
+}
+
+const LOCKED_STATUSES: LeadStatus[] = ["appointment", "callback"];
+
+/**
+ * Edit an existing lead's fields (contact info, address, energy details, status,
+ * notes) — the general-purpose counterpart to the disposition flow, for
+ * correcting data rather than filing a call outcome. Row-level scoped exactly
+ * like every other lead write in this file (deleteLeads, reassignLeads): the
+ * actor must own the lead, or be a supervisor acting within their own org.
+ *
+ * `status` deliberately excludes "appointment"/"callback" — those are backed by
+ * rows in the appointments/callbacks tables (see routeDisposition() in
+ * records.ts) that a plain status write here wouldn't create or clear, leaving
+ * the lead's status and its pipeline tab disagreeing. Use the disposition
+ * override flow (RowActions "Change disposition") for those transitions.
+ */
+export async function updateLead(
+  id: string,
+  patch: LeadPatch,
+): Promise<{ ok: boolean; error?: string }> {
+  if (!isSupabaseConfigured()) return { ok: false, error: "Connect Supabase to edit leads." };
+  if (!UUID.test(id)) return { ok: false, error: "Invalid lead." };
+  if (patch.status && LOCKED_STATUSES.includes(patch.status)) {
+    return {
+      ok: false,
+      error:
+        'Use "Change disposition" on the Appointments/Callbacks tab to move a lead to Appointment or Callback — it needs a scheduled time too.',
+    };
+  }
+  try {
+    const scope = await getScope();
+    if (!scope) return { ok: false, error: "You must be signed in." };
+
+    // Read who owns this lead first — canActOn() needs it to decide whether
+    // THIS actor (owner, or a supervisor in the same org) may write to it.
+    const reader = isAdminConfigured() ? createAdminClient() : await createClient();
+    const { data: row } = await reader
+      .from("leads")
+      .select("owner_id, org_id")
+      .eq("id", id)
+      .maybeSingle();
+    if (!row) return { ok: false, error: "Lead not found." };
+    const r = row as Row;
+    const rowOwnerId = r.owner_id ? String(r.owner_id) : null;
+    const rowOrgId = r.org_id ? String(r.org_id) : null;
+    if (!canActOn(scope, rowOwnerId, rowOrgId)) {
+      return { ok: false, error: "You don't have permission to edit this lead." };
+    }
+
+    const fields: Record<string, unknown> = {};
+    if (patch.firstName !== undefined) fields.first_name = patch.firstName;
+    if (patch.lastName !== undefined) fields.last_name = patch.lastName;
+    if (patch.phone !== undefined) {
+      const normalized = normalizePhone(patch.phone);
+      fields.phone = normalized || patch.phone;
+    }
+    if (patch.email !== undefined) fields.email = patch.email || null;
+    if (patch.address !== undefined) fields.address = patch.address;
+    if (patch.city !== undefined) fields.city = patch.city;
+    if (patch.state !== undefined) fields.state = patch.state;
+    if (patch.zip !== undefined) fields.zip = patch.zip;
+    if (patch.utilityProvider !== undefined) fields.utility_provider = patch.utilityProvider;
+    if (patch.solarProvider !== undefined) fields.solar_provider = patch.solarProvider;
+    if (patch.status !== undefined) fields.status = patch.status;
+    if (patch.utilityBill !== undefined) fields.utility_bill = patch.utilityBill;
+    if (patch.solarPayment !== undefined) fields.solar_payment = patch.solarPayment;
+    if (patch.hasEV !== undefined) fields.has_ev = patch.hasEV;
+    if (patch.hasPool !== undefined) fields.has_pool = patch.hasPool;
+    if (patch.hasBattery !== undefined) fields.has_battery = patch.hasBattery;
+    if (patch.multipleSystems !== undefined) fields.multiple_systems = patch.multipleSystems;
+    if (patch.notes !== undefined) fields.notes = patch.notes || null;
+
+    if (Object.keys(fields).length === 0) return { ok: true };
+
+    const writer = isAdminConfigured() ? createAdminClient() : await createClient();
+    const { error } = await writer.from("leads").update(fields).eq("id", id);
+    return error ? { ok: false, error: error.message } : { ok: true };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Update failed." };
   }
 }
 

@@ -5,6 +5,7 @@ import {
   BatteryCharging,
   Car,
   Loader2,
+  Pencil,
   PhoneCall,
   Search,
   Trash2,
@@ -20,6 +21,7 @@ import { Button, buttonVariants } from "@/components/ui/button";
 import type { Lead, LeadStatus } from "@/lib/types";
 import { leadStatusConfig } from "@/lib/status";
 import { cn, formatCurrency, formatPhone, initials } from "@/lib/utils";
+import { EditLeadDialog } from "./edit-lead-dialog";
 
 const FILTERS: Array<{ value: LeadStatus | "all"; label: string }> = [
   { value: "all", label: "All" },
@@ -58,6 +60,7 @@ export function LeadsTable({
   // Ids queued for deletion, awaiting confirmation (individual = 1, bulk = many).
   const [pendingDelete, setPendingDelete] = useState<string[] | null>(null);
   const [err, setErr] = useState("");
+  const [editing, setEditing] = useState<Lead | null>(null);
 
   // Checkboxes are useful for bulk-assign (campaigns) and bulk-delete (canManage).
   const selectable = canManage || campaigns.length > 0;
@@ -543,6 +546,16 @@ export function LeadsTable({
                           <PhoneCall className="h-3.5 w-3.5" />
                           Call
                         </Link>
+                        {(canManage || l.ownerId === meId) && (
+                          <button
+                            type="button"
+                            onClick={() => setEditing(l)}
+                            aria-label={`Edit ${name}`}
+                            className="flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground opacity-0 transition-colors hover:bg-muted hover:text-foreground group-hover:opacity-100"
+                          >
+                            <Pencil className="h-3.5 w-3.5" />
+                          </button>
+                        )}
                         {canManage && (
                           <button
                             type="button"
@@ -572,6 +585,8 @@ export function LeadsTable({
       <p className="text-xs text-muted-foreground">
         Showing {filtered.length} of {leads.length} leads
       </p>
+
+      {editing && <EditLeadDialog lead={editing} onClose={() => setEditing(null)} />}
     </div>
   );
 }
