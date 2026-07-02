@@ -377,6 +377,13 @@ export function CallStage({
                       />
                     </span>
                   </label>
+                  {state.autoDial && (
+                    <p className="-mt-2 text-center text-[11px] text-muted-foreground">
+                      Keeps dialing through your whole list on repeat — refreshing it after
+                      each pass so anyone just dispositioned isn&apos;t called again.
+                      {ai && " Keep this tab open; for calling with the tab closed, use Admin → Automated calling."}
+                    </p>
+                  )}
 
                   <Button
                     size="lg"

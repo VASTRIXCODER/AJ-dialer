@@ -61,6 +61,12 @@ export interface DialerState {
   /** Running dial total for the whole local day — persists across refresh/logout. */
   dialsToday: number;
   queueIndex: number;
+  /** Bumped every time auto-dial completes a full pass through the queue (either
+   *  mode). The parent (dialer-client) watches this to refetch the dial queue
+   *  from the server — dropping leads just dispositioned this pass — before
+   *  starting the next pass, so "repeat the list" never blindly re-calls
+   *  someone just marked not-interested/DNC/booked. */
+  queueLap: number;
   error: string | null;
   callSid: string | null;
   /** Conference room for the active manual call — links its recording. */
@@ -172,6 +178,7 @@ export function useDialer(queue: Lead[], aiConfigured = false, userId?: string) 
     connectsThisSession: 0,
     dialsToday: 0,
     queueIndex: 0,
+    queueLap: 0,
     error: null,
     callSid: null,
     room: null,
@@ -208,6 +215,8 @@ export function useDialer(queue: Lead[], aiConfigured = false, userId?: string) 
   // Bumped on every device (re-)setup so async callbacks from a torn-down or
   // superseded Device can detect they're stale and bail instead of fighting.
   const deviceGenRef = useRef(0);
+  // Source of truth for state.queueLap (see DialerState.queueLap).
+  const queueLapRef = useRef(0);
 
   const patch = useCallback((p: Partial<DialerState>) => {
     setState((s) => ({ ...s, ...p }));
@@ -613,7 +622,12 @@ export function useDialer(queue: Lead[], aiConfigured = false, userId?: string) 
         void launchAIBatch();
       }, 8000);
     } else if (aiCursorRef.current >= queue.length) {
-      patch({ aiCampaign: "done" });
+      // Reached the end of this pass. Bump queueLap so the parent (which owns
+      // fetching the queue) refetches — dropping anything just dispositioned
+      // this pass — and restarts via restartAutoDialLap() when auto-dial is
+      // on. If auto-dial is off, this just leaves the campaign at "done".
+      queueLapRef.current += 1;
+      patch({ aiCampaign: "done", queueLap: queueLapRef.current });
     }
   }, [patch, queue, recordDials, stopAITimer]);
 
@@ -895,6 +909,20 @@ export function useDialer(queue: Lead[], aiConfigured = false, userId?: string) 
     [startAISession, startHumanCall],
   );
 
+  /**
+   * Begin a fresh pass through the (freshly-refetched) queue after auto-dial
+   * completes a lap. Called by the parent once it's confirmed there's still
+   * something dialable — resets the queue position to the top so AI mode's
+   * cursor (which reads off queueIndexRef) and manual mode's nextLeads() both
+   * start from lead 0 of the new list, instead of picking up from wherever
+   * the exhausted previous pass left off.
+   */
+  const restartAutoDialLap = useCallback(() => {
+    queueIndexRef.current = 0;
+    patch({ queueIndex: 0 });
+    startCall();
+  }, [patch, startCall]);
+
   const dialNumber = useCallback(
     (raw: string, displayName?: string) => {
       const e164 = toE164(raw);
@@ -920,16 +948,36 @@ export function useDialer(queue: Lead[], aiConfigured = false, userId?: string) 
     patch({ queueIndex: queueIndexRef.current });
   }, [patch, queue.length]);
 
+  // True when the CURRENT queue position is the last one this pass will touch
+  // — i.e. advanceQueue() is about to wrap back toward the start. Must be
+  // read BEFORE advanceQueue() moves the index.
+  const isCompletingLap = useCallback(
+    () => queue.length > 0 && queueIndexRef.current + parallelRef.current >= queue.length,
+    [queue.length],
+  );
+
   const selectOutcome = useCallback(
     (outcome: CallOutcome) => {
       clearHumanPresence();
+      const completingLap = isCompletingLap();
       patch({ lastOutcome: outcome, status: "idle", lines: [], connectedLead: null });
       advanceQueue();
       if (autoDialRef.current && queue.length) {
-        setTimeout(() => startCall(), 900);
+        if (completingLap) {
+          // Reached the end of this pass. Don't blindly re-dial the same
+          // static, possibly-stale array (it would include leads just
+          // dispositioned as not_interested/DNC/booked moments ago in this
+          // same pass). Bump queueLap — the parent refetches the dial queue
+          // and calls restartAutoDialLap() once it confirms there's still
+          // something dialable.
+          queueLapRef.current += 1;
+          patch({ queueLap: queueLapRef.current });
+        } else {
+          setTimeout(() => startCall(), 900);
+        }
       }
     },
-    [advanceQueue, clearHumanPresence, patch, queue.length, startCall],
+    [advanceQueue, clearHumanPresence, isCompletingLap, patch, queue.length, startCall],
   );
 
   const skip = useCallback(() => {
@@ -942,13 +990,19 @@ export function useDialer(queue: Lead[], aiConfigured = false, userId?: string) 
       /* noop */
     }
     callRef.current = null;
+    const completingLap = isCompletingLap();
     advanceQueue();
     if (autoDialRef.current && queue.length) {
-      setTimeout(() => startCall(), 400);
+      if (completingLap) {
+        queueLapRef.current += 1;
+        patch({ status: "idle", lines: [], connectedLead: null, durationSec: 0, queueLap: queueLapRef.current });
+      } else {
+        setTimeout(() => startCall(), 400);
+      }
     } else {
       patch({ status: "idle", lines: [], connectedLead: null, durationSec: 0 });
     }
-  }, [advanceQueue, clearHumanPresence, patch, queue.length, startCall, stopPoll, stopTick]);
+  }, [advanceQueue, clearHumanPresence, isCompletingLap, patch, queue.length, startCall, stopPoll, stopTick]);
 
   const launchNextAI = useCallback(() => {
     void launchAIBatch();
@@ -1042,6 +1096,7 @@ export function useDialer(queue: Lead[], aiConfigured = false, userId?: string) 
   return {
     state,
     startCall,
+    restartAutoDialLap,
     dialNumber,
     aiDialNumber,
     endCall,

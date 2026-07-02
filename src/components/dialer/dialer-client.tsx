@@ -48,7 +48,10 @@ export function DialerClient({
   const [loadingLeads, setLoadingLeads] = useState(false);
   const [loadMsg, setLoadMsg] = useState<string | null>(null);
 
-  async function loadLeads() {
+  // Returns the fetched leads so callers (e.g. the auto-dial lap watcher
+  // below) can act on the result immediately, without waiting a render for
+  // `queue` state to settle.
+  async function loadLeads(): Promise<Lead[]> {
     setLoadingLeads(true);
     setLoadMsg(null);
     try {
@@ -68,8 +71,10 @@ export function DialerClient({
       } else {
         setLoadMsg("No leads found — import a CSV on the Leads tab first.");
       }
+      return leads;
     } catch {
       setLoadMsg("Couldn’t load leads. Check your connection and try again.");
+      return [];
     } finally {
       setLoadingLeads(false);
     }
@@ -113,6 +118,44 @@ export function DialerClient({
       dialer.dialNumber(callbackPhone, callbackName);
     }
   }, [state.mode, state.status, state.aiMode, callbackPhone, callbackName, dialer]);
+
+  // Auto-dial "repeat the whole list": when a full pass completes (either
+  // mode — signaled by queueLap incrementing), refetch the dial queue from
+  // the server before starting the next pass. Never replay the static array
+  // captured at page-load — that would keep re-dialing leads just marked
+  // not_interested/DNC/booked moments earlier in the same pass. If nothing
+  // dialable is left, stop cleanly instead of hammering an empty fetch.
+  const lastHandledLapRef = useRef(0);
+  useEffect(() => {
+    if (!state.autoDial) return;
+    if (state.queueLap === lastHandledLapRef.current) return;
+    lastHandledLapRef.current = state.queueLap;
+
+    let cancelled = false;
+    (async () => {
+      // Brief pause: avoids a jarring instant restart, and gives the fire-
+      // and-forget disposition write from onOutcome time to land server-side
+      // before we refetch (otherwise the just-finished lead could still show
+      // as dialable and get called again immediately).
+      await new Promise((r) => setTimeout(r, 2500));
+      if (cancelled) return;
+      const fresh = await loadLeads();
+      if (cancelled) return;
+      const stillDialable = campaignFilter
+        ? fresh.filter((l) => l.campaignId === campaignFilter)
+        : fresh;
+      if (stillDialable.length > 0) {
+        dialer.restartAutoDialLap();
+      } else {
+        dialer.setAutoDial(false);
+        setLoadMsg("Auto-dial finished — every lead in your list has been dialed.");
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.queueLap, state.autoDial]);
 
   // Which lead the side panels describe right now (null when the queue is empty
   // and no call is active — production ships with no placeholder lead).
