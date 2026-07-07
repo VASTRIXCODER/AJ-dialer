@@ -117,6 +117,31 @@ export function secondsSince(iso: string, now: number = Date.now()) {
   return Math.max(0, Math.floor((now - new Date(iso).getTime()) / 1000));
 }
 
+/**
+ * One consistent, complete address string from a lead's parts — the single
+ * source of truth for how an address renders anywhere in the app. CSVs vary
+ * wildly: some put the whole address in one column (the street field holds
+ * city/state/zip too and the city/state/zip fields are empty), others split it
+ * across columns. This joins whatever is present — street, "City, ST", ZIP —
+ * skipping blanks, so an address never shows half-empty, truncated, or with
+ * stray commas. Returns "" when nothing is known (callers supply their own "—").
+ */
+export function formatAddress(lead: {
+  address?: string | null;
+  city?: string | null;
+  state?: string | null;
+  zip?: string | null;
+}): string {
+  const street = (lead.address ?? "").trim();
+  const cityState = [lead.city, lead.state]
+    .map((s) => (s ?? "").trim())
+    .filter(Boolean)
+    .join(", ");
+  const zip = (lead.zip ?? "").trim();
+  const locality = [cityState, zip].filter(Boolean).join(" ");
+  return [street, locality].filter(Boolean).join(street && locality ? ", " : "");
+}
+
 export function initials(name: string) {
   return name
     .split(" ")

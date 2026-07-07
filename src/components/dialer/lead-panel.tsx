@@ -28,7 +28,7 @@ import { Ring } from "@/components/ui/progress";
 import type { Lead } from "@/lib/types";
 import { outcomeConfig } from "@/lib/status";
 import type { CallOutcome } from "@/lib/types";
-import { formatCurrency, formatDuration, formatPhone, initials, relativeTime } from "@/lib/utils";
+import { formatAddress, formatCurrency, formatDuration, formatPhone, initials, relativeTime } from "@/lib/utils";
 
 export function LeadPanel({
   lead,
@@ -174,12 +174,11 @@ function LeadDetail({ lead, upNext }: { lead: Lead; upNext: Lead[] }) {
         </div>
 
         <div className="mt-4 space-y-2 text-sm">
-          {(lead.address || lead.city) && (
+          {formatAddress(lead) && (
             <div className="flex items-start gap-2.5 text-muted-foreground">
               <MapPin className="mt-0.5 h-4 w-4 shrink-0" />
-              <span>
-                {[lead.address, lead.city, lead.state].filter(Boolean).join(", ")}{" "}
-                {lead.zip}
+              <span className="break-words" title={formatAddress(lead)}>
+                {formatAddress(lead)}
               </span>
             </div>
           )}
@@ -262,7 +261,7 @@ function LeadDetail({ lead, upNext }: { lead: Lead; upNext: Lead[] }) {
                   {l.firstName} {l.lastName}
                 </p>
                 <p className="truncate text-xs text-muted-foreground">
-                  {l.city}, {l.state}
+                  {[l.city, l.state].filter(Boolean).join(", ") || "—"}
                 </p>
               </div>
               {l.aiScore != null && (

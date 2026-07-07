@@ -9,6 +9,7 @@ import type { AiLockReason } from "@/lib/org/settings";
 import type { Lead } from "@/lib/types";
 import { useDialer } from "@/lib/use-dialer";
 import { CallStage } from "./call-stage";
+import { DialerFloor } from "./dialer-floor";
 import { LeadPanel } from "./lead-panel";
 import { QualifyPanel } from "./qualify-panel";
 
@@ -230,8 +231,12 @@ export function DialerClient({
           )}
           Load leads
         </Button>
-        <span className="text-xs font-medium text-muted-foreground tabular">
-          {queueForDialer.length} lead{queueForDialer.length === 1 ? "" : "s"} ready to dial
+        <span
+          className="text-xs font-medium text-muted-foreground tabular"
+          title="The power dialer only ever loads leads you uploaded — you never dial a teammate's leads."
+        >
+          <b className="text-foreground">{queueForDialer.length}</b> of your lead
+          {queueForDialer.length === 1 ? "" : "s"} ready to dial
         </span>
         {campaigns.length > 0 && (
           <>
@@ -258,6 +263,9 @@ export function DialerClient({
           <span className="basis-full text-xs text-muted-foreground">{loadMsg}</span>
         )}
       </div>
+
+      {/* Shared live floor — who's dialing + calls today, org-wide */}
+      <DialerFloor />
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-12">
         <Card className="overflow-hidden lg:col-span-3">
