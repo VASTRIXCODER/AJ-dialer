@@ -8,8 +8,10 @@ import {
   Pencil,
   PhoneCall,
   Search,
+  Sparkles,
   Trash2,
   UploadCloud,
+  Users,
   Waves,
 } from "lucide-react";
 import Link from "next/link";
@@ -20,7 +22,8 @@ import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import type { Lead, LeadStatus } from "@/lib/types";
 import { leadStatusConfig } from "@/lib/status";
-import { cn, formatCurrency, formatPhone, initials } from "@/lib/utils";
+import { SMART_LISTS, countSmartLists, smartListById } from "@/lib/leads/smart-lists";
+import { cn, formatAddress, formatCurrency, formatPhone, initials } from "@/lib/utils";
 import { EditLeadDialog } from "./edit-lead-dialog";
 
 const FILTERS: Array<{ value: LeadStatus | "all"; label: string }> = [
@@ -51,6 +54,7 @@ export function LeadsTable({
   const router = useRouter();
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<LeadStatus | "all">("all");
+  const [smartList, setSmartList] = useState<string | null>(null);
   const [campaignFilter, setCampaignFilter] = useState<string>("all");
   const [uploaderFilter, setUploaderFilter] = useState<string>("all");
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -86,9 +90,15 @@ export function LeadsTable({
     return [...m.entries()].map(([id, name]) => ({ id, name }));
   }, [leads, meId]);
 
+  // Counts for the smart-list chips — over ALL leads so they stay stable as
+  // other filters change. Cheap pure evaluation, same idiom as the row filter.
+  const smartCounts = useMemo(() => countSmartLists(leads), [leads]);
+  const activeSmartList = smartList ? smartListById(smartList) : undefined;
+
   const filtered = useMemo(() => {
     return leads.filter((l) => {
       const matchesFilter = filter === "all" || l.status === filter;
+      const matchesSmart = !activeSmartList || activeSmartList.match(l);
       const matchesCampaign =
         campaignFilter === "all" ||
         (campaignFilter === "none" ? !l.campaignId : l.campaignId === campaignFilter);
@@ -101,9 +111,9 @@ export function LeadsTable({
         l.city.toLowerCase().includes(q) ||
         l.phone.includes(q) ||
         l.utilityProvider.toLowerCase().includes(q);
-      return matchesFilter && matchesCampaign && matchesUploader && matchesQuery;
+      return matchesFilter && matchesSmart && matchesCampaign && matchesUploader && matchesQuery;
     });
-  }, [leads, filter, campaignFilter, uploaderFilter, query]);
+  }, [leads, filter, activeSmartList, campaignFilter, uploaderFilter, query]);
 
   const allSelected = filtered.length > 0 && filtered.every((l) => selected.has(l.id));
   const toggleAll = () =>
@@ -166,6 +176,38 @@ export function LeadsTable({
     }
   }
 
+  // Split the selected leads evenly across every teammate, giving each their own
+  // owned subset — the one-click fix for a batch imported under one account.
+  async function distribute() {
+    if (selected.size === 0 || members.length === 0) return;
+    setBusy(true);
+    setErr("");
+    try {
+      const res = await fetch("/api/leads/distribute", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          leadIds: [...selected],
+          toUserIds: members.map((m) => m.id),
+        }),
+      });
+      const json = (await res.json().catch(() => ({}))) as {
+        updated?: number;
+        error?: string;
+      };
+      if (!res.ok || json.error) {
+        setErr(json.error ?? "Couldn’t distribute those leads.");
+        return;
+      }
+      setSelected(new Set());
+      router.refresh();
+    } catch {
+      setErr("Network error while distributing.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function confirmDelete() {
     if (!pendingDelete?.length) return;
     setBusy(true);
@@ -221,6 +263,53 @@ export function LeadsTable({
 
   return (
     <div className="space-y-4">
+      {/* Smart lists — auto-updating segments. Only shows chips that currently
+          match at least one lead, so the row stays relevant as data changes. */}
+      {SMART_LISTS.some((sl) => smartCounts[sl.id] > 0) && (
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span className="flex items-center gap-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+            <Sparkles className="h-3.5 w-3.5" />
+            Smart lists
+          </span>
+          {SMART_LISTS.filter((sl) => smartCounts[sl.id] > 0).map((sl) => {
+            const active = smartList === sl.id;
+            return (
+              <button
+                key={sl.id}
+                type="button"
+                title={sl.description}
+                onClick={() => setSmartList(active ? null : sl.id)}
+                className={cn(
+                  "flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium transition-colors",
+                  active
+                    ? "border-primary bg-primary text-white"
+                    : "border-border bg-background/50 text-muted-foreground hover:bg-muted",
+                )}
+              >
+                {sl.label}
+                <span
+                  className={cn(
+                    "rounded-full px-1.5 tabular",
+                    active ? "bg-white/20" : "bg-muted text-foreground",
+                  )}
+                >
+                  {smartCounts[sl.id]}
+                </span>
+              </button>
+            );
+          })}
+          {smartList && (
+            <button
+              type="button"
+              onClick={() => setSmartList(null)}
+              className="text-xs font-medium text-muted-foreground hover:text-foreground"
+            >
+              Clear
+            </button>
+          )}
+        </div>
+      )}
+
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="relative max-w-sm flex-1">
           <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
@@ -372,6 +461,23 @@ export function LeadsTable({
                 {busy && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
                 Reassign
               </Button>
+              {members.length > 1 && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="gap-1.5"
+                  disabled={busy}
+                  onClick={distribute}
+                  title="Split the selected leads evenly across every teammate, giving each their own owned set"
+                >
+                  {busy ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Users className="h-3.5 w-3.5" />
+                  )}
+                  Distribute evenly
+                </Button>
+              )}
             </>
           )}
           {canManage && (
@@ -481,16 +587,13 @@ export function LeadsTable({
                     </td>
                     <td className="px-4 py-3 text-muted-foreground">
                       <div className="min-w-0 max-w-[280px]">
-                        {l.address && (
-                          <p className="break-words" title={l.address}>
-                            {l.address}
+                        {formatAddress(l) ? (
+                          <p className="break-words" title={formatAddress(l)}>
+                            {formatAddress(l)}
                           </p>
+                        ) : (
+                          <p>—</p>
                         )}
-                        <p className="break-words">
-                          {[l.city, l.state].filter(Boolean).join(", ")}
-                          {l.zip ? ` ${l.zip}` : ""}
-                          {!l.city && !l.state && !l.zip && !l.address ? "—" : ""}
-                        </p>
                         {(l.utilityProvider || l.solarProvider) && (
                           <p className="truncate text-xs">
                             {[l.utilityProvider, l.solarProvider].filter(Boolean).join(" · ")}

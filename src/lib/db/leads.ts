@@ -261,6 +261,88 @@ export async function reassignLeads(
   }
 }
 
+/**
+ * Distribute leads EVENLY across a set of teammates (round-robin), so a batch
+ * uploaded under one account can be split into each rep's own ownership in one
+ * action. This is the fix for "everyone's dialing the same leads": once each
+ * lead has a distinct owner_id, the own-only dial queue keeps reps off each
+ * other's lists automatically. Supervisor-only, strictly org-scoped, and every
+ * target is verified to be an active member of the caller's org.
+ */
+export async function distributeLeads(
+  leadIds: string[],
+  toUserIds: string[],
+): Promise<{ updated: number; perUser: Record<string, number>; error?: string }> {
+  if (!isSupabaseConfigured())
+    return { updated: 0, perUser: {}, error: "Connect Supabase to manage leads." };
+  try {
+    const supabase = await createClient();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) return { updated: 0, perUser: {}, error: "You must be signed in." };
+
+    const ids = [...new Set(leadIds.filter((id) => UUID.test(id)))];
+    if (!ids.length) return { updated: 0, perUser: {}, error: "No valid leads selected." };
+    const targets = [...new Set(toUserIds.filter((id) => UUID.test(id)))];
+    if (!targets.length) return { updated: 0, perUser: {}, error: "Pick at least one teammate." };
+
+    const { data: prof } = await supabase
+      .from("profiles")
+      .select("org_id, role")
+      .eq("id", user.id)
+      .maybeSingle();
+    const orgId = prof?.org_id ? String(prof.org_id) : null;
+    if (!orgId || !isSupervisorRole(prof?.role) || !isAdminConfigured())
+      return { updated: 0, perUser: {}, error: "Only supervisors can distribute leads." };
+
+    const admin = createAdminClient();
+    // Every target must be an active member of THIS org.
+    const { data: members } = await admin
+      .from("organization_members")
+      .select("user_id")
+      .eq("org_id", orgId)
+      .eq("status", "active")
+      .in("user_id", targets);
+    const valid = new Set(((members ?? []) as Row[]).map((m) => String(m.user_id)));
+    const finalTargets = targets.filter((t) => valid.has(t));
+    if (!finalTargets.length)
+      return {
+        updated: 0,
+        perUser: {},
+        error: "None of those teammates are members of your organization.",
+      };
+
+    // Round-robin: lead i → finalTargets[i % n]. Batched per owner like reassign.
+    const buckets = new Map<string, string[]>();
+    for (const t of finalTargets) buckets.set(t, []);
+    ids.forEach((id, i) => buckets.get(finalTargets[i % finalTargets.length])!.push(id));
+
+    let updated = 0;
+    const perUser: Record<string, number> = {};
+    for (const [uid, bucket] of buckets) {
+      const CHUNK = 100;
+      let cnt = 0;
+      for (let i = 0; i < bucket.length; i += CHUNK) {
+        const batch = bucket.slice(i, i + CHUNK);
+        const { data, error } = await admin
+          .from("leads")
+          .update({ owner_id: uid, org_id: orgId })
+          .in("id", batch)
+          .eq("org_id", orgId) // never move another org's leads
+          .select("id");
+        if (error) return { updated, perUser, error: error.message };
+        cnt += data?.length ?? 0;
+      }
+      perUser[uid] = cnt;
+      updated += cnt;
+    }
+    return { updated, perUser };
+  } catch (e) {
+    return { updated: 0, perUser: {}, error: e instanceof Error ? e.message : "Distribute failed." };
+  }
+}
+
 export interface LeadPatch {
   firstName?: string;
   lastName?: string;
