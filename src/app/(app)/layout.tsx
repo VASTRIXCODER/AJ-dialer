@@ -62,6 +62,10 @@ export default async function AppGroupLayout({
     viewer.org?.settings.features ?? DEFAULT_FEATURES,
     viewer.permissions.includes("dialer.ai"),
   );
+  // Supervisors dial the whole org pool; reps dial only their own uploads
+  // (mirrors getDialQueue's server-side scoping).
+  const dialScope: "org" | "own" =
+    viewer.role && ["owner", "admin", "manager"].includes(viewer.role) ? "org" : "own";
   const dialerConfig = {
     userId: viewer.user?.id,
     voiceConfigured: isVoiceConfigured(),
@@ -69,6 +73,7 @@ export default async function AppGroupLayout({
     manualEnabled,
     aiEnabled,
     aiLockReason,
+    dialScope,
   };
 
   return (

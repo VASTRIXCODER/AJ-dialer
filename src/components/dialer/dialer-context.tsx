@@ -21,6 +21,9 @@ export interface DialerConfig {
   manualEnabled: boolean;
   aiEnabled: boolean;
   aiLockReason: AiLockReason;
+  /** "org" for supervisors (dial the whole org pool), "own" for reps. Drives
+   *  the dialer's queue label — the actual scope is enforced server-side. */
+  dialScope: "org" | "own";
 }
 
 type Campaign = { id: string; name: string };

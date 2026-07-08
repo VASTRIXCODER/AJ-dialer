@@ -156,9 +156,14 @@ export function DialerClient({
         </Button>
         <span
           className="text-xs font-medium text-muted-foreground tabular"
-          title="The power dialer only ever loads leads you uploaded — you never dial a teammate's leads."
+          title={
+            config.dialScope === "org"
+              ? "As a supervisor you dial the whole organization's pool — every rep's leads, not just your own uploads."
+              : "The power dialer only ever loads leads you uploaded — you never dial a teammate's leads."
+          }
         >
-          <b className="text-foreground">{queueForDialer.length}</b> of your lead
+          <b className="text-foreground">{queueForDialer.length}</b>{" "}
+          {config.dialScope === "org" ? "org" : "of your"} lead
           {queueForDialer.length === 1 ? "" : "s"} ready to dial
         </span>
         {campaignsForSelect.length > 0 && (

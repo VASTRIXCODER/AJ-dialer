@@ -510,11 +510,13 @@ export async function getLeadByPhoneAdmin(phone: string): Promise<Lead | null> {
 }
 
 export async function getDialQueue(): Promise<Lead[]> {
-  // The power dialer is ALWAYS own-only — every person dials only the leads they
-  // uploaded, so reps never dial each other's leads (supervisors included). The
-  // Leads tab is where supervisors get the cross-account overview. Any lead with
-  // a plausibly-dialable number (10+ digits) and a dialable status is included;
-  // exact E.164 normalization happens at dial time.
+  // Scope matches the Leads tab (getLeads):
+  //   • Rep         → own-only. Reps never dial a teammate's leads.
+  //   • Supervisor  → the whole org's pool (owner/admin/manager). They see the
+  //                   org's leads on the Leads tab, so they can dial them too —
+  //                   otherwise an admin sees leads they physically can't call.
+  // Any lead with a plausibly-dialable number (10+ digits) and a dialable status
+  // is included; exact E.164 normalization happens at dial time.
   const dialable = (leads: Lead[]) =>
     leads
       .filter(
@@ -530,6 +532,28 @@ export async function getDialQueue(): Promise<Lead[]> {
       data: { user },
     } = await supabase.auth.getUser();
     if (!user) return [];
+
+    const { data: prof } = await supabase
+      .from("profiles")
+      .select("org_id, role")
+      .eq("id", user.id)
+      .maybeSingle();
+    const orgId = prof?.org_id ? String(prof.org_id) : null;
+    const supervisor =
+      Boolean(orgId) && isSupervisorRole(prof?.role) && isAdminConfigured();
+
+    if (supervisor) {
+      // Org-wide pool via the service-role client (RLS would hide other reps'
+      // rows), scoped in code to this org — never another org's leads.
+      const admin = createAdminClient();
+      const { data } = await admin
+        .from("leads")
+        .select("*")
+        .eq("org_id", orgId as string)
+        .order("ai_score", { ascending: false, nullsFirst: false });
+      return dialable((data ?? []).map((r) => rowToLead(r as Row)));
+    }
+
     const { data } = await supabase
       .from("leads")
       .select("*")
@@ -595,9 +619,9 @@ export async function touchLeadContacted(
 }
 
 /**
- * Count the viewer's OWN leads (every status) — the denominator for the dialer's
- * "you have N leads but none are ready to dial" hint. Own-scoped to match the
- * own-only dial queue, so a supervisor's count isn't inflated by the whole org.
+ * Count the leads in the viewer's dial scope (every status) — the denominator
+ * for the dialer's "you have N leads but none are ready to dial" hint. Matches
+ * getDialQueue's scope: a supervisor's org-wide pool, a rep's own leads.
  */
 export async function getMyLeadsCount(): Promise<number> {
   if (!isSupabaseConfigured()) return fallbackLeads.length;
@@ -607,6 +631,21 @@ export async function getMyLeadsCount(): Promise<number> {
       data: { user },
     } = await supabase.auth.getUser();
     if (!user) return 0;
+    const { data: prof } = await supabase
+      .from("profiles")
+      .select("org_id, role")
+      .eq("id", user.id)
+      .maybeSingle();
+    const orgId = prof?.org_id ? String(prof.org_id) : null;
+    const supervisor =
+      Boolean(orgId) && isSupervisorRole(prof?.role) && isAdminConfigured();
+    if (supervisor) {
+      const { count } = await createAdminClient()
+        .from("leads")
+        .select("id", { count: "exact", head: true })
+        .eq("org_id", orgId as string);
+      return count ?? 0;
+    }
     const { count } = await supabase
       .from("leads")
       .select("id", { count: "exact", head: true })
