@@ -3,11 +3,9 @@ import { DialerClient } from "@/components/dialer/dialer-client";
 import { PageContainer, PageHeader } from "@/components/shared/page-header";
 import { Badge } from "@/components/ui/badge";
 import { getCampaigns } from "@/lib/db/pipeline";
-import { isElevenLabsConfigured } from "@/lib/elevenlabs";
 import { getDialQueue } from "@/lib/leads-source";
 import { getViewer } from "@/lib/org/membership";
 import { DEFAULT_FEATURES, resolveDialerAccess } from "@/lib/org/settings";
-import { isVoiceConfigured } from "@/lib/twilio";
 
 export const metadata = { title: "Power Dialer" };
 export const dynamic = "force-dynamic";
@@ -23,11 +21,9 @@ export default async function DialerPage({
     getCampaigns(),
     getViewer(),
   ]);
-  const voiceConfigured = isVoiceConfigured();
-  const aiAgentConfigured = isElevenLabsConfigured();
-  // Resolve dialer access from org features + the viewer's role. Manual off ⇒
-  // AI-only workspace; AI off (or rep without dialer.ai) ⇒ AI shows locked.
-  const { manualEnabled, aiEnabled, aiLockReason } = resolveDialerAccess(
+  // Only used for the header badge copy — the dialer engine + its full access
+  // gates now live in the app-wide DialerProvider (AppShell).
+  const { manualEnabled } = resolveDialerAccess(
     viewer.org?.settings.features ?? DEFAULT_FEATURES,
     viewer.permissions.includes("dialer.ai"),
   );
@@ -62,14 +58,8 @@ export default async function DialerPage({
         queue={queue}
         campaigns={dialCampaigns}
         initialCampaign={campaign ?? ""}
-        voiceConfigured={voiceConfigured}
-        aiAgentConfigured={aiAgentConfigured}
-        manualEnabled={manualEnabled}
-        aiEnabled={aiEnabled}
-        aiLockReason={aiLockReason}
         callbackPhone={callbackPhone}
         callbackName={callbackName}
-        userId={viewer.user?.id}
       />
     </PageContainer>
   );

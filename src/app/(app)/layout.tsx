@@ -4,7 +4,9 @@ import { MaintenanceScreen } from "@/components/layout/maintenance-screen";
 import { PaywallScreen } from "@/components/layout/paywall-screen";
 import { isAIConfigured } from "@/lib/ai/claude";
 import { getAppSettings, isAccountDisabled } from "@/lib/db/app-control";
+import { isElevenLabsConfigured } from "@/lib/elevenlabs";
 import { getViewer } from "@/lib/org/membership";
+import { DEFAULT_FEATURES, resolveDialerAccess } from "@/lib/org/settings";
 import { isSuperadmin } from "@/lib/superadmin";
 import { isVoiceConfigured } from "@/lib/twilio";
 import { initials } from "@/lib/utils";
@@ -54,6 +56,21 @@ export default async function AppGroupLayout({
     initials: initials(viewer.displayName) || "·",
   };
 
+  // Config for the app-wide dialer engine (lives in AppShell so calls survive
+  // navigation). Same resolution the dialer page uses for its access gates.
+  const { manualEnabled, aiEnabled, aiLockReason } = resolveDialerAccess(
+    viewer.org?.settings.features ?? DEFAULT_FEATURES,
+    viewer.permissions.includes("dialer.ai"),
+  );
+  const dialerConfig = {
+    userId: viewer.user?.id,
+    voiceConfigured: isVoiceConfigured(),
+    aiAgentConfigured: isElevenLabsConfigured(),
+    manualEnabled,
+    aiEnabled,
+    aiLockReason,
+  };
+
   return (
     <AppShell
       voiceConfigured={isVoiceConfigured()}
@@ -66,6 +83,7 @@ export default async function AppGroupLayout({
       brandColor={viewer.org?.brandColor || null}
       role={viewer.role}
       superadmin={superadmin}
+      dialerConfig={dialerConfig}
     >
       {children}
     </AppShell>

@@ -2,13 +2,12 @@
 
 import { AlertTriangle, Loader2, Megaphone, Phone, Settings, Users } from "lucide-react";
 import Link from "next/link";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 import { Card } from "@/components/ui/card";
 import { Button, buttonVariants } from "@/components/ui/button";
-import type { AiLockReason } from "@/lib/org/settings";
 import type { Lead } from "@/lib/types";
-import { useDialer } from "@/lib/use-dialer";
 import { CallStage } from "./call-stage";
+import { useDialerContext } from "./dialer-context";
 import { DialerFloor } from "./dialer-floor";
 import { LeadPanel } from "./lead-panel";
 import { QualifyPanel } from "./qualify-panel";
@@ -17,82 +16,43 @@ export function DialerClient({
   queue: initialQueue,
   campaigns = [],
   initialCampaign = "",
-  voiceConfigured,
-  aiAgentConfigured,
-  manualEnabled = true,
-  aiEnabled = true,
-  aiLockReason = null,
   callbackPhone,
   callbackName,
-  userId,
 }: {
   queue: Lead[];
   campaigns?: { id: string; name: string }[];
   initialCampaign?: string;
-  voiceConfigured: boolean;
-  aiAgentConfigured: boolean;
-  /** Org feature: when false, only AI calling is offered (no manual dialing). */
-  manualEnabled?: boolean;
-  /** Viewer access: when false, AI calling is locked (premium plan or rep role). */
-  aiEnabled?: boolean;
-  /** Why AI is locked, to tailor the message ("premium" plan vs "role"). */
-  aiLockReason?: AiLockReason;
   /** When set, auto-dial this number (from the Callbacks page "Call back" link). */
   callbackPhone?: string;
   callbackName?: string;
-  /** Signed-in user id — keys the persisted "dials today" counter per rep. */
-  userId?: string;
 }) {
-  // The queue is held in state so the "Load leads" button can pull the latest
-  // shared pool into the dialer on demand (the page ships an initial copy).
-  const [queue, setQueue] = useState<Lead[]>(initialQueue);
-  const [loadingLeads, setLoadingLeads] = useState(false);
-  const [loadMsg, setLoadMsg] = useState<string | null>(null);
-
-  // Returns the fetched leads so callers (e.g. the auto-dial lap watcher
-  // below) can act on the result immediately, without waiting a render for
-  // `queue` state to settle.
-  async function loadLeads(): Promise<Lead[]> {
-    setLoadingLeads(true);
-    setLoadMsg(null);
-    try {
-      const res = await fetch("/api/leads/queue", { cache: "no-store" });
-      const json = (await res.json().catch(() => ({}))) as {
-        leads?: Lead[];
-        total?: number;
-      };
-      const leads = Array.isArray(json.leads) ? json.leads : [];
-      setQueue(leads);
-      if (leads.length) {
-        setLoadMsg(`Loaded ${leads.length} lead${leads.length === 1 ? "" : "s"} into the dialer.`);
-      } else if ((json.total ?? 0) > 0) {
-        setLoadMsg(
-          `Found ${json.total} leads, but none are ready to dial yet — they need a New / No-answer / Callback status and a valid phone number.`,
-        );
-      } else {
-        setLoadMsg("No leads found — import a CSV on the Leads tab first.");
-      }
-      return leads;
-    } catch {
-      setLoadMsg("Couldn’t load leads. Check your connection and try again.");
-      return [];
-    } finally {
-      setLoadingLeads(false);
-    }
-  }
-
-  // Filter the dialing queue to a campaign (client-side; the page ships the full
-  // queue). Only changeable between calls so the active session isn't disrupted.
-  const [campaignFilter, setCampaignFilter] = useState(
-    initialCampaign && campaigns.some((c) => c.id === initialCampaign) ? initialCampaign : "",
-  );
-  const queueForDialer = campaignFilter
-    ? queue.filter((l) => l.campaignId === campaignFilter)
-    : queue;
-  // AI is usable only when the agent is configured AND this viewer is allowed it.
-  const aiUsable = aiAgentConfigured && aiEnabled;
-  const dialer = useDialer(queueForDialer, aiUsable, userId);
+  // The dialer engine now lives ABOVE the page (in AppShell's DialerProvider) so
+  // a live call survives navigating between sections. This page consumes it.
+  const {
+    dialer,
+    config,
+    queueForDialer,
+    campaignFilter,
+    setCampaignFilter,
+    campaigns: ctxCampaigns,
+    loadLeads,
+    loadingLeads,
+    loadMsg,
+    activate,
+  } = useDialerContext();
   const { state } = dialer;
+
+  // Seed the provider with this page's server data + switch the engine on. Runs
+  // once; the provider keeps the device + any live call alive after we leave.
+  const activatedRef = useRef(false);
+  useEffect(() => {
+    if (activatedRef.current) return;
+    activatedRef.current = true;
+    activate(initialQueue, campaigns, initialCampaign);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const campaignsForSelect = ctxCampaigns.length ? ctxCampaigns : campaigns;
 
   // Track the rep's in-call notes so they can be saved with the disposition.
   const notesRef = useRef<string>("");
@@ -102,12 +62,13 @@ export function DialerClient({
     (queueForDialer.length ? queueForDialer[state.queueIndex % queueForDialer.length] : null)
   )?.id;
   useEffect(() => {
-    const lead = state.connectedLead ??
+    const lead =
+      state.connectedLead ??
       state.lines[0]?.lead ??
       (queueForDialer.length ? queueForDialer[state.queueIndex % queueForDialer.length] : null);
     notesRef.current = lead?.notes ?? "";
-  // Reset notes to the lead's saved notes whenever the active lead changes.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // Reset notes to the lead's saved notes whenever the active lead changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [focusLeadId]);
 
   // Auto-dial a callback number as soon as the Twilio device is live and idle.
@@ -119,44 +80,6 @@ export function DialerClient({
       dialer.dialNumber(callbackPhone, callbackName);
     }
   }, [state.mode, state.status, state.aiMode, callbackPhone, callbackName, dialer]);
-
-  // Auto-dial "repeat the whole list": when a full pass completes (either
-  // mode — signaled by queueLap incrementing), refetch the dial queue from
-  // the server before starting the next pass. Never replay the static array
-  // captured at page-load — that would keep re-dialing leads just marked
-  // not_interested/DNC/booked moments earlier in the same pass. If nothing
-  // dialable is left, stop cleanly instead of hammering an empty fetch.
-  const lastHandledLapRef = useRef(0);
-  useEffect(() => {
-    if (!state.autoDial) return;
-    if (state.queueLap === lastHandledLapRef.current) return;
-    lastHandledLapRef.current = state.queueLap;
-
-    let cancelled = false;
-    (async () => {
-      // Brief pause: avoids a jarring instant restart, and gives the fire-
-      // and-forget disposition write from onOutcome time to land server-side
-      // before we refetch (otherwise the just-finished lead could still show
-      // as dialable and get called again immediately).
-      await new Promise((r) => setTimeout(r, 2500));
-      if (cancelled) return;
-      const fresh = await loadLeads();
-      if (cancelled) return;
-      const stillDialable = campaignFilter
-        ? fresh.filter((l) => l.campaignId === campaignFilter)
-        : fresh;
-      if (stillDialable.length > 0) {
-        dialer.restartAutoDialLap();
-      } else {
-        dialer.setAutoDial(false);
-        setLoadMsg("Auto-dial finished — every lead in your list has been dialed.");
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [state.queueLap, state.autoDial]);
 
   // Which lead the side panels describe right now (null when the queue is empty
   // and no call is active — production ships with no placeholder lead).
@@ -174,7 +97,7 @@ export function DialerClient({
   return (
     <div className="space-y-4">
       {/* Manual mode needs Twilio; AI mode places calls server-side without it. */}
-      {manualEnabled && !voiceConfigured && !state.aiMode && (
+      {config.manualEnabled && !config.voiceConfigured && !state.aiMode && (
         <Card className="flex flex-col items-start gap-3 border-warning/30 bg-warning/5 p-4 sm:flex-row sm:items-center">
           <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-warning/15 text-warning">
             <AlertTriangle className="h-5 w-5" />
@@ -238,7 +161,7 @@ export function DialerClient({
           <b className="text-foreground">{queueForDialer.length}</b> of your lead
           {queueForDialer.length === 1 ? "" : "s"} ready to dial
         </span>
-        {campaigns.length > 0 && (
+        {campaignsForSelect.length > 0 && (
           <>
             <span className="ml-1 flex items-center gap-1.5 text-sm font-medium text-muted-foreground">
               <Megaphone className="h-4 w-4" />
@@ -251,7 +174,7 @@ export function DialerClient({
               className="h-9 rounded-xl border border-border bg-background/60 px-2.5 text-sm font-medium transition-colors focus-visible:border-primary/50 focus-visible:outline-none disabled:opacity-50"
             >
               <option value="">All leads</option>
-              {campaigns.map((c) => (
+              {campaignsForSelect.map((c) => (
                 <option key={c.id} value={c.id}>
                   {c.name}
                 </option>
@@ -289,10 +212,10 @@ export function DialerClient({
             state={state}
             focusLead={focusLead}
             hasQueue={queueForDialer.length > 0}
-            aiConfigured={aiAgentConfigured}
-            manualEnabled={manualEnabled}
-            aiEnabled={aiEnabled}
-            aiLockReason={aiLockReason}
+            aiConfigured={config.aiAgentConfigured}
+            manualEnabled={config.manualEnabled}
+            aiEnabled={config.aiEnabled}
+            aiLockReason={config.aiLockReason}
             onStart={() => dialer.startCall()}
             onManualDial={dialer.dialNumber}
             onAiDialNumber={dialer.aiDialNumber}
@@ -342,7 +265,9 @@ export function DialerClient({
             <QualifyPanel
               key={focusLead?.id ?? "none"}
               lead={focusLead}
-              onNotesChange={(n) => { notesRef.current = n; }}
+              onNotesChange={(n) => {
+                notesRef.current = n;
+              }}
             />
           </div>
         </Card>

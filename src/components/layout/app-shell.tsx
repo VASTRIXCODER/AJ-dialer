@@ -4,6 +4,8 @@ import { AnimatePresence, motion } from "framer-motion";
 import { X } from "lucide-react";
 import { useState } from "react";
 import { CommandPalette } from "@/components/ai/command-palette";
+import { type DialerConfig, DialerProvider } from "@/components/dialer/dialer-context";
+import { GlobalCallBar } from "@/components/dialer/global-call-bar";
 import type { OrgFeatures } from "@/lib/org/settings";
 import { AmbientBackground } from "./ambient-background";
 import { Sidebar } from "./sidebar";
@@ -23,6 +25,7 @@ export function AppShell({
   brandColor = null,
   role = null,
   superadmin = false,
+  dialerConfig,
 }: {
   children: React.ReactNode;
   voiceConfigured: boolean;
@@ -35,11 +38,14 @@ export function AppShell({
   brandColor?: string | null;
   role?: string | null;
   superadmin?: boolean;
+  /** Config for the app-wide dialer engine (persists calls across navigation). */
+  dialerConfig: DialerConfig;
 }) {
   const [mobileOpen, setMobileOpen] = useState(false);
   const sidebarProps = { permissions, features, orgName, productName, brandColor, role, superadmin };
 
   return (
+    <DialerProvider config={dialerConfig}>
     <div className="relative flex min-h-screen">
       <AmbientBackground />
       <CommandPalette />
@@ -94,6 +100,10 @@ export function AppShell({
         />
         <main className="flex-1">{children}</main>
       </div>
+
+      {/* Follows the rep to every page so an in-progress call never drops. */}
+      <GlobalCallBar />
     </div>
+    </DialerProvider>
   );
 }

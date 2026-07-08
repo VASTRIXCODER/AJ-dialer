@@ -161,7 +161,17 @@ function manualLead(e164: string): Lead {
   };
 }
 
-export function useDialer(queue: Lead[], aiConfigured = false, userId?: string) {
+export function useDialer(
+  queue: Lead[],
+  aiConfigured = false,
+  userId?: string,
+  /** Gate for the Twilio device. The dialer now lives in an app-wide provider so
+   *  a call survives navigation; without this gate the device would initialize
+   *  (and prompt for mic) for every user on every page. The provider flips this
+   *  true only once the dialer is actually opened, and keeps it true after — so
+   *  the device persists across route changes. */
+  enabled = true,
+) {
   const [state, setState] = useState<DialerState>({
     status: "idle",
     lines: [],
@@ -413,6 +423,10 @@ export function useDialer(queue: Lead[], aiConfigured = false, userId?: string) 
   }, [setupDevice]);
 
   useEffect(() => {
+    // Only build the Twilio device once the dialer is actually in use. Flips
+    // true on first activation and stays true, so the device (and any live
+    // call) persists across navigation instead of tearing down per page.
+    if (!enabled) return;
     void setupDevice();
     return () => {
       // Invalidate in-flight callbacks and tear the device down on unmount.
@@ -424,7 +438,7 @@ export function useDialer(queue: Lead[], aiConfigured = false, userId?: string) 
       }
       deviceRef.current = null;
     };
-  }, [setupDevice]);
+  }, [setupDevice, enabled]);
 
   // ── Seed the daily dial counter from storage (per rep, per local day) ──────
   useEffect(() => {
