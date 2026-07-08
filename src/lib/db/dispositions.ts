@@ -122,6 +122,14 @@ export async function updateAppointment(
   return error ? err(error.message) : { ok: true };
 }
 
+/** Permanently remove an appointment (e.g. a duplicate or mistaken booking). */
+export async function deleteAppointment(id: string): Promise<Result> {
+  const auth = await authorizeAppointment(id);
+  if ("error" in auth) return err(auth.error);
+  const { error } = await auth.admin.from("appointments").delete().eq("id", id);
+  return error ? err(error.message) : { ok: true };
+}
+
 /** Approve many proposals at once (scoped to the actor). */
 export async function approveAppointmentsBulk(ids: string[]): Promise<Result> {
   if (!isSupabaseConfigured() || !isAdminConfigured()) return err("Not configured.");

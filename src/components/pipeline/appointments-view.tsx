@@ -20,6 +20,7 @@ import {
   Sparkles,
   SlidersHorizontal,
   Star,
+  Trash2,
   Users,
   X,
 } from "lucide-react";
@@ -237,6 +238,10 @@ export function AppointmentsView({
       post({ action: "disposition", leadId, outcome }, leadId),
     [post],
   );
+  const remove = useCallback(
+    (id: string) => post({ action: "appointment-delete", id }, id),
+    [post],
+  );
 
   const toggleSelect = useCallback((id: string) => {
     setSelected((prev) => {
@@ -408,6 +413,9 @@ export function AppointmentsView({
             }}
             onRoute={async (leadId, outcome) => {
               if (await routeBack(leadId, outcome)) setActive(null);
+            }}
+            onDelete={async (id) => {
+              if (await remove(id)) setActive(null);
             }}
           />
         )}
@@ -783,7 +791,7 @@ function CalendarView({
 
 // ── Detail / review dialog ───────────────────────────────────────────────────
 function DetailDialog({
-  appt, teamWide, busy, reduce, onClose, onApprove, onSave, onStatus, onRoute,
+  appt, teamWide, busy, reduce, onClose, onApprove, onSave, onStatus, onRoute, onDelete,
 }: {
   appt: AppointmentRow;
   teamWide: boolean;
@@ -794,12 +802,14 @@ function DetailDialog({
   onSave: (id: string, patch: { scheduledAt?: string | null; scheduledLabel?: string; notes?: string; approve?: boolean }) => void;
   onStatus: (id: string, status: string) => void;
   onRoute: (leadId: string, outcome: CallOutcome) => void;
+  onDelete: (id: string) => void;
 }) {
   const isReview = !appt.approved && appt.status !== "completed" && appt.status !== "no_show" && appt.status !== "cancelled";
   const [when, setWhen] = useState(toLocalInput(appt.scheduledAt));
   const [notes, setNotes] = useState(appt.notes ?? "");
   const [status, setStatusValue] = useState(appt.status || "scheduled");
   const [routing, setRouting] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
   const buildPatch = (approve: boolean) => {
     const patch: { scheduledAt?: string | null; scheduledLabel?: string; notes?: string; approve?: boolean } = {};
@@ -878,6 +888,21 @@ function DetailDialog({
             <div className="flex justify-center py-16">
               <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
             </div>
+          ) : confirmDelete ? (
+            <div className="p-5">
+              <p className="mb-1 text-base font-semibold">Delete this appointment?</p>
+              <p className="mb-5 text-sm text-muted-foreground">
+                This permanently removes it from the pipeline. This can&apos;t be undone.
+              </p>
+              <div className="flex items-center gap-2">
+                <Button variant="outline" size="sm" onClick={() => setConfirmDelete(false)}>
+                  Cancel
+                </Button>
+                <Button variant="danger" size="sm" onClick={() => onDelete(appt.id)} className="gap-1.5">
+                  <Trash2 className="h-3.5 w-3.5" /> Delete appointment
+                </Button>
+              </div>
+            </div>
           ) : routing ? (
             <div className="p-5">
               <button type="button" onClick={() => setRouting(false)} className="mb-3 flex items-center gap-1 text-xs font-semibold text-muted-foreground hover:text-foreground">
@@ -953,6 +978,14 @@ function DetailDialog({
               <div className="flex flex-wrap items-center gap-2 border-t border-border/60 p-4">
                 <Button variant="ghost" size="sm" onClick={() => setRouting(true)} className="gap-1.5">
                   <RotateCcw className="h-3.5 w-3.5" /> Route back
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setConfirmDelete(true)}
+                  className="gap-1.5 text-danger hover:bg-danger/10 hover:text-danger"
+                >
+                  <Trash2 className="h-3.5 w-3.5" /> Delete
                 </Button>
                 <div className="ml-auto flex items-center gap-2">
                   {isReview ? (

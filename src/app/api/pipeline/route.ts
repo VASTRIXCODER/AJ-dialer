@@ -4,6 +4,7 @@ import {
   CALLBACK_STATUSES,
   approveAppointment,
   approveAppointmentsBulk,
+  deleteAppointment,
   overrideLeadDisposition,
   routeAppointmentsBulk,
   setAppointmentStatus,
@@ -30,6 +31,7 @@ const OUTCOMES: CallOutcome[] = [
  * Pipeline overrides from the Appointments / Callbacks tabs:
  *  • { action: "disposition", leadId, outcome } — re-file the lead (override AI).
  *  • { action: "appointment", id, status }      — set an appointment's status.
+ *  • { action: "appointment-delete", id }       — permanently delete an appointment.
  *  • { action: "callback", id, status }         — set a callback's status.
  */
 export async function POST(req: Request) {
@@ -61,6 +63,12 @@ export async function POST(req: Request) {
       notes: body.notes,
       approve: body.approve,
     });
+    return NextResponse.json(r, { status: r.ok ? 200 : 400 });
+  }
+
+  if (body.action === "appointment-delete") {
+    if (!body.id) return NextResponse.json({ error: "id is required." }, { status: 400 });
+    const r = await deleteAppointment(body.id);
     return NextResponse.json(r, { status: r.ok ? 200 : 400 });
   }
 
