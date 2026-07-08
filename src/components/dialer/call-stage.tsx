@@ -164,14 +164,7 @@ export function CallStage({
           <span className="text-muted-foreground">
             <b className="font-bold text-foreground tabular">{state.connectsThisSession}</b> connects
           </span>
-          {/* Daily total — persists across refresh/logout so reps keep a running
-              count for the whole day, not just the current session. */}
-          <span
-            title="Total dials today — saved on this device through the whole day, even if you refresh or log out."
-            className="text-muted-foreground"
-          >
-            <b className="font-bold text-primary tabular">{state.dialsToday}</b> today
-          </span>
+          <span className="text-[11px] text-muted-foreground/70">this session</span>
           {/* Caller-ID rotation indicator */}
           {state.callerIdInfo && state.callerIdInfo.pool.length > 0 && (
             <span

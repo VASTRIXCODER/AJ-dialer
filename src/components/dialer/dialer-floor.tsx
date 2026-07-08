@@ -52,6 +52,9 @@ export function DialerFloor() {
   // Nothing to show until there's activity today (keeps a fresh org's dialer clean).
   if (!data || (data.dialers.length === 0 && data.totalCallsToday === 0)) return null;
 
+  // Your own authoritative calls-today (from call_records — matches Reports).
+  const myCallsToday = data.dialers.find((d) => d.id === data.meId)?.callsToday ?? 0;
+
   return (
     <Card className="overflow-hidden">
       <button
@@ -74,9 +77,15 @@ export function DialerFloor() {
         ) : (
           <span className="text-xs text-muted-foreground">Nobody dialing right now</span>
         )}
-        <span className="ml-auto flex items-center gap-3 text-xs text-muted-foreground">
+        <span
+          className="ml-auto flex items-center gap-3 text-xs text-muted-foreground"
+          title="Calls logged today, from your call records — the same source as Reports."
+        >
           <span>
-            <b className="font-bold text-foreground tabular">{data.totalCallsToday}</b> calls today
+            <b className="font-bold text-foreground tabular">{myCallsToday}</b> yours
+          </span>
+          <span>
+            <b className="font-bold text-foreground tabular">{data.totalCallsToday}</b> team today
           </span>
           <ChevronDown className={cn("h-4 w-4 transition-transform", open && "rotate-180")} />
         </span>

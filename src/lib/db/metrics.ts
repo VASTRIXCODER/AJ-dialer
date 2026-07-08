@@ -72,6 +72,122 @@ function toPlayableRecording(raw: string | null): string | null {
   return m ? `/api/twilio/recording/${m[1]}` : raw;
 }
 
+/** Map one call_records row to the RecentCall shape (recording + transcript aware). */
+function mapRecentCall(
+  r: Row,
+  supervisor: boolean,
+  nameById: Map<string, string>,
+): RecentCall {
+  const outcome = (r.outcome as CallOutcome) ?? null;
+  const channel = r.channel === "human" ? "human" : "ai";
+  const recordingUrl =
+    channel === "human"
+      ? toPlayableRecording((r.recording_url as string) ?? null)
+      : ((r.recording_url as string) ?? null);
+  const conversationId = (r.conversation_id as string) ?? null;
+  const summary = (r.summary as string) ?? null;
+  // A recording only exists when the call actually connected — no-answer /
+  // voicemail / failed calls have none, so don't offer a dead "Play" link.
+  const hasRecording =
+    channel === "human"
+      ? Boolean(recordingUrl)
+      : Boolean(conversationId && outcome && CONNECTED_OUTCOMES.has(outcome));
+  return {
+    id: String(r.id ?? conversationId ?? `${r.owner_id}-${r.started_at}`),
+    leadName: String(r.lead_name ?? "Homeowner"),
+    channel,
+    repName: supervisor ? nameById.get(String(r.owner_id)) || "Rep" : undefined,
+    phone: String(r.phone ?? ""),
+    outcome,
+    durationSec: Number(r.duration_sec ?? 0),
+    startedAt: String(r.started_at ?? new Date().toISOString()),
+    recordingUrl,
+    conversationId,
+    summary,
+    hasSummary: Boolean(summary),
+    hasRecording,
+  };
+}
+
+export interface CallHistoryPage {
+  calls: RecentCall[];
+  hasMore: boolean;
+  scope: "org" | "own";
+}
+
+/**
+ * Paginated FULL call history — every call ever logged (not just the recent
+ * slice on the reports hero), each with its recording + transcript access.
+ * Supervisors get the whole org; reps get their own. Ordered newest-first.
+ */
+export async function getCallHistory(opts: {
+  offset?: number;
+  limit?: number;
+}): Promise<CallHistoryPage> {
+  if (!isSupabaseConfigured()) return { calls: [], hasMore: false, scope: "own" };
+  try {
+    const supabase = await createClient();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) return { calls: [], hasMore: false, scope: "own" };
+
+    const { data: prof } = await supabase
+      .from("profiles")
+      .select("org_id,role")
+      .eq("id", user.id)
+      .maybeSingle();
+    const orgId = prof?.org_id ? String(prof.org_id) : null;
+    const supervisor = Boolean(
+      orgId &&
+        ["owner", "admin", "manager"].includes(String(prof?.role ?? "rep")) &&
+        isAdminConfigured(),
+    );
+    const reader = supervisor ? createAdminClient() : supabase;
+    const scopeCol = supervisor ? "org_id" : "owner_id";
+    const scopeVal = (supervisor ? orgId : user.id) as string;
+
+    const limit = Math.min(200, Math.max(1, Math.floor(opts.limit ?? 50)));
+    const offset = Math.max(0, Math.floor(opts.offset ?? 0));
+
+    // Fetch one extra row to know whether there's another page.
+    const { data, error } = await reader
+      .from("call_records")
+      .select(
+        "id,owner_id,outcome,duration_sec,channel,started_at,lead_name,phone,conversation_id,recording_url,summary",
+      )
+      .eq(scopeCol, scopeVal)
+      .order("started_at", { ascending: false })
+      .range(offset, offset + limit);
+    if (error) {
+      console.error("[metrics] getCallHistory query failed:", error.message);
+      return { calls: [], hasMore: false, scope: supervisor ? "org" : "own" };
+    }
+    const rows = (data ?? []) as Row[];
+    const hasMore = rows.length > limit;
+    const page = hasMore ? rows.slice(0, limit) : rows;
+
+    let nameById = new Map<string, string>();
+    if (supervisor && orgId) {
+      const { data: mem } = await createAdminClient()
+        .from("organization_members")
+        .select("user_id,name")
+        .eq("org_id", orgId)
+        .eq("status", "active");
+      nameById = new Map(((mem ?? []) as Row[]).map((m) => [String(m.user_id), String(m.name ?? "")]));
+    }
+
+    return {
+      calls: page.map((r) => mapRecentCall(r, supervisor, nameById)),
+      hasMore,
+      scope: supervisor ? "org" : "own",
+    };
+  } catch (e) {
+    console.error("[metrics] getCallHistory failed:", e instanceof Error ? e.message : e);
+    return { calls: [], hasMore: false, scope: "own" };
+  }
+}
+
 export interface LiveCall {
   id: string;
   leadName: string;
@@ -355,37 +471,9 @@ export async function getReportingData(
       .map((d) => ({ name: d.label, value: Math.round(d.rate), color: d.color }));
 
     // ── Recent calls (period-scoped) ────────────────────────────────────────────
-    const recentCalls: RecentCall[] = periodCalls.slice(0, supervisor ? 25 : 12).map((r, i) => {
-      const outcome = outcomeOf(r);
-      const channel = r.channel === "human" ? "human" : "ai";
-      const recordingUrl =
-        channel === "human"
-          ? toPlayableRecording((r.recording_url as string) ?? null)
-          : ((r.recording_url as string) ?? null);
-      const conversationId = (r.conversation_id as string) ?? null;
-      const summary = (r.summary as string) ?? null;
-      // A recording only exists when the call actually connected — no-answer /
-      // voicemail / failed calls have none, so don't offer a dead "Play" link.
-      const hasRecording =
-        channel === "human"
-          ? Boolean(recordingUrl)
-          : Boolean(conversationId && outcome && CONNECTED_OUTCOMES.has(outcome));
-      return {
-        id: String(r.id ?? conversationId ?? i),
-        leadName: String(r.lead_name ?? "Homeowner"),
-        channel,
-        repName: supervisor ? nameById.get(String(r.owner_id)) || "Rep" : undefined,
-        phone: String(r.phone ?? ""),
-        outcome,
-        durationSec: Number(r.duration_sec ?? 0),
-        startedAt: String(r.started_at ?? new Date().toISOString()),
-        recordingUrl,
-        conversationId,
-        summary,
-        hasSummary: Boolean(summary),
-        hasRecording,
-      };
-    });
+    const recentCalls: RecentCall[] = periodCalls
+      .slice(0, supervisor ? 25 : 12)
+      .map((r) => mapRecentCall(r, supervisor, nameById));
 
     // ── Pipeline + live ─────────────────────────────────────────────────────────
     const appointments: ApptLite[] = appts.slice(0, 30).map((a, i) => ({

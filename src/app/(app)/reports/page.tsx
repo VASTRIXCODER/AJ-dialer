@@ -15,7 +15,7 @@ import Link from "next/link";
 import { AiExecReport } from "@/components/ai/exec-report";
 import { HourlyBarChart, OutcomeDonut, TrendAreaChart } from "@/components/dashboard/charts";
 import { MetricCard } from "@/components/dashboard/metric-card";
-import { RecentCalls } from "@/components/reports/recent-calls";
+import { CallHistory } from "@/components/reports/call-history";
 import {
   ChannelCompare,
   DispositionBreakdown,
@@ -266,15 +266,15 @@ export default async function ReportsPage({
       {aiDialerEnabled && <AiExecReport />}
 
       <SectionCard
-        title="Recent calls"
+        title="Call history"
         description={
           aiDialerEnabled
-            ? "Click any call for the full breakdown — transcript, summary, appointment & recording"
-            : "Click any call for the full breakdown — summary, outcome & recording"
+            ? "Every call, newest first — click any for the full breakdown (transcript, summary, appointment & recording)"
+            : "Every call, newest first — click any for the full breakdown (summary, outcome & recording)"
         }
         bodyClassName="p-0"
       >
-        <RecentCalls calls={recentCalls} />
+        <CallHistory />
       </SectionCard>
     </PageContainer>
   );
