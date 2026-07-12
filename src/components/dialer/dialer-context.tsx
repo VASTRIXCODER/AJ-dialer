@@ -24,6 +24,8 @@ export interface DialerConfig {
   /** "org" for supervisors (dial the whole org pool), "own" for reps. Drives
    *  the dialer's queue label — the actual scope is enforced server-side. */
   dialScope: "org" | "own";
+  /** The org's AI concurrency allowance (their voice plan's live-call limit). */
+  maxAiConcurrency?: number;
 }
 
 type Campaign = { id: string; name: string };
@@ -76,7 +78,13 @@ export function DialerProvider({
     ? queue.filter((l) => l.campaignId === campaignFilter)
     : queue;
 
-  const dialer = useDialer(queueForDialer, aiUsable, config.userId, activated);
+  const dialer = useDialer(
+    queueForDialer,
+    aiUsable,
+    config.userId,
+    activated,
+    config.maxAiConcurrency ?? 10,
+  );
   const { state } = dialer;
 
   async function loadLeads(): Promise<Lead[]> {

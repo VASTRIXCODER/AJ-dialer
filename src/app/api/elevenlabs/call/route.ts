@@ -103,6 +103,17 @@ export async function POST(req: Request) {
     baseUrl: getPublicBaseUrl(req),
   });
 
+  // The placement layer REFUSED to dial (out of credits / breaker open). Pass
+  // `halted` through so the dialer stops the whole campaign instead of marching
+  // to the next lead — each further call would fail the same way and spend a real
+  // homeowner for nothing. 402 = payment required, which is literally the case.
+  if (result.halted) {
+    return NextResponse.json(
+      { error: result.error, halted: true, reason: result.haltReason },
+      { status: result.haltReason === "provider_quota_exceeded" ? 402 : 503 },
+    );
+  }
+
   if (!result.conversationId) {
     const message = result.error ?? "ElevenLabs did not return a conversation id";
     const hint = /document_not_found|not[_ ]found/i.test(message)

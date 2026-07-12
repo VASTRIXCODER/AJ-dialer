@@ -37,6 +37,18 @@ import { OutcomeGrid } from "./outcome-grid";
 import { ParallelLines } from "./parallel-lines";
 import { Waveform } from "./waveform";
 
+/**
+ * Concurrency choices, up to the mode's ceiling. Below 6 we offer every value;
+ * above that we step (1,2,3,5,10,…) so a 30-line ceiling doesn't render 30 chips.
+ */
+function parallelChoices(max: number): number[] {
+  const ladder = [1, 2, 3, 5, 10, 15, 20, 25, 30];
+  const out =
+    max <= 5 ? [1, 2, 3, 4, 5].filter((n) => n <= max) : ladder.filter((n) => n <= max);
+  if (!out.includes(max)) out.push(max);
+  return out.slice(0, 10);
+}
+
 function ControlButton({
   active,
   onClick,
@@ -330,9 +342,12 @@ export function CallStage({
                   <div className="w-full">
                     <p className="mb-2 text-center text-xs font-bold uppercase tracking-wide text-muted-foreground">
                       {ai ? "Calls at once" : "Parallel lines"}
+                      <span className="ml-1.5 font-medium normal-case tracking-normal opacity-60">
+                        max {state.maxParallel}
+                      </span>
                     </p>
-                    <div className="grid grid-cols-3 gap-2">
-                      {[1, 2, 3].map((n) => (
+                    <div className="grid grid-cols-5 gap-2">
+                      {parallelChoices(state.maxParallel).map((n) => (
                         <button
                           key={n}
                           type="button"

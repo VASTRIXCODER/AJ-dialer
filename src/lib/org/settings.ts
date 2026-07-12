@@ -119,6 +119,16 @@ export interface OrgSettings {
     aiFirst: boolean;
     maxTalkMin: number;
     language: string;
+    /**
+     * How many AI calls may be LIVE at once — the org's voice-plan concurrency
+     * allowance. The dialer holds itself to this number.
+     *
+     * It matters that this is a REAL ceiling: the dialer used to launch a fresh
+     * batch every 8 seconds regardless of whether prior calls had ended, so a
+     * "3X" setting peaked near 70 simultaneous calls and burned credits at a
+     * rate nobody chose. Set this to whatever the plan actually allows.
+     */
+    maxConcurrentCalls: number;
   };
   compliance: {
     dncEnforced: boolean;
@@ -197,6 +207,8 @@ export const DEFAULT_ORG_SETTINGS: OrgSettings = {
     aiFirst: true,
     maxTalkMin: 8,
     language: "en",
+    // Matches the common ElevenLabs plan allowance. Raise if the plan does.
+    maxConcurrentCalls: 10,
   },
   compliance: {
     dncEnforced: true,

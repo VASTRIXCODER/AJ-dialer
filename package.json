@@ -9,7 +9,9 @@
     "start": "next start",
     "lint": "next lint",
     "relay": "node server/media-stream-server.mjs",
-    "verify:live-audio": "node scripts/verify-live-audio.mjs"
+    "verify:live-audio": "node scripts/verify-live-audio.mjs",
+    "verify:disposition": "tsx scripts/verify-disposition.ts",
+    "verify:dialer": "tsx scripts/verify-dialer.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.105.0",
@@ -34,6 +36,7 @@
     "@types/react": "^19.0.7",
     "@types/react-dom": "^19.0.3",
     "tailwindcss": "^4.0.0",
+    "tsx": "^4.23.0",
     "typescript": "^5.7.3"
   }
 }

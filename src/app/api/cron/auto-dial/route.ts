@@ -1,9 +1,10 @@
 import { NextResponse } from "next/server";
+import { breakerStatus } from "@/lib/ai-call-breaker";
 import { placeAiCallForLead } from "@/lib/ai-dialer";
 import { getAutoDialLeadsForOrg, touchLeadContacted } from "@/lib/db/leads";
 import { nextDialSeq } from "@/lib/dialer/rotation-server";
 import { isAutoDialActive, zonedDayKey } from "@/lib/dialer/schedule";
-import { isElevenLabsConfigured } from "@/lib/elevenlabs";
+import { fetchQuota, isElevenLabsConfigured } from "@/lib/elevenlabs";
 import { listActiveOrgsWithSettings } from "@/lib/org/membership";
 import { getPublicBaseUrl } from "@/lib/twilio";
 
@@ -38,10 +39,40 @@ async function runAutoDial(req: Request) {
     return NextResponse.json({ ok: true, skipped: "ElevenLabs not configured", results: [] });
   }
 
+  // PRE-FLIGHT: never start an unattended run against a dead provider.
+  //
+  // The loop below stamps a lead as contacted BEFORE placing its call (so a
+  // mid-flight crash can't cause a re-dial loop). That's right when calls work —
+  // but if the account is out of credits, every lead it touches gets marked
+  // contacted while the provider hangs up on them mid-greeting. Unattended, at
+  // one tick per minute, that quietly burns the whole book overnight. So we check
+  // the balance once, up front, and refuse to start.
+  const quota = await fetchQuota({ force: true });
+  if (quota?.exhausted) {
+    console.error("[cron.auto-dial] halted — out of ElevenLabs credits", quota);
+    return NextResponse.json({
+      ok: false,
+      halted: true,
+      reason: "provider_quota_exceeded",
+      error: "Out of ElevenLabs credits — auto-dialing halted so it stops burning leads.",
+      quota,
+    });
+  }
+  const breaker = breakerStatus();
+  if (breaker.open) {
+    return NextResponse.json({
+      ok: false,
+      halted: true,
+      reason: breaker.reason,
+      error: `Auto-dialing halted: ${breaker.message}`,
+    });
+  }
+
   const now = new Date();
   const baseUrl = getPublicBaseUrl(req);
   const orgs = await listActiveOrgsWithSettings();
   const results: Array<Record<string, unknown>> = [];
+  let halted: string | null = null;
 
   for (const org of orgs) {
     const a = org.settings.automation;
@@ -86,13 +117,27 @@ async function runAutoDial(req: Request) {
         lead,
         baseUrl,
       });
+      // The provider refused mid-run (credits ran dry between ticks). Stop the
+      // ENTIRE run, not just this org — the quota is account-wide, so every
+      // remaining call would fail identically and spend a real homeowner.
+      if (r.halted) {
+        halted = r.haltReason ?? "provider_error";
+        results.push({ org: org.name, lead: lead.id, halted: true, error: r.error });
+        break;
+      }
       placed++;
       if (r.error) results.push({ org: org.name, lead: lead.id, error: r.error });
     }
     results.push({ org: org.name, placed, ...(capped ? { capped: true } : {}) });
+    if (halted) break;
   }
 
-  return NextResponse.json({ ok: true, ranAt: now.toISOString(), results });
+  return NextResponse.json({
+    ok: !halted,
+    ...(halted ? { halted: true, reason: halted } : {}),
+    ranAt: now.toISOString(),
+    results,
+  });
 }
 
 // Vercel Cron issues a GET; support POST too for external schedulers / testing.

@@ -74,6 +74,8 @@ export default async function AppGroupLayout({
     aiEnabled,
     aiLockReason,
     dialScope,
+    // The org's voice-plan concurrency allowance — the dialer holds itself to it.
+    maxAiConcurrency: viewer.org?.settings.ai.maxConcurrentCalls ?? 10,
   };
 
   return (

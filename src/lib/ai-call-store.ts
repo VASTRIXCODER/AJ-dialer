@@ -30,7 +30,8 @@ export interface AICall {
   endedAt?: number;
   durationSec?: number;
   summary?: string;
-  outcome?: CallOutcome;
+  /** null when the call failed for a SYSTEM reason and has no homeowner outcome. */
+  outcome?: CallOutcome | null;
   recordingAvailable?: boolean;
   appointment?: { when: string; notes: string } | null;
   /** Active Twilio Media Stream SID while a supervisor is listening live. */

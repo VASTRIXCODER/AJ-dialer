@@ -54,6 +54,8 @@ export interface DialerState {
   recording: boolean;
   autoDial: boolean;
   parallelCount: number;
+  /** Ceiling for parallelCount in the CURRENT mode (human 3, AI = plan limit). */
+  maxParallel: number;
   lastOutcome: CallOutcome | null;
   mode: DialerMode;
   callsThisSession: number;
@@ -161,6 +163,24 @@ function manualLead(e164: string): Lead {
   };
 }
 
+// ── Concurrency ──────────────────────────────────────────────────────────────
+/**
+ * How often the pump checks for a FREE LINE. This is a poll interval, not a
+ * launch interval — the old code launched a whole fresh batch on every tick,
+ * which is what turned a "3 concurrent" setting into ~22 calls a minute.
+ */
+const AI_PUMP_MS = 5_000;
+/**
+ * A slot is force-released after this long. A call that never reports a terminal
+ * state would otherwise hold its line forever and stall the campaign at N-1.
+ */
+const AI_SLOT_MAX_MS = 12 * 60_000;
+
+/** A human rep can only talk to one answered line — more just abandons calls. */
+export const MAX_PARALLEL_HUMAN = 3;
+/** Platform ceiling for AI concurrency; the org's plan limit applies on top. */
+export const MAX_PARALLEL_AI = 30;
+
 export function useDialer(
   queue: Lead[],
   aiConfigured = false,
@@ -171,6 +191,8 @@ export function useDialer(
    *  true only once the dialer is actually opened, and keeps it true after — so
    *  the device persists across route changes. */
   enabled = true,
+  /** The org's AI concurrency allowance (their voice plan's live-call limit). */
+  maxAiConcurrency = 10,
 ) {
   const [state, setState] = useState<DialerState>({
     status: "idle",
@@ -182,6 +204,7 @@ export function useDialer(
     recording: true,
     autoDial: false,
     parallelCount: 1,
+    maxParallel: aiConfigured ? maxAiConcurrency : MAX_PARALLEL_HUMAN,
     lastOutcome: null,
     mode: "connecting",
     callsThisSession: 0,
@@ -211,6 +234,17 @@ export function useDialer(
   const aiModeRef = useRef(aiConfigured);
   const aiConfiguredRef = useRef(aiConfigured);
   const aiCursorRef = useRef(0);
+  /**
+   * Conversations we've launched that haven't finished. THIS is what makes
+   * `parallelCount` an actual concurrency limit rather than a batch size.
+   */
+  const inflightRef = useRef<Set<string>>(new Set());
+  /** When each slot was taken — so a call that never ends can't hold one forever. */
+  const slotAgeRef = useRef<Map<string, number>>(new Map());
+  const maxAiRef = useRef(maxAiConcurrency);
+  useEffect(() => {
+    maxAiRef.current = maxAiConcurrency;
+  }, [maxAiConcurrency]);
   const aiTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const humanIdRef = useRef<string | null>(null);
   // Monotonically incremented on every AI session start/end so in-flight fetch
@@ -459,14 +493,19 @@ export function useDialer(
     [stopTick, stopPoll, stopAITimer, clearHumanPresence],
   );
 
+  /**
+   * The next `count` leads. Does NOT wrap WITHIN a batch.
+   *
+   * This used to index `queue[(i + n) % queue.length]`, so a 2-lead queue dialed
+   * at 3X produced [lead0, lead1, lead0] — the same homeowner rung twice, on two
+   * lines, simultaneously, from a single batch. Running short at the end of the
+   * queue means fewer lines this round, not calling someone twice.
+   * (Lapping the whole list is handled deliberately elsewhere, via queueLap.)
+   */
   const nextLeads = useCallback(
     (count: number) => {
-      const out: Lead[] = [];
-      for (let i = 0; i < count && i < queue.length; i++) {
-        const lead = queue[(queueIndexRef.current + i) % queue.length];
-        if (lead) out.push(lead);
-      }
-      return out;
+      const start = queueIndexRef.current;
+      return queue.slice(start, start + count);
     },
     [queue],
   );
@@ -552,19 +591,82 @@ export function useDialer(
   );
 
   // ── AI calling (default) ──────────────────────────────────────────────────
+
+  /**
+   * Retire slots whose calls have ended, so the pump can top the floor back up.
+   * Force-releases any slot older than AI_SLOT_MAX_MS — otherwise a conversation
+   * that never reaches a terminal state holds its line forever and the campaign
+   * quietly stalls at N-1, which presents as "the dialer just stopped".
+   */
+  const reapInflight = useCallback(async () => {
+    const now = Date.now();
+    for (const [id, at] of slotAgeRef.current) {
+      if (now - at > AI_SLOT_MAX_MS) {
+        inflightRef.current.delete(id);
+        slotAgeRef.current.delete(id);
+      }
+    }
+    const ids = [...inflightRef.current].filter((id) => !id.startsWith("lead:"));
+    if (!ids.length) return;
+    try {
+      const res = await fetch("/api/elevenlabs/inflight", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ ids }),
+      });
+      const json = (await res.json().catch(() => ({}))) as { active?: string[] };
+      const live = new Set(json.active ?? []);
+      for (const id of ids) {
+        if (!live.has(id)) {
+          inflightRef.current.delete(id);
+          slotAgeRef.current.delete(id);
+        }
+      }
+    } catch {
+      /* the age guard above is the backstop */
+    }
+  }, []);
+
+  /**
+   * The pump. Tops the floor up to `parallelCount` LIVE calls — no more.
+   *
+   * This used to launch N fresh calls every 8 seconds regardless of whether the
+   * previous ones had ended. An AI call runs 2-5 minutes, so "3X" meant 3 NEW
+   * calls every 8 seconds — about 22 a minute, peaking near 70 simultaneous
+   * within ten minutes (and ~230 at "10X"). It was a throughput dial wearing a
+   * concurrency label, and it is how a 10-concurrent plan got flooded and a
+   * credit balance drained in an afternoon.
+   *
+   * Now it asks how many lines are free and launches exactly that many.
+   */
   const launchAIBatch = useCallback(async () => {
+    await reapInflight();
+    const slots = Math.max(0, parallelRef.current - inflightRef.current.size);
+
+    // Every line is busy — come back when one frees up. Launch NOTHING.
+    if (slots === 0) {
+      if (autoDialRef.current) {
+        aiTimerRef.current = setTimeout(() => void launchAIBatch(), AI_PUMP_MS);
+      }
+      return;
+    }
+
     const start = aiCursorRef.current;
-    const leads = queue.slice(start, start + parallelRef.current);
+    const leads = queue.slice(start, start + slots);
     if (!leads.length) {
+      // Out of leads — but only "done" once the calls still on the wire finish.
+      if (inflightRef.current.size > 0) {
+        if (autoDialRef.current) {
+          aiTimerRef.current = setTimeout(() => void launchAIBatch(), AI_PUMP_MS);
+        }
+        return;
+      }
       stopAITimer();
       patch({ status: "ai", aiCampaign: "done" });
       return;
     }
     aiCursorRef.current = start + leads.length;
-    queueIndexRef.current = Math.min(
-      aiCursorRef.current,
-      Math.max(0, queue.length - 1),
-    );
+    queueIndexRef.current = Math.min(aiCursorRef.current, queue.length);
 
     // Capture the session generation so stale callbacks from a prior session
     // (e.g. if endAISession() fires while fetch() is in-flight) are discarded.
@@ -588,8 +690,17 @@ export function useDialer(
       aiCalls: [...pending, ...s.aiCalls].slice(0, 40),
     }));
 
+    // Reserve a slot per lead the INSTANT we launch, keyed by lead id until the
+    // real conversationId comes back. Counting only calls that had already
+    // returned an id would let the next tick see empty lines and over-launch.
+    for (const l of leads) {
+      inflightRef.current.add(`lead:${l.id}`);
+      slotAgeRef.current.set(`lead:${l.id}`, Date.now());
+    }
+
     await Promise.all(
       leads.map(async (l) => {
+        const slotKey = `lead:${l.id}`;
         try {
           const res = await fetch("/api/elevenlabs/call", {
             method: "POST",
@@ -599,7 +710,39 @@ export function useDialer(
           const json = (await res.json().catch(() => ({}))) as {
             conversationId?: string;
             error?: string;
+            halted?: boolean;
           };
+
+          // The server REFUSED to dial (out of credits / breaker open). Stop the
+          // whole campaign — every further call would fail identically and spend
+          // a real homeowner for nothing.
+          if (json.halted) {
+            inflightRef.current.delete(slotKey);
+            slotAgeRef.current.delete(slotKey);
+            stopAITimer();
+            autoDialRef.current = false;
+            setState((s) =>
+              sessionGenRef.current !== gen
+                ? s
+                : {
+                    ...s,
+                    autoDial: false,
+                    aiCampaign: "idle",
+                    error: json.error ?? "AI dialing halted.",
+                  },
+            );
+            return;
+          }
+
+          // Hand the slot to the real conversation id so reapInflight() can retire
+          // it when the call ends. A call that failed to launch frees its line now.
+          inflightRef.current.delete(slotKey);
+          slotAgeRef.current.delete(slotKey);
+          if (res.ok && json.conversationId) {
+            inflightRef.current.add(json.conversationId);
+            slotAgeRef.current.set(json.conversationId, Date.now());
+          }
+
           setState((s) => {
             if (sessionGenRef.current !== gen) return s;
             return {
@@ -616,6 +759,8 @@ export function useDialer(
             };
           });
         } catch {
+          inflightRef.current.delete(slotKey);
+          slotAgeRef.current.delete(slotKey);
           setState((s) => {
             if (sessionGenRef.current !== gen) return s;
             return {
@@ -631,15 +776,21 @@ export function useDialer(
       }),
     );
 
+    // Keep pumping while auto-dial is on. The next tick re-checks free lines, so
+    // this can't run away: if all N are still busy it launches nothing.
     if (autoDialRef.current && aiCursorRef.current < queue.length) {
-      aiTimerRef.current = setTimeout(() => {
-        void launchAIBatch();
-      }, 8000);
+      aiTimerRef.current = setTimeout(() => void launchAIBatch(), AI_PUMP_MS);
     } else if (aiCursorRef.current >= queue.length) {
-      // Reached the end of this pass. Bump queueLap so the parent (which owns
-      // fetching the queue) refetches — dropping anything just dispositioned
-      // this pass — and restarts via restartAutoDialLap() when auto-dial is
-      // on. If auto-dial is off, this just leaves the campaign at "done".
+      // End of this pass. Wait for the calls still on the wire before declaring
+      // the lap over — otherwise the parent refetches while N calls are live and
+      // the next lap starts on top of them, stacking concurrency lap over lap.
+      if (inflightRef.current.size > 0 && autoDialRef.current) {
+        aiTimerRef.current = setTimeout(() => void launchAIBatch(), AI_PUMP_MS);
+        return;
+      }
+      // Bump queueLap so the parent (which owns fetching the queue) refetches —
+      // dropping anything just dispositioned this pass — and restarts via
+      // restartAutoDialLap(). If auto-dial is off, this leaves it at "done".
       queueLapRef.current += 1;
       patch({ aiCampaign: "done", queueLap: queueLapRef.current });
     }
@@ -649,6 +800,10 @@ export function useDialer(
     stopAITimer();
     sessionGenRef.current += 1;
     aiCursorRef.current = queueIndexRef.current;
+    // A fresh session starts with every line free. Carrying stale slots over
+    // would make the pump believe the floor was busy and launch nothing.
+    inflightRef.current.clear();
+    slotAgeRef.current.clear();
     setState((s) => ({
       ...s,
       status: "ai",
@@ -1085,13 +1240,28 @@ export function useDialer(
     [patch, stopAITimer],
   );
 
+  /**
+   * The ceiling is MODE-AWARE. A human rep genuinely can't handle more than a few
+   * ringing lines — every extra answered call gets abandoned, which is rude and a
+   * compliance problem. The AI agent has no such limit; its ceiling is whatever
+   * the voice plan allows. Collapsing both into one hardcoded `Math.min(3, …)`
+   * meant a 10-concurrent plan ran at 30% of what it pays for.
+   */
+  const maxParallel = useCallback(
+    () =>
+      aiModeRef.current
+        ? Math.max(1, Math.min(MAX_PARALLEL_AI, maxAiRef.current))
+        : MAX_PARALLEL_HUMAN,
+    [],
+  );
+
   const setParallelCount = useCallback(
     (value: number) => {
-      const clamped = Math.min(3, Math.max(1, value));
+      const clamped = Math.min(maxParallel(), Math.max(1, value));
       parallelRef.current = clamped;
-      patch({ parallelCount: clamped });
+      patch({ parallelCount: clamped, maxParallel: maxParallel() });
     },
-    [patch],
+    [maxParallel, patch],
   );
 
   const setAiMode = useCallback(
@@ -1102,7 +1272,25 @@ export function useDialer(
       aiModeRef.current = next;
       stopAITimer();
       clearHumanPresence();
-      patch({ aiMode: next, status: "idle", aiCalls: [], aiCampaign: "idle" });
+      inflightRef.current.clear();
+      slotAgeRef.current.clear();
+
+      // Re-clamp: the ceilings differ per mode. Switching AI(10x) -> human without
+      // this would leave one rep with ten lines ringing, and nine of those
+      // homeowners would answer to nobody.
+      const ceiling = next
+        ? Math.max(1, Math.min(MAX_PARALLEL_AI, maxAiRef.current))
+        : MAX_PARALLEL_HUMAN;
+      parallelRef.current = Math.min(parallelRef.current, ceiling);
+
+      patch({
+        aiMode: next,
+        status: "idle",
+        aiCalls: [],
+        aiCampaign: "idle",
+        parallelCount: parallelRef.current,
+        maxParallel: ceiling,
+      });
     },
     [clearHumanPresence, patch, stopAITimer],
   );

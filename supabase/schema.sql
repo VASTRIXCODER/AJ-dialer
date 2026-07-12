@@ -787,3 +787,42 @@ $$;
 
 grant execute on function public.app_next_dial_seq(text)
   to anon, authenticated, service_role;
+-- PART 10 — AI CALL FORENSICS  (idempotent; safe to re-run)
+--
+-- Added after the zero-connect incident, in which 283 calls that the homeowner
+-- ANSWERED and the agent then killed after ~2s were all filed as "no answer",
+-- and 6,164 calls were never finalized at all. Nothing in the schema recorded
+-- WHY a call produced no conversation, so a total outage of the AI agent was
+-- indistinguishable from a run of bad luck on the lead list.
+--
+-- `failure_kind` is the fix: it separates a fact about the HOMEOWNER (outcome:
+-- no_answer / voicemail / wrong_number) from a fact about OUR SYSTEM (the agent
+-- hung up, the provider errored, the call was never placed). A row with
+-- outcome IS NULL AND failure_kind IS NOT NULL is "not a real call" — it is
+-- excluded from every connect-rate denominator instead of deflating it.
+-- ─────────────────────────────────────────────────────────────────────────────
+
+alter table public.call_records     add column if not exists failure_kind        text;
+alter table public.call_records     add column if not exists termination_reason  text;
+alter table public.call_records     add column if not exists twilio_call_status  text;   -- completed|no-answer|busy|failed|canceled
+alter table public.call_records     add column if not exists twilio_error_code   int;    -- e.g. 21210 / 21212 / 21610
+alter table public.call_records     add column if not exists answered_by         text;   -- Twilio AMD, when enabled
+
+alter table public.ai_conversations add column if not exists failure_kind        text;
+alter table public.ai_conversations add column if not exists termination_reason  text;
+alter table public.ai_conversations add column if not exists override_mode       text;   -- what we were allowed to send
+
+-- The reconciler drains stuck calls OLDEST-first; without this index that scan
+-- degrades as the backlog grows (and the backlog is exactly when it must be fast).
+create index if not exists ai_conversations_stuck_idx
+  on public.ai_conversations (state, started_at)
+  where state in ('initiated', 'in_progress');
+
+create index if not exists call_records_failure_idx
+  on public.call_records (failure_kind)
+  where failure_kind is not null;
+
+-- Joining an AI call back to its Twilio leg / recording webhook.
+create index if not exists call_records_call_sid_idx
+  on public.call_records (call_sid)
+  where call_sid is not null;

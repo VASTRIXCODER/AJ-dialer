@@ -151,6 +151,12 @@ export interface OutboundCallResult {
   conversationId: string | null;
   callSid: string | null;
   success: boolean;
+  /** Override fields we were permitted to send on this call. */
+  overridesSent: string[];
+  /** Override fields we wanted but the agent forbids — omitted to keep the call alive. */
+  overridesDropped: string[];
+  /** Compact label persisted for forensics (e.g. "partial:first_message,language"). */
+  overrideMode: string;
 }
 
 export interface ElevenLabsPhoneNumber {
@@ -211,6 +217,306 @@ export async function resolveAgentPhoneNumberId(): Promise<string> {
   return (await resolvePhoneNumberId(configured)) || configured;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// THE OVERRIDE CONTRACT  (this is what caused the zero-connect outage)
+//
+// ElevenLabs will TERMINATE a call the instant it receives a
+// conversation_config_override for a field the agent hasn't allow-listed. The
+// call connects, the homeowner says "hello", and it dies — ~2 seconds, no
+// transcript. Every one of those was then filed as "no answer".
+//
+// The old code decided whether to send overrides purely from an env var
+// (ELEVENLABS_USE_DASHBOARD_PROMPT). If that var and the agent's dashboard
+// toggles ever disagreed, EVERY call died — and nothing anywhere said so.
+//
+// So we now ask the agent what it actually permits, and send only that.
+// The rule is FAIL CLOSED: sending no override is always survivable (the agent
+// falls back to its dashboard script and the call connects); sending a
+// disallowed one is fatal. When we don't know the policy, we send nothing.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ─────────────────────────────────────────────────────────────────────────────
+// QUOTA  (this is what actually caused the zero-connect outage)
+//
+// When the ElevenLabs credit balance is exhausted, the outbound call still gets
+// PLACED — Twilio dials, the homeowner's phone rings, they pick up, the agent
+// begins its greeting — and then ElevenLabs kills the conversation mid-sentence:
+//
+//     "This request exceeds your quota limit."
+//     Status: Error · Duration: 0:02 · Cost: 0 credits
+//
+// Every one of those was then filed as "no answer". So an empty wallet looked
+// exactly like a floor full of homeowners refusing to pick up, and the dialer
+// happily burned through 1,500 real leads against a provider that could not
+// speak a single word. Those leads are now marked "contacted" for nothing.
+//
+// The guardrail: CHECK BEFORE DIALING, and refuse. A lead you didn't call is
+// recoverable; a lead you burned on a 2-second dead call is much less so.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface QuotaStatus {
+  /** Credits/characters consumed this period. */
+  used: number;
+  /** The period's allowance. */
+  limit: number;
+  remaining: number;
+  /** True when there is no headroom left — DO NOT DIAL. */
+  exhausted: boolean;
+  /** True when we're close enough to the edge that a batch will run dry mid-way. */
+  low: boolean;
+  tier: string;
+  /** ElevenLabs subscription status: active | trialing | past_due | free_disabled … */
+  status: string;
+  /** Can the account go into overage (usage-based billing)? If so, "exhausted" isn't fatal. */
+  canOverage: boolean;
+  /** When the allowance resets (ISO), if known. */
+  resetsAt: string | null;
+}
+
+/** Below this many credits, a bulk batch will run dry partway through. */
+const LOW_QUOTA_THRESHOLD = 500;
+
+const QUOTA_TTL_MS = 60_000;
+let _quotaCache: { value: QuotaStatus; expiresAt: number } | null = null;
+
+/**
+ * Read the account's remaining credits. Cached for a minute — a 1,500-call batch
+ * must not make 1,500 billing lookups, but it must also notice within a minute
+ * when the tank runs dry mid-batch.
+ *
+ * Returns null when it can't be read. Callers must treat null as "unknown" and
+ * NOT block dialing on it — a billing-endpoint hiccup must never take the floor
+ * down. The post-call quota detection (classifyNonConversation) is the backstop.
+ */
+export async function fetchQuota(opts: { force?: boolean } = {}): Promise<QuotaStatus | null> {
+  if (!elevenLabsConfig.apiKey) return null;
+  if (!opts.force && _quotaCache && _quotaCache.expiresAt > Date.now()) {
+    return _quotaCache.value;
+  }
+  try {
+    const res = await el("/v1/user/subscription", {
+      method: "GET",
+      signal: AbortSignal.timeout(4000),
+    });
+    const j = (await res.json()) as Record<string, unknown>;
+
+    const used = Number(j.character_count ?? 0);
+    const limit = Number(j.character_limit ?? 0);
+    const remaining = Math.max(0, limit - used);
+    // "unlimited" or a non-zero extension means the account can run into overage,
+    // so hitting the limit doesn't actually stop calls.
+    const ext = j.max_credit_limit_extension;
+    const canOverage =
+      Boolean(j.can_extend_character_limit) &&
+      (ext === "unlimited" || Number(ext ?? 0) > 0);
+    const status = String(j.status ?? "");
+    const reset = Number(j.next_character_count_reset_unix ?? 0);
+
+    const value: QuotaStatus = {
+      used,
+      limit,
+      remaining,
+      exhausted: !canOverage && limit > 0 && remaining <= 0,
+      low: !canOverage && limit > 0 && remaining > 0 && remaining < LOW_QUOTA_THRESHOLD,
+      tier: String(j.tier ?? ""),
+      status,
+      canOverage,
+      resetsAt: reset > 0 ? new Date(reset * 1000).toISOString() : null,
+    };
+    _quotaCache = { value, expiresAt: Date.now() + QUOTA_TTL_MS };
+    return value;
+  } catch (e) {
+    console.error("[elevenlabs] could not read quota", e);
+    return null;
+  }
+}
+
+/** Drop the cached quota — call after a quota failure so the next check is fresh. */
+export function invalidateQuota(): void {
+  _quotaCache = null;
+}
+
+/** Which override fields this agent has allow-listed in its Security settings. */
+export interface OverridePolicy {
+  prompt: boolean;
+  firstMessage: boolean;
+  language: boolean;
+  ttsSpeed: boolean;
+}
+
+export const NO_OVERRIDES: OverridePolicy = {
+  prompt: false,
+  firstMessage: false,
+  language: false,
+  ttsSpeed: false,
+};
+
+const POLICY_TTL_MS = 5 * 60_000;
+let _policyCache: { value: OverridePolicy; expiresAt: number } | null = null;
+let _policyInFlight: Promise<OverridePolicy | null> | null = null;
+
+/**
+ * Read the agent's allow-list: platform_settings.overrides.conversation_config_override.
+ *
+ * Cached (5 min) and single-flighted, so a burst of 1,500 dials makes ONE request.
+ * Returns null on any failure — caller must then send no overrides at all. Never
+ * throws: a hiccup reading the policy must never take the dialer down.
+ */
+export async function fetchOverridePolicy(
+  opts: { force?: boolean } = {},
+): Promise<OverridePolicy | null> {
+  if (!elevenLabsConfig.apiKey || !elevenLabsConfig.agentId) return null;
+  const now = Date.now();
+  if (!opts.force && _policyCache && _policyCache.expiresAt > now) {
+    return _policyCache.value;
+  }
+  if (_policyInFlight) return _policyInFlight;
+
+  _policyInFlight = (async () => {
+    try {
+      const res = await el(
+        `/v1/convai/agents/${encodeURIComponent(elevenLabsConfig.agentId)}`,
+        { method: "GET", signal: AbortSignal.timeout(2500) },
+      );
+      const json = (await res.json()) as Record<string, unknown>;
+      const platform = (json.platform_settings ?? {}) as Record<string, unknown>;
+      const overrides = (platform.overrides ?? {}) as Record<string, unknown>;
+      const cco = (overrides.conversation_config_override ?? {}) as Record<string, unknown>;
+      const agent = (cco.agent ?? {}) as Record<string, unknown>;
+      const tts = (cco.tts ?? {}) as Record<string, unknown>;
+      const promptNode = (agent.prompt ?? {}) as Record<string, unknown> | boolean;
+
+      const policy: OverridePolicy = {
+        prompt:
+          typeof promptNode === "boolean"
+            ? promptNode
+            : Boolean((promptNode as Record<string, unknown>).prompt),
+        firstMessage: Boolean(agent.first_message),
+        language: Boolean(agent.language),
+        ttsSpeed: Boolean(tts.speed),
+      };
+      _policyCache = { value: policy, expiresAt: Date.now() + POLICY_TTL_MS };
+      return policy;
+    } catch (e) {
+      console.error("[elevenlabs] could not read the agent's override policy — " +
+        "sending NO overrides for safety (calls will use the dashboard script)", e);
+      return null;
+    } finally {
+      _policyInFlight = null;
+    }
+  })();
+
+  return _policyInFlight;
+}
+
+/** The last policy we successfully read, without hitting the network. */
+export function cachedOverridePolicy(): OverridePolicy | null {
+  return _policyCache && _policyCache.expiresAt > Date.now() ? _policyCache.value : null;
+}
+
+export interface OverrideBuild {
+  /** The conversation_config_override to send, or null to send none. */
+  override: Record<string, unknown> | null;
+  /** Fields we were asked for AND allowed to send. */
+  sent: string[];
+  /** Fields we were asked for but are NOT allowed to send — silently omitted. */
+  dropped: string[];
+  /** Compact label persisted on the conversation row for forensics. */
+  mode: string;
+}
+
+/**
+ * Build the override payload we are actually permitted to send.
+ *
+ * Pure — no I/O — so it can be unit-tested and reused by the health endpoint to
+ * answer "would this call get killed right now?" without placing a call.
+ *
+ * `policy === null` (unknown) → send NOTHING. That is the fail-closed rule.
+ */
+export function buildOverridePayload(
+  opts: {
+    promptOverride?: string;
+    firstMessage?: string;
+    language?: string;
+    voiceSpeed?: number;
+  },
+  policy: OverridePolicy | null,
+): OverrideBuild {
+  const wanted: { key: string; allowed: boolean; apply: (o: Record<string, unknown>) => void }[] = [];
+
+  if (opts.promptOverride) {
+    wanted.push({
+      key: "prompt",
+      allowed: Boolean(policy?.prompt),
+      apply: (o) => {
+        const agent = (o.agent ?? {}) as Record<string, unknown>;
+        agent.prompt = { prompt: opts.promptOverride };
+        o.agent = agent;
+      },
+    });
+  }
+  if (opts.firstMessage) {
+    wanted.push({
+      key: "first_message",
+      allowed: Boolean(policy?.firstMessage),
+      apply: (o) => {
+        const agent = (o.agent ?? {}) as Record<string, unknown>;
+        agent.first_message = opts.firstMessage;
+        o.agent = agent;
+      },
+    });
+  }
+  if (opts.language) {
+    wanted.push({
+      key: "language",
+      allowed: Boolean(policy?.language),
+      apply: (o) => {
+        const agent = (o.agent ?? {}) as Record<string, unknown>;
+        agent.language = opts.language;
+        o.agent = agent;
+      },
+    });
+  }
+  if (typeof opts.voiceSpeed === "number") {
+    wanted.push({
+      key: "tts.speed",
+      allowed: Boolean(policy?.ttsSpeed),
+      apply: (o) => {
+        o.tts = { speed: opts.voiceSpeed };
+      },
+    });
+  }
+
+  const override: Record<string, unknown> = {};
+  const sent: string[] = [];
+  const dropped: string[] = [];
+  for (const w of wanted) {
+    if (w.allowed) {
+      w.apply(override);
+      sent.push(w.key);
+    } else {
+      dropped.push(w.key);
+    }
+  }
+
+  if (dropped.length) {
+    console.warn(
+      "[elevenlabs] dropping override fields the agent does not allow — " +
+        "sending them would kill the call on connect. Enable them under " +
+        "Agent → Security → Overrides to use the app's script.",
+      { dropped, sent, policyKnown: policy !== null },
+    );
+  }
+
+  const mode = policy === null ? "none:policy-unknown" : sent.length ? `partial:${sent.join(",")}` : "none";
+  return {
+    override: Object.keys(override).length ? override : null,
+    sent,
+    dropped,
+    mode,
+  };
+}
+
 /**
  * Place an outbound AI call via Twilio. `dynamicVariables` are injected into the
  * agent's prompt/script (e.g. first_name, utility_bill); `firstMessage` overrides
@@ -235,20 +541,15 @@ export async function placeOutboundCall(opts: {
   const initData: Record<string, unknown> = {};
   if (opts.dynamicVariables) initData.dynamic_variables = opts.dynamicVariables;
 
-  // Dashboard-prompt mode: send ONLY the personalization variables and let the
-  // agent use its own configured prompt/first-message/voice. We must NOT send a
-  // conversation_config_override the agent can't accept — that makes ElevenLabs
-  // end the call on connect (the "it calls then immediately hangs up" symptom).
-  if (!elevenLabsConfig.useDashboardPrompt) {
-    const agent: Record<string, unknown> = {};
-    if (opts.firstMessage) agent.first_message = opts.firstMessage;
-    if (opts.promptOverride) agent.prompt = { prompt: opts.promptOverride };
-    if (opts.language) agent.language = opts.language;
-    const override: Record<string, unknown> = {};
-    if (Object.keys(agent).length) override.agent = agent;
-    if (typeof opts.voiceSpeed === "number") override.tts = { speed: opts.voiceSpeed };
-    if (Object.keys(override).length) initData.conversation_config_override = override;
-  }
+  // Send ONLY the override fields this agent actually allows. `useDashboardPrompt`
+  // is now just an explicit "never override" kill switch — it is no longer the
+  // thing standing between us and a dead call, because the agent itself is the
+  // authority on what it will accept.
+  const policy = elevenLabsConfig.useDashboardPrompt
+    ? NO_OVERRIDES
+    : await fetchOverridePolicy();
+  const built = buildOverridePayload(opts, policy);
+  if (built.override) initData.conversation_config_override = built.override;
 
   // Rotation: use the per-call number when it resolves to an imported ElevenLabs
   // number, otherwise fall back to the configured default.
@@ -275,6 +576,9 @@ export async function placeOutboundCall(opts: {
       (json.conversation_id as string) ?? (json.conversationId as string) ?? null,
     callSid: (json.callSid as string) ?? (json.call_sid as string) ?? null,
     success: json.success !== false,
+    overridesSent: built.sent,
+    overridesDropped: built.dropped,
+    overrideMode: built.mode,
   };
 }
 
@@ -290,6 +594,13 @@ export interface ParsedConversation {
   callSid: string | null;
   durationSec: number | null;
   terminationReason: string;
+  /**
+   * metadata.error — the provider telling us outright that IT failed (e.g. a
+   * rejected conversation_config_override). This was previously parsed and
+   * thrown away, which is a large part of why a total agent outage was invisible.
+   */
+  errorCode: string | null;
+  errorReason: string;
   hasAudio: boolean;
   summary: string;
   turns: { role: string; message: string; secs: number | null }[];
@@ -337,6 +648,21 @@ export async function fetchConversation(
         };
       },
     );
+    const err = (metadata.error ?? data.error ?? null) as
+      | Record<string, unknown>
+      | string
+      | null;
+    const errorCode =
+      err == null
+        ? null
+        : typeof err === "string"
+          ? err || null
+          : String(err.code ?? err.type ?? "") || null;
+    const errorReason =
+      err == null || typeof err === "string"
+        ? ""
+        : String(err.reason ?? err.message ?? err.detail ?? "");
+
     return {
       status: String(data.status ?? ""),
       callSid,
@@ -344,6 +670,8 @@ export async function fetchConversation(
       terminationReason: String(
         metadata.termination_reason ?? metadata.call_termination_reason ?? "",
       ),
+      errorCode,
+      errorReason,
       hasAudio: Boolean(data.has_audio),
       summary: String(analysis.transcript_summary ?? ""),
       turns,

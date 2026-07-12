@@ -1,9 +1,17 @@
-import { NextResponse } from "next/server";
 import { losingLegs, markAnswered } from "@/lib/call-registry";
 import { createAdminClient, isAdminConfigured } from "@/lib/supabase/admin";
 import { getRestClient } from "@/lib/twilio";
 
 export const dynamic = "force-dynamic";
+
+/** Twilio call states that mean the leg is over and its verdict is final. */
+const TERMINAL_STATUSES = new Set([
+  "completed",
+  "no-answer",
+  "busy",
+  "failed",
+  "canceled",
+]);
 
 /**
  * Receives Twilio call + recording status callbacks.
@@ -80,5 +88,31 @@ export async function POST(req: Request) {
     }
   }
 
-  return NextResponse.json({ received: true });
+  // ── Persist Twilio's own verdict on the call ────────────────────────────────
+  // Twilio knows things we otherwise throw away: whether the leg was actually
+  // answered, and the error code when it wasn't (21210/21212 bad caller ID, 21610
+  // blocked, 13224 geo-permissions…). None of it was ever stored, which is a big
+  // part of why "the call never happened" and "nobody picked up" were
+  // indistinguishable. Only applies to legs WE create — for direct-mode AI calls
+  // ElevenLabs owns the Twilio leg and the truth comes from its metadata.error.
+  if (callSid && TERMINAL_STATUSES.has(callStatus) && isAdminConfigured()) {
+    try {
+      const errorCode = Number(form.get("ErrorCode")) || null;
+      await createAdminClient()
+        .from("call_records")
+        .update({
+          twilio_call_status: callStatus,
+          twilio_error_code: errorCode,
+          answered_by: String(form.get("AnsweredBy") ?? "") || null,
+        })
+        .eq("call_sid", callSid);
+    } catch {
+      /* best-effort */
+    }
+  }
+
+  // Twilio parses a status-callback response as TwiML. Returning a JSON body made
+  // it log "15003 Warning Response to Callback URL" on every single call. An empty
+  // 204 is what it actually wants.
+  return new Response(null, { status: 204 });
 }

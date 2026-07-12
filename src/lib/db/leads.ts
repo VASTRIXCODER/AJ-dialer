@@ -18,7 +18,43 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 type Row = Record<string, unknown>;
 
-function rowToLead(r: Row): Lead {
+// ─────────────────────────────────────────────────────────────────────────────
+// THE 1,000-ROW CEILING
+//
+// PostgREST caps every response at 1,000 rows by default. `.select("*")` with no
+// `.range()` therefore returns AT MOST 1,000 rows — silently, with no error and
+// nothing to indicate anything was withheld. This account has 17,342 leads, so
+// the Leads tab showed 1,000 of them and the dial queue silently truncated to
+// 1,000 even though 15,136 leads are dialable.
+//
+// Anything that must return "all" rows has to page explicitly.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** PostgREST's per-response ceiling. Pages are requested at exactly this size. */
+const PAGE = 1000;
+/** Hard stop so a runaway table can never OOM the server. */
+const MAX_PAGED_ROWS = 100_000;
+
+/**
+ * Read EVERY row a query matches, paging past the 1,000-row cap.
+ * `build()` must return a FRESH query builder each call (they aren't reusable).
+ */
+async function fetchAllPaged(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  build: () => any,
+): Promise<Row[]> {
+  const out: Row[] = [];
+  for (let from = 0; from < MAX_PAGED_ROWS; from += PAGE) {
+    const { data, error } = await build().range(from, from + PAGE - 1);
+    if (error) break;
+    const rows = (data ?? []) as Row[];
+    out.push(...rows);
+    if (rows.length < PAGE) break; // short page ⇒ end of the table
+  }
+  return out;
+}
+
+export function rowToLead(r: Row): Lead {
   const num = (v: unknown) => (v == null ? undefined : Number(v));
   return {
     id: String(r.id),
@@ -77,21 +113,38 @@ export async function getLeads(): Promise<Lead[]> {
     // Leads are SEPARATED BY UPLOADER. A rep sees only the leads they uploaded;
     // a supervisor (owner/admin/manager) sees the whole org, attributed to each
     // uploader so the Leads tab can group them into per-account sections.
+    // Both branches PAGE — an un-ranged select silently stops at 1,000 rows, which
+    // is why a 17,342-lead book rendered (and reported its total) as 1,000.
     if (!supervisor) {
-      const { data } = await supabase
-        .from("leads")
-        .select("*")
-        .eq("owner_id", user.id)
-        .order("ai_score", { ascending: false, nullsFirst: false });
-      return (data ?? []).map(rowToLead);
+      const rows = await fetchAllPaged(() =>
+        supabase
+          .from("leads")
+          .select("*")
+          .eq("owner_id", user.id)
+          .order("ai_score", { ascending: false, nullsFirst: false })
+          .order("id", { ascending: true }),
+      );
+      return rows.map(rowToLead);
     }
 
     // Supervisor: the org pool + their own leads (covers any legacy null-org
     // rows), deduped, with each uploader's display name resolved for sections.
     const admin = createAdminClient();
-    const [orgRes, ownRes, memberRes] = await Promise.all([
-      admin.from("leads").select("*").eq("org_id", orgId as string),
-      admin.from("leads").select("*").eq("owner_id", user.id),
+    const [orgRows, ownRows, memberRes] = await Promise.all([
+      fetchAllPaged(() =>
+        admin
+          .from("leads")
+          .select("*")
+          .eq("org_id", orgId as string)
+          .order("id", { ascending: true }),
+      ),
+      fetchAllPaged(() =>
+        admin
+          .from("leads")
+          .select("*")
+          .eq("owner_id", user.id)
+          .order("id", { ascending: true }),
+      ),
       admin
         .from("organization_members")
         .select("user_id,name")
@@ -105,7 +158,7 @@ export async function getLeads(): Promise<Lead[]> {
       ]),
     );
     const byId = new Map<string, Row>();
-    for (const r of [...(orgRes.data ?? []), ...(ownRes.data ?? [])]) {
+    for (const r of [...orgRows, ...ownRows]) {
       byId.set(String((r as Row).id), r as Row);
     }
     return [...byId.values()]
@@ -542,24 +595,37 @@ export async function getDialQueue(): Promise<Lead[]> {
     const supervisor =
       Boolean(orgId) && isSupervisorRole(prof?.role) && isAdminConfigured();
 
+    // PAGED. An un-ranged select stops at PostgREST's 1,000-row default without
+    // any error, so this account's dial queue silently held 1,000 of its 15,136
+    // dialable leads — 93% of the book invisible, and the dialer reporting "done"
+    // having never touched it. Filter status in SQL too, so we page over dialable
+    // rows rather than the whole 17k table.
     if (supervisor) {
       // Org-wide pool via the service-role client (RLS would hide other reps'
       // rows), scoped in code to this org — never another org's leads.
       const admin = createAdminClient();
-      const { data } = await admin
-        .from("leads")
-        .select("*")
-        .eq("org_id", orgId as string)
-        .order("ai_score", { ascending: false, nullsFirst: false });
-      return dialable((data ?? []).map((r) => rowToLead(r as Row)));
+      const rows = await fetchAllPaged(() =>
+        admin
+          .from("leads")
+          .select("*")
+          .eq("org_id", orgId as string)
+          .in("status", DIALABLE)
+          .order("ai_score", { ascending: false, nullsFirst: false })
+          .order("id", { ascending: true }),
+      );
+      return dialable(rows.map((r) => rowToLead(r as Row)));
     }
 
-    const { data } = await supabase
-      .from("leads")
-      .select("*")
-      .eq("owner_id", user.id)
-      .order("ai_score", { ascending: false, nullsFirst: false });
-    return dialable((data ?? []).map(rowToLead));
+    const rows = await fetchAllPaged(() =>
+      supabase
+        .from("leads")
+        .select("*")
+        .eq("owner_id", user.id)
+        .in("status", DIALABLE)
+        .order("ai_score", { ascending: false, nullsFirst: false })
+        .order("id", { ascending: true }),
+    );
+    return dialable(rows.map((r) => rowToLead(r as Row)));
   } catch {
     return [];
   }

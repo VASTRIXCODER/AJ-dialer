@@ -1,9 +1,10 @@
 import "server-only";
 
+import { recordCallSuccess, recordProviderFailure } from "./ai-call-breaker";
 import { getAICall, updateAICall } from "./ai-call-store";
 import { readCall, resolveAppointment } from "./ai/appointment";
 import { analyzeConversation } from "./ai/services";
-import { dispositionBlurb, unconnectedOutcome } from "./call-disposition";
+import { classifyNonConversation, type FailureKind } from "./call-disposition";
 import { getLeadById, getLeadByIdAdmin, getLeadByPhoneAdmin } from "./db/leads";
 import {
   completeAIConversation,
@@ -31,7 +32,14 @@ export interface Turn {
 
 export interface FinalizeResult {
   connected: boolean;
-  outcome: CallOutcome;
+  /**
+   * null when the call failed for a SYSTEM reason (see `failureKind`) rather than
+   * a homeowner one. A null outcome is excluded from every rate denominator by
+   * isResolved() — a call the agent killed on connect must never be counted as
+   * "the homeowner didn't answer".
+   */
+  outcome: CallOutcome | null;
+  failureKind: FailureKind | null;
   summary: string;
   sentiment: "positive" | "neutral" | "negative";
   appointment: { when: string; iso?: string; notes: string } | null;
@@ -61,6 +69,12 @@ export async function finalizeAIConversation(input: {
   status?: string;
   durationSec?: number;
   terminationReason?: string;
+  /** ElevenLabs `metadata.error.code`, when the provider reported one. */
+  errorCode?: string | null;
+  /** ElevenLabs `metadata.error.reason` — where "exceeds your quota limit" appears. */
+  errorReason?: string | null;
+  /** Set when the caller already KNOWS this was a system fault (e.g. dial rejected). */
+  failureKind?: FailureKind | null;
   lead?: Lead | null;
 }): Promise<FinalizeResult> {
   const { conversationId, turns } = input;
@@ -70,7 +84,11 @@ export async function finalizeAIConversation(input: {
     .filter((line) => line.trim().length > 3)
     .join("\n");
 
-  const connected = didConnect(turns, input.status ?? "");
+  const hasHumanTurn = turns.some(
+    (t) =>
+      (t.role ?? t.speaker) !== "agent" && (t.message ?? t.text ?? "").trim().length > 1,
+  );
+  const connected = !input.failureKind && didConnect(turns, input.status ?? "");
 
   const tracked = getAICall(conversationId);
   // Resolve the lead robustly. The webhook has no user session, so we must use
@@ -88,7 +106,8 @@ export async function finalizeAIConversation(input: {
   }
 
   let summary: string;
-  let outcome: CallOutcome;
+  let outcome: CallOutcome | null;
+  let failureKind: FailureKind | null = null;
   let sentiment: "positive" | "neutral" | "negative";
   let appointment: { when: string; iso?: string; notes: string } | null = null;
   let qualification: FinalizeResult["qualification"];
@@ -143,13 +162,51 @@ export async function finalizeAIConversation(input: {
     // If an appointment was genuinely agreed, the disposition must reflect it.
     if (appointment && outcome !== "do_not_call") outcome = "appointment_booked";
   } else {
-    outcome = unconnectedOutcome(
-      input.terminationReason ?? input.status ?? "",
-      input.durationSec ?? 0,
-    );
+    // No two-way conversation. Decide WHY — and specifically, whether this was
+    // the homeowner (a real outcome) or us (a system failure). Getting this wrong
+    // is what let a total agent outage masquerade as a bad no-answer rate for days.
+    const verdict = classifyNonConversation({
+      terminationReason: input.terminationReason,
+      status: input.status,
+      durationSec: input.durationSec,
+      errorCode: input.errorCode,
+      errorReason: input.errorReason,
+      hasHumanTurn,
+      failureKind: input.failureKind,
+    });
     sentiment = "neutral";
-    summary = dispositionBlurb(outcome);
+    summary = verdict.summary;
+    if (verdict.kind === "outcome") {
+      outcome = verdict.outcome;
+    } else {
+      // A system failure tells us NOTHING about the homeowner. Leave the call
+      // un-dispositioned so it stays out of every rate denominator (isResolved)
+      // rather than deflating the connect rate as a phantom "no answer".
+      outcome = null;
+      failureKind = verdict.failureKind;
+      console.error("[ai-call] system failure", {
+        conversationId,
+        failureKind,
+        durationSec: input.durationSec,
+        terminationReason: input.terminationReason,
+        errorCode: input.errorCode,
+      });
+
+      // Tell the breaker. This is what makes a RUNNING batch stop itself: the
+      // first call to come back "out of credits" halts the remaining 1,499
+      // before they ring anyone. Without this the batch just keeps dialing.
+      if (
+        failureKind === "provider_quota_exceeded" ||
+        failureKind === "agent_terminated_on_connect" ||
+        failureKind === "provider_error"
+      ) {
+        recordProviderFailure(failureKind, input.errorReason ?? input.terminationReason ?? "");
+      }
+    }
   }
+
+  // A real two-way conversation means the provider is healthy again.
+  if (connected) recordCallSuccess();
 
   // Live monitor (in-memory) — instant feedback.
   updateAICall(conversationId, {
@@ -168,6 +225,8 @@ export async function finalizeAIConversation(input: {
     conversationId,
     summary,
     outcome,
+    failureKind,
+    terminationReason: input.terminationReason ?? input.status ?? null,
     sentiment,
     durationSec: input.durationSec,
     appointment,
@@ -176,9 +235,9 @@ export async function finalizeAIConversation(input: {
 
   // Process the extracted data back onto the lead (bill, solar, EV/pool/battery,
   // score, status) so the CRM reflects what the AI learned on the call.
-  if (connected) {
+  if (connected && outcome) {
     await enrichLeadFromAI({ conversationId, outcome, score, qualification });
   }
 
-  return { connected, outcome, summary, sentiment, appointment };
+  return { connected, outcome, failureKind, summary, sentiment, appointment };
 }

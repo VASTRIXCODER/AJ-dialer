@@ -216,6 +216,8 @@ export async function seedAIConversation(input: {
   leadId: string | null;
   leadName: string;
   phone: string;
+  /** Which override fields actually went out — forensics for a killed call. */
+  overrideMode?: string;
 }): Promise<void> {
   if (!isSupabaseConfigured()) return;
   try {
@@ -231,6 +233,7 @@ export async function seedAIConversation(input: {
       lead_name: input.leadName,
       phone: input.phone,
       call_sid: input.callSid,
+      override_mode: input.overrideMode ?? null,
       state: "initiated",
     });
   } catch {
@@ -238,11 +241,103 @@ export async function seedAIConversation(input: {
   }
 }
 
+export interface StuckConversation {
+  conversationId: string;
+  startedAt: number;
+}
+
+/**
+ * Every AI conversation that never reached a terminal state — global,
+ * service-role, OLDEST-FIRST, keyset-paged. For the cron reconciler ONLY.
+ *
+ * Deliberately not reusing getAIConversationsForMonitor(): that one is scoped to
+ * the viewer, orders newest-first, and caps rows BEFORE filtering to active. Once
+ * a backlog grows past the cap the oldest stuck calls fall out of the window and
+ * can never be seen again — they're stuck forever, by construction. Draining a
+ * backlog requires going oldest-first with a cursor.
+ */
+export async function listStuckAIConversations(opts: {
+  olderThanMs: number;
+  limit: number;
+  after?: string | null;
+}): Promise<{ rows: StuckConversation[]; nextCursor: string | null }> {
+  if (!isAdminConfigured()) return { rows: [], nextCursor: null };
+  try {
+    const admin = createAdminClient();
+    const cutoff = new Date(Date.now() - opts.olderThanMs).toISOString();
+    let q = admin
+      .from("ai_conversations")
+      .select("conversation_id, started_at")
+      .in("state", ["initiated", "in_progress"])
+      .lt("started_at", cutoff);
+    if (opts.after) q = q.gt("started_at", opts.after);
+
+    const { data } = await q
+      .order("started_at", { ascending: true })
+      .limit(opts.limit);
+
+    const raw = (data ?? []) as Record<string, unknown>[];
+    const rows = raw.map((r) => ({
+      conversationId: String(r.conversation_id),
+      startedAt: Date.parse(String(r.started_at)),
+    }));
+    const last = raw[raw.length - 1];
+    return {
+      rows,
+      nextCursor: rows.length === opts.limit && last ? String(last.started_at) : null,
+    };
+  } catch {
+    return { rows: [], nextCursor: null };
+  }
+}
+
+/** How many AI conversations are stuck mid-flight (for the health endpoint). */
+export async function countStuckAIConversations(): Promise<number> {
+  if (!isAdminConfigured()) return 0;
+  try {
+    const { count } = await createAdminClient()
+      .from("ai_conversations")
+      .select("conversation_id", { count: "exact", head: true })
+      .in("state", ["initiated", "in_progress"]);
+    return count ?? 0;
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * Calls in the last 24h that the provider killed on connect — the outage
+ * signature. Zero is healthy; anything else means homeowners are answering and
+ * being hung up on.
+ */
+export async function countKillSignature24h(): Promise<number> {
+  if (!isAdminConfigured()) return 0;
+  try {
+    const since = new Date(Date.now() - 86_400_000).toISOString();
+    const { count } = await createAdminClient()
+      .from("call_records")
+      .select("id", { count: "exact", head: true })
+      .in("failure_kind", ["provider_quota_exceeded", "agent_terminated_on_connect"])
+      .gte("started_at", since);
+    return count ?? 0;
+  } catch {
+    return 0;
+  }
+}
+
 // ── AI conversation: complete from the webhook (no session → admin client) ───
 export async function completeAIConversation(input: {
   conversationId: string;
   summary: string;
-  outcome: CallOutcome;
+  /**
+   * null when the call failed for a SYSTEM reason (see `failureKind`) rather than
+   * a homeowner one — e.g. the provider ran out of credits and hung up on the
+   * homeowner mid-greeting. A null outcome is excluded from every rate
+   * denominator, and (see below) must NOT re-file the lead.
+   */
+  outcome: CallOutcome | null;
+  failureKind?: string | null;
+  terminationReason?: string | null;
   sentiment: string;
   durationSec?: number;
   appointment?: { when: string; iso?: string; notes: string } | null;
@@ -254,7 +349,7 @@ export async function completeAIConversation(input: {
     const admin = createAdminClient();
     const { data: existing } = await admin
       .from("ai_conversations")
-      .select("owner_id, lead_id, lead_name, phone, state, outcome")
+      .select("owner_id, lead_id, lead_name, phone, call_sid, state, outcome, started_at")
       .eq("conversation_id", input.conversationId)
       .maybeSingle();
 
@@ -270,7 +365,9 @@ export async function completeAIConversation(input: {
       prevOutcome != null &&
       CONNECTED_OUTCOMES.has(prevOutcome);
     const newConnected =
-      input.state !== "failed" && CONNECTED_OUTCOMES.has(input.outcome);
+      input.state !== "failed" &&
+      input.outcome != null &&
+      CONNECTED_OUTCOMES.has(input.outcome);
     if (isFinal && !(newConnected && !prevConnected)) return;
     const upgrading = isFinal;
 
@@ -280,6 +377,8 @@ export async function completeAIConversation(input: {
         state: input.state ?? "completed",
         summary: input.summary,
         outcome: input.outcome,
+        failure_kind: input.failureKind ?? null,
+        termination_reason: input.terminationReason ?? null,
         sentiment: input.sentiment,
         duration_sec: input.durationSec ?? null,
         appointment: input.appointment ?? null,
@@ -312,8 +411,21 @@ export async function completeAIConversation(input: {
         owner_id: ownerId,
         lead_id: existing?.lead_id ?? null,
         lead_name: existing?.lead_name ?? "",
+        // phone + call_sid were never carried onto AI rows, so an AI call could
+        // not be joined to its Twilio leg at all.
+        phone: (existing?.phone as string) ?? "",
+        call_sid: (existing?.call_sid as string) ?? null,
+        // The DIAL time, copied from the conversation — not now().
+        //
+        // call_records.started_at defaults to now() and this insert never set it,
+        // so an AI call was stamped with the moment it was FINALIZED. Calls dialed
+        // on Jun 29 carry a started_at of Jul 6 in production: seven days of drift.
+        // That put every AI call in the wrong reporting window.
+        started_at: (existing?.started_at as string) ?? new Date().toISOString(),
         duration_sec: input.durationSec ?? 0,
         outcome: input.outcome,
+        failure_kind: input.failureKind ?? null,
+        termination_reason: input.terminationReason ?? null,
         channel: "ai",
         conversation_id: input.conversationId,
         summary: input.summary,
@@ -326,12 +438,21 @@ export async function completeAIConversation(input: {
         .from("call_records")
         .update({
           outcome: input.outcome,
+          failure_kind: input.failureKind ?? null,
+          termination_reason: input.terminationReason ?? null,
           summary: input.summary,
           sentiment: input.sentiment,
           duration_sec: input.durationSec ?? 0,
         })
         .eq("id", existingRec.id);
     }
+
+    // A SYSTEM failure (outcome === null) says nothing about the homeowner, so it
+    // must not re-file them: no lead-status change, no pipeline routing. A lead
+    // the agent hung up on — or one whose phone never rang — stays exactly where
+    // it was, still due for a real attempt. Routing these would quietly bury
+    // thousands of un-called leads as "no answer".
+    if (input.outcome == null) return;
 
     // Route the disposition to the right pipeline tab (Appointments / Callbacks).
     await routeDisposition(admin, {

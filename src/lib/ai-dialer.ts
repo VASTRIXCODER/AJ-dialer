@@ -1,13 +1,17 @@
 import "server-only";
 
 import { resolveAgentConfig } from "./ai/agent-prompt";
+import { armProbe, breakerStatus, recordProviderFailure } from "./ai-call-breaker";
 import { registerAICall } from "./ai-call-store";
+import { isQuotaMessage } from "./call-disposition";
 import { seedAIConversation } from "./db/records";
 import { nextCallerId } from "./dialer/rotation-server";
 import {
   agentVariablesForLead,
   aiConferenceRoom,
   elevenLabsConfig,
+  fetchQuota,
+  invalidateQuota,
   isAIBridgeConfigured,
   placeOutboundCall,
 } from "./elevenlabs";
@@ -83,6 +87,13 @@ export interface PlaceAiCallResult {
   room?: string;
   customerCallSid?: string;
   error?: string;
+  /**
+   * Set when the call was REFUSED before dialing (out of credits, breaker open).
+   * Callers must stop the campaign rather than move to the next lead — every
+   * further call would fail identically and burn a lead for nothing.
+   */
+  halted?: boolean;
+  haltReason?: string;
 }
 
 /**
@@ -109,6 +120,47 @@ export async function placeAiCallForLead(opts: {
     return { conversationId: null, callSid: null, error: "Invalid phone number" };
   }
   const leadName = `${lead.firstName} ${lead.lastName}`.trim() || formatPhone(toNumber);
+
+  // ── GUARDRAIL 1: the circuit breaker ───────────────────────────────────────
+  // If recent calls all died on the provider's side, STOP. This sits in the
+  // SHARED placement path on purpose: the unattended cron scheduler dials through
+  // here too, so a guard that only lived in the interactive route would leave the
+  // scheduler free to burn the whole book overnight.
+  const breaker = breakerStatus();
+  if (breaker.open) {
+    return {
+      conversationId: null,
+      callSid: null,
+      halted: true,
+      haltReason: breaker.reason ?? "provider_error",
+      error:
+        `AI dialing is halted — recent calls all failed on the voice provider (${breaker.reason}). ` +
+        `${breaker.message} Calls are blocked so they stop burning leads.`,
+    };
+  }
+  if (breaker.halfOpen) armProbe(); // let one call through to test the water
+
+  // ── GUARDRAIL 2: preflight credit check ────────────────────────────────────
+  // Out of credits, the provider STILL places the call and only kills it after the
+  // homeowner answers — they pick up, hear half a greeting, and get hung up on.
+  // So the balance has to be checked BEFORE dialing. A null quota (couldn't read
+  // it) must never block the floor; the post-call detection is the backstop.
+  const quota = await fetchQuota();
+  if (quota?.exhausted) {
+    recordProviderFailure("provider_quota_exceeded", `0 of ${quota.limit} credits remaining.`);
+    return {
+      conversationId: null,
+      callSid: null,
+      halted: true,
+      haltReason: "provider_quota_exceeded",
+      error:
+        "Out of ElevenLabs credits — refusing to dial. The provider would place the call, let the " +
+        "homeowner answer, then hang up on them mid-greeting. Top up the balance." +
+        (quota.resetsAt
+          ? ` Allowance resets ${new Date(quota.resetsAt).toLocaleString()}.`
+          : ""),
+    };
+  }
 
   const agent = resolveAgentConfig(org);
   // Caller-ID rotation + local presence, keyed on this rep/owner's counter.
@@ -168,14 +220,29 @@ export async function placeAiCallForLead(opts: {
       leadId: lead.id.startsWith("manual-") ? null : lead.id,
       leadName,
       phone: toNumber,
+      // Records exactly which override fields went out, so a future "why did every
+      // call die?" is answerable from the data alone.
+      overrideMode: result.overrideMode,
     });
 
     return { conversationId: result.conversationId, callSid: result.callSid, room, customerCallSid };
   } catch (err) {
-    return {
-      conversationId: null,
-      callSid: null,
-      error: err instanceof Error ? err.message : String(err),
-    };
+    const message = err instanceof Error ? err.message : String(err);
+
+    // The provider can also reject the dial outright when the balance is gone.
+    // Trip the breaker so the rest of the batch doesn't even try.
+    if (isQuotaMessage(message)) {
+      invalidateQuota();
+      recordProviderFailure("provider_quota_exceeded", message);
+      return {
+        conversationId: null,
+        callSid: null,
+        halted: true,
+        haltReason: "provider_quota_exceeded",
+        error: "Out of ElevenLabs credits — AI dialing halted. Top up the balance, then resume.",
+      };
+    }
+
+    return { conversationId: null, callSid: null, error: message };
   }
 }

@@ -1,7 +1,7 @@
 import "server-only";
 
 import { finalizeAIConversation } from "./ai-call-finalize";
-import { getAIConversationsForMonitor } from "./db/records";
+import { getAIConversationsForMonitor, listStuckAIConversations } from "./db/records";
 import { fetchConversation, isElevenLabsConfigured } from "./elevenlabs";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -72,17 +72,25 @@ export async function reconcileActiveCalls(active: ActiveRef[]): Promise<void> {
             status,
             durationSec: convo?.durationSec ?? undefined,
             terminationReason: convo?.terminationReason,
+            errorCode: convo?.errorCode ?? null,
+            errorReason: convo?.errorReason ?? null,
           });
         } else if (tooOld) {
-          // ElevenLabs never reported terminal (or is unreachable) — close it
-          // out. If a transcript did load, finalize it as the real (connected)
-          // call rather than a timeout, so a long chat isn't lost as "failed".
+          // ElevenLabs never reported terminal (or is unreachable) — close it out.
+          // If a transcript did load, finalize it as the real (connected) call so a
+          // long chat isn't lost. Otherwise we genuinely DON'T KNOW what happened:
+          // mark it "unresolvable" rather than guessing "no_answer". Guessing is
+          // what buried this outage — an unknown must look unknown.
+          const human = hasHumanTurn(turns);
           await finalizeAIConversation({
             conversationId: c.conversationId,
             turns,
-            status: hasHumanTurn(turns) ? "completed" : "failed",
+            status: human ? "completed" : "failed",
             durationSec: convo?.durationSec ?? undefined,
-            terminationReason: hasHumanTurn(turns) ? "" : "timeout",
+            terminationReason: human ? "" : "timeout",
+            errorCode: convo?.errorCode ?? null,
+            errorReason: convo?.errorReason ?? null,
+            failureKind: human ? null : "unresolvable",
           });
         }
       } catch {
@@ -99,6 +107,12 @@ export async function reconcileActiveCalls(active: ActiveRef[]): Promise<void> {
  * wherever live/derived data is read (monitor feed, dashboard, reports,
  * appointments) so a call that connected, failed, or never answered is ended +
  * categorized even if no one is watching the monitor and the webhook is silent.
+ *
+ * NOTE: this is a best-effort UX nicety, NOT the system's guarantee of
+ * finalization. It only runs when a human happens to load a page, only sees the
+ * viewer's own calls, and only touches CHECK_LIMIT of them. Relying on it as the
+ * safety net is what let 6,164 calls sit unfinalized. The real guarantee is
+ * reconcileStuckConversations() below, driven by cron.
  */
 export async function reconcileOwnerActiveCalls(): Promise<void> {
   if (!isElevenLabsConfigured()) return;
@@ -114,4 +128,112 @@ export async function reconcileOwnerActiveCalls(): Promise<void> {
   } catch {
     /* best-effort */
   }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The cron-driven reconciler: the actual guarantee that every call gets finalized.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Don't touch calls this young — they may still legitimately be ringing. */
+const STUCK_GRACE_MS = 10 * 60_000;
+
+export interface DrainResult {
+  checked: number;
+  finalized: number;
+  errors: number;
+  /** True when we ran out of time budget with work still queued. */
+  moreRemaining: boolean;
+}
+
+/** Run `tasks` with at most `limit` in flight at once. */
+async function pooled<T>(
+  items: T[],
+  limit: number,
+  worker: (item: T) => Promise<void>,
+): Promise<void> {
+  let cursor = 0;
+  const runners = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (cursor < items.length) {
+      const item = items[cursor++];
+      await worker(item);
+    }
+  });
+  await Promise.all(runners);
+}
+
+/**
+ * Drain the backlog of never-finalized AI calls, oldest first.
+ *
+ * Unlike the render-driven path this has no per-run item cap and no query window
+ * — it pages with a keyset cursor until the backlog is empty or the time budget
+ * runs out, so it converges instead of endlessly re-checking the newest few.
+ *
+ * A call we genuinely cannot resolve is finalized as `unresolvable` with a NULL
+ * outcome. It is never guessed into "no_answer": an unknown must look unknown,
+ * or we recreate the exact blindness this incident was made of.
+ */
+export async function reconcileStuckConversations(opts?: {
+  budgetMs?: number;
+  pageSize?: number;
+  concurrency?: number;
+}): Promise<DrainResult> {
+  const budgetMs = opts?.budgetMs ?? 50_000;
+  const pageSize = opts?.pageSize ?? 200;
+  const concurrency = opts?.concurrency ?? 6;
+  const deadline = Date.now() + budgetMs;
+
+  const out: DrainResult = { checked: 0, finalized: 0, errors: 0, moreRemaining: false };
+  if (!isElevenLabsConfigured()) return out;
+
+  let cursor: string | null = null;
+  for (;;) {
+    if (Date.now() >= deadline) {
+      out.moreRemaining = true;
+      break;
+    }
+    const page: { rows: ActiveRef[]; nextCursor: string | null } =
+      await listStuckAIConversations({
+        olderThanMs: STUCK_GRACE_MS,
+        limit: pageSize,
+        after: cursor,
+      });
+    if (page.rows.length === 0) break;
+
+    await pooled(page.rows, concurrency, async (c) => {
+      if (Date.now() >= deadline) return;
+      out.checked++;
+      try {
+        const convo = await fetchConversation(c.conversationId);
+        const turns = convo?.turns ?? [];
+        const human = hasHumanTurn(turns);
+        const status = (convo?.status ?? "").toLowerCase();
+
+        // Still genuinely in flight and inside the hard cap — leave it alone.
+        const age = Date.now() - c.startedAt;
+        if (!convo && age < MAX_AGE_MS) return;
+        if (convo && !TERMINAL.has(status) && age < MAX_AGE_MS) return;
+
+        // We can't read it at all and it's past the cap: the truth is unknowable.
+        const unresolvable = !convo && age >= MAX_AGE_MS;
+
+        await finalizeAIConversation({
+          conversationId: c.conversationId,
+          turns,
+          status: human ? "completed" : "failed",
+          durationSec: convo?.durationSec ?? undefined,
+          terminationReason: convo?.terminationReason ?? (unresolvable ? "unreadable" : "timeout"),
+          errorCode: convo?.errorCode ?? null,
+          errorReason: convo?.errorReason ?? null,
+          failureKind: human ? null : unresolvable ? "unresolvable" : undefined,
+        });
+        out.finalized++;
+      } catch {
+        out.errors++;
+      }
+    });
+
+    cursor = page.nextCursor;
+    if (!cursor) break;
+  }
+  return out;
 }
