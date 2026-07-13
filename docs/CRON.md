@@ -37,6 +37,34 @@ external scheduler can drive them.
 
 The secret is held in Supabase Vault, not inlined in the job definition.
 
+## One-time setup (and after any rotation)
+
+`CRON_SECRET` has to exist in **both** Vercel and Supabase. Vercel deliberately will not hand an
+encrypted env var back out — `vercel env pull` returns empty values for them — so the value has to
+be copied across by hand exactly once. There is no way around this that doesn't involve either
+pasting a live credential through a third party or standing up an unauthenticated endpoint that can
+write to the secret store. Do it by hand.
+
+1. Vercel dashboard → **aj-dialer** → Settings → Environment Variables → copy the **Production**
+   value of `CRON_SECRET`.
+2. Supabase → **SQL Editor** → run this, pasting the value in place of `<PASTE>`:
+
+```sql
+select public.app_set_cron_secret('<PASTE>', 'https://aiatworkdialer.vercel.app');
+```
+
+3. Confirm both jobs start succeeding:
+
+```sql
+select j.jobname, r.status, r.start_time
+from cron.job_run_details r join cron.job j using (jobid)
+order by r.start_time desc limit 6;
+```
+
+Until step 2 is done, `app_fire_cron()` raises and every run is recorded as **failed** in
+`cron.job_run_details` — deliberately loud, rather than silently firing unauthenticated requests
+that would 401 forever.
+
 Inspect the jobs:
 ```sql
 select jobid, jobname, schedule, active from cron.job;

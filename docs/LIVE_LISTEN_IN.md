@@ -49,16 +49,36 @@ in bridge mode ElevenLabs is talking to *our* conference and cannot see the home
 
 ## Why it appears broken
 
-### 1. The bridge isn't configured, so the real button never renders
+### 0. First: production was running 13-day-old code
 
-`liveAudioAvailable` is computed in `src/app/api/elevenlabs/conversation/[id]/route.ts:238` as
-"bridge mode is on **or** the media-stream relay is on". With neither configured it is `false`, and
-the **"Listen live"** button is not rendered at all. If you somehow reached the endpoint anyway,
-`/api/twilio/listen` returns `503 "Live audio isn't configured"`.
+Every Vercel deployment had been failing since `ea02108` (see `docs/CRON.md`). Whatever was tested
+and reported as "listen-in doesn't work" was tested against **stale code**. Re-test on the current
+deploy before doing anything else here.
 
-Evidence production runs **direct mode** (no bridge): the ElevenLabs call log shows the agent dialing
-the homeowner's number (`+1 703 439 8382`) directly. In bridge mode the receiver would instead be the
-Twilio bridge number.
+### 1. What production is actually configured with
+
+Checked against `vercel env ls production` (key presence only — no values read):
+
+| Key | Prod | Consequence |
+|---|---|---|
+| `TWILIO_ACCOUNT_SID` / `AUTH_TOKEN` / `API_KEY_SID` / `API_KEY_SECRET` / `TWIML_APP_SID` | **set** | The Voice SDK path works. **Human-call listen-in should already function.** |
+| `MEDIA_STREAM_URL` / `MEDIA_STREAM_SECRET` | **set** | `isMediaStreamConfigured()` is true, so `liveAudioAvailable` is **true** and the **"Listen live" button does render** for AI calls. |
+| `TWILIO_AI_BRIDGE_NUMBER` | **not set** | **Direct mode.** ElevenLabs dials the homeowner itself, so there is no Twilio conference for AI calls and no `statusCallback`. |
+
+So the earlier assumption that listen-in is dark because *nothing* is configured is **wrong for
+production**. The relay path is wired. `liveAudioAvailable` is true. The button is there.
+
+That narrows the fault to one of:
+- **The media-stream relay itself is down or was never deployed.** `MEDIA_STREAM_URL` points at a
+  standalone WebSocket service (`server/media-stream-server.mjs`, deployed via `render.yaml`). If
+  that host is asleep, unreachable, or never went up, "Listen live" renders, is clicked, and fails.
+  **This is the first thing to check** — `npm run verify:live-audio` asserts the contract.
+- The relay is up but the fork never starts, because in **direct mode** ElevenLabs owns the Twilio
+  call and we never attach a `<Stream>` to it. Worth confirming against
+  `src/app/api/twilio/listen/route.ts:103-153` on a real call.
+
+Evidence for direct mode: the ElevenLabs call log shows the agent dialing the homeowner
+(`+1 703 439 8382`) directly. Under bridge mode the receiver would be the Twilio bridge number.
 
 ### 2. What *did* render was a text-to-speech button
 
@@ -78,20 +98,19 @@ anywhere in this codebase**; if it is wanted, it is a new build, not a fix.
 
 ---
 
-## To switch live listen-in on
+## What to do, in order
 
-Everything below is environment configuration in Vercel. No code changes.
+1. **Re-test on the current deploy.** Production was 13 days stale; the bug may not survive.
+2. **Check the media-stream relay is alive.** `MEDIA_STREAM_URL` is set, so the app believes live
+   audio is available. If that host is down, everything downstream looks broken for no visible
+   reason. `npm run verify:live-audio` boots the relay locally and asserts the contract;
+   `docs/LIVE_AUDIO.md` covers the Render deployment.
+3. **Only if the relay proves unworkable, switch on bridge mode** (below). It is the simpler
+   architecture — no extra service to keep alive — and it also fixes AI no-answer detection.
 
-**For human rep calls** (the cheaper win — they're already conferenced):
-```
-TWILIO_ACCOUNT_SID=
-TWILIO_AUTH_TOKEN=
-TWILIO_API_KEY_SID=
-TWILIO_API_KEY_SECRET=
-TWILIO_TWIML_APP_SID=      # Voice TwiML App, its Voice URL → {APP_URL}/api/twilio/voice
-```
+### Enabling bridge mode
 
-**For AI calls, add bridge mode:**
+The Twilio Voice creds are already set in production. Bridge mode needs one more:
 ```
 TWILIO_AI_BRIDGE_NUMBER=+1XXXXXXXXXX   # a Twilio number you own
 ```
