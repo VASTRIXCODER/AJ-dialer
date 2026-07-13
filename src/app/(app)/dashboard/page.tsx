@@ -21,6 +21,8 @@ import { buttonVariants } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { getReportingData, getTeamLeaderboard } from "@/lib/db/metrics";
 import { getViewer } from "@/lib/org/membership";
+import { liveStateConfig } from "@/lib/status";
+import type { AILiveState } from "@/lib/types";
 import {
   formatCurrency,
   formatDuration,
@@ -37,10 +39,12 @@ function greeting() {
   return "Good evening";
 }
 
+// The shared lifecycle map (src/lib/status.ts). This file used to define its own
+// third variant, which disagreed with both the monitor's and the call dashboard's.
 const liveTone = (s: string) =>
-  s === "in_progress" ? "success" : s === "failed" ? "danger" : "warning";
+  liveStateConfig[s as AILiveState]?.tone ?? "neutral";
 const liveLabel = (s: string) =>
-  s === "in_progress" ? "On call" : s === "initiated" ? "Dialing" : s.replace("_", " ");
+  liveStateConfig[s as AILiveState]?.label ?? s.replace("_", " ");
 
 export default async function DashboardPage() {
   const [

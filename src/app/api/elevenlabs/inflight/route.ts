@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { createAdminClient, isAdminConfigured } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { isSupabaseConfigured } from "@/lib/supabase/config";
+import { LIVE_STATES } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
@@ -42,7 +43,11 @@ export async function POST(req: Request) {
       .select("conversation_id, state")
       .eq("owner_id", user.id)
       .in("conversation_id", ids)
-      .in("state", ["initiated", "in_progress"]);
+      // LIVE_STATES, not a hand-written list — a call whose phone is RINGING is
+      // very much still in flight. Omitting 'ringing' here would free its
+      // concurrency slot the moment it started ringing, and the pump would launch
+      // a replacement call on top of it: silent over-dialing, every batch.
+      .in("state", LIVE_STATES as unknown as string[]);
 
     return NextResponse.json({
       active: (data ?? []).map((r) => String(r.conversation_id)),

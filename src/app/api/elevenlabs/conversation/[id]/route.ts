@@ -15,7 +15,7 @@ import {
 import { isMediaStreamConfigured } from "@/lib/media-stream";
 import { viewerCanAny } from "@/lib/org/membership";
 import { isRestConfigured } from "@/lib/twilio";
-import type { CallOutcome } from "@/lib/types";
+import { type CallOutcome, liveStateRank } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
@@ -34,6 +34,8 @@ interface DetailResponse {
   summary: string;
   durationSec: number | null;
   startedAt: number | null;
+  /** They picked up. The live timer counts from here, not startedAt. */
+  connectedAt: number | null;
   recordingAvailable: boolean;
   transcript: TranscriptTurn[];
   appointment: { when: string; notes: string } | null;
@@ -196,12 +198,9 @@ export async function GET(
 
   // Resolve to the MOST-ADVANCED state any source knows about, so a transient
   // failed live read can't make a connected/finished call look unstarted.
-  const STATE_RANK: Record<AICallState, number> = {
-    initiated: 0,
-    in_progress: 1,
-    completed: 2,
-    failed: 2,
-  };
+  // Ranking now comes from liveStateRank() — the single lifecycle definition in
+  // types.ts — rather than a private table here that knew nothing of "ringing"
+  // and would have silently ranked it 0, letting a stale "initiated" outrank it.
   const knownStates = [
     store?.state,
     liveState,
@@ -209,7 +208,7 @@ export async function GET(
   ].filter((s): s is AICallState => Boolean(s));
   const state: AICallState =
     knownStates.length > 0
-      ? knownStates.reduce((a, b) => (STATE_RANK[b] > STATE_RANK[a] ? b : a))
+      ? knownStates.reduce((a, b) => (liveStateRank(b) > liveStateRank(a) ? b : a))
       : "completed";
 
   const response: DetailResponse = {
@@ -228,6 +227,7 @@ export async function GET(
     summary: store?.summary ?? db?.summary ?? liveSummary ?? "",
     durationSec: store?.durationSec ?? liveDuration ?? db?.durationSec ?? null,
     startedAt: store?.startedAt ?? null,
+    connectedAt: store?.connectedAt ?? db?.connectedAt ?? null,
     recordingAvailable:
       (store?.recordingAvailable ?? db?.recordingAvailable ?? hasAudio) &&
       state === "completed",

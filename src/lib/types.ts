@@ -26,6 +26,64 @@ export type CallOutcome =
 
 export type CallDisposition = "answered" | "no_answer" | "voicemail" | "busy" | "failed";
 
+/**
+ * What a call is doing RIGHT NOW, as the Live Monitor shows it. Distinct from
+ * CallOutcome, which is the verdict after it's over.
+ *
+ * Strictly monotonic — a call only ever moves forward through these:
+ *
+ *   initiated ──► ringing ──► in_progress ──► completed | failed
+ *   we asked      their       they picked      over; has an outcome
+ *   Twilio to     phone is    up; the talk     (or a failure_kind if it
+ *   dial          ringing     timer starts     never really happened)
+ *
+ * Every writer must respect the order. Webhooks arrive out of order and land on
+ * different serverless instances, so a late "ringing" event must never drag a
+ * connected call backwards. Use liveStateRank() to compare.
+ */
+export type AILiveState =
+  | "initiated"
+  | "ringing"
+  | "in_progress"
+  | "completed"
+  | "failed";
+
+const LIVE_STATE_RANK: Record<AILiveState, number> = {
+  initiated: 0,
+  ringing: 1,
+  in_progress: 2,
+  completed: 3,
+  failed: 3,
+};
+
+/** Position in the lifecycle. Higher wins; equal ranks are interchangeable. */
+export function liveStateRank(state: string): number {
+  return LIVE_STATE_RANK[state as AILiveState] ?? 0;
+}
+
+/** The states in which a call is still on the phone — i.e. shown as live. */
+export const LIVE_STATES: readonly AILiveState[] = [
+  "initiated",
+  "ringing",
+  "in_progress",
+] as const;
+
+/** True once the call is over and its verdict is final. */
+export function isTerminalLiveState(state: string): boolean {
+  return state === "completed" || state === "failed";
+}
+
+/**
+ * What a rep is doing right now, for the manager's Team Status roster. Mirrors
+ * DialerStatus (src/lib/use-dialer.ts).
+ *
+ * Lives here, not in presence-store.ts, because the roster is a client component
+ * and presence-store.ts is `server-only`. A type-only import across that boundary
+ * happens to survive (SWC erases it), but it puts a client component one value
+ * import away from pulling the service-role client into the browser bundle.
+ */
+export type PresenceStatus = "idle" | "dialing" | "live" | "wrapup" | "ai";
+
 export interface Lead {
   id: string;
   firstName: string;

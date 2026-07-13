@@ -11,7 +11,9 @@
     "relay": "node server/media-stream-server.mjs",
     "verify:live-audio": "node scripts/verify-live-audio.mjs",
     "verify:disposition": "tsx scripts/verify-disposition.ts",
-    "verify:dialer": "tsx scripts/verify-dialer.ts"
+    "verify:dialer": "tsx scripts/verify-dialer.ts",
+    "verify:live-states": "tsx scripts/verify-live-states.ts",
+    "e2e:live-states": "node scripts/e2e-live-states.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.105.0",

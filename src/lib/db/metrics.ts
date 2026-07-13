@@ -27,6 +27,7 @@ import { createAdminClient, isAdminConfigured } from "../supabase/admin";
 import { isSupabaseConfigured } from "../supabase/config";
 import { createClient } from "../supabase/server";
 import type {
+  AILiveState,
   CallOutcome,
   KpiPoint,
   LeaderboardEntry,
@@ -42,7 +43,8 @@ import { getAIConversationsForMonitor } from "./records";
 // session, it falls back to the bundled data module so demo mode still works.
 // ─────────────────────────────────────────────────────────────────────────────
 
-export type LiveCallState = "initiated" | "in_progress" | "completed" | "failed";
+/** The one lifecycle (src/lib/types.ts) — this was a fourth private copy of it. */
+export type LiveCallState = AILiveState;
 
 export interface RecentCall {
   id: string;
@@ -548,7 +550,14 @@ function fallbackReporting(): ReportingData {
       id: c.id,
       leadName: c.leadName,
       city: c.leadCity,
-      state: c.state === "connected" ? "in_progress" : "initiated",
+      // Demo mode must show the same four states as production — a ringing sample
+      // call used to collapse to "initiated", so the demo couldn't tell "Calling"
+      // from "Ringing" either.
+      state: (c.state === "connected"
+        ? "in_progress"
+        : c.state === "ringing"
+          ? "ringing"
+          : "initiated") as AILiveState,
     })),
     appointments: sampleAppts.map((a) => ({
       id: a.id,

@@ -1,6 +1,6 @@
 import "server-only";
 
-import type { CallOutcome } from "./types";
+import { type AILiveState, LIVE_STATES, type CallOutcome } from "./types";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Live registry of AI (ElevenLabs) conversations.
@@ -15,7 +15,8 @@ import type { CallOutcome } from "./types";
 // setup guide.
 // ─────────────────────────────────────────────────────────────────────────────
 
-export type AICallState = "initiated" | "in_progress" | "completed" | "failed";
+/** The canonical lifecycle lives in types.ts — this is the shared vocabulary. */
+export type AICallState = AILiveState;
 
 export interface AICall {
   conversationId: string;
@@ -27,6 +28,10 @@ export interface AICall {
   state: AICallState;
   sentiment: "positive" | "neutral" | "negative";
   startedAt: number;
+  /** Their phone started ringing. */
+  ringingAt?: number;
+  /** They picked up. The on-call timer counts from here — never from startedAt. */
+  connectedAt?: number;
   endedAt?: number;
   durationSec?: number;
   summary?: string;
@@ -45,11 +50,26 @@ export interface AICall {
 const calls = new Map<string, AICall>();
 const bySid = new Map<string, string>(); // callSid → conversationId
 const TTL_MS = 60 * 60_000;
+/**
+ * A call cannot genuinely still be on the phone after this. Past it, an entry
+ * that never got an endedAt is not "live", it's LEAKED — see sweep().
+ */
+const MAX_ACTIVE_MS = 12 * 60_000;
 
 function sweep() {
   const now = Date.now();
   for (const [id, c] of calls) {
-    if (c.endedAt && now - c.endedAt > TTL_MS) {
+    // Ended long ago — ordinary expiry.
+    const expired = c.endedAt != null && now - c.endedAt > TTL_MS;
+    // Never ended, and far too old to still be ringing or talking. This branch
+    // is the fix for a genuine leak: the old sweep required `endedAt` to be set,
+    // so an entry stuck in initiated/ringing/in_progress could NEVER be evicted.
+    // It stayed in this Map for the life of the instance, listActiveAICalls()
+    // kept returning it, and the monitor kept showing a call that had been over
+    // for hours — one that no refresh could clear, because the stale entry
+    // outranked the (correct, terminal) database row on every poll.
+    const leaked = c.endedAt == null && now - c.startedAt > MAX_ACTIVE_MS;
+    if (expired || leaked) {
       calls.delete(id);
       if (c.callSid) bySid.delete(c.callSid);
     }
@@ -109,8 +129,9 @@ export function getAICall(conversationId: string): AICall | null {
 }
 
 export function listActiveAICalls(): AICall[] {
+  sweep(); // evict leaked entries on READ too — registerAICall may never run again
   return [...calls.values()]
-    .filter((c) => c.state === "initiated" || c.state === "in_progress")
+    .filter((c) => LIVE_STATES.includes(c.state))
     .sort((a, b) => b.startedAt - a.startedAt);
 }
 

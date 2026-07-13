@@ -227,6 +227,12 @@ export function useDialer(
   const callRef = useRef<Call | null>(null);
   const tickRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const presenceTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const presenceSnapshotRef = useRef<{
+    status: DialerStatus;
+    lead: { name?: string; city?: string; phone?: string } | null;
+    aiActiveCount: number;
+  }>({ status: "idle", lead: null, aiActiveCount: 0 });
   const identityRef = useRef<string>("agent");
   const autoDialRef = useRef(false);
   const parallelRef = useRef(1);
@@ -295,6 +301,31 @@ export function useDialer(
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ action: "end", id }),
+      keepalive: true,
+    }).catch(() => {});
+  }, []);
+
+  // ── Per-user live presence (manager Team Status roster) ──────────────────
+  const postPresence = useCallback(
+    (
+      status: DialerStatus,
+      lead: { name?: string; city?: string; phone?: string } | null,
+      aiActiveCount: number,
+    ) => {
+      fetch("/api/team/presence", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ status, lead, aiActiveCount }),
+      }).catch(() => {});
+    },
+    [],
+  );
+
+  const clearMyPresence = useCallback(() => {
+    fetch("/api/team/presence", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ status: "offline" }),
       keepalive: true,
     }).catch(() => {});
   }, []);
@@ -474,6 +505,40 @@ export function useDialer(
     };
   }, [setupDevice, enabled]);
 
+  // Report status + current lead on every change, and keep a steady heartbeat
+  // (independent of state changes) so a rep sitting genuinely idle doesn't age
+  // past the roster's staleness window and vanish from a manager's view.
+  useEffect(() => {
+    if (!enabled) return;
+    const lead = state.connectedLead
+      ? {
+          name: `${state.connectedLead.firstName} ${state.connectedLead.lastName}`.trim(),
+          city: [state.connectedLead.city, state.connectedLead.state].filter(Boolean).join(", "),
+          phone: state.connectedLead.phone,
+        }
+      : state.aiCalls[0]
+        ? { name: state.aiCalls[0].leadName }
+        : null;
+    const aiActiveCount = state.status === "ai" ? state.aiCalls.length : 0;
+    presenceSnapshotRef.current = { status: state.status, lead, aiActiveCount };
+    postPresence(state.status, lead, aiActiveCount);
+    // aiCalls.length (not the array itself) so a per-lead mutation mid-batch
+    // doesn't fire a POST per lead — only when the concurrent count changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [enabled, state.status, state.connectedLead, state.aiCalls.length, postPresence]);
+
+  useEffect(() => {
+    if (!enabled) return;
+    presenceTimerRef.current = setInterval(() => {
+      const snap = presenceSnapshotRef.current;
+      postPresence(snap.status, snap.lead, snap.aiActiveCount);
+    }, 20_000);
+    return () => {
+      if (presenceTimerRef.current) clearInterval(presenceTimerRef.current);
+      presenceTimerRef.current = null;
+    };
+  }, [enabled, postPresence]);
+
   // ── Seed the daily dial counter from storage (per rep, per local day) ──────
   useEffect(() => {
     userIdRef.current = userId;
@@ -489,8 +554,9 @@ export function useDialer(
       stopPoll();
       stopAITimer();
       clearHumanPresence();
+      clearMyPresence();
     },
-    [stopTick, stopPoll, stopAITimer, clearHumanPresence],
+    [stopTick, stopPoll, stopAITimer, clearHumanPresence, clearMyPresence],
   );
 
   /**

@@ -52,6 +52,7 @@ export const PERMISSIONS = [
   "monitor.view", // open the Live Monitor (see in-progress AI + rep calls)
   "monitor.listen", // listen to live audio of in-progress calls
   "monitor.intervene", // take over / transfer / end a live call
+  "monitor.roster", // view the live team presence roster — manager+ only, unlike monitor.view/listen which reps also hold
 ] as const;
 export type Permission = (typeof PERMISSIONS)[number];
 
@@ -73,6 +74,7 @@ export const ROLE_PERMISSIONS: Record<OrgRole, Permission[]> = {
     "monitor.view",
     "monitor.listen",
     "monitor.intervene",
+    "monitor.roster",
   ],
   // Reps dial and work leads. They get the MANUAL dialer; the AI dialer is gated
   // (managers+ only) unless the workspace is AI-only. They can open the monitor
@@ -97,6 +99,7 @@ export const PERMISSION_LABEL: Record<Permission, string> = {
   "monitor.view": "Open the Live Monitor",
   "monitor.listen": "Listen to live calls",
   "monitor.intervene": "Take over, transfer or end live calls",
+  "monitor.roster": "View the live team roster (who's active, on what call)",
 };
 
 export function rolePermissions(role: OrgRole | null | undefined): Permission[] {

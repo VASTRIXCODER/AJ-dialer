@@ -1,11 +1,10 @@
 "use client";
 
-import { Ear, MessageSquare, Phone, Smile, Meh, Frown } from "lucide-react";
+import { Phone, Smile, Meh, Frown } from "lucide-react";
 import { useEffect, useState } from "react";
 import { SpotlightCard } from "@/components/motion";
 import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import type { ActiveCall } from "@/lib/types";
 import { cn, formatDuration, secondsSince } from "@/lib/utils";
 
@@ -82,21 +81,20 @@ export function MonitorGrid({ calls }: { calls: ActiveCall[] }) {
               <p className="mt-1 text-xs text-muted-foreground">{call.leadCity}</p>
             </div>
 
-            <div className="mt-4 flex items-center justify-between">
+            {/*
+              There were "Listen" and "Whisper" buttons here with no onClick — they
+              did nothing at all, in a component whose whole job is supervision.
+              Real listen-in lives on the AI call detail view ("Listen live", which
+              joins the Twilio conference muted); whisper/coach has never been built.
+              A button that promises a capability the product doesn't have is worse
+              than no button: it's how "live listen-in doesn't work" gets reported.
+              See docs/LIVE_LISTEN_IN.md.
+            */}
+            <div className="mt-4 flex items-center">
               <span className={cn("flex items-center gap-1.5 text-xs font-medium", s.tone)}>
                 <Sentiment className="h-4 w-4" />
                 {s.label}
               </span>
-              <div className="flex gap-2">
-                <Button variant="outline" size="sm" className="gap-1.5" disabled={!connected}>
-                  <Ear className="h-3.5 w-3.5" />
-                  Listen
-                </Button>
-                <Button variant="ghost" size="sm" className="gap-1.5" disabled={!connected}>
-                  <MessageSquare className="h-3.5 w-3.5" />
-                  Whisper
-                </Button>
-              </div>
             </div>
           </SpotlightCard>
         );

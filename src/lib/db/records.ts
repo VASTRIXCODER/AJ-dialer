@@ -4,7 +4,12 @@ import { CONNECTED_OUTCOMES } from "../call-analytics";
 import { createAdminClient, isAdminConfigured } from "../supabase/admin";
 import { isSupabaseConfigured } from "../supabase/config";
 import { createClient } from "../supabase/server";
-import type { CallOutcome } from "../types";
+import {
+  type AILiveState,
+  type CallOutcome,
+  isTerminalLiveState,
+  LIVE_STATES,
+} from "../types";
 
 const UUID =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -216,6 +221,8 @@ export async function seedAIConversation(input: {
   leadId: string | null;
   leadName: string;
   phone: string;
+  /** The homeowner's Twilio leg (bridge mode) — how the status webhook finds us. */
+  customerCallSid?: string | null;
   /** Which override fields actually went out — forensics for a killed call. */
   overrideMode?: string;
 }): Promise<void> {
@@ -233,6 +240,7 @@ export async function seedAIConversation(input: {
       lead_name: input.leadName,
       phone: input.phone,
       call_sid: input.callSid,
+      customer_call_sid: input.customerCallSid ?? null,
       override_mode: input.overrideMode ?? null,
       state: "initiated",
     });
@@ -268,7 +276,7 @@ export async function listStuckAIConversations(opts: {
     let q = admin
       .from("ai_conversations")
       .select("conversation_id, started_at")
-      .in("state", ["initiated", "in_progress"])
+      .in("state", LIVE_STATES as unknown as string[])
       .lt("started_at", cutoff);
     if (opts.after) q = q.gt("started_at", opts.after);
 
@@ -298,7 +306,7 @@ export async function countStuckAIConversations(): Promise<number> {
     const { count } = await createAdminClient()
       .from("ai_conversations")
       .select("conversation_id", { count: "exact", head: true })
-      .in("state", ["initiated", "in_progress"]);
+      .in("state", LIVE_STATES as unknown as string[]);
     return count ?? 0;
   } catch {
     return 0;
@@ -471,10 +479,37 @@ export async function completeAIConversation(input: {
 }
 
 /**
- * Advance a conversation to "in_progress" the moment it connects, durably (admin
- * client, no session needed). Keeps the row truthful across serverless instances
- * so a connected call never looks like it "hasn't started" in the monitor. Only
- * advances from "initiated" — never downgrades a terminal/active row.
+ * Advance a conversation to "ringing" — the homeowner's phone is now audibly
+ * ringing, per Twilio. Only from "initiated": a late `ringing` webhook must never
+ * drag a call that already connected backwards. Twilio does not guarantee
+ * callback ordering, so this guard is load-bearing, not decorative.
+ */
+export async function markAIConversationRinging(
+  conversationId: string,
+): Promise<void> {
+  if (!isAdminConfigured()) return;
+  try {
+    await createAdminClient()
+      .from("ai_conversations")
+      .update({ state: "ringing", ringing_at: new Date().toISOString() })
+      .eq("conversation_id", conversationId)
+      .eq("state", "initiated");
+  } catch {
+    /* best-effort */
+  }
+}
+
+/**
+ * Advance a conversation to "in_progress" the moment the HOMEOWNER picks up.
+ *
+ * The guard admits "ringing" as well as "initiated". That is not a cosmetic
+ * widening: with a `ringing` state in the lifecycle, an `.eq("state","initiated")`
+ * guard would reject every real connect that had (correctly) passed through
+ * ringing first, and the call would be pinned at "Ringing" for its entire
+ * duration. Terminal rows are still never resurrected.
+ *
+ * `connected_at` is only stamped if it is null, so a duplicate/retried webhook
+ * can't reset the on-call timer to zero mid-conversation.
  */
 export async function markAIConversationActive(
   conversationId: string,
@@ -482,13 +517,157 @@ export async function markAIConversationActive(
   if (!isAdminConfigured()) return;
   try {
     const admin = createAdminClient();
+    const { data } = await admin
+      .from("ai_conversations")
+      .select("connected_at")
+      .eq("conversation_id", conversationId)
+      .maybeSingle();
+
     await admin
       .from("ai_conversations")
-      .update({ state: "in_progress" })
+      .update({
+        state: "in_progress",
+        ...(data?.connected_at ? {} : { connected_at: new Date().toISOString() }),
+      })
       .eq("conversation_id", conversationId)
-      .eq("state", "initiated");
+      .in("state", ["initiated", "ringing"]);
   } catch {
     /* best-effort */
+  }
+}
+
+/**
+ * Claim the right to close out a call that Twilio says never connected (no-answer
+ * / busy / failed / canceled). Returns true exactly once, and only if the call
+ * has NOT already reached "in_progress".
+ *
+ * This is the mutex the status webhook uses before it hangs up the AI agent's
+ * leg. Lose the swap and someone already advanced the call to in_progress — the
+ * homeowner IS on the line — so we must not hang up on them.
+ *
+ * Note what this deliberately does NOT do: set the state to a terminal value.
+ * It stakes its claim on `termination_reason` instead. Writing state='failed'
+ * here would be self-defeating — completeAIConversation() treats an already-
+ * terminal row as final and returns without writing anything, so the call would
+ * go terminal with NO outcome and no summary, permanently un-dispositioned. The
+ * claim reserves the call; finalizeAIConversation() is what actually files it.
+ *
+ * If we crash between the two, the row is still in a live state with a
+ * termination_reason set, so the cron reconciler will find it and finish the job.
+ */
+export async function claimAIConversationUnanswered(
+  conversationId: string,
+  reason: string,
+): Promise<boolean> {
+  if (!isAdminConfigured()) return false;
+  try {
+    const { data } = await createAdminClient()
+      .from("ai_conversations")
+      .update({ termination_reason: reason || "no-answer" })
+      .eq("conversation_id", conversationId)
+      .in("state", ["initiated", "ringing"])
+      .is("termination_reason", null)
+      .select("conversation_id");
+    return (data?.length ?? 0) > 0;
+  } catch {
+    return false;
+  }
+}
+
+/** Everything the Twilio status webhook needs to act on a conversation. */
+export interface AICallRef {
+  conversationId: string;
+  /** The ElevenLabs agent's Twilio leg — the one we hang up on a no-answer. */
+  callSid: string | null;
+  state: string;
+  connectedAt: number | null;
+}
+
+/**
+ * Resolve a conversation from the homeowner's Twilio leg SID. The status webhook
+ * carries a CallSid and nothing else if its query string is ever lost, so this is
+ * the fallback that keeps the event from being silently dropped.
+ */
+export async function getAICallRefByCustomerSid(
+  customerCallSid: string,
+): Promise<AICallRef | null> {
+  if (!isAdminConfigured() || !customerCallSid) return null;
+  try {
+    const { data } = await createAdminClient()
+      .from("ai_conversations")
+      .select("conversation_id, call_sid, state, connected_at")
+      .eq("customer_call_sid", customerCallSid)
+      .maybeSingle();
+    if (!data) return null;
+    return {
+      conversationId: String(data.conversation_id),
+      callSid: (data.call_sid as string) ?? null,
+      state: String(data.state ?? "initiated"),
+      connectedAt: data.connected_at ? Date.parse(String(data.connected_at)) : null,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/** An active call's Twilio legs, for the direct-mode status poller. */
+export interface AILegRef {
+  conversationId: string;
+  /** The leg ElevenLabs placed. In DIRECT mode this IS the homeowner's leg. */
+  callSid: string | null;
+  /** The leg WE placed to the homeowner (bridge mode only). */
+  customerCallSid: string | null;
+  state: string;
+  startedAt: number;
+}
+
+/**
+ * The Twilio legs of calls that haven't connected yet — the ones whose true state
+ * we may still be missing. Used by the direct-mode poller, which asks Twilio
+ * directly because it cannot attach a status callback to a leg ElevenLabs created.
+ */
+export async function listUnconnectedAILegs(
+  conversationIds: string[],
+): Promise<AILegRef[]> {
+  if (!isAdminConfigured() || conversationIds.length === 0) return [];
+  try {
+    const { data } = await createAdminClient()
+      .from("ai_conversations")
+      .select("conversation_id, call_sid, customer_call_sid, state, started_at")
+      .in("conversation_id", conversationIds.slice(0, 200))
+      .in("state", ["initiated", "ringing"]);
+    return ((data ?? []) as Record<string, unknown>[]).map((r) => ({
+      conversationId: String(r.conversation_id),
+      callSid: (r.call_sid as string) ?? null,
+      customerCallSid: (r.customer_call_sid as string) ?? null,
+      state: String(r.state ?? "initiated"),
+      startedAt: r.started_at ? Date.parse(String(r.started_at)) : Date.now(),
+    }));
+  } catch {
+    return [];
+  }
+}
+
+/** Same, by conversation id. */
+export async function getAICallRef(
+  conversationId: string,
+): Promise<AICallRef | null> {
+  if (!isAdminConfigured() || !conversationId) return null;
+  try {
+    const { data } = await createAdminClient()
+      .from("ai_conversations")
+      .select("conversation_id, call_sid, state, connected_at")
+      .eq("conversation_id", conversationId)
+      .maybeSingle();
+    if (!data) return null;
+    return {
+      conversationId: String(data.conversation_id),
+      callSid: (data.call_sid as string) ?? null,
+      state: String(data.state ?? "initiated"),
+      connectedAt: data.connected_at ? Date.parse(String(data.connected_at)) : null,
+    };
+  } catch {
+    return null;
   }
 }
 
@@ -553,6 +732,8 @@ export interface AIConversationRow {
   durationSec: number | null;
   recordingAvailable: boolean;
   callSid: string | null;
+  /** They picked up. The live timer counts from here, not startedAt. */
+  connectedAt: number | null;
   appointment: { when: string; notes: string } | null;
 }
 
@@ -583,6 +764,9 @@ export async function getAIConversation(
       durationSec: (data.duration_sec as number) ?? null,
       recordingAvailable: data.state === "completed",
       callSid: (data.call_sid as string) ?? null,
+      connectedAt: data.connected_at
+        ? Date.parse(String(data.connected_at))
+        : null,
       appointment:
         (data.appointment as { when: string; notes: string } | null) ?? null,
     };
@@ -740,9 +924,13 @@ export interface MonitorAICall {
   leadName: string;
   phone: string;
   city: string;
-  state: "initiated" | "in_progress" | "completed" | "failed";
+  state: AILiveState;
   sentiment: "positive" | "neutral" | "negative";
   startedAt: number;
+  /** When their phone started ringing. */
+  ringingAt?: number;
+  /** When they picked up. The on-call timer counts from HERE, not startedAt. */
+  connectedAt?: number;
   endedAt?: number;
   durationSec?: number;
   summary?: string;
@@ -810,6 +998,8 @@ export async function getAIConversationsForMonitor(): Promise<{
         state,
         sentiment,
         startedAt: r.started_at ? Date.parse(String(r.started_at)) : Date.now(),
+        ringingAt: r.ringing_at ? Date.parse(String(r.ringing_at)) : undefined,
+        connectedAt: r.connected_at ? Date.parse(String(r.connected_at)) : undefined,
         endedAt: r.ended_at ? Date.parse(String(r.ended_at)) : undefined,
         durationSec: r.duration_sec == null ? undefined : Number(r.duration_sec),
         summary: (r.summary as string) ?? undefined,
@@ -820,12 +1010,8 @@ export async function getAIConversationsForMonitor(): Promise<{
 
     const all = (data ?? []).map(map);
     return {
-      active: all.filter(
-        (c) => c.state === "initiated" || c.state === "in_progress",
-      ),
-      recent: all
-        .filter((c) => c.state === "completed" || c.state === "failed")
-        .slice(0, 8),
+      active: all.filter((c) => LIVE_STATES.includes(c.state)),
+      recent: all.filter((c) => isTerminalLiveState(c.state)).slice(0, 8),
     };
   } catch {
     return { active: [], recent: [] };

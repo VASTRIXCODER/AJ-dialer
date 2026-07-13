@@ -12,10 +12,24 @@ type HumanCall = {
   leadName: string;
   city: string;
   phone: string;
-  state: "ringing" | "connected";
+  /**
+   * "calling" — we've asked Twilio to dial; their phone isn't ringing yet.
+   * "ringing" — Twilio says it is.
+   * These are now driven by Twilio's own status callbacks rather than inferred by
+   * the rep's browser, so the monitor stays truthful even if the rep's tab dies.
+   */
+  state: "calling" | "ringing" | "connected";
   startedAt: number;
+  /** They picked up. The talk timer counts from here, not startedAt. */
+  connectedAt: number | null;
   repName: string;
   canListen: boolean;
+};
+
+const humanStateMeta = {
+  calling: { label: "Calling", tone: "neutral" as const },
+  ringing: { label: "Ringing", tone: "warning" as const },
+  connected: { label: "On call", tone: "success" as const },
 };
 
 /**
@@ -83,7 +97,9 @@ export function HumanLiveMonitor({
         .then((j) => setCalls(j.active ?? []))
         .catch(() => {});
     load();
-    const poll = setInterval(load, 4000);
+    // 2s, matching the AI monitor. Twilio drives these states now, so the feed is
+    // a plain DB read and polling harder is cheap.
+    const poll = setInterval(load, 2000);
     const tick = setInterval(() => setNow(Date.now()), 1000);
     return () => {
       clearInterval(poll);
@@ -198,11 +214,17 @@ export function HumanLiveMonitor({
       ) : (
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
         {calls.map((c) => {
-          const dur = Math.min(
-            Math.max(0, Math.floor((now - c.startedAt) / 1000)),
-            60 * 60,
-          );
           const connected = c.state === "connected";
+          // Only time a conversation that has actually begun. This used to count
+          // from startedAt, so a ringing phone displayed a running talk timer.
+          const dur =
+            connected && c.connectedAt
+              ? Math.min(
+                  Math.max(0, Math.floor((now - c.connectedAt) / 1000)),
+                  60 * 60,
+                )
+              : null;
+          const meta = humanStateMeta[c.state] ?? humanStateMeta.calling;
           const isListening = listeningId === c.id;
           return (
             <Card key={c.id} className="overflow-hidden p-5">
@@ -213,6 +235,12 @@ export function HumanLiveMonitor({
                     {connected && (
                       <span className="absolute -bottom-0.5 -right-0.5 h-3.5 w-3.5 rounded-full border-2 border-card bg-success" />
                     )}
+                    {c.state === "ringing" && (
+                      <span className="absolute -bottom-0.5 -right-0.5 flex h-3.5 w-3.5">
+                        <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-warning opacity-70" />
+                        <span className="relative inline-flex h-3.5 w-3.5 rounded-full border-2 border-card bg-warning" />
+                      </span>
+                    )}
                   </span>
                   <div className="min-w-0">
                     <p className="truncate font-semibold leading-tight">{c.leadName}</p>
@@ -221,8 +249,8 @@ export function HumanLiveMonitor({
                     </p>
                   </div>
                 </div>
-                <Badge tone={connected ? "success" : "warning"} dot>
-                  {connected ? "On call" : "Ringing"}
+                <Badge tone={meta.tone} dot>
+                  {meta.label}
                 </Badge>
               </div>
 
@@ -234,12 +262,25 @@ export function HumanLiveMonitor({
 
               <div className="mt-3 flex items-center justify-between rounded-xl bg-muted/60 p-3">
                 <span className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
-                  <Phone className="h-4 w-4" />
-                  Manual call
+                  <Phone
+                    className={cn(
+                      "h-4 w-4",
+                      c.state === "ringing" && "animate-pulse text-warning",
+                    )}
+                  />
+                  {connected
+                    ? "Manual call"
+                    : c.state === "ringing"
+                      ? "Their phone is ringing"
+                      : "Placing the call…"}
                 </span>
-                <span className="font-mono text-sm font-bold tabular">
-                  {formatDuration(dur)}
-                </span>
+                {dur != null ? (
+                  <span className="font-mono text-sm font-bold tabular">
+                    {formatDuration(dur)}
+                  </span>
+                ) : (
+                  <span className="text-xs text-muted-foreground">—</span>
+                )}
               </div>
 
               {canListen && connected && (

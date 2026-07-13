@@ -7,6 +7,7 @@ import {
   CalendarCheck,
   ClipboardList,
   Frown,
+  HeadphoneOff,
   Headphones,
   Loader2,
   Meh,
@@ -29,11 +30,11 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Portal } from "@/components/ui/portal";
 import { createPcmPlayer, type PcmPlayer } from "@/lib/pcm-player";
-import { outcomeConfig } from "@/lib/status";
-import type { CallOutcome } from "@/lib/types";
+import { liveStateConfig, outcomeConfig } from "@/lib/status";
+import { type AILiveState, type CallOutcome, isTerminalLiveState } from "@/lib/types";
 import { cn, formatDuration, formatPhone } from "@/lib/utils";
 
-type AICallState = "initiated" | "in_progress" | "completed" | "failed";
+type AICallState = AILiveState;
 type Sentiment = "positive" | "neutral" | "negative";
 
 export type CallDetail = {
@@ -48,6 +49,8 @@ export type CallDetail = {
   summary: string;
   durationSec: number | null;
   startedAt: number | null;
+  /** They picked up. The live timer counts from here, not startedAt. */
+  connectedAt: number | null;
   recordingAvailable: boolean;
   transcript: { role: string; message: string; secs: number | null }[];
   appointment: { when: string; notes: string } | null;
@@ -62,12 +65,13 @@ const sentimentMeta: Record<Sentiment, { icon: typeof Smile; tone: string; label
   negative: { icon: Frown, tone: "text-danger", label: "Negative" },
 };
 
-const stateMeta: Record<AICallState, { label: string; tone: "primary" | "success" | "danger" | "neutral" }> = {
-  initiated: { label: "Dialing", tone: "primary" },
-  in_progress: { label: "On call", tone: "primary" },
-  completed: { label: "Completed", tone: "success" },
-  failed: { label: "Didn't connect", tone: "danger" },
-};
+/**
+ * The one shared map (src/lib/status.ts). This file used to keep its own, which
+ * disagreed with the monitor's and with the dashboard's — three vocabularies for
+ * one lifecycle, so the same call could read "Dialing" in one place and "In
+ * Progress" in another.
+ */
+const stateMeta = liveStateConfig;
 
 /**
  * Per-call mini dashboard + full breakdown — live transcript, AI summary, the
@@ -179,7 +183,7 @@ export function CallDashboard({
 
   // Stop reading aloud once the call is over, and always on unmount.
   useEffect(() => {
-    if (detail && detail.state !== "in_progress" && detail.state !== "initiated") {
+    if (detail && isTerminalLiveState(detail.state)) {
       try {
         window.speechSynthesis?.cancel();
       } catch {
@@ -312,7 +316,7 @@ export function CallDashboard({
 
   // Stop live audio when the call ends, and always tear down on unmount.
   useEffect(() => {
-    if (detail && detail.state !== "in_progress" && detail.state !== "initiated") {
+    if (detail && isTerminalLiveState(detail.state)) {
       if (wsRef.current) {
         closeAudio();
         setAudioOn(false);
@@ -322,10 +326,15 @@ export function CallDashboard({
 
   useEffect(() => () => closeAudio(), [closeAudio]);
 
-  const live = detail?.state === "initiated" || detail?.state === "in_progress";
+  const live = detail ? !isTerminalLiveState(detail.state) : false;
+  // Count from the moment they PICKED UP. Counting from startedAt (as this did)
+  // meant a call still ringing displayed a growing "on call" duration — a timer
+  // for a conversation that hadn't begun. Before pickup there is nothing to time.
   const dur = detail
-    ? live && detail.startedAt
-      ? Math.max(0, Math.floor((now - detail.startedAt) / 1000))
+    ? live
+      ? detail.connectedAt
+        ? Math.max(0, Math.floor((now - detail.connectedAt) / 1000))
+        : 0
       : (detail.durationSec ?? 0)
     : 0;
 
@@ -650,9 +659,19 @@ export function CallDashboard({
                       {audioOn ? "Listening (audio)" : "Listen live"}
                     </button>
                   )}
+                  {/*
+                    Not live audio — this is window.speechSynthesis reading the
+                    TRANSCRIPT aloud in a synthetic voice. It used to be labelled
+                    "Read aloud" and sat where "Listen live" would be if live audio
+                    were configured, so with no Twilio bridge it was the only
+                    listen-shaped control on the screen. Anyone who pressed it heard
+                    a robot recite text and reasonably concluded listen-in was
+                    broken. Say what it actually is.
+                  */}
                   <button
                     type="button"
                     onClick={toggleListen}
+                    title="Speaks the call transcript using your browser's text-to-speech. This is not the live call audio."
                     className={cn(
                       "inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs font-semibold transition-colors",
                       listen
@@ -661,8 +680,22 @@ export function CallDashboard({
                     )}
                   >
                     {listen ? <Volume2 className="h-3.5 w-3.5" /> : <VolumeX className="h-3.5 w-3.5" />}
-                    {listen ? "Reading…" : "Read aloud"}
+                    {listen ? "Reading transcript…" : "Read transcript aloud"}
                   </button>
+                  {/*
+                    And when live audio ISN'T available, say so, rather than hiding
+                    the button and leaving the supervisor to guess. Silence here is
+                    what made this look like a bug instead of a missing env var.
+                  */}
+                  {canListen && !detail?.liveAudioAvailable && (
+                    <span
+                      title="Live call audio needs a Twilio bridge number (TWILIO_AI_BRIDGE_NUMBER) or the media-stream relay. See docs/LIVE_LISTEN_IN.md."
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-dashed border-border px-2.5 py-1 text-xs font-medium text-muted-foreground"
+                    >
+                      <HeadphoneOff className="h-3.5 w-3.5" />
+                      Live audio not configured
+                    </span>
+                  )}
                 </div>
               )}
             </div>

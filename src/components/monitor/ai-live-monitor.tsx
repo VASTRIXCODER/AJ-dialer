@@ -7,6 +7,7 @@ import {
   Frown,
   Headphones,
   Meh,
+  PhoneCall,
   PhoneOff,
   Radio,
   Smile,
@@ -15,18 +16,17 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { SpotlightCard } from "@/components/motion";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { CONNECTED_OUTCOMES } from "@/lib/call-analytics";
-import type { CallOutcome } from "@/lib/types";
-import { outcomeConfig } from "@/lib/status";
+import type { AILiveState, CallOutcome } from "@/lib/types";
+import { liveStateConfig, outcomeConfig } from "@/lib/status";
 import { cn, formatDuration } from "@/lib/utils";
 import { CallDashboard } from "./call-dashboard";
 
-type AICallState = "initiated" | "in_progress" | "completed" | "failed";
 type Sentiment = "positive" | "neutral" | "negative";
 
 type AICall = {
@@ -35,15 +35,33 @@ type AICall = {
   leadName: string;
   phone: string;
   city: string;
-  state: AICallState;
+  state: AILiveState;
   sentiment: Sentiment;
   startedAt: number;
+  /** Their phone started ringing. */
+  ringingAt?: number;
+  /** They picked up — the talk timer counts from here, never from startedAt. */
+  connectedAt?: number;
   endedAt?: number;
   durationSec?: number;
   summary?: string;
   outcome?: CallOutcome;
   recordingAvailable?: boolean;
 };
+
+/** How long a call that just ended stays on the board in its terminal state. */
+const FLASH_MS = 15_000;
+
+/**
+ * A call the monitor is holding on screen for a moment after it ended.
+ *
+ * Without this a no-answer is invisible: the card simply vanishes between polls
+ * and reappears in the "Recent" list, so the one state we most need to SEE — the
+ * homeowner didn't pick up — is the one state that never renders. Holding the card
+ * briefly, in its own distinct terminal styling, makes the transition observable
+ * (and is what makes the 10-call verification something you can actually watch).
+ */
+type Flash = { call: AICall; until: number };
 
 const sentimentMeta: Record<Sentiment, { icon: typeof Smile; tone: string; label: string }> = {
   positive: { icon: Smile, tone: "text-success", label: "Positive" },
@@ -103,25 +121,62 @@ export function AiLiveMonitor({
 }) {
   const [active, setActive] = useState<AICall[]>([]);
   const [recent, setRecent] = useState<AICall[]>([]);
+  const [flash, setFlash] = useState<Flash[]>([]);
   const [now, setNow] = useState(() => Date.now());
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [openId, setOpenId] = useState<string | null>(initialCall);
 
+  // Which calls were live as of the previous poll — the basis for spotting the
+  // moment one of them drops off, which is exactly when a no-answer happens.
+  const wasLive = useRef<Set<string>>(new Set());
+
   const load = useCallback(() => {
     fetch("/api/elevenlabs/conversations", { cache: "no-store" })
       .then((r) => r.json())
       .then((j) => {
-        setActive(j.active ?? []);
-        setRecent(j.recent ?? []);
+        const nextActive: AICall[] = j.active ?? [];
+        const nextRecent: AICall[] = j.recent ?? [];
+        const liveNow = new Set(nextActive.map((c) => c.conversationId));
+
+        // Anything that was live last poll and is now terminal just ENDED. Hold it
+        // on the board so its final state is actually seen rather than blinking out.
+        const justEnded = nextRecent.filter(
+          (c) => wasLive.current.has(c.conversationId) && !liveNow.has(c.conversationId),
+        );
+        if (justEnded.length > 0) {
+          const until = Date.now() + FLASH_MS;
+          setFlash((prev) => {
+            const held = new Map(prev.map((f) => [f.call.conversationId, f]));
+            for (const call of justEnded) {
+              held.set(call.conversationId, { call, until });
+            }
+            return [...held.values()];
+          });
+        }
+
+        wasLive.current = liveNow;
+        setActive(nextActive);
+        setRecent(nextRecent);
       })
       .catch(() => {});
   }, []);
 
   useEffect(() => {
     load();
-    const poll = setInterval(load, 4000);
-    const tick = setInterval(() => setNow(Date.now()), 1000);
+    // 2s, down from 4s. The feed is now a plain DB read — Twilio has already
+    // pushed the truth into the row by the time we ask — so polling harder is
+    // cheap, and halves the worst-case lag between a phone ringing and the
+    // monitor saying so.
+    const poll = setInterval(load, 2000);
+    const tick = setInterval(() => {
+      const t = Date.now();
+      setNow(t);
+      setFlash((prev) => {
+        const kept = prev.filter((f) => f.until > t);
+        return kept.length === prev.length ? prev : kept;
+      });
+    }, 1000);
     return () => {
       clearInterval(poll);
       clearInterval(tick);
@@ -173,11 +228,23 @@ export function AiLiveMonitor({
 
   const connectedCount = recent.filter((c) => c.outcome && CONNECTED_OUTCOMES.has(c.outcome)).length;
   const kpis = {
+    // "Live" counts calls actually on the phone — never the just-ended cards still
+    // fading off the board.
     live: active.length,
     completed: recent.length,
     booked: recent.filter((c) => c.outcome === "appointment_booked").length,
     connectRate: recent.length ? Math.round((connectedCount / recent.length) * 100) : 0,
   };
+
+  // The board = what's on the phone now, plus what just came off it. Anything the
+  // feed reports as live wins over a stale flash card of the same call.
+  const liveIds = new Set(active.map((c) => c.conversationId));
+  const board: AICall[] = [
+    ...active,
+    ...flash
+      .filter((f) => !liveIds.has(f.call.conversationId))
+      .map((f) => f.call),
+  ];
 
   return (
     <div className="space-y-5">
@@ -208,7 +275,7 @@ export function AiLiveMonitor({
           </span>
         </div>
 
-        {active.length === 0 ? (
+        {board.length === 0 ? (
           <Card className="flex flex-col items-center gap-1 p-8 text-center">
             <Bot className="mb-1 h-8 w-8 text-muted-foreground/50" />
             <p className="text-sm font-medium">No live AI calls right now</p>
@@ -222,13 +289,28 @@ export function AiLiveMonitor({
           </Card>
         ) : (
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
-            {active.map((c, i) => {
+            {board.map((c, i) => {
               const s = sentimentMeta[c.sentiment];
               const Sentiment = s.icon;
-              const dur = Math.min(
-                Math.max(0, Math.floor((now - c.startedAt) / 1000)),
-                60 * 60,
-              );
+              const meta = liveStateConfig[c.state];
+              const ended = c.state === "completed" || c.state === "failed";
+
+              // The talk timer runs from the moment they PICKED UP. It used to
+              // count from startedAt, so a call that was merely ringing already
+              // showed a growing "on call" duration — the clock itself was lying.
+              const dur = meta.timer && c.connectedAt
+                ? Math.min(Math.max(0, Math.floor((now - c.connectedAt) / 1000)), 60 * 60)
+                : null;
+
+              // What the card says it's doing, in the homeowner's terms.
+              const statusLine = ended
+                ? (c.outcome ? outcomeConfig[c.outcome].label : meta.label)
+                : c.state === "in_progress"
+                  ? "AI on call"
+                  : c.state === "ringing"
+                    ? "Their phone is ringing"
+                    : "Placing the call…";
+
               return (
                 <SpotlightCard
                   key={c.conversationId}
@@ -236,32 +318,85 @@ export function AiLiveMonitor({
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ delay: i * 0.05, duration: 0.4 }}
                   onClick={() => setOpenId(c.conversationId)}
-                  className="cursor-pointer overflow-hidden p-5 ring-1 ring-primary/20"
+                  className={cn(
+                    "cursor-pointer overflow-hidden p-5 ring-1 transition-colors",
+                    c.state === "in_progress" && "ring-success/30",
+                    c.state === "ringing" && "ring-warning/40",
+                    c.state === "initiated" && "ring-border",
+                    ended && "opacity-70 ring-border",
+                  )}
                 >
                   <div className="flex items-start justify-between">
                     <div className="flex items-center gap-3">
-                      <span className="relative flex h-10 w-10 items-center justify-center rounded-xl bg-solar text-white shadow-glow">
+                      <span
+                        className={cn(
+                          "relative flex h-10 w-10 items-center justify-center rounded-xl text-white",
+                          ended ? "bg-muted-foreground/40" : "bg-solar shadow-glow",
+                        )}
+                      >
                         <Bot className="h-5 w-5" />
-                        <span className="absolute -bottom-0.5 -right-0.5 h-3.5 w-3.5 rounded-full border-2 border-card bg-success" />
+                        {/* The presence dot means "a human is on this line". It was
+                            previously shown on EVERY active card, including ones
+                            that were still ringing. */}
+                        {meta.live && (
+                          <span className="absolute -bottom-0.5 -right-0.5 flex h-3.5 w-3.5">
+                            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-success opacity-70" />
+                            <span className="relative inline-flex h-3.5 w-3.5 rounded-full border-2 border-card bg-success" />
+                          </span>
+                        )}
+                        {c.state === "ringing" && (
+                          <span className="absolute -bottom-0.5 -right-0.5 flex h-3.5 w-3.5">
+                            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-warning opacity-70" />
+                            <span className="relative inline-flex h-3.5 w-3.5 rounded-full border-2 border-card bg-warning" />
+                          </span>
+                        )}
                       </span>
                       <div className="min-w-0">
                         <p className="truncate font-semibold leading-tight">{c.leadName}</p>
                         <p className="truncate text-xs text-muted-foreground">{c.city}</p>
                       </div>
                     </div>
-                    <Badge tone="primary" dot className="capitalize">
-                      {c.state.replace("_", " ")}
+                    <Badge
+                      tone={ended && c.outcome ? outcomeConfig[c.outcome].tone : meta.tone}
+                      dot={!ended}
+                    >
+                      {ended && c.outcome ? outcomeConfig[c.outcome].label : meta.label}
                     </Badge>
                   </div>
 
                   <div className="mt-4 flex items-center justify-between rounded-xl bg-muted/60 p-3">
-                    <span className={cn("flex items-center gap-1.5 text-xs font-medium", s.tone)}>
-                      <Sentiment className="h-4 w-4" />
-                      AI on call
+                    <span
+                      className={cn(
+                        "flex items-center gap-1.5 text-xs font-medium",
+                        c.state === "in_progress" ? s.tone : "text-muted-foreground",
+                      )}
+                    >
+                      {c.state === "in_progress" ? (
+                        <Sentiment className="h-4 w-4" />
+                      ) : ended ? (
+                        <PhoneOff className="h-4 w-4" />
+                      ) : (
+                        <PhoneCall
+                          className={cn(
+                            "h-4 w-4",
+                            c.state === "ringing" && "animate-pulse text-warning",
+                          )}
+                        />
+                      )}
+                      {statusLine}
                     </span>
-                    <span className="font-mono text-sm font-bold tabular">
-                      {formatDuration(dur)}
-                    </span>
+                    {/* No timer before pickup — there is nothing yet to time. */}
+                    {dur != null ? (
+                      <span className="font-mono text-sm font-bold tabular">
+                        {formatDuration(dur)}
+                      </span>
+                    ) : ended && c.durationSec != null ? (
+                      <span className="font-mono text-sm font-bold tabular text-muted-foreground">
+                        {formatDuration(c.durationSec)}
+                      </span>
+                    ) : (
+                      <span className="text-xs text-muted-foreground">—</span>
+                    )}
                   </div>
 
                   <div className="mt-4 flex gap-2">
@@ -275,9 +410,13 @@ export function AiLiveMonitor({
                       }}
                     >
                       <Headphones className="h-3.5 w-3.5" />
-                      {canIntervene ? "Manage & take over" : "Open & listen"}
+                      {ended
+                        ? "Open"
+                        : canIntervene
+                          ? "Manage & take over"
+                          : "Open & listen"}
                     </Button>
-                    {canIntervene && (
+                    {canIntervene && !ended && (
                       <Button
                         size="sm"
                         variant="danger"

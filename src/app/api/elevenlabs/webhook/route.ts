@@ -26,6 +26,18 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Bad JSON" }, { status: 400 });
   }
 
+  // ── Only the transcript event may finalize a call ───────────────────────────
+  // ElevenLabs posts several event types to this one URL. `post_call_audio`
+  // carries a conversation_id but NO transcript and NO metadata — so it used to
+  // fall straight through to classifyNonConversation as a call with zero turns and
+  // zero duration, which files it as `no_answer`. A real, connected, successful
+  // call could therefore be overwritten as a miss purely because its audio event
+  // landed first. Ignore everything that isn't the transcript.
+  const eventType = String(payload.type ?? "");
+  if (eventType && eventType !== "post_call_transcription") {
+    return NextResponse.json({ received: true, ignored: eventType });
+  }
+
   const data = (payload.data ?? payload) as Record<string, unknown>;
   const conversationId = String(
     data.conversation_id ?? data.conversationId ?? "",
@@ -44,12 +56,23 @@ export async function POST(req: Request) {
     metadata.termination_reason ?? metadata.call_termination_reason ?? "",
   );
 
+  // The provider's own error, which the reconcile path already reads but this one
+  // dropped. classifyNonConversation checks the quota message FIRST, ahead of every
+  // other rule — and "out of credits" only ever appears in here. Without it, a call
+  // the provider killed for an empty wallet came through this webhook looking like
+  // an ordinary no-answer: the exact misclassification that hid the outage.
+  const error = (metadata.error ?? {}) as Record<string, unknown>;
+  const errorCode = error.code == null ? null : String(error.code);
+  const errorReason = error.reason == null ? null : String(error.reason);
+
   await finalizeAIConversation({
     conversationId,
     turns,
     status: String(data.status ?? ""),
     durationSec,
     terminationReason,
+    errorCode,
+    errorReason,
   });
 
   return NextResponse.json({ received: true });

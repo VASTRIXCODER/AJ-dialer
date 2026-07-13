@@ -26,6 +26,7 @@ export async function GET() {
     phone: c.phone,
     state: c.state,
     startedAt: c.startedAt,
+    connectedAt: c.connectedAt,
     repName: c.repName,
     // Once the call is connected, its Twilio conference exists and a supervisor
     // can join it (muted) to listen. Tied to the connected state — which the

@@ -35,24 +35,52 @@ export async function POST(req: Request) {
   // fires for a real call ElevenLabs just placed, so there's nothing to "demo."
   const lead = await getLeadByPhoneAdmin(calledNumber);
 
-  // Keep the live monitor in sync.
-  if (callSid) {
-    const existing = findByCallSid(callSid);
-    if (existing) updateAICall(existing.conversationId, { state: "in_progress" });
+  // ── Who actually answered? ──────────────────────────────────────────────────
+  // In BRIDGE mode the agent doesn't dial the homeowner — it dials our Twilio
+  // bridge number, whose voice webhook answers instantly with a <Pause> (see
+  // /api/twilio/voice). So this webhook fires a second or two after we place the
+  // call, while the homeowner's phone has not even begun to ring.
+  //
+  // Treating that as "connected" was the original sin of the live monitor: every
+  // bridge-mode call jumped straight to "In Progress" and sat there — the state
+  // was a lie from the first second, not merely one that failed to clear. It also
+  // made the real lifecycle unrepresentable, because a later (truthful) "ringing"
+  // event from Twilio is a BACKWARDS move from in_progress and gets rejected.
+  //
+  // In bridge mode the only authority on "the homeowner picked up" is Twilio's
+  // `answered` event on the customer leg (/api/twilio/status). So: say nothing.
+  const bridge = elevenLabsConfig.bridgeNumber.trim();
+  const isBridgeLeg = Boolean(bridge) && last10(calledNumber) === last10(bridge);
+
+  // Keep the live monitor in sync — DIRECT mode only, where this webhook really
+  // does mean the homeowner is on the line.
+  if (!isBridgeLeg) {
+    if (callSid) {
+      const existing = findByCallSid(callSid);
+      if (existing) {
+        updateAICall(existing.conversationId, {
+          state: "in_progress",
+          connectedAt: Date.now(),
+        });
+      }
+    }
+    if (conversationId && !getAICall(conversationId) && lead) {
+      registerAICall({
+        conversationId,
+        callSid: callSid || null,
+        leadId: lead.id,
+        leadName: `${lead.firstName} ${lead.lastName}`,
+        phone: calledNumber,
+        city: `${lead.city}, ${lead.state}`,
+      });
+      updateAICall(conversationId, {
+        state: "in_progress",
+        connectedAt: Date.now(),
+      });
+    }
+    // Durable advance so the call shows as connected on every instance.
+    if (conversationId) await markAIConversationActive(conversationId);
   }
-  if (conversationId && !getAICall(conversationId) && lead) {
-    registerAICall({
-      conversationId,
-      callSid: callSid || null,
-      leadId: lead.id,
-      leadName: `${lead.firstName} ${lead.lastName}`,
-      phone: calledNumber,
-      city: `${lead.city}, ${lead.state}`,
-    });
-    updateAICall(conversationId, { state: "in_progress" });
-  }
-  // Durable advance so the call shows as connected on every instance.
-  if (conversationId) await markAIConversationActive(conversationId);
 
   // Resolve the agent's prompt + voice from the matched lead's organization
   // (Sunrun/solar → the exact Emily script), plus personalization variables.

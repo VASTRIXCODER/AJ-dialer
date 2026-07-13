@@ -1,4 +1,5 @@
 import {
+  Activity,
   BarChart3,
   CalendarCheck,
   CheckCircle2,
@@ -63,6 +64,13 @@ export const navGroups: NavGroup[] = [
         icon: Radio,
         feature: "liveMonitor",
         permission: "monitor.view",
+      },
+      {
+        label: "Team Status",
+        href: "/monitor/team",
+        icon: Activity,
+        feature: "liveMonitor",
+        permission: "monitor.roster",
       },
       { label: "Leaderboard", href: "/leaderboard", icon: Trophy, feature: "leaderboard" },
       { label: "Campaigns", href: "/campaigns", icon: Megaphone, feature: "campaigns" },

@@ -1,8 +1,18 @@
 import "server-only";
 
 import { finalizeAIConversation } from "./ai-call-finalize";
-import { getAIConversationsForMonitor, listStuckAIConversations } from "./db/records";
-import { fetchConversation, isElevenLabsConfigured } from "./elevenlabs";
+import { applyTwilioCallStatus } from "./ai-call-state";
+import {
+  getAIConversationsForMonitor,
+  listStuckAIConversations,
+  listUnconnectedAILegs,
+} from "./db/records";
+import {
+  fetchConversation,
+  isAIBridgeConfigured,
+  isElevenLabsConfigured,
+} from "./elevenlabs";
+import { getRestClient, isRestConfigured } from "./twilio";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Active-call reconciliation. Serverless has no background workers, so the Live
@@ -34,6 +44,93 @@ function hasHumanTurn(turns: { role: string; message: string }[]): boolean {
 export interface ActiveRef {
   conversationId: string;
   startedAt: number;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Twilio status poll — the ringing/no-answer signal for DIRECT mode.
+//
+// In bridge mode we place the homeowner's leg ourselves and Twilio pushes its
+// status to /api/twilio/status within a second. In direct mode ElevenLabs places
+// that leg, and Twilio's API gives us no way to attach a status callback after the
+// fact — so push is simply unavailable.
+//
+// But the leg is not out of reach: ElevenLabs dials through the org's OWN Twilio
+// number, so the call exists in our Twilio account and we can just ask about it.
+// That's authoritative and immediate, unlike polling ElevenLabs — which believes a
+// call is connected the moment it's placed.
+//
+// Cost: one Twilio REST fetch (~100ms) per not-yet-connected call, capped. A call
+// is only in this set for the few seconds between placement and pickup, so in
+// practice this touches almost nothing.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const TWILIO_CHECK_LIMIT = 10;
+
+/**
+ * Which Twilio leg actually represents the HOMEOWNER's phone?
+ *
+ * This distinction is load-bearing. In bridge mode `call_sid` is the AGENT's leg —
+ * the one dialing our own bridge number, which the voice webhook answers instantly
+ * with a <Pause>. Polling that leg would report `in-progress` within a second of
+ * every call and mark it "Connected" while the homeowner's phone is still ringing:
+ * exactly the lie we just finished tearing out of the personalization webhook.
+ *
+ * So in bridge mode the homeowner is `customer_call_sid`, and nothing else will
+ * do. If the bridge failed and we never got one, we have no homeowner leg to ask
+ * about — return null rather than guess with the agent's.
+ */
+function homeownerLeg(leg: {
+  callSid: string | null;
+  customerCallSid: string | null;
+}): string | null {
+  if (isAIBridgeConfigured()) return leg.customerCallSid;
+  return leg.customerCallSid ?? leg.callSid;
+}
+
+/**
+ * Ask Twilio the true state of every active call that hasn't connected yet, and
+ * apply it through the same transition table the status webhook uses.
+ *
+ * Returns the conversations it FINALIZED (Twilio said nobody ever picked up), so
+ * a caller that also consults ElevenLabs can skip them. That matters: Twilio's
+ * verdict is the precise one — a `failed` leg carrying 21210/21610 is filed as a
+ * `provider_error`, whereas ElevenLabs, which cannot see the homeowner's phone at
+ * all, would only ever offer a generic timeout. Re-finalizing from the vaguer
+ * source would overwrite the better answer with a worse one.
+ */
+export async function reconcileViaTwilio(
+  conversationIds: string[],
+): Promise<Set<string>> {
+  const settled = new Set<string>();
+  if (!isRestConfigured() || conversationIds.length === 0) return settled;
+
+  const legs = (await listUnconnectedAILegs(conversationIds))
+    .map((l) => ({ ...l, sid: homeownerLeg(l) }))
+    .filter((l): l is typeof l & { sid: string } => Boolean(l.sid))
+    .slice(0, TWILIO_CHECK_LIMIT);
+  if (legs.length === 0) return settled;
+
+  const client = await getRestClient();
+  if (!client) return settled;
+
+  await Promise.all(
+    legs.map(async (leg) => {
+      try {
+        const call = await client.calls(leg.sid).fetch();
+        const applied = await applyTwilioCallStatus({
+          conversationId: leg.conversationId,
+          agentCallSid: leg.callSid,
+          callStatus: String(call.status ?? ""),
+          // The REST resource exposes the same error code the webhook would carry.
+          errorCode: (call as { errorCode?: number | null }).errorCode ?? null,
+        });
+        if (applied === "unanswered") settled.add(leg.conversationId);
+      } catch {
+        /* best-effort — the cron drainer is the guarantee, not this */
+      }
+    }),
+  );
+  return settled;
 }
 
 export async function reconcileActiveCalls(active: ActiveRef[]): Promise<void> {
@@ -134,8 +231,16 @@ export async function reconcileOwnerActiveCalls(): Promise<void> {
 // The cron-driven reconciler: the actual guarantee that every call gets finalized.
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** Don't touch calls this young — they may still legitimately be ringing. */
-const STUCK_GRACE_MS = 10 * 60_000;
+/**
+ * Don't touch calls this young — they may still legitimately be ringing.
+ *
+ * Was 10 minutes, back when this was imagined as the only safety net. Now that
+ * Twilio pushes the real verdict to /api/twilio/status within a second of the
+ * homeowner's phone giving up (~33s), a ten-minute grace buys nothing and simply
+ * extends how long a call sits stranded when a webhook IS genuinely lost. Two
+ * minutes is comfortably past any real ring-out while keeping the backstop tight.
+ */
+const STUCK_GRACE_MS = 2 * 60_000;
 
 export interface DrainResult {
   checked: number;
@@ -183,7 +288,9 @@ export async function reconcileStuckConversations(opts?: {
   const deadline = Date.now() + budgetMs;
 
   const out: DrainResult = { checked: 0, finalized: 0, errors: 0, moreRemaining: false };
-  if (!isElevenLabsConfigured()) return out;
+  // Twilio alone is enough to resolve a call that never connected, so this runs
+  // even with no ElevenLabs key. Only the transcript pass below needs one.
+  if (!isElevenLabsConfigured() && !isRestConfigured()) return out;
 
   let cursor: string | null = null;
   for (;;) {
@@ -199,8 +306,34 @@ export async function reconcileStuckConversations(opts?: {
       });
     if (page.rows.length === 0) break;
 
+    // Ask Twilio FIRST, because Twilio is the only witness to the homeowner's
+    // phone. Without this the cron — the thing this file calls "the actual
+    // guarantee" — was the one path that never consulted it: reconcileViaTwilio
+    // ran solely inside the supervisor's monitor poll, so an unwatched no-answer
+    // waited on ElevenLabs, which believes a call is connected the moment it is
+    // placed. In direct mode (no bridge number, hence no status callback) that is
+    // the ONLY way a ringing call ever learns it rang out.
+    //
+    // It also settles calls the ElevenLabs pass below would leave alone: a leg
+    // Twilio reports as no-answer/busy/failed is finalized here, and the pass
+    // below then finds nothing left to do. Cheap — one REST fetch per
+    // not-yet-connected call, internally capped, and a call only sits in that set
+    // for the seconds between placement and pickup.
+    const settled = await reconcileViaTwilio(page.rows.map((r) => r.conversationId));
+    out.checked += settled.size;
+    out.finalized += settled.size;
+
+    if (!isElevenLabsConfigured()) {
+      cursor = page.nextCursor;
+      if (!cursor) break;
+      continue;
+    }
+
     await pooled(page.rows, concurrency, async (c) => {
       if (Date.now() >= deadline) return;
+      // Twilio already gave this one a verdict, and a better one than ElevenLabs
+      // can. Don't spend a lookup re-deciding it.
+      if (settled.has(c.conversationId)) return;
       out.checked++;
       try {
         const convo = await fetchConversation(c.conversationId);

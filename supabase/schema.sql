@@ -826,3 +826,142 @@ create index if not exists call_records_failure_idx
 create index if not exists call_records_call_sid_idx
   on public.call_records (call_sid)
   where call_sid is not null;
+
+-- ═════════════════════════════════════════════════════════════════════════════
+-- PART 9 — LIVE CALL STATE  (idempotent; safe to re-run)
+--
+-- The Live Monitor could not tell "ringing" from "connected": a call sat in one
+-- lumped "in progress" state from the moment it was placed until something
+-- finalized it — which, for a homeowner who never picked up, could be twelve
+-- minutes later or never. Twilio always knew the difference. We just never asked
+-- it, and had nowhere to put the answer.
+--
+-- The lifecycle is now monotonic and can only move forward:
+--   initiated ──► ringing ──► in_progress ──► completed | failed
+--   (placed)     (their      (they picked    (terminal, with an outcome)
+--                 phone is    up — the talk
+--                 ringing)    timer starts here)
+-- ═════════════════════════════════════════════════════════════════════════════
+
+-- ringing_at / connected_at are the moments Twilio reported each transition.
+-- connected_at is what the on-call timer counts from: it previously counted from
+-- started_at, so a call that was merely ringing already displayed a running talk
+-- duration, which is precisely the lie this fixes.
+alter table public.ai_conversations add column if not exists ringing_at   timestamptz;
+alter table public.ai_conversations add column if not exists connected_at timestamptz;
+
+-- The homeowner's Twilio leg (bridge mode). The status webhook arrives carrying
+-- only a CallSid; without this column we cannot map it back to a conversation
+-- when the query param is lost, and the event is discarded.
+alter table public.ai_conversations add column if not exists customer_call_sid text;
+
+create index if not exists ai_conversations_customer_sid_idx
+  on public.ai_conversations (customer_call_sid)
+  where customer_call_sid is not null;
+
+-- CRITICAL: the stuck-call reconciler finds work through this partial index. It
+-- was `state in ('initiated','in_progress')`. Adding a 'ringing' state without
+-- adding it here would make every ringing call INVISIBLE to the reconciler — the
+-- exact class of "stuck forever" bug this whole change exists to kill. The index
+-- must be recreated, not just re-declared: `create index if not exists` is a
+-- no-op against the old definition and would silently leave the gap open.
+drop index if exists public.ai_conversations_stuck_idx;
+create index ai_conversations_stuck_idx
+  on public.ai_conversations (state, started_at)
+  where state in ('initiated', 'ringing', 'in_progress');
+
+-- Human calls get the same treatment. 'calling' is the pre-ring state (we've
+-- asked Twilio to dial, the phone isn't ringing yet); connected_at again anchors
+-- the talk timer instead of started_at.
+--   calling ──► ringing ──► connected  (row is deleted on hangup)
+alter table public.live_calls add column if not exists connected_at timestamptz;
+comment on column public.live_calls.state is 'calling | ringing | connected';
+
+-- Which lead actually picked up, in a parallel ("3X") dial. One room has N legs;
+-- the losing legs are force-released and report `completed`/`canceled` moments
+-- after the winner answers. Without knowing WHICH leg answered, a losing leg's
+-- terminal event would delete the row and yank a live, connected call off the
+-- monitor while the rep is still talking. We only end the row on a terminal event
+-- for the leg recorded here.
+alter table public.live_calls add column if not exists answered_lead_id text;
+
+-- ═════════════════════════════════════════════════════════════════════════════
+-- PART 11 — LIVE USER PRESENCE  (idempotent; safe to re-run)
+--
+-- The manager-level Team Status roster needs to know who is currently active —
+-- not just who's on a call. `live_calls` only has a row while a call is ringing
+-- or connected (deleted on hangup), so an idle-but-present rep is invisible to
+-- it. This is presence, one row per USER (upserted on every heartbeat from the
+-- dialer), not per call — status mirrors DialerStatus (idle | dialing | live |
+-- wrapup | ai) and is simply overwritten as the rep moves between states.
+--
+-- Same trust model as `live_calls`: RLS on, no policies. The server (service
+-- role) writes the caller's OWN row (identity from the session, never the
+-- client) and reads scoped to the viewer's org + monitor.roster permission,
+-- both enforced in application code. name/role are intentionally NOT stored
+-- here — the read side joins organization_members so a display-name change
+-- can't leave a stale row behind.
+-- ═════════════════════════════════════════════════════════════════════════════
+create table if not exists public.user_presence (
+  user_id         uuid primary key,
+  org_id          uuid,
+  status          text not null default 'idle',   -- idle | dialing | live | wrapup | ai
+  lead_name       text,
+  lead_city       text,
+  lead_phone      text,
+  ai_active_count int not null default 0,
+  updated_at      timestamptz not null default now(), -- last heartbeat (staleness)
+  status_since    timestamptz not null default now()  -- when `status` last CHANGED (roster timer)
+);
+create index if not exists user_presence_org_idx on public.user_presence (org_id, updated_at desc);
+alter table public.user_presence enable row level security;
+
+-- Atomic upsert that preserves `status_since` when the status hasn't actually
+-- changed (a heartbeat every ~20s would otherwise reset a "Live · 4:12" timer
+-- back to :00 on every tick). A plain client-side .upsert() can't express this
+-- "keep old value unless X changed" logic in one round trip without a race
+-- between concurrent heartbeats, so it's a function like app_next_dial_seq.
+create or replace function public.app_upsert_presence(
+  p_user_id uuid,
+  p_org_id uuid,
+  p_status text,
+  p_lead_name text,
+  p_lead_city text,
+  p_lead_phone text,
+  p_ai_active_count int
+) returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  insert into public.user_presence
+    (user_id, org_id, status, lead_name, lead_city, lead_phone, ai_active_count, updated_at, status_since)
+  values
+    (p_user_id, p_org_id, p_status, p_lead_name, p_lead_city, p_lead_phone, p_ai_active_count, now(), now())
+  on conflict (user_id) do update set
+    org_id           = excluded.org_id,
+    status           = excluded.status,
+    lead_name        = excluded.lead_name,
+    lead_city        = excluded.lead_city,
+    lead_phone       = excluded.lead_phone,
+    ai_active_count  = excluded.ai_active_count,
+    updated_at       = now(),
+    status_since     = case
+                          when public.user_presence.status = excluded.status
+                          then public.user_presence.status_since
+                          else now()
+                        end;
+end;
+$$;
+
+grant execute on function public.app_upsert_presence(uuid, uuid, text, text, text, text, int)
+  to service_role;
+-- CREATE FUNCTION grants PUBLIC execute by default — the grant above is
+-- additive, not a replacement. Unlike app_next_dial_seq (an arbitrary atomic
+-- counter, safe for anon/authenticated), this function trusts p_user_id /
+-- p_org_id with no auth.uid() check, so it must ONLY ever be reachable via the
+-- service-role client. Revoke the implicit PUBLIC grant explicitly.
+revoke execute on function public.app_upsert_presence(uuid, uuid, text, text, text, text, int) from public;
+revoke execute on function public.app_upsert_presence(uuid, uuid, text, text, text, text, int) from anon;
+revoke execute on function public.app_upsert_presence(uuid, uuid, text, text, text, text, int) from authenticated;

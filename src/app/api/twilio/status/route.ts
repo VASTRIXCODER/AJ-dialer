@@ -1,38 +1,53 @@
+import {
+  ANSWERED_STATUSES,
+  applyTwilioCallStatus,
+  TERMINAL_STATUSES,
+} from "@/lib/ai-call-state";
 import { losingLegs, markAnswered } from "@/lib/call-registry";
+import {
+  type AICallRef,
+  getAICallRef,
+  getAICallRefByCustomerSid,
+} from "@/lib/db/records";
+import {
+  connectHumanCall,
+  endHumanCallForLeg,
+  ringHumanCall,
+} from "@/lib/human-call-store";
 import { createAdminClient, isAdminConfigured } from "@/lib/supabase/admin";
 import { getRestClient } from "@/lib/twilio";
 
 export const dynamic = "force-dynamic";
 
-/** Twilio call states that mean the leg is over and its verdict is final. */
-const TERMINAL_STATUSES = new Set([
-  "completed",
-  "no-answer",
-  "busy",
-  "failed",
-  "canceled",
-]);
-
 /**
  * Receives Twilio call + recording status callbacks.
  *
- * For parallel dialing, the callback URL carries `room` and `leadId`. When a leg
- * is answered we record the winner and hang up the other ringing legs so only
- * the first homeowner is bridged to the agent.
+ * This route is the system's source of truth for what a phone is actually doing.
+ * Twilio is the only party that knows whether a human picked up — ElevenLabs
+ * cannot tell us, because in bridge mode it is talking to our own Twilio
+ * conference, which answers instantly. We used to subscribe to these events and
+ * then throw the interesting ones away, which is why a call that rang out sat in
+ * the Live Monitor as "In Progress" until something force-closed it minutes later.
  *
- * For recording callbacks (RecordingStatus=completed), we save the recording URL
- * to the matching call_records row by call_sid.
+ * Three jobs:
+ *   1. AI calls  — drive the conversation lifecycle (ringing → connected →
+ *      no-answer), and hang up the AI agent when nobody answers.
+ *   2. Human calls — drive `live_calls` presence, so the monitor no longer depends
+ *      on the rep's browser tab staying alive.
+ *   3. Recordings + parallel-dial winner selection (pre-existing).
  */
 export async function POST(req: Request) {
   const url = new URL(req.url);
   const room = url.searchParams.get("room");
   const leadId = url.searchParams.get("leadId");
+  const conversationId = url.searchParams.get("conversationId");
 
   const form = await req.formData();
   const callStatus = String(form.get("CallStatus") ?? "");
   const recordingStatus = String(form.get("RecordingStatus") ?? "");
   const recordingUrl = String(form.get("RecordingUrl") ?? "");
   const callSid = String(form.get("CallSid") ?? "");
+  const errorCode = Number(form.get("ErrorCode")) || null;
 
   // ── Recording complete: save URL to the matching call record ────────────────
   // Manual calls are conferences, so the webhook carries the room (passed on the
@@ -68,8 +83,35 @@ export async function POST(req: Request) {
     }
   }
 
+  // ── AI call: the homeowner's leg is the whole truth ─────────────────────────
+  // Human conference legs carry `room=hc-…` and never a conversationId, so skip
+  // them rather than spend a lookup per event proving they aren't AI calls.
+  const maybeAi = Boolean(conversationId) || !room;
+  if (callStatus && maybeAi) {
+    await handleAiLeg({ conversationId, callSid, callStatus, errorCode });
+  }
+
+  // ── Human call: drive live presence straight off Twilio ─────────────────────
+  // room is `hc-<humanId>` (see use-dialer), and live_calls.id IS that humanId.
+  if (room?.startsWith("hc-") && callStatus) {
+    const humanId = room.slice(3);
+    try {
+      if (callStatus === "ringing") {
+        await ringHumanCall(humanId);
+      } else if (ANSWERED_STATUSES.has(callStatus)) {
+        await connectHumanCall(humanId, leadId);
+      } else if (TERMINAL_STATUSES.has(callStatus) && leadId) {
+        // Only ends the row if THIS is the leg that answered — a losing parallel
+        // leg terminating must not yank a live call off the monitor.
+        await endHumanCallForLeg(humanId, leadId);
+      }
+    } catch {
+      /* presence is best-effort — never fail a Twilio webhook over it */
+    }
+  }
+
   // ── Parallel-dial winner: hang up the losing legs ───────────────────────────
-  if (room && leadId && (callStatus === "in-progress" || callStatus === "answered")) {
+  if (room && leadId && ANSWERED_STATUSES.has(callStatus)) {
     const isWinner = markAnswered(room, leadId);
     if (isWinner) {
       const client = await getRestClient();
@@ -91,21 +133,27 @@ export async function POST(req: Request) {
   // ── Persist Twilio's own verdict on the call ────────────────────────────────
   // Twilio knows things we otherwise throw away: whether the leg was actually
   // answered, and the error code when it wasn't (21210/21212 bad caller ID, 21610
-  // blocked, 13224 geo-permissions…). None of it was ever stored, which is a big
-  // part of why "the call never happened" and "nobody picked up" were
-  // indistinguishable. Only applies to legs WE create — for direct-mode AI calls
-  // ElevenLabs owns the Twilio leg and the truth comes from its metadata.error.
-  if (callSid && TERMINAL_STATUSES.has(callStatus) && isAdminConfigured()) {
+  // blocked, 13224 geo-permissions…).
+  //
+  // This used to key on `.eq("call_sid", callSid)` — the HOMEOWNER leg's SID. But
+  // call_records.call_sid holds the REP's browser-leg SID for manual calls and the
+  // AGENT's leg SID for AI calls. It never holds this one. So the update matched
+  // zero rows on every single call, and these columns were always null. Conference
+  // calls carry the room, so match on that instead — the same way the recording
+  // path above already does.
+  if (TERMINAL_STATUSES.has(callStatus) && isAdminConfigured()) {
     try {
-      const errorCode = Number(form.get("ErrorCode")) || null;
-      await createAdminClient()
-        .from("call_records")
-        .update({
-          twilio_call_status: callStatus,
-          twilio_error_code: errorCode,
-          answered_by: String(form.get("AnsweredBy") ?? "") || null,
-        })
-        .eq("call_sid", callSid);
+      const admin = createAdminClient();
+      const verdict = {
+        twilio_call_status: callStatus,
+        twilio_error_code: errorCode,
+        answered_by: String(form.get("AnsweredBy") ?? "") || null,
+      };
+      if (room) {
+        await admin.from("call_records").update(verdict).eq("room", room);
+      } else if (callSid) {
+        await admin.from("call_records").update(verdict).eq("call_sid", callSid);
+      }
     } catch {
       /* best-effort */
     }
@@ -115,4 +163,36 @@ export async function POST(req: Request) {
   // it log "15003 Warning Response to Callback URL" on every single call. An empty
   // 204 is what it actually wants.
   return new Response(null, { status: 204 });
+}
+
+/**
+ * Resolve which AI conversation this leg belongs to, then hand it to the shared
+ * transition table in ai-call-state.ts (the same one the direct-mode poller uses,
+ * so push and poll can never disagree).
+ */
+async function handleAiLeg(input: {
+  conversationId: string | null;
+  callSid: string;
+  callStatus: string;
+  errorCode: number | null;
+}): Promise<void> {
+  const { callSid, callStatus, errorCode } = input;
+
+  // The query param is the fast path; the SID lookup is the fallback for when it's
+  // lost, so a no-answer event is never silently dropped on the floor.
+  let ref: AICallRef | null = null;
+  if (input.conversationId) ref = await getAICallRef(input.conversationId);
+  if (!ref && callSid) ref = await getAICallRefByCustomerSid(callSid);
+  if (!ref) return; // not an AI leg — a human leg, or a call we don't track
+
+  try {
+    await applyTwilioCallStatus({
+      conversationId: ref.conversationId,
+      agentCallSid: ref.callSid,
+      callStatus,
+      errorCode,
+    });
+  } catch {
+    /* best-effort — the cron reconciler will catch anything we drop */
+  }
 }

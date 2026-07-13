@@ -42,6 +42,7 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
  */
 async function bridgeIntoConference(opts: {
   agentCallSid: string;
+  conversationId: string;
   room: string;
   toNumber: string;
   record: boolean;
@@ -57,12 +58,36 @@ async function bridgeIntoConference(opts: {
         ? ' record="record-from-start"'
         : "";
 
+  // This leg — the homeowner's — is the ONLY thing in the system that knows
+  // whether a real person picked up the phone. ElevenLabs cannot tell us: in
+  // bridge mode it is talking to our own Twilio conference, which answered
+  // instantly, so from its side every call "connects".
+  //
+  // We previously created this leg with no status callback and no timeout, and so
+  // never learned that a call rang out. That is why a no-answer sat in the monitor
+  // as "In Progress" until something force-closed it twelve minutes later.
+  //
+  // Only attach the callback when we have a publicly reachable origin — an
+  // unreachable URL makes Twilio reject the create outright (21609 / 11200). On
+  // localhost getPublicBaseUrl() returns null, so this silently degrades to the
+  // old behavior; set NEXT_PUBLIC_APP_URL to a tunnel to exercise it locally.
+  const statusCb = opts.base
+    ? {
+        // 30s, matching the human dial path. Twilio's default is 60s, so this
+        // isn't fixing "rings forever" — it's tightening the no-answer window.
+        timeout: 30,
+        statusCallback: `${opts.base}/api/twilio/status?conversationId=${encodeURIComponent(opts.conversationId)}`,
+        statusCallbackEvent: ["initiated", "ringing", "answered", "completed"],
+      }
+    : {};
+
   const customer = await client.calls.create({
     to: opts.toNumber,
     from: opts.from || twilioConfig.callerId,
     twiml: xml(
       `<Dial><Conference startConferenceOnEnter="true" endConferenceOnExit="true" beep="false"${recAttr}>${escapeXml(opts.room)}</Conference></Dial>`,
     ),
+    ...statusCb,
   });
 
   const moveTwiml = xml(
@@ -191,6 +216,7 @@ export async function placeAiCallForLead(opts: {
         room = aiConferenceRoom(result.conversationId);
         const sid = await bridgeIntoConference({
           agentCallSid: result.callSid,
+          conversationId: result.conversationId,
           room,
           toNumber,
           record,
@@ -220,6 +246,10 @@ export async function placeAiCallForLead(opts: {
       leadId: lead.id.startsWith("manual-") ? null : lead.id,
       leadName,
       phone: toNumber,
+      // The homeowner's leg. The Twilio status webhook identifies itself by
+      // CallSid, so without this the row can't be found when the query string is
+      // missing and the no-answer event is dropped on the floor.
+      customerCallSid: customerCallSid ?? null,
       // Records exactly which override fields went out, so a future "why did every
       // call die?" is answerable from the data alone.
       overrideMode: result.overrideMode,

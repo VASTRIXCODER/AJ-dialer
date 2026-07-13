@@ -1,7 +1,10 @@
 import "server-only";
 
 import { zonedDayKey } from "../dialer/schedule";
-import { listActiveHumanCallsForOrg } from "../human-call-store";
+import {
+  type HumanCallState,
+  listActiveHumanCallsForOrg,
+} from "../human-call-store";
 import { createAdminClient, isAdminConfigured } from "../supabase/admin";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -23,7 +26,7 @@ export interface FloorDialer {
   /** Calls logged today (this org's local day), from call_records. */
   callsToday: number;
   /** Present when the rep is on a live manual call right now. */
-  live: { state: "ringing" | "connected"; leadName: string } | null;
+  live: { state: HumanCallState; leadName: string } | null;
 }
 
 export interface DialerFloorSnapshot {
@@ -82,7 +85,10 @@ export async function getDialerFloor(
     }
 
     // First (most recent) live call per rep.
-    const liveByOwner = new Map<string, { state: "ringing" | "connected"; leadName: string }>();
+    const liveByOwner = new Map<
+      string,
+      { state: HumanCallState; leadName: string }
+    >();
     for (const a of active) {
       if (!a.ownerId || liveByOwner.has(a.ownerId)) continue;
       liveByOwner.set(a.ownerId, { state: a.state, leadName: a.leadName });
