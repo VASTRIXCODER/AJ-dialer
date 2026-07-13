@@ -36,3 +36,9 @@ yarn-error.log*
 
 .vercel
 .env*
+
+# unrelated project checked out inside this repo — not part of the dialer
+/tradingview-mcp
+
+# scratch prompt drafts
+promptx.txt
