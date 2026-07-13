@@ -11,6 +11,7 @@ import {
   History,
   KeyRound,
   Loader2,
+  Mail,
   Plug,
   Plus,
   Settings2,
@@ -24,6 +25,7 @@ import {
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { NotificationsSettings } from "@/components/admin/notifications-settings";
 import { CsvImport } from "@/components/leads/csv-import";
 import { OrgSettingsForm } from "@/components/admin/org-settings-form";
 import { SectionCard } from "@/components/shared/section-card";
@@ -43,7 +45,7 @@ import {
 } from "@/lib/permissions";
 import { cn, initials, relativeTime } from "@/lib/utils";
 
-type Tab = "members" | "organization" | "companies" | "activity" | "data";
+type Tab = "members" | "organization" | "notifications" | "companies" | "activity" | "data";
 
 type Integration = { name: string; ok: boolean; detail: string };
 
@@ -78,6 +80,8 @@ export function AdminConsole({
   platformPool = [],
   platformRotateEvery = 1,
   platformPoolLocked = false,
+  emailConfigured = false,
+  emailProblem = null,
 }: {
   org: OrgFull;
   role: OrgRole;
@@ -92,12 +96,16 @@ export function AdminConsole({
   platformPool?: string[];
   platformRotateEvery?: number;
   platformPoolLocked?: boolean;
+  /** Resend credentials present on the server — resolved in the RSC. */
+  emailConfigured?: boolean;
+  emailProblem?: string | null;
 }) {
   const has = (p: string) => permissions.includes(p);
 
   const TABS: { key: Tab; label: string; icon: typeof Users; show: boolean }[] = [
     { key: "members", label: "Members", icon: Users, show: has("members.view") },
     { key: "organization", label: "Organization", icon: Settings2, show: has("org.edit") },
+    { key: "notifications", label: "Notifications", icon: Mail, show: has("org.edit") },
     { key: "companies", label: "Companies", icon: Building2, show: has("companies.manage") },
     { key: "activity", label: "Activity log", icon: History, show: has("members.view") },
     { key: "data", label: "Data & integrations", icon: Database, show: true },
@@ -149,6 +157,13 @@ export function AdminConsole({
           platformPool={platformPool}
           platformRotateEvery={platformRotateEvery}
           platformPoolLocked={platformPoolLocked}
+        />
+      )}
+      {tab === "notifications" && (
+        <NotificationsSettings
+          org={org}
+          emailConfigured={emailConfigured}
+          configProblem={emailProblem}
         />
       )}
       {tab === "companies" && (

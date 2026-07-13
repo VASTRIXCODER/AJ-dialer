@@ -69,6 +69,26 @@ export interface OrgBilling {
   note: string;
 }
 
+/**
+ * Outbound email the workspace sends on its own — today, just the "an appointment
+ * was set" alert to whoever owns the sales calendar.
+ *
+ * The recipients live HERE, in the org's settings, and not in an env var, because
+ * the person who needs to change them is an admin looking at a screen, not an
+ * engineer with deploy access. `APPOINTMENT_NOTIFY_EMAILS` remains as a
+ * deployment-wide fallback for orgs that have never opened the panel.
+ */
+export interface NotificationSettings {
+  /** Master switch. Off ⇒ appointments still book, nobody gets emailed. */
+  appointmentEmail: boolean;
+  /** Who gets told when an appointment is set / moved / cancelled. */
+  appointmentEmails: string[];
+  /** Also copy the rep who booked it, so they have their own paper trail. */
+  ccBookingRep: boolean;
+  /** Display name on the From line, e.g. "AIATWORK Dialer". */
+  fromName: string;
+}
+
 export interface OrgSettings {
   dialing: {
     mode: "preview" | "progressive" | "predictive";
@@ -136,12 +156,22 @@ export interface OrgSettings {
     consentRequired: boolean;
   };
   dispositions: { label: string; tone: DispositionTone }[];
+  notifications: NotificationSettings;
   features: OrgFeatures;
   billing: OrgBilling;
   /** Domain noun the dialer uses for a contact, e.g. "homeowner". */
   leadNoun: string;
   leadNounPlural: string;
 }
+
+export const DEFAULT_NOTIFICATIONS: NotificationSettings = {
+  // On by default, but with no recipients it is inert — an org that never opens
+  // the panel gets no email and, importantly, no "delivery failed" alerts either.
+  appointmentEmail: true,
+  appointmentEmails: [],
+  ccBookingRep: false,
+  fromName: "",
+};
 
 export const DEFAULT_FEATURES: OrgFeatures = {
   aiDialer: true,
@@ -221,6 +251,7 @@ export const DEFAULT_ORG_SETTINGS: OrgSettings = {
     { label: "Not interested", tone: "danger" },
     { label: "No answer", tone: "neutral" },
   ],
+  notifications: { ...DEFAULT_NOTIFICATIONS },
   features: { ...DEFAULT_FEATURES },
   billing: { ...DEFAULT_BILLING },
   leadNoun: "lead",
@@ -281,6 +312,15 @@ export function mergeSettings(raw: unknown): OrgSettings {
     dispositions: Array.isArray(s.dispositions)
       ? s.dispositions
       : DEFAULT_ORG_SETTINGS.dispositions,
+    notifications: {
+      ...DEFAULT_NOTIFICATIONS,
+      ...(s.notifications ?? {}),
+      // Arrays replace wholesale — spreading would merge index-wise and resurrect
+      // a recipient the admin just deleted.
+      appointmentEmails: Array.isArray(s.notifications?.appointmentEmails)
+        ? s.notifications!.appointmentEmails
+        : DEFAULT_NOTIFICATIONS.appointmentEmails,
+    },
     features: { ...DEFAULT_FEATURES, ...(s.features ?? {}) },
     billing: { ...DEFAULT_BILLING, ...(s.billing ?? {}) },
     leadNoun: s.leadNoun ?? DEFAULT_ORG_SETTINGS.leadNoun,

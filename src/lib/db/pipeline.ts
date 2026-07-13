@@ -5,6 +5,8 @@ import { statsForCampaign, type CampaignStats } from "../campaign-stats";
 import { createAdminClient, isAdminConfigured } from "../supabase/admin";
 import { isSupabaseConfigured } from "../supabase/config";
 import { createClient } from "../supabase/server";
+import { formatAddress } from "../utils";
+import { apptScope } from "./appointments";
 import { canActOn, getScope } from "./scope";
 
 // Account-scoped reads/writes for the pipeline surfaces. Each returns empty (or
@@ -214,26 +216,48 @@ export interface AppointmentRow {
   /** AI bookings are proposals (false) until a human approves them. */
   approved: boolean;
   scheduledLabel: string;
+  /**
+   * Floating wall clock ("2026-07-14T18:00:00") or null when the booking has no
+   * pinned time yet. See src/lib/appointments/time.ts for the invariant.
+   */
   scheduledAt: string | null;
+  durationMin: number;
+  location: string;
+  timezone: string;
+  title: string;
   notes: string;
   phone: string;
   city: string;
+  address: string;
   createdAt: string;
   reviewedAt: string | null;
+  cancelReason: string;
+  rescheduleCount: number;
+  /** The call this appointment came out of, if any. */
+  callRecordId: string | null;
+  /** Who runs the review (defaults to the booker). Drives the per-rep calendar. */
+  assignedTo: string | null;
+  assignedToName: string;
+  ownerId: string;
   /** Owning rep's name (team view only). */
   repName?: string;
-  /** Whether the viewer sees the whole org's pipeline. */
+  /** Whether the viewer sees the whole org's calendar. */
   teamWide: boolean;
+  /** Delivery state of the "appointment set" email: null when nothing was queued. */
+  notifyStatus: "pending" | "sent" | "failed" | "skipped" | null;
 }
 
 export async function getAppointments(): Promise<AppointmentRow[]> {
   if (!isSupabaseConfigured()) return [];
   try {
-    const scope = await getScope();
+    const scope = await apptScope();
     if (!scope) return [];
     // Finalize any stuck calls first so freshly-booked reviews show immediately.
     await reconcileOwnerActiveCalls();
-    const orgWide = scope.supervisor && isAdminConfigured() && Boolean(scope.orgId);
+    // Org-wide is the `appointments.team` permission now, not the role. The role
+    // defaults grant it to owner/admin/manager, so this is the same set as the old
+    // `scope.supervisor` check — but an override finally means something.
+    const orgWide = scope.team && isAdminConfigured() && Boolean(scope.orgId);
     const reader = orgWide ? createAdminClient() : await createClient();
     const { data, error } = await reader
       .from("appointments")
@@ -245,17 +269,34 @@ export async function getAppointments(): Promise<AppointmentRow[]> {
     const rows = (data ?? []) as Row[];
     const names = orgWide ? await memberNames(scope.orgId as string) : null;
 
-    // Batch the leads' phone/city for richer review context.
+    // Batch the leads' contact details for the review lane + the email context.
     const leadIds = [...new Set(rows.map((r) => r.lead_id).filter(Boolean).map(String))];
-    const contacts = new Map<string, { phone: string; city: string }>();
+    const contacts = new Map<string, { phone: string; city: string; address: string }>();
     if (leadIds.length) {
-      const { data: ls } = await reader.from("leads").select("id,phone,city").in("id", leadIds);
+      const { data: ls } = await reader
+        .from("leads")
+        .select("id,phone,city,address,state,zip")
+        .in("id", leadIds);
       for (const l of (ls ?? []) as Row[])
-        contacts.set(s(l.id), { phone: s(l.phone), city: s(l.city) });
+        contacts.set(s(l.id), {
+          phone: s(l.phone),
+          city: s(l.city),
+          address: formatAddress({
+            address: s(l.address),
+            city: s(l.city),
+            state: s(l.state),
+            zip: s(l.zip),
+          }),
+        });
     }
+
+    // Delivery state of each appointment's notification, so a failed send is
+    // visible ON the thing it failed for — not just buried in a log.
+    const notify = await latestNotifyStatus(rows.map((r) => s(r.id)));
 
     return rows.map((r) => {
       const c = r.lead_id ? contacts.get(s(r.lead_id)) : undefined;
+      const assignedTo = r.assigned_to ? s(r.assigned_to) : s(r.owner_id) || null;
       return {
         id: s(r.id),
         leadId: r.lead_id ? s(r.lead_id) : null,
@@ -266,19 +307,54 @@ export async function getAppointments(): Promise<AppointmentRow[]> {
         approved: r.approved == null ? true : Boolean(r.approved),
         scheduledLabel: s(r.scheduled_label),
         scheduledAt: r.scheduled_at ? toFloatingLocal(s(r.scheduled_at)) : null,
+        durationMin: Number(r.duration_min ?? 60) || 60,
+        location: s(r.location),
+        timezone: s(r.timezone),
+        title: s(r.title),
         notes: s(r.notes),
         phone: c?.phone ?? "",
         city: c?.city ?? "",
+        address: c?.address ?? "",
         createdAt: s(r.created_at),
         reviewedAt: r.reviewed_at ? s(r.reviewed_at) : null,
+        cancelReason: s(r.cancel_reason),
+        rescheduleCount: Number(r.reschedule_count ?? 0) || 0,
+        callRecordId: r.call_record_id ? s(r.call_record_id) : null,
+        assignedTo,
+        assignedToName: names && assignedTo ? names.get(assignedTo) || "Rep" : "",
+        ownerId: s(r.owner_id),
         repName: names ? names.get(s(r.owner_id)) || "Rep" : undefined,
         teamWide: orgWide,
+        notifyStatus: notify.get(s(r.id)) ?? null,
       };
     });
   } catch (e) {
     console.error("[pipeline] getAppointments failed:", e instanceof Error ? e.message : e);
     return [];
   }
+}
+
+/** appointment_id → the delivery state of its most recent notification. */
+async function latestNotifyStatus(
+  ids: string[],
+): Promise<Map<string, "pending" | "sent" | "failed" | "skipped">> {
+  const out = new Map<string, "pending" | "sent" | "failed" | "skipped">();
+  if (!ids.length || !isAdminConfigured()) return out;
+  try {
+    const { data } = await createAdminClient()
+      .from("notification_outbox")
+      .select("appointment_id,status,created_at")
+      .in("appointment_id", ids.slice(0, 1000))
+      .order("created_at", { ascending: true });
+    // Ascending, so the last write per appointment wins — the newest state.
+    for (const r of (data ?? []) as Row[]) {
+      const id = s(r.appointment_id);
+      if (id) out.set(id, s(r.status) as "pending" | "sent" | "failed" | "skipped");
+    }
+  } catch {
+    /* the calendar renders fine without delivery badges */
+  }
+  return out;
 }
 
 // ── Bills are fine ───────────────────────────────────────────────────────────

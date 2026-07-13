@@ -3,12 +3,18 @@ import "server-only";
 import type { CallOutcome } from "../types";
 import { createAdminClient, isAdminConfigured } from "../supabase/admin";
 import { isSupabaseConfigured } from "../supabase/config";
+import { apptScope } from "./appointments";
 import { applyManualDisposition } from "./records";
 import { canActOn, getScope } from "./scope";
 
-// Human overrides for the Appointments / Callbacks tabs: re-disposition a lead
-// (correcting what the AI filed) or update an appointment / callback's status.
-// Every write is authorized against the actor's scope before it touches the DB.
+// Human overrides for the Callbacks tab and the appointment review lane:
+// re-disposition a lead (correcting what the AI filed) or update a callback's
+// status. Every write is authorized against the actor's scope before it touches
+// the DB.
+//
+// Appointment writes used to live here too. They moved to ./appointments.ts,
+// which authorizes on the `appointments.manage` / `appointments.team` permissions
+// rather than the role-derived `scope.supervisor` — see the header there for why.
 
 type Result = { ok: boolean; error?: string };
 const err = (error: string): Result => ({ ok: false, error });
@@ -47,116 +53,47 @@ export async function overrideLeadDisposition(
   });
 }
 
-async function setStatus(table: "appointments" | "callbacks", id: string, status: string): Promise<Result> {
+export async function setCallbackStatus(id: string, status: string): Promise<Result> {
   if (!isSupabaseConfigured() || !isAdminConfigured()) return err("Not configured.");
   const scope = await getScope();
   if (!scope) return err("You must be signed in.");
   const admin = createAdminClient();
   const { data: row } = await admin
-    .from(table)
+    .from("callbacks")
     .select("id, owner_id, org_id")
     .eq("id", id)
     .maybeSingle();
   if (!row) return err("Item not found.");
   if (!canActOn(scope, row.owner_id as string, (row.org_id as string) ?? null))
     return err("You don't have access to change this item.");
-  const { error } = await admin.from(table).update({ status }).eq("id", id);
+  const { error } = await admin.from("callbacks").update({ status }).eq("id", id);
   return error ? err(error.message) : { ok: true };
 }
-
-export const setAppointmentStatus = (id: string, status: string) =>
-  setStatus("appointments", id, status);
-export const setCallbackStatus = (id: string, status: string) =>
-  setStatus("callbacks", id, status);
 
 type Row = Record<string, unknown>;
 
-/** Load an appointment for a write + confirm the actor may touch it. */
-async function authorizeAppointment(
-  id: string,
-): Promise<{ admin: ReturnType<typeof createAdminClient>; userId: string } | { error: string }> {
-  if (!isSupabaseConfigured() || !isAdminConfigured()) return { error: "Not configured." };
-  const scope = await getScope();
-  if (!scope) return { error: "You must be signed in." };
-  const admin = createAdminClient();
-  const { data } = await admin
-    .from("appointments")
-    .select("owner_id, org_id")
-    .eq("id", id)
-    .maybeSingle();
-  if (!data) return { error: "Appointment not found." };
-  if (!canActOn(scope, data.owner_id as string, (data.org_id as string) ?? null))
-    return { error: "You don't have access to change this item." };
-  return { admin, userId: scope.userId };
-}
-
-/** Approve a single AI-proposed appointment (the human accepts the booking). */
-export async function approveAppointment(id: string): Promise<Result> {
-  const auth = await authorizeAppointment(id);
-  if ("error" in auth) return err(auth.error);
-  const { error } = await auth.admin
-    .from("appointments")
-    .update({ approved: true, reviewed_by: auth.userId, reviewed_at: new Date().toISOString() })
-    .eq("id", id);
-  return error ? err(error.message) : { ok: true };
-}
-
-/** Edit an appointment's time/notes, optionally approving in the same step. */
-export async function updateAppointment(
-  id: string,
-  patch: { scheduledLabel?: string; scheduledAt?: string | null; notes?: string; approve?: boolean },
-): Promise<Result> {
-  const auth = await authorizeAppointment(id);
-  if ("error" in auth) return err(auth.error);
-  const fields: Record<string, unknown> = {};
-  if (patch.scheduledLabel != null) fields.scheduled_label = patch.scheduledLabel;
-  if (patch.scheduledAt !== undefined) fields.scheduled_at = patch.scheduledAt || null;
-  if (patch.notes != null) fields.notes = patch.notes;
-  if (patch.approve) {
-    fields.approved = true;
-    fields.reviewed_by = auth.userId;
-    fields.reviewed_at = new Date().toISOString();
-  }
-  if (Object.keys(fields).length === 0) return { ok: true };
-  const { error } = await auth.admin.from("appointments").update(fields).eq("id", id);
-  return error ? err(error.message) : { ok: true };
-}
-
-/** Permanently remove an appointment (e.g. a duplicate or mistaken booking). */
-export async function deleteAppointment(id: string): Promise<Result> {
-  const auth = await authorizeAppointment(id);
-  if ("error" in auth) return err(auth.error);
-  const { error } = await auth.admin.from("appointments").delete().eq("id", id);
-  return error ? err(error.message) : { ok: true };
-}
-
-/** Approve many proposals at once (scoped to the actor). */
-export async function approveAppointmentsBulk(ids: string[]): Promise<Result> {
-  if (!isSupabaseConfigured() || !isAdminConfigured()) return err("Not configured.");
-  const scope = await getScope();
-  if (!scope) return err("You must be signed in.");
-  const list = ids.filter(Boolean).slice(0, 500);
-  if (!list.length) return err("Nothing selected.");
-  const admin = createAdminClient();
-  const base = admin
-    .from("appointments")
-    .update({ approved: true, reviewed_by: scope.userId, reviewed_at: new Date().toISOString() })
-    .in("id", list);
-  const q = scope.supervisor && scope.orgId ? base.eq("org_id", scope.orgId) : base.eq("owner_id", scope.userId);
-  const { error } = await q;
-  return error ? err(error.message) : { ok: true };
-}
-
-/** Route many proposals back to a single disposition (re-files each lead). */
+/**
+ * Route many appointment proposals back to a single disposition (re-files each
+ * lead — "these AI bookings aren't real, they're all not-interested").
+ *
+ * Gated on the appointment permissions rather than `scope.supervisor`, because
+ * it is reached from the appointment review lane and rewrites appointment rows
+ * as a side effect (routeDisposition cancels the lead's scheduled appointment).
+ */
 export async function routeAppointmentsBulk(ids: string[], outcome: CallOutcome): Promise<Result> {
   if (!isSupabaseConfigured() || !isAdminConfigured()) return err("Not configured.");
-  const scope = await getScope();
+  const scope = await apptScope();
   if (!scope) return err("You must be signed in.");
+  if (!scope.manage) return err("You don't have permission to manage appointments.");
   const list = ids.filter(Boolean).slice(0, 200);
   if (!list.length) return err("Nothing selected.");
+
   const admin = createAdminClient();
   const base = admin.from("appointments").select("id, lead_id, owner_id, org_id").in("id", list);
-  const scoped = scope.supervisor && scope.orgId ? base.eq("org_id", scope.orgId) : base.eq("owner_id", scope.userId);
+  // Narrow the SELECT itself: a rep re-routing a list of ids they don't own gets
+  // back nothing, not somebody else's leads.
+  const scoped =
+    scope.team && scope.orgId ? base.eq("org_id", scope.orgId) : base.eq("owner_id", scope.userId);
   const { data: appts } = await scoped;
   const leadIds = [
     ...new Set(((appts ?? []) as Row[]).map((a) => a.lead_id).filter(Boolean).map(String)),

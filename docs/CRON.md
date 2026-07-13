@@ -10,7 +10,7 @@ This project runs two jobs that must fire **every minute**:
 | Endpoint | What it does |
 |---|---|
 | `/api/cron/auto-dial` | Places unattended AI calls for every org whose automation window is open. |
-| `/api/cron/reconcile-ai` | The backstop that guarantees every AI call reaches a terminal state — the thing that stops calls sitting "in progress" for hours. |
+| `/api/cron/reconcile-ai` | The backstop that guarantees every AI call reaches a terminal state — the thing that stops calls sitting "in progress" for hours. **Also drains the appointment-notification outbox** (see below). |
 
 They were declared in `vercel.json` as `"schedule": "* * * * *"`. **Vercel's Hobby plan only allows
 once-per-day crons.** A per-minute expression doesn't degrade or warn — it makes the whole
@@ -116,6 +116,37 @@ select vault.update_secret(
   'https://<new-host>'
 );
 ```
+
+## Appointment notifications ride the reconciler's tick
+
+The "email the sales lead when an appointment is set" outbox (`docs/APPOINTMENTS.md`) is drained
+from inside `/api/cron/reconcile-ai`, **not** from a job of its own — deliberately.
+
+Everything on this page is the reason why. The schedule is hand-applied SQL that lives in
+Supabase and not in this repo, so **a new job is a step someone can forget** — and a forgotten
+job here would mean the appointment email silently never sends, which is the exact failure mode
+the feature exists to prevent. Riding a tick that already exists means it works the moment the
+code deploys, with nothing to remember.
+
+The drain runs *before* the reconciler's telephony guard (so email still flows in a workspace
+with no Twilio credentials) and takes a tight 8-second slice of the 60-second budget; the
+reconciler gets the remaining 45.
+
+### Optional: give it its own job
+
+If you'd rather the email path didn't share a budget with the reconciler, `/api/cron/notifications`
+is a standalone drain with the same auth contract. Schedule it the same way as the others:
+
+```sql
+select cron.schedule(
+  'notifications',
+  '* * * * *',
+  $$ select public.app_fire_cron('/api/cron/notifications') $$
+);
+```
+
+Running **both** is harmless: the drain claims a row by flipping its status before sending, so a
+double-fire never sends the same email twice.
 
 ## If you upgrade to Vercel Pro
 

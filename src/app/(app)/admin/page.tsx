@@ -4,6 +4,7 @@ import { EmptyState } from "@/components/shared/empty-state";
 import { PageContainer, PageHeader } from "@/components/shared/page-header";
 import { isAIConfigured } from "@/lib/ai/claude";
 import { listAuditLog } from "@/lib/db/app-control";
+import { emailConfigProblem, isEmailConfigured } from "@/lib/email/resend";
 import { getLeadStats } from "@/lib/db/leads";
 import { getPlatformPool } from "@/lib/dialer/rotation-server";
 import { isElevenLabsConfigured } from "@/lib/elevenlabs";
@@ -56,6 +57,7 @@ export default async function AdminPage() {
     { name: "ElevenLabs (AI voice agent)", ok: isElevenLabsConfigured(), detail: "AI conducts + records outbound calls" },
     { name: "Twilio Voice (browser SDK)", ok: isVoiceConfigured(), detail: "Access tokens & in-browser calling" },
     { name: "Twilio REST (parallel dial)", ok: isRestConfigured(), detail: "Server-orchestrated outbound calls" },
+    { name: "Resend (email)", ok: isEmailConfigured(), detail: "Appointment notifications to the sales lead" },
   ];
 
   return (
@@ -78,6 +80,8 @@ export default async function AdminPage() {
         platformPool={platformPool.pool}
         platformRotateEvery={platformPool.rotateEvery}
         platformPoolLocked={platformPool.isLocked}
+        emailConfigured={isEmailConfigured()}
+        emailProblem={emailConfigProblem()}
       />
     </PageContainer>
   );

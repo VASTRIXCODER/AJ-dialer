@@ -18,7 +18,31 @@ export async function POST(req: Request) {
     callSid?: string;
     room?: string;
     notes?: string;
+    /**
+     * The slot the rep agreed with the homeowner, captured by the booking dialog
+     * on "Appointment booked". Optional — a rep who skips it still books, the
+     * appointment just carries no time (which is what EVERY rep booking did
+     * before this existed, and why none of them could appear on a calendar).
+     */
+    appointment?: {
+      when?: string;
+      iso?: string;
+      notes?: string;
+      durationMin?: number;
+      location?: string;
+    } | null;
   };
+
+  const appt =
+    body.outcome === "appointment_booked" && body.appointment
+      ? {
+          when: body.appointment.when ?? "",
+          iso: body.appointment.iso,
+          notes: body.appointment.notes ?? "",
+          durationMin: body.appointment.durationMin,
+          location: body.appointment.location,
+        }
+      : null;
 
   const recordId = await insertCallRecord({
     leadId: body.leadId ?? null,
@@ -30,6 +54,7 @@ export async function POST(req: Request) {
     callSid: body.callSid ?? null,
     room: body.room ?? null,
     notes: body.notes,
+    appointment: appt,
   });
 
   if (!recordId) {

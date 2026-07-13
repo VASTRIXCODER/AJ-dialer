@@ -53,6 +53,9 @@ export const PERMISSIONS = [
   "monitor.listen", // listen to live audio of in-progress calls
   "monitor.intervene", // take over / transfer / end a live call
   "monitor.roster", // view the live team presence roster — manager+ only, unlike monitor.view/listen which reps also hold
+  "appointments.view", // open the appointments calendar
+  "appointments.manage", // create, reschedule, approve & cancel appointments
+  "appointments.team", // see & manage the WHOLE team's calendar, not just your own — manager+
 ] as const;
 export type Permission = (typeof PERMISSIONS)[number];
 
@@ -75,11 +78,22 @@ export const ROLE_PERMISSIONS: Record<OrgRole, Permission[]> = {
     "monitor.listen",
     "monitor.intervene",
     "monitor.roster",
+    "appointments.view",
+    "appointments.manage",
+    "appointments.team",
   ],
   // Reps dial and work leads. They get the MANUAL dialer; the AI dialer is gated
   // (managers+ only) unless the workspace is AI-only. They can open the monitor
   // and LISTEN to live calls (AI + human), but can't take over / transfer / end.
-  rep: ["monitor.view", "monitor.listen"],
+  //
+  // They DO get appointments.view + .manage — a rep books their own account
+  // reviews, so revoking these would break the dialer's own disposition flow.
+  // What they don't get is `appointments.team`: a rep sees their own calendar,
+  // a manager sees the floor's. Row-level access follows the permission (see
+  // canActOnAppt in src/lib/db/appointments.ts), so a per-member override that
+  // revokes `appointments.manage` genuinely locks that account out of every
+  // calendar write — not just the buttons.
+  rep: ["monitor.view", "monitor.listen", "appointments.view", "appointments.manage"],
 };
 
 export const PERMISSION_LABEL: Record<Permission, string> = {
@@ -100,6 +114,9 @@ export const PERMISSION_LABEL: Record<Permission, string> = {
   "monitor.listen": "Listen to live calls",
   "monitor.intervene": "Take over, transfer or end live calls",
   "monitor.roster": "View the live team roster (who's active, on what call)",
+  "appointments.view": "View the appointments calendar",
+  "appointments.manage": "Book, reschedule & cancel appointments",
+  "appointments.team": "See & manage the whole team's calendar",
 };
 
 export function rolePermissions(role: OrgRole | null | undefined): Permission[] {

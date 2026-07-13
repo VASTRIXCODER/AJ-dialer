@@ -965,3 +965,236 @@ grant execute on function public.app_upsert_presence(uuid, uuid, text, text, tex
 revoke execute on function public.app_upsert_presence(uuid, uuid, text, text, text, text, int) from public;
 revoke execute on function public.app_upsert_presence(uuid, uuid, text, text, text, text, int) from anon;
 revoke execute on function public.app_upsert_presence(uuid, uuid, text, text, text, text, int) from authenticated;
+
+-- ═════════════════════════════════════════════════════════════════════════════
+-- PART 12 — APPOINTMENTS & CALENDAR  (idempotent; safe to re-run)
+--
+-- The appointments table was a flat list: a lead name, a nullable timestamp, a
+-- status. That is enough to render a list and nothing else. A calendar needs an
+-- END time (duration), a PLACE, a person it belongs to that is distinct from the
+-- person who booked it, and a memory of what it used to be. It also needs to be
+-- able to exist WITHOUT a call behind it — a manager scheduling a review by hand.
+--
+-- ── The one invariant everything here depends on ────────────────────────────
+-- `scheduled_at` is declared timestamptz but it is NOT a true instant. It is a
+-- FLOATING WALL-CLOCK time: the app writes an offset-less string
+-- ("2026-06-23T18:00:00"), Postgres reads it as UTC, and the app strips the +00
+-- again on the way out (`toFloatingLocal`). "6pm" means 6pm on whatever wall
+-- clock the appointment belongs to — which is what `timezone` now records.
+--
+-- Do NOT "fix" this into real UTC without backfilling every existing row and
+-- rewriting every reader. It is deliberate, it is consistent, and a half-done
+-- migration would silently shift every appointment in the database by hours.
+-- The single source of truth for reading/writing it is src/lib/appointments/time.ts.
+--
+-- `scheduled_at` is also NULLABLE and always will be — an AI call that books
+-- "sometime next week" has a label and no timestamp. Those rows live in the
+-- "later" bucket and never appear on the grid.
+-- ═════════════════════════════════════════════════════════════════════════════
+alter table public.appointments add column if not exists duration_min     int not null default 60;
+alter table public.appointments add column if not exists location         text default '';
+alter table public.appointments add column if not exists timezone         text;
+alter table public.appointments add column if not exists assigned_to      uuid references auth.users (id) on delete set null;
+alter table public.appointments add column if not exists created_by       uuid references auth.users (id) on delete set null;
+alter table public.appointments add column if not exists call_record_id   uuid references public.call_records (id) on delete set null;
+alter table public.appointments add column if not exists title            text default '';
+alter table public.appointments add column if not exists cancel_reason    text;
+alter table public.appointments add column if not exists rescheduled_from timestamptz;
+alter table public.appointments add column if not exists reschedule_count int not null default 0;
+alter table public.appointments add column if not exists notified_at      timestamptz;
+alter table public.appointments add column if not exists updated_at       timestamptz not null default now();
+
+-- The calendar's only range query: "every appointment in this org between X and Y".
+create index if not exists appointments_calendar_idx on public.appointments (org_id, scheduled_at);
+-- The per-rep calendar filter (a rep's own day/week).
+create index if not exists appointments_assigned_idx on public.appointments (assigned_to, scheduled_at);
+
+-- Every pre-existing row belongs to whoever booked it.
+update public.appointments set assigned_to = owner_id where assigned_to is null;
+
+-- Fill in the derivable columns so app code can never forget them: an unassigned
+-- appointment belongs to its owner, and its wall clock is the lead's timezone.
+create or replace function public.appointments_before_write()
+returns trigger language plpgsql security definer set search_path = public as $$
+begin
+  if new.assigned_to is null then
+    new.assigned_to := new.owner_id;
+  end if;
+  if coalesce(new.timezone, '') = '' and new.lead_id is not null then
+    new.timezone := nullif((select timezone from public.leads where id = new.lead_id), '');
+  end if;
+  new.updated_at := now();
+  return new;
+end;
+$$;
+drop trigger if exists appointments_before_write on public.appointments;
+create trigger appointments_before_write before insert or update on public.appointments
+  for each row execute function public.appointments_before_write();
+
+-- ═════════════════════════════════════════════════════════════════════════════
+-- PART 13 — NOTIFICATION OUTBOX  (idempotent; safe to re-run)
+--
+-- "Email the sales lead whenever an appointment is set, and never fail silently."
+--
+-- The enqueue is a TRIGGER, not application code, and that is the whole point.
+-- supabase-js has no transactions: an app-level "insert the appointment, then
+-- insert the outbox row" can lose the second write to a cold lambda, a network
+-- blip, or an unhandled throw — and a dropped notification is exactly what this
+-- feature exists to prevent. A trigger is atomic with the INSERT by construction,
+-- and it cannot be forgotten by whatever new booking path someone adds next year.
+--
+-- WHEN it fires is a product decision, not a technical one:
+--   • INSERT with approved = true          → the rep booked it. It's real. Send.
+--   • UPDATE approved false → true         → a human approved the AI's proposal.
+--                                            THAT is when an AI booking becomes
+--                                            real. Firing on the AI's raw proposal
+--                                            would email a guess.
+--   • scheduled_at changed, already notified → rescheduled. Tell them.
+--   • status → cancelled, already notified   → cancelled. Tell them.
+-- `notified_at` makes "set" at-most-once, so a re-approve can't double-send.
+--
+-- The trigger records only WHAT happened and the data to render it. WHO receives
+-- it is resolved at SEND time by the drain (org settings → APPOINTMENT_NOTIFY_EMAILS
+-- env fallback), because Postgres cannot see the app's environment.
+--
+-- Same trust model as user_presence: RLS on, NO policies. Service-role only,
+-- org-scoped in application code.
+-- ═════════════════════════════════════════════════════════════════════════════
+create table if not exists public.notification_outbox (
+  id              uuid primary key default gen_random_uuid(),
+  org_id          uuid references public.organizations (id) on delete cascade,
+  -- appointment_set | appointment_rescheduled | appointment_cancelled
+  kind            text not null,
+  appointment_id  uuid references public.appointments (id) on delete cascade,
+  -- Everything the email needs, snapshotted at enqueue time. The drain does no joins.
+  payload         jsonb not null default '{}'::jsonb,
+  -- pending → sent | failed (retries exhausted) | skipped (nobody to email — benign)
+  status          text not null default 'pending',
+  attempts        int not null default 0,
+  next_attempt_at timestamptz not null default now(),
+  last_error      text,
+  sent_at         timestamptz,
+  provider_id     text,
+  created_at      timestamptz not null default now(),
+  updated_at      timestamptz not null default now()
+);
+
+-- The drain's ONLY query — "what is due?". Partial so it stays tiny no matter how
+-- many thousands of sent rows accumulate behind it.
+create index if not exists notification_outbox_due_idx
+  on public.notification_outbox (next_attempt_at)
+  where status = 'pending';
+-- The alert surfaces ("has anything failed for this org?") and the audit trail.
+create index if not exists notification_outbox_org_idx
+  on public.notification_outbox (org_id, status, created_at desc);
+
+alter table public.notification_outbox enable row level security;
+
+create or replace function public.enqueue_appointment_notification()
+returns trigger language plpgsql security definer set search_path = public as $$
+declare
+  k text;
+  l record;
+begin
+  -- Our own `set notified_at` UPDATE below re-enters this trigger. Bail out of any
+  -- nested invocation rather than relying on the branch conditions to be a fixed
+  -- point — cheaper to reason about, and it can't loop.
+  if pg_trigger_depth() > 1 then
+    return new;
+  end if;
+
+  if tg_op = 'INSERT' then
+    if new.approved and new.status = 'scheduled' then
+      k := 'appointment_set';
+    end if;
+  else
+    if new.status = 'cancelled' and coalesce(old.status, '') <> 'cancelled'
+       and old.notified_at is not null then
+      k := 'appointment_cancelled';
+    elsif new.approved and not coalesce(old.approved, false)
+          and new.status = 'scheduled' and old.notified_at is null then
+      k := 'appointment_set';
+    elsif old.notified_at is not null and new.status = 'scheduled'
+          and new.scheduled_at is distinct from old.scheduled_at then
+      k := 'appointment_rescheduled';
+    end if;
+  end if;
+
+  if k is null then
+    return new;
+  end if;
+
+  select first_name, last_name, phone, email, address, city, state, zip,
+         utility_bill, solar_payment, utility_provider
+    into l
+    from public.leads
+   where id = new.lead_id;
+
+  insert into public.notification_outbox (org_id, kind, appointment_id, payload)
+  values (
+    new.org_id,
+    k,
+    new.id,
+    jsonb_build_object(
+      'appointmentId',  new.id,
+      'ownerId',        new.owner_id,
+      'assignedTo',     new.assigned_to,
+      'leadId',         new.lead_id,
+      'leadName',       coalesce(nullif(new.lead_name, ''), 'Homeowner'),
+      -- Serialize the floating wall clock back out EXACTLY as the app stores it:
+      -- read the timestamptz as UTC and drop the offset. See the PART 12 invariant.
+      'scheduledAt',    case when new.scheduled_at is null then null
+                             else to_char(new.scheduled_at at time zone 'UTC',
+                                          'YYYY-MM-DD"T"HH24:MI:SS') end,
+      'previousAt',     case when old is null or old.scheduled_at is null then null
+                             else to_char(old.scheduled_at at time zone 'UTC',
+                                          'YYYY-MM-DD"T"HH24:MI:SS') end,
+      'scheduledLabel', coalesce(new.scheduled_label, ''),
+      'durationMin',    new.duration_min,
+      'timezone',       coalesce(new.timezone, ''),
+      'location',       coalesce(new.location, ''),
+      'notes',          coalesce(new.notes, ''),
+      'source',         new.source,
+      'status',         new.status,
+      'cancelReason',   coalesce(new.cancel_reason, ''),
+      'phone',          coalesce(l.phone, ''),
+      'email',          coalesce(l.email, ''),
+      'address',        coalesce(l.address, ''),
+      'city',           coalesce(l.city, ''),
+      'state',          coalesce(l.state, ''),
+      'zip',            coalesce(l.zip, ''),
+      'utilityBill',    l.utility_bill,
+      'solarPayment',   l.solar_payment,
+      'utilityProvider', coalesce(l.utility_provider, '')
+    )
+  );
+
+  -- Mark it notified so a later reschedule/cancel knows there's something to
+  -- correct, and so a second approve can't re-send the booking. The guard makes
+  -- this a no-op (and fires no trigger) for the reschedule/cancel kinds.
+  if k = 'appointment_set' then
+    update public.appointments set notified_at = now()
+     where id = new.id and notified_at is null;
+  end if;
+
+  return new;
+end;
+$$;
+
+drop trigger if exists enqueue_appointment_notification on public.appointments;
+create trigger enqueue_appointment_notification
+  after insert or update on public.appointments
+  for each row execute function public.enqueue_appointment_notification();
+
+-- CREATE FUNCTION grants PUBLIC execute by default, which publishes both trigger
+-- functions at /rest/v1/rpc/<name> for anon and authenticated. Postgres refuses to
+-- run a trigger function as an ordinary call ("can only be called as a trigger"),
+-- so this is not exploitable — but they are SECURITY DEFINER, they have no business
+-- being in the public API surface, and the linter is right to flag them. Same
+-- treatment as app_upsert_presence above.
+revoke execute on function public.appointments_before_write() from public;
+revoke execute on function public.appointments_before_write() from anon;
+revoke execute on function public.appointments_before_write() from authenticated;
+revoke execute on function public.enqueue_appointment_notification() from public;
+revoke execute on function public.enqueue_appointment_notification() from anon;
+revoke execute on function public.enqueue_appointment_notification() from authenticated;

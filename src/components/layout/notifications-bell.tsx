@@ -1,14 +1,14 @@
 "use client";
 
 import { AnimatePresence, motion } from "framer-motion";
-import { Bell, CalendarCheck, PhoneIncoming, Sparkles } from "lucide-react";
+import { AlertTriangle, Bell, CalendarCheck, PhoneIncoming, Sparkles } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { cn, relativeTime } from "@/lib/utils";
 
 type Notif = {
   id: string;
-  type: "appointment" | "callback" | "call";
+  type: "appointment" | "callback" | "call" | "alert";
   title: string;
   body: string;
   at: string;
@@ -21,6 +21,9 @@ const meta = {
   appointment: { icon: CalendarCheck, tone: "bg-success/12 text-success" },
   callback: { icon: PhoneIncoming, tone: "bg-warning/15 text-warning" },
   call: { icon: Sparkles, tone: "bg-accent-soft text-accent" },
+  // Something the system promised to do and couldn't — an appointment email that
+  // exhausted its retries. Not activity; a problem.
+  alert: { icon: AlertTriangle, tone: "bg-danger/15 text-danger" },
 } as const;
 
 export function NotificationsBell() {
@@ -60,7 +63,10 @@ export function NotificationsBell() {
     };
   }, [open]);
 
-  const unread = items.filter((n) => +new Date(n.at) > seen).length;
+  // An alert stays unread until it's actually dealt with. Opening the bell marks
+  // activity as seen; it does NOT make a booking that never got emailed go away.
+  // The badge is the only thing standing between a failed send and nobody noticing.
+  const unread = items.filter((n) => n.type === "alert" || +new Date(n.at) > seen).length;
 
   function markSeen() {
     const now = Date.now();
@@ -121,8 +127,25 @@ export function NotificationsBell() {
                         <Icon className="h-4 w-4" />
                       </span>
                       <div className="min-w-0 flex-1">
-                        <p className="text-sm font-semibold">{n.title}</p>
-                        <p className="truncate text-xs text-muted-foreground">{n.body}</p>
+                        <p
+                          className={cn(
+                            "text-sm font-semibold",
+                            n.type === "alert" && "text-danger",
+                          )}
+                        >
+                          {n.title}
+                        </p>
+                        <p
+                          className={cn(
+                            "text-xs text-muted-foreground",
+                            // The provider's error is the actionable part ("domain
+                            // is not verified") — truncating it to one line would
+                            // hide exactly what the admin needs to read.
+                            n.type === "alert" ? "line-clamp-3" : "truncate",
+                          )}
+                        >
+                          {n.body}
+                        </p>
                         <p className="mt-0.5 text-[11px] text-muted-foreground/70">
                           {n.at ? relativeTime(n.at) : ""}
                         </p>

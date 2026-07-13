@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { reconcileStuckConversations } from "@/lib/ai-call-reconcile";
 import { isElevenLabsConfigured } from "@/lib/elevenlabs";
+import { drainOutbox } from "@/lib/notifications/outbox";
 import { isRestConfigured } from "@/lib/twilio";
 
 export const dynamic = "force-dynamic";
@@ -43,15 +44,34 @@ async function runReconcile(req: Request) {
     return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
   }
 
+  // ── Appointment notifications ride this tick ────────────────────────────────
+  // Deliberately BEFORE the telephony guard below, and deliberately not on a cron
+  // of its own. Per-minute crons cannot live in vercel.json — on the Hobby plan a
+  // `* * * * *` expression makes the whole DEPLOYMENT fail, which once froze prod
+  // on 13-day-old code for two weeks (see docs/CRON.md). The schedule is therefore
+  // hand-applied pg_cron SQL that is not in this repo — which means a NEW job is a
+  // step someone can simply forget, and a forgotten job here would mean the
+  // "appointment set" email silently never sends. Riding the tick that already
+  // exists makes the feature work the moment this code deploys. A dedicated
+  // /api/cron/notifications route also exists if you'd rather schedule it properly.
+  //
+  // Tight budget: this must not eat the reconciler's headroom under maxDuration.
+  const outbox = await drainOutbox({ budgetMs: 8_000, limit: 25 });
+
   // Twilio alone can resolve a call that never connected — and on the homeowner's
   // phone it is the ONLY witness. Only refuse when we have neither provider to ask.
   if (!isElevenLabsConfigured() && !isRestConfigured()) {
-    return NextResponse.json({ ok: true, skipped: "no ElevenLabs or Twilio credentials" });
+    return NextResponse.json({
+      ok: true,
+      skipped: "no ElevenLabs or Twilio credentials",
+      outbox,
+    });
   }
 
   // Leave headroom under maxDuration so we always return a real report instead of
   // being killed mid-page — `moreRemaining` tells the next tick to keep going.
-  const result = await reconcileStuckConversations({ budgetMs: 50_000 });
+  // 45s, not 50: the outbox drain above may already have spent up to 8 of the 60.
+  const result = await reconcileStuckConversations({ budgetMs: 45_000 });
 
   if (result.moreRemaining) {
     console.warn(
@@ -61,7 +81,7 @@ async function runReconcile(req: Request) {
     );
   }
 
-  return NextResponse.json({ ok: true, ranAt: new Date().toISOString(), ...result });
+  return NextResponse.json({ ok: true, ranAt: new Date().toISOString(), ...result, outbox });
 }
 
 // Vercel Cron issues a GET; support POST too for external schedulers / testing.

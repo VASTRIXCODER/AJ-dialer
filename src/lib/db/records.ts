@@ -28,6 +28,17 @@ const OUTCOME_TO_STATUS: Record<CallOutcome, string> = {
   do_not_call: "dnc",
 };
 
+/** What a disposition knows about the appointment it booked. */
+export interface AppointmentDraft {
+  /** Human label — "Tomorrow — Tue, Jun 23 at 6:00 PM", or the AI's own words. */
+  when: string;
+  /** Floating wall-clock ("2026-06-23T18:00:00"). Absent = booked with no time. */
+  iso?: string;
+  notes: string;
+  durationMin?: number;
+  location?: string;
+}
+
 /**
  * Route a disposition to the right pipeline tab. appointment_booked → the
  * Appointments tab, callback_scheduled → the Callbacks tab. "Latest disposition
@@ -46,8 +57,10 @@ async function routeDisposition(
     phone: string;
     outcome: CallOutcome;
     summary?: string;
-    appointment?: { when: string; iso?: string; notes: string } | null;
+    appointment?: AppointmentDraft | null;
     source: "ai" | "rep";
+    /** The call this disposition came from — links the appointment to its call. */
+    callRecordId?: string | null;
   },
 ): Promise<void> {
   const { ownerId, leadId, outcome } = input;
@@ -55,7 +68,19 @@ async function routeDisposition(
   // Clear this lead's pending pipeline items so the newest disposition wins.
   if (leadId) {
     await client.from("callbacks").delete().eq("lead_id", leadId).neq("status", "completed");
-    await client.from("appointments").delete().eq("lead_id", leadId).eq("status", "scheduled");
+    // CANCEL, don't delete. Appointments are calendar objects now: a rep who
+    // re-dispositions a lead should see the old review struck through on Tuesday,
+    // not find that Tuesday silently rewrote itself. It also gives the outbox a
+    // cancellation to send, so nobody drives to a review that's been called off.
+    // (Reports must not count these — see appointmentsBooked in db/metrics.ts.)
+    await client
+      .from("appointments")
+      .update({
+        status: "cancelled",
+        cancel_reason: `Re-dispositioned as ${outcome.replace(/_/g, " ")}`,
+      })
+      .eq("lead_id", leadId)
+      .eq("status", "scheduled");
   }
 
   if (outcome === "appointment_booked" || input.appointment) {
@@ -63,10 +88,13 @@ async function routeDisposition(
       owner_id: ownerId,
       lead_id: leadId,
       lead_name: input.leadName,
+      call_record_id: input.callRecordId || null,
       // Machine timestamp (drives the calendar + time buckets) when the resolver
       // pinned a concrete slot; the human label is always kept for display.
       scheduled_at: input.appointment?.iso || null,
       scheduled_label: input.appointment?.when ?? "",
+      duration_min: input.appointment?.durationMin || 60,
+      location: input.appointment?.location ?? "",
       notes: input.appointment?.notes ?? input.summary ?? "",
       source: input.source,
       status: "scheduled",
@@ -99,6 +127,13 @@ export async function insertCallRecord(input: {
   room?: string | null;
   /** Rep's free-text call notes — persisted back to leads.notes. */
   notes?: string;
+  /**
+   * The slot the rep agreed with the homeowner, captured by the booking dialog
+   * before the disposition is filed. Optional: a rep who skips it still books the
+   * appointment, it just lands with no time (exactly the old behavior) and shows
+   * up in the "later" bucket rather than on the calendar.
+   */
+  appointment?: AppointmentDraft | null;
 }): Promise<string | null> {
   if (!isSupabaseConfigured()) return null;
   try {
@@ -179,6 +214,8 @@ export async function insertCallRecord(input: {
       phone: input.phone ?? "",
       outcome: input.outcome,
       summary: input.summary,
+      appointment: input.appointment ?? null,
+      callRecordId: recordId,
       source: input.channel === "ai" ? "ai" : "rep",
     });
     return recordId ?? null;

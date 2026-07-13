@@ -410,7 +410,12 @@ export async function getReportingData(
       appointmentRate: pct(apptOutcome, totalCalls),
       callbackRate: pct(callbackOutcome, totalCalls),
       noAnswerRate: pct(noAnswerOutcome, totalCalls),
-      appointmentsBooked: appts.length,
+      // "Booked" = still on the books. Superseded appointments are CANCELLED now
+      // rather than hard-deleted (routeDisposition, db/records.ts) so the calendar
+      // keeps its history — but a review the rep re-dispositioned away was never a
+      // booking, and counting it here would quietly inflate every report the day
+      // that change shipped. Excluding cancelled reproduces the old count exactly.
+      appointmentsBooked: appts.filter((a) => a.status !== "cancelled").length,
       appointmentsCompleted: appts.filter((a) => a.status === "completed").length,
       noShows: appts.filter((a) => a.status === "no_show").length,
       reschedules: appts.filter((a) => a.status === "rescheduled").length,
@@ -478,13 +483,18 @@ export async function getReportingData(
       .map((r) => mapRecentCall(r, supervisor, nameById));
 
     // ── Pipeline + live ─────────────────────────────────────────────────────────
-    const appointments: ApptLite[] = appts.slice(0, 30).map((a, i) => ({
-      id: String(a.id ?? i),
-      leadName: String(a.lead_name ?? "Homeowner"),
-      whenLabel: apptWhen(a),
-      source: String(a.source ?? "ai"),
-      status: String(a.status ?? "scheduled"),
-    }));
+    // Cancelled reviews are dead weight in the dashboard's upcoming list — and
+    // they'd eat the 30 slots the live ones need.
+    const appointments: ApptLite[] = appts
+      .filter((a) => a.status !== "cancelled")
+      .slice(0, 30)
+      .map((a, i) => ({
+        id: String(a.id ?? i),
+        leadName: String(a.lead_name ?? "Homeowner"),
+        whenLabel: apptWhen(a),
+        source: String(a.source ?? "ai"),
+        status: String(a.status ?? "scheduled"),
+      }));
 
     const liveCutoff = Date.now() - 20 * 60_000;
     const liveCalls: LiveCall[] = monitor.active

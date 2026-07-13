@@ -1,4 +1,6 @@
 import { NextResponse } from "next/server";
+import { listFailedNotifications } from "@/lib/notifications/outbox";
+import { getViewer } from "@/lib/org/membership";
 import { isSupabaseConfigured } from "@/lib/supabase/config";
 import { createClient } from "@/lib/supabase/server";
 
@@ -20,12 +22,18 @@ const OUTCOME_LABEL: Record<string, string> = {
 
 export interface Notification {
   id: string;
-  type: "appointment" | "callback" | "call";
+  type: "appointment" | "callback" | "call" | "alert";
   title: string;
   body: string;
   at: string;
   href: string;
 }
+
+const KIND_LABEL: Record<string, string> = {
+  appointment_set: "Appointment email",
+  appointment_rescheduled: "Reschedule email",
+  appointment_cancelled: "Cancellation email",
+};
 
 /**
  * Account-scoped notifications derived from real activity — booked appointments,
@@ -97,8 +105,32 @@ export async function GET() {
       });
     }
 
-    notifications.sort((a, b) => +new Date(b.at) - +new Date(a.at));
-    return NextResponse.json({ notifications: notifications.slice(0, 20) });
+    // ── The alert path a failed notification is REQUIRED to have ───────────────
+    // An appointment email that exhausted its retries has to reach a human, or
+    // the whole "never fails silently" promise is a console.error nobody reads.
+    // Only shown to people who could act on it (they manage the calendar), and
+    // sorted to the top regardless of age — an unsent booking doesn't get less
+    // urgent because it's from yesterday.
+    const viewer = await getViewer();
+    if (viewer.permissions.includes("appointments.manage")) {
+      const failed = await listFailedNotifications(viewer.org?.id ?? null);
+      for (const f of failed) {
+        notifications.unshift({
+          id: `n-${f.id}`,
+          type: "alert",
+          title: `${KIND_LABEL[f.kind] ?? "Notification"} failed to send`,
+          body: `${f.leadName} — gave up after ${f.attempts} attempts. ${f.lastError}`,
+          at: f.createdAt,
+          href: "/appointments",
+        });
+      }
+    }
+
+    const alerts = notifications.filter((n) => n.type === "alert");
+    const rest = notifications
+      .filter((n) => n.type !== "alert")
+      .sort((a, b) => +new Date(b.at) - +new Date(a.at));
+    return NextResponse.json({ notifications: [...alerts, ...rest].slice(0, 20) });
   } catch {
     return NextResponse.json({ notifications: [] });
   }

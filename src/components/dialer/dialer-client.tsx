@@ -2,10 +2,11 @@
 
 import { AlertTriangle, Loader2, Megaphone, Phone, Settings, Users } from "lucide-react";
 import Link from "next/link";
-import { useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Card } from "@/components/ui/card";
 import { Button, buttonVariants } from "@/components/ui/button";
-import type { Lead } from "@/lib/types";
+import type { CallOutcome, Lead } from "@/lib/types";
+import { BookAppointmentDialog, type BookedAppointment } from "./book-appointment-dialog";
 import { CallStage } from "./call-stage";
 import { useDialerContext } from "./dialer-context";
 import { DialerFloor } from "./dialer-floor";
@@ -93,6 +94,48 @@ export function DialerClient({
         (_, i) => queueForDialer[(state.queueIndex + i + 1) % queueForDialer.length],
       )
     : [];
+
+  // ── Disposition ────────────────────────────────────────────────────────────
+  // "Appointment booked" pauses here to ask WHEN, because filing the disposition
+  // is a one-way door: dialer.selectOutcome() advances the queue and, with
+  // auto-dial on, immediately starts calling the next homeowner. Ask first, file
+  // second. Every other outcome files straight through, untouched.
+  const [booking, setBooking] = useState<{ lead: Lead; notes: string } | null>(null);
+
+  const fileOutcome = useCallback(
+    (o: CallOutcome, lead: Lead | null, appointment?: BookedAppointment | null) => {
+      if (lead) {
+        void fetch("/api/calls", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            leadId: lead.id,
+            leadName: `${lead.firstName} ${lead.lastName}`,
+            phone: lead.phone,
+            durationSec: state.durationSec,
+            outcome: o,
+            callSid: state.callSid,
+            room: state.room,
+            notes: notesRef.current || undefined,
+            appointment: appointment ?? undefined,
+          }),
+        }).catch(() => {});
+      }
+      dialer.selectOutcome(o);
+    },
+    [dialer, state.durationSec, state.callSid, state.room],
+  );
+
+  const onOutcome = useCallback(
+    (o: CallOutcome) => {
+      if (o === "appointment_booked" && focusLead) {
+        setBooking({ lead: focusLead, notes: notesRef.current });
+        return;
+      }
+      fileOutcome(o, focusLead);
+    },
+    [focusLead, fileOutcome],
+  );
 
   return (
     <div className="space-y-4">
@@ -226,25 +269,7 @@ export function DialerClient({
             onAiDialNumber={dialer.aiDialNumber}
             onEnd={dialer.endCall}
             onSkip={dialer.skip}
-            onOutcome={(o) => {
-              if (focusLead) {
-                void fetch("/api/calls", {
-                  method: "POST",
-                  headers: { "content-type": "application/json" },
-                  body: JSON.stringify({
-                    leadId: focusLead.id,
-                    leadName: `${focusLead.firstName} ${focusLead.lastName}`,
-                    phone: focusLead.phone,
-                    durationSec: state.durationSec,
-                    outcome: o,
-                    callSid: state.callSid,
-                    room: state.room,
-                    notes: notesRef.current || undefined,
-                  }),
-                }).catch(() => {});
-              }
-              dialer.selectOutcome(o);
-            }}
+            onOutcome={onOutcome}
             onToggleMute={dialer.toggleMute}
             onToggleHold={dialer.toggleHold}
             onToggleRecording={dialer.toggleRecording}
@@ -277,6 +302,26 @@ export function DialerClient({
           </div>
         </Card>
       </div>
+
+      {booking && (
+        <BookAppointmentDialog
+          lead={booking.lead}
+          defaultNotes={booking.notes}
+          onConfirm={(appt) => {
+            setBooking(null);
+            fileOutcome("appointment_booked", booking.lead, appt);
+          }}
+          onSkip={() => {
+            // Books it with no time — the pre-existing behavior. It lands in the
+            // calendar's "Needs a time" rail rather than being silently lost.
+            setBooking(null);
+            fileOutcome("appointment_booked", booking.lead);
+          }}
+          // Backing out files nothing at all: the rep mis-clicked, and the call
+          // stays open on the same lead.
+          onCancel={() => setBooking(null)}
+        />
+      )}
     </div>
   );
 }

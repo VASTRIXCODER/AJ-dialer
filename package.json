@@ -12,6 +12,7 @@
     "verify:live-audio": "node scripts/verify-live-audio.mjs",
     "verify:disposition": "tsx scripts/verify-disposition.ts",
     "verify:dialer": "tsx scripts/verify-dialer.ts",
+    "verify:appointments": "tsx scripts/verify-appointments.ts",
     "verify:live-states": "tsx scripts/verify-live-states.ts",
     "e2e:live-states": "node scripts/e2e-live-states.mjs"
   },
