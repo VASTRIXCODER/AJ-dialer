@@ -12,6 +12,19 @@ import { isSupabaseConfigured } from "../supabase/config";
 import { createClient } from "../supabase/server";
 import type { Lead } from "../types";
 
+/** The caller's currently active org, so "own leads" never crosses org lines. */
+async function currentOrgId(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  userId: string,
+): Promise<string | null> {
+  const { data: prof } = await supabase
+    .from("profiles")
+    .select("org_id")
+    .eq("id", userId)
+    .maybeSingle();
+  return prof?.org_id ? String(prof.org_id) : null;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // The session builder: decide exactly WHO gets called before a single call goes out.
 //
@@ -76,6 +89,7 @@ export async function getSegmentReport(): Promise<SegmentReport> {
       data: { user },
     } = await supabase.auth.getUser();
     if (!user) return empty;
+    const orgId = await currentOrgId(supabase, user.id);
 
     // head:true + count:"exact" asks Postgres for a COUNT and ships zero rows —
     // so it is immune to the 1,000-row cap that corrupted every other total.
@@ -86,10 +100,11 @@ export async function getSegmentReport(): Promise<SegmentReport> {
       return count ?? 0;
     };
     function base() {
-      return supabase
-        .from("leads")
-        .select("id", { count: "exact", head: true })
-        .eq("owner_id", user!.id);
+      // Own-scoped, AND within the CURRENT org — a lead this account uploaded
+      // under a past org must not count toward a freshly joined/created one.
+      let q = supabase.from("leads").select("id", { count: "exact", head: true }).eq("owner_id", user!.id);
+      if (orgId) q = q.eq("org_id", orgId);
+      return q;
     }
 
     const [total, neverContacted, contacted, ...counts] = await Promise.all([
@@ -139,12 +154,15 @@ export async function countSession(spec: SessionSpec): Promise<number> {
       data: { user },
     } = await supabase.auth.getUser();
     if (!user) return 0;
+    const orgId = await currentOrgId(supabase, user.id);
 
     let q = supabase
       .from("leads")
       .select("id", { count: "exact", head: true })
       .eq("owner_id", user.id)
       .in("status", sanitizeSegments(spec.statuses));
+    // Own-scoped, AND within the CURRENT org — never count a past org's leads.
+    if (orgId) q = q.eq("org_id", orgId);
     q = applyContact(q, spec.contact);
     if (spec.campaignId) q = q.eq("campaign_id", spec.campaignId);
 
@@ -173,21 +191,24 @@ export async function buildSession(spec: SessionSpec): Promise<Lead[]> {
       data: { user },
     } = await supabase.auth.getUser();
     if (!user) return [];
+    const orgId = await currentOrgId(supabase, user.id);
 
     const limit = Math.max(1, Math.min(spec.limit || 0, MAX_SESSION_LEADS));
 
     // An explicit hand-picked set skips the segment filters entirely — but still
-    // never escapes the owner scope or the DNC block.
+    // never escapes the owner scope, the current org, or the DNC block.
     if (spec.leadIds?.length) {
       const ids = spec.leadIds.slice(0, limit);
       const out: Lead[] = [];
       for (let i = 0; i < ids.length; i += 200) {
-        const { data } = await supabase
+        let q = supabase
           .from("leads")
           .select("*")
           .eq("owner_id", user.id)
           .not("status", "in", `(${BLOCKED_SEGMENTS.join(",")})`)
           .in("id", ids.slice(i, i + 200));
+        if (orgId) q = q.eq("org_id", orgId);
+        const { data } = await q;
         out.push(...(data ?? []).map(rowToLead));
       }
       // Preserve the order the operator picked them in.
@@ -204,6 +225,9 @@ export async function buildSession(spec: SessionSpec): Promise<Lead[]> {
         .select("*")
         .eq("owner_id", user.id)
         .in("status", statuses);
+      // Own-scoped, AND within the CURRENT org — a lead uploaded under a past
+      // org must never join a session dialed in a freshly joined/created one.
+      if (orgId) q = q.eq("org_id", orgId);
       q = applyContact(q, spec.contact);
       if (spec.campaignId) q = q.eq("campaign_id", spec.campaignId);
 

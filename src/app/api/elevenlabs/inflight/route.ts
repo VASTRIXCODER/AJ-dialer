@@ -35,13 +35,26 @@ export async function POST(req: Request) {
     } = await supabase.auth.getUser();
     if (!user) return NextResponse.json({ active: [] });
 
+    // Own-scoped, AND within the CURRENT org — a conversation this account owns
+    // from a past org must never be treated as one of THIS session's in-flight
+    // calls (it would silently eat a concurrency slot for a call that isn't
+    // actually part of the current campaign).
+    const { data: prof } = await supabase
+      .from("profiles")
+      .select("org_id")
+      .eq("id", user.id)
+      .maybeSingle();
+    const orgId = prof?.org_id ? String(prof.org_id) : null;
+
     // Service role when available: the pump must see the row even if a webhook
     // wrote it from a context RLS would hide. Still hard-scoped to the caller.
     const reader = isAdminConfigured() ? createAdminClient() : supabase;
-    const { data } = await reader
+    let query = reader
       .from("ai_conversations")
       .select("conversation_id, state")
-      .eq("owner_id", user.id)
+      .eq("owner_id", user.id);
+    if (orgId) query = query.eq("org_id", orgId);
+    const { data } = await query
       .in("conversation_id", ids)
       // LIVE_STATES, not a hand-written list — a call whose phone is RINGING is
       // very much still in flight. Omitting 'ringing' here would free its

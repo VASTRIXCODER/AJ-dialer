@@ -49,27 +49,43 @@ export async function GET() {
     } = await supabase.auth.getUser();
     if (!user) return NextResponse.json({ notifications: [] });
 
+    // Own-scoped, AND within the CURRENT org — an appointment/callback/call this
+    // account owns from a past org must not surface as a notification in a
+    // freshly joined/created one.
+    const { data: prof } = await supabase
+      .from("profiles")
+      .select("org_id")
+      .eq("id", user.id)
+      .maybeSingle();
+    const orgId = prof?.org_id ? String(prof.org_id) : null;
+
     const [appts, callbacks, calls] = await Promise.all([
-      supabase
-        .from("appointments")
-        .select("id,lead_name,scheduled_label,created_at")
-        .eq("owner_id", user.id)
-        .order("created_at", { ascending: false })
-        .limit(8),
-      supabase
-        .from("callbacks")
-        .select("id,lead_name,reason,created_at,status")
-        .eq("owner_id", user.id)
-        .neq("status", "completed")
-        .order("created_at", { ascending: false })
-        .limit(8),
-      supabase
-        .from("call_records")
-        .select("id,lead_name,outcome,started_at,channel")
-        .eq("owner_id", user.id)
-        .eq("channel", "ai")
-        .order("started_at", { ascending: false })
-        .limit(8),
+      (() => {
+        let q = supabase
+          .from("appointments")
+          .select("id,lead_name,scheduled_label,created_at")
+          .eq("owner_id", user.id);
+        if (orgId) q = q.eq("org_id", orgId);
+        return q.order("created_at", { ascending: false }).limit(8);
+      })(),
+      (() => {
+        let q = supabase
+          .from("callbacks")
+          .select("id,lead_name,reason,created_at,status")
+          .eq("owner_id", user.id)
+          .neq("status", "completed");
+        if (orgId) q = q.eq("org_id", orgId);
+        return q.order("created_at", { ascending: false }).limit(8);
+      })(),
+      (() => {
+        let q = supabase
+          .from("call_records")
+          .select("id,lead_name,outcome,started_at,channel")
+          .eq("owner_id", user.id)
+          .eq("channel", "ai");
+        if (orgId) q = q.eq("org_id", orgId);
+        return q.order("started_at", { ascending: false }).limit(8);
+      })(),
     ]);
 
     const notifications: Notification[] = [];

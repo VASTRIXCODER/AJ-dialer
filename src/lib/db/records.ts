@@ -1008,14 +1008,14 @@ export async function getAIConversationsForMonitor(): Promise<{
     const supervisor =
       Boolean(orgId) && ["owner", "admin", "manager"].includes(String(prof?.role ?? "rep"));
 
-    const base = supabase
-      .from("ai_conversations")
-      .select("*")
+    let base = supabase.from("ai_conversations").select("*");
+    // A rep's "own" scope must stay within their CURRENT org — never surface
+    // AI conversations they happen to own from an org they've since left.
+    base = supervisor ? base.eq("org_id", orgId as string) : base.eq("owner_id", user.id);
+    if (!supervisor && orgId) base = base.eq("org_id", orgId);
+    const { data, error } = await base
       .order("started_at", { ascending: false })
       .limit(supervisor ? 100 : 50);
-    const { data, error } = supervisor
-      ? await base.eq("org_id", orgId as string)
-      : await base.eq("owner_id", user.id);
     if (error) {
       console.error("[records] getAIConversationsForMonitor failed:", error.message);
       return { active: [], recent: [] };

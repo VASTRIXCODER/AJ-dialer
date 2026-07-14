@@ -39,6 +39,13 @@ export function canActOn(
   rowOwnerId: string | null,
   rowOrgId: string | null,
 ): boolean {
+  // A row stamped with a DIFFERENT org than the one the actor is currently
+  // active in is never actionable — even if they happen to be its owner. Rows
+  // don't follow a user across organizations just because the same account
+  // created them; otherwise a user who leaves (or spins up a new) org keeps
+  // reaching into the old one's data forever. Legacy rows with no org_id at
+  // all fall through to the ownership check below unchanged.
+  if (rowOrgId && rowOrgId !== scope.orgId) return false;
   if (rowOwnerId && rowOwnerId === scope.userId) return true;
   if (scope.supervisor && scope.orgId && rowOrgId && rowOrgId === scope.orgId) return true;
   return false;

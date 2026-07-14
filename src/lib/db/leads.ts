@@ -110,25 +110,26 @@ export async function getLeads(): Promise<Lead[]> {
     const supervisor =
       Boolean(orgId) && isSupervisorRole(prof?.role) && isAdminConfigured();
 
-    // Leads are SEPARATED BY UPLOADER. A rep sees only the leads they uploaded;
-    // a supervisor (owner/admin/manager) sees the whole org, attributed to each
-    // uploader so the Leads tab can group them into per-account sections.
+    // Leads are SEPARATED BY UPLOADER. A rep sees only the leads they uploaded
+    // WITHIN THEIR CURRENT ORG (never a past org's rows just because they still
+    // own them); a supervisor (owner/admin/manager) sees the whole org,
+    // attributed to each uploader so the Leads tab can group them into
+    // per-account sections.
     // Both branches PAGE — an un-ranged select silently stops at 1,000 rows, which
     // is why a 17,342-lead book rendered (and reported its total) as 1,000.
     if (!supervisor) {
-      const rows = await fetchAllPaged(() =>
-        supabase
-          .from("leads")
-          .select("*")
-          .eq("owner_id", user.id)
-          .order("ai_score", { ascending: false, nullsFirst: false })
-          .order("id", { ascending: true }),
-      );
+      const rows = await fetchAllPaged(() => {
+        let q = supabase.from("leads").select("*").eq("owner_id", user.id);
+        if (orgId) q = q.eq("org_id", orgId);
+        return q.order("ai_score", { ascending: false, nullsFirst: false }).order("id", { ascending: true });
+      });
       return rows.map(rowToLead);
     }
 
-    // Supervisor: the org pool + their own leads (covers any legacy null-org
-    // rows), deduped, with each uploader's display name resolved for sections.
+    // Supervisor: the org pool + any of their own leads that predate org
+    // scoping (org_id null — never another org's, which would still have a
+    // real, different org_id), deduped, with each uploader's display name
+    // resolved for sections.
     const admin = createAdminClient();
     const [orgRows, ownRows, memberRes] = await Promise.all([
       fetchAllPaged(() =>
@@ -143,6 +144,7 @@ export async function getLeads(): Promise<Lead[]> {
           .from("leads")
           .select("*")
           .eq("owner_id", user.id)
+          .is("org_id", null)
           .order("id", { ascending: true }),
       ),
       admin
@@ -616,15 +618,11 @@ export async function getDialQueue(): Promise<Lead[]> {
       return dialable(rows.map((r) => rowToLead(r as Row)));
     }
 
-    const rows = await fetchAllPaged(() =>
-      supabase
-        .from("leads")
-        .select("*")
-        .eq("owner_id", user.id)
-        .in("status", DIALABLE)
-        .order("ai_score", { ascending: false, nullsFirst: false })
-        .order("id", { ascending: true }),
-    );
+    const rows = await fetchAllPaged(() => {
+      let q = supabase.from("leads").select("*").eq("owner_id", user.id).in("status", DIALABLE);
+      if (orgId) q = q.eq("org_id", orgId);
+      return q.order("ai_score", { ascending: false, nullsFirst: false }).order("id", { ascending: true });
+    });
     return dialable(rows.map((r) => rowToLead(r as Row)));
   } catch {
     return [];
@@ -712,10 +710,9 @@ export async function getMyLeadsCount(): Promise<number> {
         .eq("org_id", orgId as string);
       return count ?? 0;
     }
-    const { count } = await supabase
-      .from("leads")
-      .select("id", { count: "exact", head: true })
-      .eq("owner_id", user.id);
+    let q = supabase.from("leads").select("id", { count: "exact", head: true }).eq("owner_id", user.id);
+    if (orgId) q = q.eq("org_id", orgId);
+    const { count } = await q;
     return count ?? 0;
   } catch {
     return 0;

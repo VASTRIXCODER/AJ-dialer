@@ -153,12 +153,16 @@ export async function getCallHistory(opts: {
     const offset = Math.max(0, Math.floor(opts.offset ?? 0));
 
     // Fetch one extra row to know whether there's another page.
-    const { data, error } = await reader
+    let callHistoryQuery = reader
       .from("call_records")
       .select(
         "id,owner_id,outcome,duration_sec,channel,started_at,lead_name,phone,conversation_id,recording_url,summary",
       )
-      .eq(scopeCol, scopeVal)
+      .eq(scopeCol, scopeVal);
+    // A rep's "own" scope must stay within their CURRENT org — never surface
+    // calls they happen to own from an org they've since left.
+    if (!supervisor && orgId) callHistoryQuery = callHistoryQuery.eq("org_id", orgId);
+    const { data, error } = await callHistoryQuery
       .order("started_at", { ascending: false })
       .range(offset, offset + limit);
     if (error) {
@@ -290,27 +294,38 @@ export async function getReportingData(
     const reader = supervisor ? createAdminClient() : supabase;
     const scopeCol = supervisor ? "org_id" : "owner_id";
     const scopeVal = (supervisor ? orgId : user.id) as string;
+    // A rep's "own" scope must stay within their CURRENT org — never surface
+    // calls/appointments/leads they happen to own from an org they've since
+    // left (matters most right after joining/creating a fresh org).
+    const ownScoped = !supervisor && orgId;
 
     const [callsRes, apptsRes, leadsRes, monitor, memberRes, orgRes] = await Promise.all([
-      reader
-        .from("call_records")
-        .select(
-          "id,owner_id,outcome,duration_sec,channel,started_at,lead_name,phone,conversation_id,recording_url,summary",
-        )
-        .eq(scopeCol, scopeVal)
-        .order("started_at", { ascending: false })
-        .limit(supervisor ? 20000 : 2000),
-      reader
-        .from("appointments")
-        .select("id,status,source,lead_name,scheduled_label,scheduled_at,created_at")
-        .eq(scopeCol, scopeVal)
-        .order("created_at", { ascending: false })
-        .limit(supervisor ? 5000 : 500),
-      reader
-        .from("leads")
-        .select("utility_bill,solar_payment,has_ev,has_pool,has_battery")
-        .eq(scopeCol, scopeVal)
-        .limit(supervisor ? 50000 : 5000),
+      (() => {
+        let q = reader
+          .from("call_records")
+          .select(
+            "id,owner_id,outcome,duration_sec,channel,started_at,lead_name,phone,conversation_id,recording_url,summary",
+          )
+          .eq(scopeCol, scopeVal);
+        if (ownScoped) q = q.eq("org_id", orgId as string);
+        return q.order("started_at", { ascending: false }).limit(supervisor ? 20000 : 2000);
+      })(),
+      (() => {
+        let q = reader
+          .from("appointments")
+          .select("id,status,source,lead_name,scheduled_label,scheduled_at,created_at")
+          .eq(scopeCol, scopeVal);
+        if (ownScoped) q = q.eq("org_id", orgId as string);
+        return q.order("created_at", { ascending: false }).limit(supervisor ? 5000 : 500);
+      })(),
+      (() => {
+        let q = reader
+          .from("leads")
+          .select("utility_bill,solar_payment,has_ev,has_pool,has_battery")
+          .eq(scopeCol, scopeVal);
+        if (ownScoped) q = q.eq("org_id", orgId as string);
+        return q.limit(supervisor ? 50000 : 5000);
+      })(),
       getAIConversationsForMonitor(),
       supervisor && orgId
         ? createAdminClient()

@@ -92,8 +92,11 @@ export async function routeAppointmentsBulk(ids: string[], outcome: CallOutcome)
   const base = admin.from("appointments").select("id, lead_id, owner_id, org_id").in("id", list);
   // Narrow the SELECT itself: a rep re-routing a list of ids they don't own gets
   // back nothing, not somebody else's leads.
-  const scoped =
+  let scoped =
     scope.team && scope.orgId ? base.eq("org_id", scope.orgId) : base.eq("owner_id", scope.userId);
+  // A rep's "own" scope must stay within their CURRENT org — never touch
+  // appointments they happen to own from an org they've since left.
+  if (!scope.team && scope.orgId) scoped = scoped.eq("org_id", scope.orgId);
   const { data: appts } = await scoped;
   const leadIds = [
     ...new Set(((appts ?? []) as Row[]).map((a) => a.lead_id).filter(Boolean).map(String)),

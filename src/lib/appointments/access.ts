@@ -38,6 +38,10 @@ export function canActOnAppt(
   orgId: string | null,
 ): boolean {
   if (!s.manage) return false; // no manage permission ⇒ no write, ever
+  // An appointment stamped with a DIFFERENT org than the one the actor is
+  // currently active in is never actionable, even if they booked it — it
+  // must not follow them into whatever org they're active in now.
+  if (orgId && orgId !== s.orgId) return false;
   if (ownerId && ownerId === s.userId) return true; // your own booking
   return Boolean(s.team && s.orgId && orgId && orgId === s.orgId); // the floor's
 }

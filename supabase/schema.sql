@@ -484,6 +484,18 @@ returns boolean language sql stable security definer set search_path = public as
   );
 $$;
 
+-- The caller's CURRENTLY ACTIVE org (profiles.org_id). Rows a user owns from an
+-- org they've since left/switched away from must NOT follow them into whatever
+-- org they're active in now — "you own it" only counts while org_id still
+-- matches where you're actively working (or the row predates org scoping and
+-- has no org_id at all). Without this, a fresh organization can appear to show
+-- another org's leads/calls/appointments simply because the same account owns
+-- rows in both.
+create or replace function public.app_active_org()
+returns uuid language sql stable security definer set search_path = public as $$
+  select org_id from public.profiles where id = auth.uid();
+$$;
+
 -- ── Stamp org_id on insert from the owner's profile (app code can't forget) ──
 create or replace function public.stamp_org_id()
 returns trigger language plpgsql security definer set search_path = public as $$
@@ -557,11 +569,11 @@ drop policy if exists "call_records read" on public.call_records;
 drop policy if exists "call_records write" on public.call_records;
 create policy "call_records read" on public.call_records for select using (
   public.app_is_superadmin() or (public.app_is_active() and (
-    owner_id = auth.uid()
+    (owner_id = auth.uid() and (org_id is null or org_id = public.app_active_org()))
     or (org_id is not null and public.app_is_org_supervisor(org_id)))));
 create policy "call_records write" on public.call_records for all
-  using (public.app_is_superadmin() or (public.app_is_active() and owner_id = auth.uid()))
-  with check (public.app_is_superadmin() or (public.app_is_active() and owner_id = auth.uid()));
+  using (public.app_is_superadmin() or (public.app_is_active() and owner_id = auth.uid() and (org_id is null or org_id = public.app_active_org())))
+  with check (public.app_is_superadmin() or (public.app_is_active() and owner_id = auth.uid() and (org_id is null or org_id = public.app_active_org())));
 
 -- appointments
 drop policy if exists "appointments owner" on public.appointments;
@@ -569,11 +581,11 @@ drop policy if exists "appointments read" on public.appointments;
 drop policy if exists "appointments write" on public.appointments;
 create policy "appointments read" on public.appointments for select using (
   public.app_is_superadmin() or (public.app_is_active() and (
-    owner_id = auth.uid()
+    (owner_id = auth.uid() and (org_id is null or org_id = public.app_active_org()))
     or (org_id is not null and public.app_is_org_supervisor(org_id)))));
 create policy "appointments write" on public.appointments for all
-  using (public.app_is_superadmin() or (public.app_is_active() and owner_id = auth.uid()))
-  with check (public.app_is_superadmin() or (public.app_is_active() and owner_id = auth.uid()));
+  using (public.app_is_superadmin() or (public.app_is_active() and owner_id = auth.uid() and (org_id is null or org_id = public.app_active_org())))
+  with check (public.app_is_superadmin() or (public.app_is_active() and owner_id = auth.uid() and (org_id is null or org_id = public.app_active_org())));
 
 -- callbacks
 drop policy if exists "callbacks owner" on public.callbacks;
@@ -581,11 +593,11 @@ drop policy if exists "callbacks read" on public.callbacks;
 drop policy if exists "callbacks write" on public.callbacks;
 create policy "callbacks read" on public.callbacks for select using (
   public.app_is_superadmin() or (public.app_is_active() and (
-    owner_id = auth.uid()
+    (owner_id = auth.uid() and (org_id is null or org_id = public.app_active_org()))
     or (org_id is not null and public.app_is_org_supervisor(org_id)))));
 create policy "callbacks write" on public.callbacks for all
-  using (public.app_is_superadmin() or (public.app_is_active() and owner_id = auth.uid()))
-  with check (public.app_is_superadmin() or (public.app_is_active() and owner_id = auth.uid()));
+  using (public.app_is_superadmin() or (public.app_is_active() and owner_id = auth.uid() and (org_id is null or org_id = public.app_active_org())))
+  with check (public.app_is_superadmin() or (public.app_is_active() and owner_id = auth.uid() and (org_id is null or org_id = public.app_active_org())));
 
 -- ai_conversations
 drop policy if exists "ai_conversations owner" on public.ai_conversations;
@@ -593,11 +605,11 @@ drop policy if exists "ai_conversations read" on public.ai_conversations;
 drop policy if exists "ai_conversations write" on public.ai_conversations;
 create policy "ai_conversations read" on public.ai_conversations for select using (
   public.app_is_superadmin() or (public.app_is_active() and (
-    owner_id = auth.uid()
+    (owner_id = auth.uid() and (org_id is null or org_id = public.app_active_org()))
     or (org_id is not null and public.app_is_org_supervisor(org_id)))));
 create policy "ai_conversations write" on public.ai_conversations for all
-  using (public.app_is_superadmin() or (public.app_is_active() and owner_id = auth.uid()))
-  with check (public.app_is_superadmin() or (public.app_is_active() and owner_id = auth.uid()));
+  using (public.app_is_superadmin() or (public.app_is_active() and owner_id = auth.uid() and (org_id is null or org_id = public.app_active_org())))
+  with check (public.app_is_superadmin() or (public.app_is_active() and owner_id = auth.uid() and (org_id is null or org_id = public.app_active_org())));
 
 -- campaigns
 drop policy if exists "campaigns owner" on public.campaigns;
@@ -605,11 +617,11 @@ drop policy if exists "campaigns read" on public.campaigns;
 drop policy if exists "campaigns write" on public.campaigns;
 create policy "campaigns read" on public.campaigns for select using (
   public.app_is_superadmin() or (public.app_is_active() and (
-    owner_id = auth.uid()
+    (owner_id = auth.uid() and (org_id is null or org_id = public.app_active_org()))
     or (org_id is not null and public.app_is_org_supervisor(org_id)))));
 create policy "campaigns write" on public.campaigns for all
-  using (public.app_is_superadmin() or (public.app_is_active() and owner_id = auth.uid()))
-  with check (public.app_is_superadmin() or (public.app_is_active() and owner_id = auth.uid()));
+  using (public.app_is_superadmin() or (public.app_is_active() and owner_id = auth.uid() and (org_id is null or org_id = public.app_active_org())))
+  with check (public.app_is_superadmin() or (public.app_is_active() and owner_id = auth.uid() and (org_id is null or org_id = public.app_active_org())));
 
 -- ── Bootstrap the platform superadmin by email (edit to your address) ────────
 -- This makes YOU a hidden superadmin tied to your real Supabase login. It is not
@@ -725,10 +737,11 @@ drop policy if exists "leads insert" on public.leads;
 drop policy if exists "leads update" on public.leads;
 drop policy if exists "leads delete" on public.leads;
 
--- Read: any active member of the lead's org (shared pool), the owner, or superadmin.
+-- Read: any active member of the lead's org (shared pool), the owner (while
+-- still active in that lead's org — see app_active_org()), or superadmin.
 create policy "leads read" on public.leads for select using (
   public.app_is_superadmin() or (public.app_is_active() and (
-    owner_id = auth.uid()
+    (owner_id = auth.uid() and (org_id is null or org_id = public.app_active_org()))
     or (org_id is not null and public.app_is_org_member(org_id)))));
 
 -- Insert: you create leads you own (the stamp_org_id trigger fills org_id).
@@ -738,16 +751,17 @@ create policy "leads insert" on public.leads for insert with check (
 -- Update: any active org member (so any rep can disposition any shared lead).
 create policy "leads update" on public.leads for update
   using (public.app_is_superadmin() or (public.app_is_active() and (
-    owner_id = auth.uid()
+    (owner_id = auth.uid() and (org_id is null or org_id = public.app_active_org()))
     or (org_id is not null and public.app_is_org_member(org_id)))))
   with check (public.app_is_superadmin() or (public.app_is_active() and (
-    owner_id = auth.uid()
+    (owner_id = auth.uid() and (org_id is null or org_id = public.app_active_org()))
     or (org_id is not null and public.app_is_org_member(org_id)))));
 
--- Delete: the owner, or a supervisor (manager/admin/owner) of the lead's org.
+-- Delete: the owner (while still active in that lead's org), or a supervisor
+-- (manager/admin/owner) of the lead's org.
 create policy "leads delete" on public.leads for delete using (
   public.app_is_superadmin() or (public.app_is_active() and (
-    owner_id = auth.uid()
+    (owner_id = auth.uid() and (org_id is null or org_id = public.app_active_org()))
     or (org_id is not null and public.app_is_org_supervisor(org_id)))));
 
 -- ─────────────────────────────────────────────────────────────────────────────

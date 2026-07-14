@@ -196,12 +196,13 @@ export async function assignLeadsToCampaign(
     if (!canActOn(scope, camp.owner_id as string, (camp.org_id as string) ?? null))
       return { ok: false, error: "You don't have access to that campaign." };
   }
-  // Scope the update so reps only touch their own leads, supervisors their org's.
+  // Scope the update so reps only touch their own leads within their CURRENT
+  // org (never a past org's leads they still happen to own), supervisors their
+  // org's whole pool.
   const base = admin.from("leads").update({ campaign_id: campaignId }).in("id", ids);
-  const q =
-    scope.supervisor && scope.orgId
-      ? base.eq("org_id", scope.orgId)
-      : base.eq("owner_id", scope.userId);
+  let q =
+    scope.supervisor && scope.orgId ? base.eq("org_id", scope.orgId) : base.eq("owner_id", scope.userId);
+  if (!scope.supervisor && scope.orgId) q = q.eq("org_id", scope.orgId);
   const { error } = await q;
   return error ? { ok: false, error: error.message } : { ok: true };
 }
@@ -259,10 +260,14 @@ export async function getAppointments(): Promise<AppointmentRow[]> {
     // `scope.supervisor` check — but an override finally means something.
     const orgWide = scope.team && isAdminConfigured() && Boolean(scope.orgId);
     const reader = orgWide ? createAdminClient() : await createClient();
-    const { data, error } = await reader
+    let query = reader
       .from("appointments")
       .select("*")
-      .eq(orgWide ? "org_id" : "owner_id", orgWide ? scope.orgId : scope.userId)
+      .eq(orgWide ? "org_id" : "owner_id", orgWide ? scope.orgId : scope.userId);
+    // A rep's "own" scope must stay within their CURRENT org — never surface
+    // appointments they happen to own from an org they've since left.
+    if (!orgWide && scope.orgId) query = query.eq("org_id", scope.orgId);
+    const { data, error } = await query
       .order("created_at", { ascending: false })
       .limit(orgWide ? 5000 : 500);
     if (error) console.error("[pipeline] getAppointments query failed:", error.message);
@@ -379,11 +384,15 @@ export async function getBillsFine(): Promise<BillsFineRow[]> {
     if (!scope) return [];
     const orgWide = scope.supervisor && isAdminConfigured() && Boolean(scope.orgId);
     const reader = orgWide ? createAdminClient() : await createClient();
-    const { data, error } = await reader
+    let query = reader
       .from("leads")
       .select("id,first_name,last_name,phone,address,utility_bill,solar_payment,utility_provider,last_contacted_at,created_at,owner_id")
       .eq(orgWide ? "org_id" : "owner_id", orgWide ? scope.orgId : scope.userId)
-      .eq("status", "bills_fine")
+      .eq("status", "bills_fine");
+    // A rep's "own" scope must stay within their CURRENT org — never surface
+    // leads they happen to own from an org they've since left.
+    if (!orgWide && scope.orgId) query = query.eq("org_id", scope.orgId);
+    const { data, error } = await query
       .order("last_contacted_at", { ascending: false })
       .limit(orgWide ? 50000 : 5000);
     if (error) console.error("[pipeline] getBillsFine query failed:", error.message);
@@ -430,10 +439,14 @@ export async function getCallbacks(): Promise<CallbackRow[]> {
     await reconcileOwnerActiveCalls();
     const orgWide = scope.supervisor && isAdminConfigured() && Boolean(scope.orgId);
     const reader = orgWide ? createAdminClient() : await createClient();
-    const { data, error } = await reader
+    let query = reader
       .from("callbacks")
       .select("*")
-      .eq(orgWide ? "org_id" : "owner_id", orgWide ? scope.orgId : scope.userId)
+      .eq(orgWide ? "org_id" : "owner_id", orgWide ? scope.orgId : scope.userId);
+    // A rep's "own" scope must stay within their CURRENT org — never surface
+    // callbacks they happen to own from an org they've since left.
+    if (!orgWide && scope.orgId) query = query.eq("org_id", scope.orgId);
+    const { data, error } = await query
       .order("created_at", { ascending: false })
       .limit(orgWide ? 5000 : 500);
     if (error) console.error("[pipeline] getCallbacks query failed:", error.message);

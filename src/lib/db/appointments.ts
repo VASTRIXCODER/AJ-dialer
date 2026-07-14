@@ -264,8 +264,11 @@ export async function approveAppointmentsBulk(ids: string[]): Promise<Result> {
     .in("id", list);
   // Narrow the UPDATE itself, so a rep can't approve the floor's proposals by
   // posting a list of ids they don't own.
-  const q =
+  let q =
     scope.team && scope.orgId ? base.eq("org_id", scope.orgId) : base.eq("owner_id", scope.userId);
+  // A rep's "own" scope must stay within their CURRENT org — never touch
+  // appointments they happen to own from an org they've since left.
+  if (!scope.team && scope.orgId) q = q.eq("org_id", scope.orgId);
   const { error } = await q;
   return error ? err(error.message) : { ok: true };
 }
