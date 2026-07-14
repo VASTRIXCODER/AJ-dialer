@@ -1,10 +1,12 @@
 "use client";
 
-import { AlertTriangle, Loader2, Megaphone, Phone, Settings, Users } from "lucide-react";
+import { AlertTriangle, Loader2, Megaphone, Phone, Settings, UserCheck, Users } from "lucide-react";
 import Link from "next/link";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { Button, buttonVariants } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 import type { CallOutcome, Lead } from "@/lib/types";
 import { BookAppointmentDialog, type BookedAppointment } from "./book-appointment-dialog";
 import { CallStage } from "./call-stage";
@@ -32,9 +34,12 @@ export function DialerClient({
   const {
     dialer,
     config,
+    queue,
     queueForDialer,
     campaignFilter,
     setCampaignFilter,
+    myLeadsOnly,
+    setMyLeadsOnly,
     campaigns: ctxCampaigns,
     loadLeads,
     loadingLeads,
@@ -42,6 +47,14 @@ export function DialerClient({
     activate,
   } = useDialerContext();
   const { state } = dialer;
+
+  // How many of the currently-loaded leads this viewer personally uploaded —
+  // powers the toggle's badge so a supervisor knows what to expect before
+  // clicking it (e.g. not worth toggling if it'd show 0).
+  const mineCount = useMemo(
+    () => (config.userId ? queue.filter((l) => l.ownerId === config.userId).length : 0),
+    [queue, config.userId],
+  );
 
   // Seed the provider with this page's server data + switch the engine on. Runs
   // once; the provider keeps the device + any live call alive after we leave.
@@ -197,16 +210,41 @@ export function DialerClient({
           )}
           Load leads
         </Button>
+        {config.dialScope === "org" && (
+          <button
+            type="button"
+            onClick={() => setMyLeadsOnly(!myLeadsOnly)}
+            disabled={state.status !== "idle"}
+            aria-pressed={myLeadsOnly}
+            className={cn(
+              "flex h-9 items-center gap-1.5 rounded-xl border px-3 text-sm font-medium transition-colors disabled:opacity-50",
+              myLeadsOnly
+                ? "border-primary/60 bg-primary-soft text-primary"
+                : "border-border bg-background/60 text-muted-foreground hover:bg-muted",
+            )}
+            title={
+              myLeadsOnly
+                ? "Showing only leads you uploaded. Click to include the whole organization's pool again."
+                : "Only load the leads you personally uploaded."
+            }
+          >
+            <UserCheck className="h-4 w-4" />
+            My leads only
+            <Badge tone={myLeadsOnly ? "primary" : "neutral"} className="ml-0.5">
+              {mineCount}
+            </Badge>
+          </button>
+        )}
         <span
           className="text-xs font-medium text-muted-foreground tabular"
           title={
-            config.dialScope === "org"
+            config.dialScope === "org" && !myLeadsOnly
               ? "As a supervisor you dial the whole organization's pool — every rep's leads, not just your own uploads."
               : "The power dialer only ever loads leads you uploaded — you never dial a teammate's leads."
           }
         >
           <b className="text-foreground">{queueForDialer.length}</b>{" "}
-          {config.dialScope === "org" ? "org" : "of your"} lead
+          {config.dialScope === "org" && !myLeadsOnly ? "org" : "of your"} lead
           {queueForDialer.length === 1 ? "" : "s"} ready to dial
         </span>
         {campaignsForSelect.length > 0 && (

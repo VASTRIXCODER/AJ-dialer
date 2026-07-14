@@ -37,6 +37,10 @@ interface DialerContextValue {
   queueForDialer: Lead[];
   campaignFilter: string;
   setCampaignFilter: (id: string) => void;
+  /** Narrow the queue to leads this viewer personally uploaded. Meaningful for
+   *  supervisors only — reps are already own-scoped server-side. */
+  myLeadsOnly: boolean;
+  setMyLeadsOnly: (v: boolean) => void;
   campaigns: Campaign[];
   loadLeads: () => Promise<Lead[]>;
   loadingLeads: boolean;
@@ -70,13 +74,21 @@ export function DialerProvider({
   const [queue, setQueue] = useState<Lead[]>([]);
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [campaignFilter, setCampaignFilter] = useState("");
+  const [myLeadsOnly, setMyLeadsOnly] = useState(false);
   const [loadingLeads, setLoadingLeads] = useState(false);
   const [loadMsg, setLoadMsg] = useState<string | null>(null);
 
   const aiUsable = config.aiAgentConfigured && config.aiEnabled;
-  const queueForDialer = campaignFilter
-    ? queue.filter((l) => l.campaignId === campaignFilter)
-    : queue;
+  // Shared by queueForDialer and the auto-dial lap-refetch effect below, so the
+  // two never drift apart. The `config.userId &&` guard matters: without an
+  // identity (demo mode, signed-out edge cases) `myLeadsOnly` must be a no-op
+  // rather than hiding every lead just because `undefined === undefined`.
+  const matchesFilters = (l: Lead) => {
+    if (campaignFilter && l.campaignId !== campaignFilter) return false;
+    if (myLeadsOnly && config.userId && l.ownerId !== config.userId) return false;
+    return true;
+  };
+  const queueForDialer = queue.filter(matchesFilters);
 
   const dialer = useDialer(
     queueForDialer,
@@ -142,9 +154,7 @@ export function DialerProvider({
       if (cancelled) return;
       const fresh = await loadLeads();
       if (cancelled) return;
-      const stillDialable = campaignFilter
-        ? fresh.filter((l) => l.campaignId === campaignFilter)
-        : fresh;
+      const stillDialable = fresh.filter(matchesFilters);
       if (stillDialable.length > 0) {
         dialer.restartAutoDialLap();
       } else {
@@ -165,6 +175,8 @@ export function DialerProvider({
     queueForDialer,
     campaignFilter,
     setCampaignFilter,
+    myLeadsOnly,
+    setMyLeadsOnly,
     campaigns,
     loadLeads,
     loadingLeads,
