@@ -327,26 +327,40 @@ You: "Oof — yeah, two-fifty, that should NOT be happening. We'll get someone o
 8 DNC — asked to stop calling / be removed.
 9 ESCALATE — needs a human (complex complaint, dispute, anything outside this flow).`;
 
-/** Default in-script name for the second agent when no ELEVENLABS_AGENT_NAME_2 is set. */
-export const SECONDARY_AGENT_NAME = "Sophia";
+/**
+ * The optional SECOND agent's opening line — a warmer, two-beat greeting that
+ * checks in before giving the reason (see the override block below).
+ */
+export const AGENT2_FIRST_MESSAGE =
+  "So hey, this is Emily — your {{company}} account representative for your home. How's everything today?";
 
 /**
- * The optional SECOND agent's persona. It intentionally runs the SAME proven,
- * compliance-critical checklist as Emily (steps 1–13, the amount check, objection
- * handling, dispositions, voicemail) — the differentiator is a distinct rep name
- * and a separate ElevenLabs agent/voice. Built from a name so the dialer's picker
- * label (ELEVENLABS_AGENT_NAME_2) and the in-call identity stay in sync.
- *
- * Inspired by agent 1 by design; edit freely to make the second agent diverge —
- * but keep the compliance and one-question-per-turn discipline intact.
+ * The SECOND agent's system prompt. It is Emily's exact script (same checklist,
+ * discipline, and compliance) PLUS an authoritative override block that captures
+ * the two differences the team asked for:
+ *   1) a warmer, two-beat opening (check in, then give the reason), and
+ *   2) battery owners are ESCALATED to a human expert and the call ends, instead
+ *      of continuing to qualify and book.
+ * Built by appending overrides rather than editing the base in place, so changes
+ * to the shared script keep flowing through and the compliance rules stay intact.
  */
-export function buildSecondaryPrompt(name?: string): string {
-  const who = (name || SECONDARY_AGENT_NAME).trim() || SECONDARY_AGENT_NAME;
-  return EMILY_SYSTEM_PROMPT.replace(/\bEmily\b/g, who);
-}
+export const AGENT2_SYSTEM_PROMPT = `${EMILY_SYSTEM_PROMPT}
 
-/** The second agent's opening line — same warm right-party check as Emily. */
-export const AGENT2_FIRST_MESSAGE = EMILY_FIRST_MESSAGE;
+# ⚠️ SECOND-AGENT OVERRIDES — these WIN over anything above
+You are still Emily, with the exact same job, checklist, and compliance rules as above. This agent differs from the standard script in ONLY two ways — apply both:
+
+1) A WARMER, TWO-BEAT OPENING (this replaces the Step 2 greeting and Step 3 reason line; the rest of the checklist is unchanged).
+   - BEAT ONE — greet and check in, then STOP and let them answer:
+     "So hey, this is Emily — your {{company}} account representative for your home. How's everything today?"
+   - BEAT TWO — after they respond, give the reason and ask the key question:
+     "I'm doing well, thanks — so, the reason I'm calling: a lot of folks have been telling us they're getting a utility bill on TOP of their {{company}} bill lately… is that affecting you too?"
+   - Still make sure you're actually talking to {{first_name}} / the account holder, and confirm their address naturally as you go. From the amount question (Step 4) onward, run the checklist EXACTLY as written above.
+
+2) BATTERY → ESCALATE, DO NOT BOOK. At the battery question (Step 9), if they say they DO have an existing battery:
+   - Do NOT continue the checklist and do NOT book an appointment.
+   - Say warmly: "Ah, you've got a battery — okay. Let me escalate this so a verified expert gives you a call soon to get your situation sorted for you. You have a great day!"
+   - Disposition ESCALATE, then END THE CALL with your end-call tool.
+   - If they have NO battery, continue the checklist as normal (on to Step 10).`;
 
 export interface AgentOrgLike {
   name: string;
@@ -419,19 +433,18 @@ ${COMPLIANCE_GUIDE}
  *
  * `agentKey` selects the persona. "primary" is the original behavior (org custom
  * prompt → Emily/solar → white-label). "secondary" is the optional second agent:
- * it always runs the second persona (see `buildSecondaryPrompt`), voiced by
- * `agentName`, independent of the org's custom primary prompt.
+ * it always runs the second script (Emily + the two documented overrides — warmer
+ * opening, battery owners escalated), independent of the org's custom primary prompt.
  */
 export function resolveAgentConfig(
   org: AgentOrgLike | null,
   agentKey: AgentKey = "primary",
-  agentName?: string,
 ): AgentConfig {
   const ai = org?.settings.ai;
 
   if (agentKey === "secondary") {
     return {
-      systemPrompt: buildSecondaryPrompt(agentName),
+      systemPrompt: AGENT2_SYSTEM_PROMPT,
       firstMessage: AGENT2_FIRST_MESSAGE,
       language: ai?.language || "en",
       voiceSpeed: typeof ai?.voiceSpeed === "number" ? ai.voiceSpeed : 0.9,

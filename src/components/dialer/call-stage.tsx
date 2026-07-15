@@ -320,7 +320,7 @@ export function CallStage({
                       const label =
                         key === "primary"
                           ? agentNames?.primary || "Emily"
-                          : agentNames?.secondary || "Sophia";
+                          : agentNames?.secondary || "Emily (Sunrun)";
                       return (
                         <button
                           key={key}

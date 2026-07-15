@@ -3,7 +3,6 @@ import "server-only";
 import { leads as demoLeads } from "../data";
 import {
   type AgentKey,
-  agentLabels,
   agentVariablesForLead,
   currentDateVariables,
 } from "../elevenlabs";
@@ -76,8 +75,6 @@ export async function resolveAgentContextByPhone(
   agentKey: AgentKey = "primary",
 ): Promise<AgentContext> {
   const digits = last10(calledNumber);
-  // The second agent voices its own persona regardless of the matched org.
-  const agentName = agentKey === "secondary" ? agentLabels().secondary : undefined;
 
   // Demo / no service role: match seed data; Sunrun → Emily.
   if (!isSupabaseConfigured() || !isAdminConfigured()) {
@@ -86,7 +83,7 @@ export async function resolveAgentContextByPhone(
       dynamicVariables: lead
         ? agentVariablesForLead(lead)
         : currentDateVariables(),
-      agentConfig: resolveAgentConfig(null, agentKey, agentName),
+      agentConfig: resolveAgentConfig(null, agentKey),
     };
   }
 
@@ -137,12 +134,12 @@ export async function resolveAgentContextByPhone(
       : currentDateVariables();
     return {
       dynamicVariables,
-      agentConfig: resolveAgentConfig(orgLike, agentKey, agentName),
+      agentConfig: resolveAgentConfig(orgLike, agentKey),
     };
   } catch {
     return {
       dynamicVariables: currentDateVariables(),
-      agentConfig: resolveAgentConfig(null, agentKey, agentName),
+      agentConfig: resolveAgentConfig(null, agentKey),
     };
   }
 }

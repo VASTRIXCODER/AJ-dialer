@@ -195,7 +195,7 @@ export async function placeAiCallForLead(opts: {
   // Which ElevenLabs agent + persona to dial as. `resolveElevenLabsAgent`
   // gracefully degrades "secondary" to the primary agent when none is configured.
   const el = resolveElevenLabsAgent(agentKey);
-  const agent = resolveAgentConfig(org, el.key, el.name);
+  const agent = resolveAgentConfig(org, el.key);
   // Caller-ID rotation + local presence, keyed on this rep/owner's counter.
   const rotatedFrom = await nextCallerId(repUserId, org?.settings, toNumber);
 

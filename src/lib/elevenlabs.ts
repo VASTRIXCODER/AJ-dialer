@@ -35,9 +35,10 @@ export const elevenLabsConfig = {
   agentId2: process.env.ELEVENLABS_AGENT_ID_2 ?? "",
   /** Dedicated caller number for the second agent; falls back to the shared pool. */
   agentPhoneNumberId2: process.env.ELEVENLABS_AGENT_PHONE_NUMBER_ID_2 ?? "",
-  /** Display labels for the dialer's agent picker. */
+  /** Display labels for the dialer's agent picker (both personas are "Emily";
+   *  these labels distinguish the two handling styles in the UI). */
   agentName: process.env.ELEVENLABS_AGENT_NAME || "Emily",
-  agentName2: process.env.ELEVENLABS_AGENT_NAME_2 || "Sophia",
+  agentName2: process.env.ELEVENLABS_AGENT_NAME_2 || "Emily (Sunrun)",
   webhookSecret: process.env.ELEVENLABS_WEBHOOK_SECRET ?? "",
   /** E.164 rep number the "Transfer" button reroutes a live call to. */
   transferNumber: process.env.ELEVENLABS_TRANSFER_NUMBER || "+14693018199",
