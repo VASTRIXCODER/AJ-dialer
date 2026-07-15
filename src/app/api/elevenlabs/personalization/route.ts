@@ -8,7 +8,13 @@ import {
 } from "@/lib/ai-call-store";
 import { getLeadByPhoneAdmin } from "@/lib/db/leads";
 import { markAIConversationActive } from "@/lib/db/records";
-import { elevenLabsConfig } from "@/lib/elevenlabs";
+import {
+  NO_OVERRIDES,
+  agentKeyForId,
+  buildOverridePayload,
+  elevenLabsConfig,
+  fetchOverridePolicy,
+} from "@/lib/elevenlabs";
 
 export const dynamic = "force-dynamic";
 
@@ -30,6 +36,10 @@ export async function POST(req: Request) {
   );
   const callSid = String(body.call_sid ?? body.callSid ?? "");
   const conversationId = String(body.conversation_id ?? body.conversationId ?? "");
+  // Which agent is calling? ElevenLabs includes agent_id in the init payload — map
+  // it back to a persona so the second agent gets its own script, not Emily's.
+  const agentIdRaw = String(body.agent_id ?? "");
+  const agentKey = agentKeyForId(agentIdRaw);
 
   // DB-backed (admin client, no user session needed) — this webhook only ever
   // fires for a real call ElevenLabs just placed, so there's nothing to "demo."
@@ -85,24 +95,29 @@ export async function POST(req: Request) {
   // Resolve the agent's prompt + voice from the matched lead's organization
   // (Sunrun/solar → the exact Emily script), plus personalization variables.
   const { dynamicVariables, agentConfig } =
-    await resolveAgentContextByPhone(calledNumber);
+    await resolveAgentContextByPhone(calledNumber, agentKey);
 
-  // Always return the personalization variables. Only return a prompt/voice
-  // override when NOT in dashboard-prompt mode — a disallowed override here makes
-  // ElevenLabs terminate the call the moment it connects.
+  // Always return the personalization variables. Only send the override fields
+  // THIS agent actually allows — a disallowed override here makes ElevenLabs
+  // terminate the call the moment it connects. This is the same policy-gated build
+  // as placeOutboundCall, keyed on the calling agent, so a second agent that runs
+  // its own dashboard script (overrides OFF) simply gets no override and survives.
   const payload: Record<string, unknown> = {
     type: "conversation_initiation_client_data",
     dynamic_variables: dynamicVariables,
   };
-  if (!elevenLabsConfig.useDashboardPrompt) {
-    payload.conversation_config_override = {
-      agent: {
-        prompt: { prompt: agentConfig.systemPrompt },
-        first_message: agentConfig.firstMessage,
-        language: agentConfig.language,
-      },
-      tts: { speed: agentConfig.voiceSpeed },
-    };
-  }
+  const policy = elevenLabsConfig.useDashboardPrompt
+    ? NO_OVERRIDES
+    : await fetchOverridePolicy({ agentId: agentIdRaw || undefined });
+  const built = buildOverridePayload(
+    {
+      promptOverride: agentConfig.systemPrompt,
+      firstMessage: agentConfig.firstMessage,
+      language: agentConfig.language,
+      voiceSpeed: agentConfig.voiceSpeed,
+    },
+    policy,
+  );
+  if (built.override) payload.conversation_config_override = built.override;
   return NextResponse.json(payload);
 }

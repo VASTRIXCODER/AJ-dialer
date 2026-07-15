@@ -11,6 +11,7 @@
 // respect opt-outs, never over-promise).
 // ─────────────────────────────────────────────────────────────────────────────
 
+import type { AgentKey } from "../elevenlabs";
 import type { OrgSettings } from "../org/settings";
 import { templateProfile } from "../org/templates";
 
@@ -326,6 +327,27 @@ You: "Oof — yeah, two-fifty, that should NOT be happening. We'll get someone o
 8 DNC — asked to stop calling / be removed.
 9 ESCALATE — needs a human (complex complaint, dispute, anything outside this flow).`;
 
+/** Default in-script name for the second agent when no ELEVENLABS_AGENT_NAME_2 is set. */
+export const SECONDARY_AGENT_NAME = "Sophia";
+
+/**
+ * The optional SECOND agent's persona. It intentionally runs the SAME proven,
+ * compliance-critical checklist as Emily (steps 1–13, the amount check, objection
+ * handling, dispositions, voicemail) — the differentiator is a distinct rep name
+ * and a separate ElevenLabs agent/voice. Built from a name so the dialer's picker
+ * label (ELEVENLABS_AGENT_NAME_2) and the in-call identity stay in sync.
+ *
+ * Inspired by agent 1 by design; edit freely to make the second agent diverge —
+ * but keep the compliance and one-question-per-turn discipline intact.
+ */
+export function buildSecondaryPrompt(name?: string): string {
+  const who = (name || SECONDARY_AGENT_NAME).trim() || SECONDARY_AGENT_NAME;
+  return EMILY_SYSTEM_PROMPT.replace(/\bEmily\b/g, who);
+}
+
+/** The second agent's opening line — same warm right-party check as Emily. */
+export const AGENT2_FIRST_MESSAGE = EMILY_FIRST_MESSAGE;
+
 export interface AgentOrgLike {
   name: string;
   productName: string;
@@ -392,10 +414,31 @@ ${COMPLIANCE_GUIDE}
 - Outcomes to categorize: ${dispositions}.`;
 }
 
-/** Resolve the live agent configuration for an organization. */
-export function resolveAgentConfig(org: AgentOrgLike | null): AgentConfig {
-  const isSolar = !org || org.dialerTemplate === "solar";
+/**
+ * Resolve the live agent configuration for an organization.
+ *
+ * `agentKey` selects the persona. "primary" is the original behavior (org custom
+ * prompt → Emily/solar → white-label). "secondary" is the optional second agent:
+ * it always runs the second persona (see `buildSecondaryPrompt`), voiced by
+ * `agentName`, independent of the org's custom primary prompt.
+ */
+export function resolveAgentConfig(
+  org: AgentOrgLike | null,
+  agentKey: AgentKey = "primary",
+  agentName?: string,
+): AgentConfig {
   const ai = org?.settings.ai;
+
+  if (agentKey === "secondary") {
+    return {
+      systemPrompt: buildSecondaryPrompt(agentName),
+      firstMessage: AGENT2_FIRST_MESSAGE,
+      language: ai?.language || "en",
+      voiceSpeed: typeof ai?.voiceSpeed === "number" ? ai.voiceSpeed : 0.9,
+    };
+  }
+
+  const isSolar = !org || org.dialerTemplate === "solar";
   const custom = ai?.systemPrompt?.trim();
 
   const systemPrompt = custom

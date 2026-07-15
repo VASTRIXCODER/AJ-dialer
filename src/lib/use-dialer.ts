@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Call, Device } from "@twilio/voice-sdk";
+import type { AgentKey } from "./elevenlabs";
 import type { CallOutcome, Lead } from "./types";
 import { formatPhone, toE164 } from "./utils";
 
@@ -79,6 +80,9 @@ export interface DialerState {
   callerIdInfo: CallerIdInfo | null;
   /** AI calling is the default; flip off for manual (human Twilio) dialing. */
   aiMode: boolean;
+  /** Which AI persona AI calls dial as. Only meaningful when a second agent is
+   *  configured; otherwise it's always "primary". */
+  activeAgent: AgentKey;
   aiCalls: AiLaunch[];
   aiCampaign: "idle" | "running" | "done";
 }
@@ -218,6 +222,7 @@ export function useDialer(
     outboundSids: [],
     callerIdInfo: null,
     aiMode: aiConfigured,
+    activeAgent: "primary",
     aiCalls: [],
     aiCampaign: "idle",
   });
@@ -238,6 +243,7 @@ export function useDialer(
   const parallelRef = useRef(1);
   const modeRef = useRef<DialerMode>("connecting");
   const aiModeRef = useRef(aiConfigured);
+  const activeAgentRef = useRef<AgentKey>("primary");
   const aiConfiguredRef = useRef(aiConfigured);
   const aiCursorRef = useRef(0);
   /**
@@ -771,7 +777,7 @@ export function useDialer(
           const res = await fetch("/api/elevenlabs/call", {
             method: "POST",
             headers: { "content-type": "application/json" },
-            body: JSON.stringify({ leadId: l.id }),
+            body: JSON.stringify({ leadId: l.id, agent: activeAgentRef.current }),
           });
           const json = (await res.json().catch(() => ({}))) as {
             conversationId?: string;
@@ -907,7 +913,7 @@ export function useDialer(
         const res = await fetch("/api/elevenlabs/call", {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ phone: e164, lead: known }),
+          body: JSON.stringify({ phone: e164, lead: known, agent: activeAgentRef.current }),
         });
         const json = (await res.json().catch(() => ({}))) as {
           conversationId?: string;
@@ -1361,6 +1367,16 @@ export function useDialer(
     [clearHumanPresence, patch, stopAITimer],
   );
 
+  /** Pick which AI persona AI calls dial as. Mirrored to a ref so in-flight
+   *  launches read the current value. */
+  const setActiveAgent = useCallback(
+    (value: AgentKey) => {
+      activeAgentRef.current = value;
+      patch({ activeAgent: value });
+    },
+    [patch],
+  );
+
   return {
     state,
     startCall,
@@ -1377,6 +1393,7 @@ export function useDialer(
     setAutoDial,
     setParallelCount,
     setAiMode,
+    setActiveAgent,
     launchNextAI,
     stopAICampaign,
     endAISession,

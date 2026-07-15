@@ -302,6 +302,9 @@ export function DialerClient({
             manualEnabled={config.manualEnabled}
             aiEnabled={config.aiEnabled}
             aiLockReason={config.aiLockReason}
+            secondAgentConfigured={config.secondAgentConfigured ?? false}
+            agentNames={config.agentNames}
+            onSetActiveAgent={dialer.setActiveAgent}
             onStart={() => dialer.startCall()}
             onManualDial={dialer.dialNumber}
             onAiDialNumber={dialer.aiDialNumber}

@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { placeAiCallForLead } from "@/lib/ai-dialer";
 import { getLeadById } from "@/lib/db/leads";
-import { isElevenLabsConfigured } from "@/lib/elevenlabs";
+import { type AgentKey, isElevenLabsConfigured, isSecondAgentConfigured } from "@/lib/elevenlabs";
 import { getViewer } from "@/lib/org/membership";
 import { resolveDialerAccess } from "@/lib/org/settings";
 import type { Lead } from "@/lib/types";
@@ -62,7 +62,14 @@ export async function POST(req: Request) {
     leadId?: string;
     phone?: string;
     lead?: Record<string, unknown>;
+    agent?: string;
   };
+
+  // Which agent the rep picked in the dialer. Only honor "secondary" when it's
+  // actually configured — otherwise fall back to the primary so a stale toggle
+  // can never dial an unconfigured agent.
+  const agentKey: AgentKey =
+    body.agent === "secondary" && isSecondAgentConfigured() ? "secondary" : "primary";
 
   let lead: Lead | null = body.leadId ? await getLeadById(body.leadId) : null;
   if (!lead && body.phone) {
@@ -101,6 +108,7 @@ export async function POST(req: Request) {
     repUserId: viewer.user?.id ?? null,
     lead,
     baseUrl: getPublicBaseUrl(req),
+    agentKey,
   });
 
   // The placement layer REFUSED to dial (out of credits / breaker open). Pass

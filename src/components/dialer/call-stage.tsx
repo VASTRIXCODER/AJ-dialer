@@ -92,6 +92,9 @@ export function CallStage({
   manualEnabled = true,
   aiEnabled = true,
   aiLockReason = null,
+  secondAgentConfigured = false,
+  agentNames,
+  onSetActiveAgent,
   onStart,
   onManualDial,
   onAiDialNumber,
@@ -117,6 +120,11 @@ export function CallStage({
   manualEnabled?: boolean;
   aiEnabled?: boolean;
   aiLockReason?: AiLockReason;
+  /** A distinct second AI agent is configured — shows the agent picker in AI mode. */
+  secondAgentConfigured?: boolean;
+  /** Display labels for the two AI agents. */
+  agentNames?: { primary: string; secondary: string };
+  onSetActiveAgent?: (agent: "primary" | "secondary") => void;
   onStart: () => void;
   onManualDial: (number: string, name?: string) => void;
   onAiDialNumber: (phone: string, known: KnownInfo) => void;
@@ -299,6 +307,39 @@ export function CallStage({
                       Manual dialing is a premium feature on this plan.
                     </p>
                   )}
+                </div>
+              )}
+
+              {/* Agent picker — which AI persona to dial as. Only meaningful in AI
+                  mode and only when a second agent is actually configured. */}
+              {ai && secondAgentConfigured && onSetActiveAgent && (
+                <div className="flex flex-col items-center gap-1.5">
+                  <div className="inline-flex rounded-xl border border-border bg-card p-1">
+                    {(["primary", "secondary"] as const).map((key) => {
+                      const active = state.activeAgent === key;
+                      const label =
+                        key === "primary"
+                          ? agentNames?.primary || "Emily"
+                          : agentNames?.secondary || "Sophia";
+                      return (
+                        <button
+                          key={key}
+                          type="button"
+                          onClick={() => onSetActiveAgent(key)}
+                          className={cn(
+                            "flex items-center gap-1.5 rounded-lg px-4 py-1.5 text-sm font-semibold transition-colors",
+                            active
+                              ? "bg-solar text-white shadow-soft"
+                              : "text-muted-foreground hover:text-foreground",
+                          )}
+                        >
+                          <Bot className="h-4 w-4" />
+                          {label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <p className="text-[11px] text-muted-foreground">Which AI agent places the call</p>
                 </div>
               )}
 

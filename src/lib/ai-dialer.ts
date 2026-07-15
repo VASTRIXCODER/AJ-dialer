@@ -7,6 +7,7 @@ import { isQuotaMessage } from "./call-disposition";
 import { seedAIConversation } from "./db/records";
 import { nextCallerId } from "./dialer/rotation-server";
 import {
+  type AgentKey,
   agentVariablesForLead,
   aiConferenceRoom,
   elevenLabsConfig,
@@ -14,6 +15,7 @@ import {
   invalidateQuota,
   isAIBridgeConfigured,
   placeOutboundCall,
+  resolveElevenLabsAgent,
 } from "./elevenlabs";
 import type { OrgFull } from "./org/membership";
 import { getRestClient, isRestConfigured, twilioConfig } from "./twilio";
@@ -129,6 +131,7 @@ export interface PlaceAiCallResult {
  * @param lead       the lead to dial (must have a dialable phone)
  * @param baseUrl    public origin for recording callbacks (may be null)
  * @param record     record the conference (default true)
+ * @param agentKey   which AI persona to dial as (default "primary")
  */
 export async function placeAiCallForLead(opts: {
   org: OrgFull | null;
@@ -136,9 +139,11 @@ export async function placeAiCallForLead(opts: {
   lead: Lead;
   baseUrl: string | null;
   record?: boolean;
+  agentKey?: AgentKey;
 }): Promise<PlaceAiCallResult> {
   const { org, repUserId, lead, baseUrl } = opts;
   const record = opts.record !== false;
+  const agentKey: AgentKey = opts.agentKey ?? "primary";
 
   const toNumber = toE164(lead.phone);
   if (toNumber.replace(/\D/g, "").length < 10) {
@@ -187,7 +192,10 @@ export async function placeAiCallForLead(opts: {
     };
   }
 
-  const agent = resolveAgentConfig(org);
+  // Which ElevenLabs agent + persona to dial as. `resolveElevenLabsAgent`
+  // gracefully degrades "secondary" to the primary agent when none is configured.
+  const el = resolveElevenLabsAgent(agentKey);
+  const agent = resolveAgentConfig(org, el.key, el.name);
   // Caller-ID rotation + local presence, keyed on this rep/owner's counter.
   const rotatedFrom = await nextCallerId(repUserId, org?.settings, toNumber);
 
@@ -197,12 +205,19 @@ export async function placeAiCallForLead(opts: {
   try {
     const result = await placeOutboundCall({
       toNumber: dialTarget,
+      agentId: el.agentId,
       dynamicVariables: agentVariablesForLead(lead, { company: org?.name }),
       promptOverride: agent.systemPrompt,
       firstMessage: agent.firstMessage,
       language: agent.language,
       voiceSpeed: agent.voiceSpeed,
-      agentPhoneNumberId: bridge ? undefined : rotatedFrom || undefined,
+      // Direct mode: prefer the second agent's dedicated number when it has one,
+      // else the normal rotation. Bridge mode dials the bridge (number unused here).
+      agentPhoneNumberId: bridge
+        ? undefined
+        : (el.key === "secondary" && elevenLabsConfig.agentPhoneNumberId2
+            ? el.agentPhoneNumberId
+            : rotatedFrom) || undefined,
     });
 
     if (!result.conversationId) {

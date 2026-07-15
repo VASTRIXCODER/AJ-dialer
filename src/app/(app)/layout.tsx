@@ -4,7 +4,7 @@ import { MaintenanceScreen } from "@/components/layout/maintenance-screen";
 import { PaywallScreen } from "@/components/layout/paywall-screen";
 import { isAIConfigured } from "@/lib/ai/claude";
 import { getAppSettings, isAccountDisabled } from "@/lib/db/app-control";
-import { isElevenLabsConfigured } from "@/lib/elevenlabs";
+import { agentLabels, isElevenLabsConfigured, isSecondAgentConfigured } from "@/lib/elevenlabs";
 import { getViewer } from "@/lib/org/membership";
 import { DEFAULT_FEATURES, resolveDialerAccess } from "@/lib/org/settings";
 import { isSuperadmin } from "@/lib/superadmin";
@@ -70,6 +70,9 @@ export default async function AppGroupLayout({
     userId: viewer.user?.id,
     voiceConfigured: isVoiceConfigured(),
     aiAgentConfigured: isElevenLabsConfigured(),
+    // A second AI persona the rep can pick in the dialer (feature is hidden unless set).
+    secondAgentConfigured: isSecondAgentConfigured(),
+    agentNames: agentLabels(),
     manualEnabled,
     aiEnabled,
     aiLockReason,

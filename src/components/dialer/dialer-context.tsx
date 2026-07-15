@@ -18,6 +18,10 @@ export interface DialerConfig {
   userId?: string;
   voiceConfigured: boolean;
   aiAgentConfigured: boolean;
+  /** A distinct second AI agent is configured — reveals the dialer's agent picker. */
+  secondAgentConfigured?: boolean;
+  /** Display labels for the two AI agents in the picker. */
+  agentNames?: { primary: string; secondary: string };
   manualEnabled: boolean;
   aiEnabled: boolean;
   aiLockReason: AiLockReason;

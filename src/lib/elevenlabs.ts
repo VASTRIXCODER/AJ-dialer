@@ -18,10 +18,26 @@ import type { Lead } from "./types";
 
 const API = "https://api.elevenlabs.io";
 
+/**
+ * Which AI persona a call runs as. "primary" is the original (Emily) agent;
+ * "secondary" is the optional second agent (its own ElevenLabs agent_id), which
+ * a rep can pick in the dialer. Threaded from the dialer UI down to
+ * `placeOutboundCall`. Falls back to "primary" everywhere the second agent isn't
+ * configured, so the feature is inert until `ELEVENLABS_AGENT_ID_2` is set.
+ */
+export type AgentKey = "primary" | "secondary";
+
 export const elevenLabsConfig = {
   apiKey: process.env.ELEVENLABS_API_KEY ?? "",
   agentId: process.env.ELEVENLABS_AGENT_ID ?? "",
   agentPhoneNumberId: process.env.ELEVENLABS_AGENT_PHONE_NUMBER_ID ?? "",
+  /** The optional second agent — a distinct ElevenLabs agent with its own script. */
+  agentId2: process.env.ELEVENLABS_AGENT_ID_2 ?? "",
+  /** Dedicated caller number for the second agent; falls back to the shared pool. */
+  agentPhoneNumberId2: process.env.ELEVENLABS_AGENT_PHONE_NUMBER_ID_2 ?? "",
+  /** Display labels for the dialer's agent picker. */
+  agentName: process.env.ELEVENLABS_AGENT_NAME || "Emily",
+  agentName2: process.env.ELEVENLABS_AGENT_NAME_2 || "Sophia",
   webhookSecret: process.env.ELEVENLABS_WEBHOOK_SECRET ?? "",
   /** E.164 rep number the "Transfer" button reroutes a live call to. */
   transferNumber: process.env.ELEVENLABS_TRANSFER_NUMBER || "+14693018199",
@@ -53,6 +69,52 @@ export const elevenLabsConfig = {
 export function isElevenLabsConfigured() {
   const c = elevenLabsConfig;
   return Boolean(c.apiKey && c.agentId && c.agentPhoneNumberId);
+}
+
+/** True when a distinct second agent is configured (drives the dialer's picker). */
+export function isSecondAgentConfigured() {
+  return Boolean(elevenLabsConfig.agentId2.trim());
+}
+
+/** The display labels reps see in the dialer's agent picker. */
+export function agentLabels(): { primary: string; secondary: string } {
+  return { primary: elevenLabsConfig.agentName, secondary: elevenLabsConfig.agentName2 };
+}
+
+/**
+ * Resolve the ElevenLabs identity to dial as. "secondary" gracefully degrades to
+ * the primary agent when no second agent is configured, so a stale toggle value
+ * can never place a call against an empty agent id.
+ */
+export function resolveElevenLabsAgent(key: AgentKey): {
+  key: AgentKey;
+  agentId: string;
+  agentPhoneNumberId: string;
+  name: string;
+} {
+  const c = elevenLabsConfig;
+  if (key === "secondary" && c.agentId2.trim()) {
+    return {
+      key: "secondary",
+      agentId: c.agentId2,
+      // Fall back to the shared default number when the second agent has none.
+      agentPhoneNumberId: c.agentPhoneNumberId2 || c.agentPhoneNumberId,
+      name: c.agentName2,
+    };
+  }
+  return {
+    key: "primary",
+    agentId: c.agentId,
+    agentPhoneNumberId: c.agentPhoneNumberId,
+    name: c.agentName,
+  };
+}
+
+/** Map a raw ElevenLabs agent_id back to its key (used by the personalization webhook). */
+export function agentKeyForId(agentId: string): AgentKey {
+  const id = (agentId || "").trim();
+  if (id && id === elevenLabsConfig.agentId2.trim()) return "secondary";
+  return "primary";
 }
 
 /**
@@ -352,30 +414,37 @@ export const NO_OVERRIDES: OverridePolicy = {
 };
 
 const POLICY_TTL_MS = 5 * 60_000;
-let _policyCache: { value: OverridePolicy; expiresAt: number } | null = null;
-let _policyInFlight: Promise<OverridePolicy | null> | null = null;
+// Keyed by agent_id: each ElevenLabs agent has its OWN override allow-list, so a
+// second agent must never reuse the first agent's policy (doing so could send it
+// an override it doesn't allow, which kills the call the instant it connects).
+const _policyCache = new Map<string, { value: OverridePolicy; expiresAt: number }>();
+const _policyInFlight = new Map<string, Promise<OverridePolicy | null>>();
 
 /**
  * Read the agent's allow-list: platform_settings.overrides.conversation_config_override.
  *
- * Cached (5 min) and single-flighted, so a burst of 1,500 dials makes ONE request.
- * Returns null on any failure — caller must then send no overrides at all. Never
- * throws: a hiccup reading the policy must never take the dialer down.
+ * Cached (5 min) and single-flighted PER AGENT, so a burst of 1,500 dials makes ONE
+ * request per distinct agent. Returns null on any failure — caller must then send no
+ * overrides at all. Never throws: a hiccup reading the policy must never take the
+ * dialer down. `agentId` defaults to the primary agent for existing callers.
  */
 export async function fetchOverridePolicy(
-  opts: { force?: boolean } = {},
+  opts: { force?: boolean; agentId?: string } = {},
 ): Promise<OverridePolicy | null> {
-  if (!elevenLabsConfig.apiKey || !elevenLabsConfig.agentId) return null;
+  const agentId = (opts.agentId || elevenLabsConfig.agentId).trim();
+  if (!elevenLabsConfig.apiKey || !agentId) return null;
   const now = Date.now();
-  if (!opts.force && _policyCache && _policyCache.expiresAt > now) {
-    return _policyCache.value;
+  const cached = _policyCache.get(agentId);
+  if (!opts.force && cached && cached.expiresAt > now) {
+    return cached.value;
   }
-  if (_policyInFlight) return _policyInFlight;
+  const inflight = _policyInFlight.get(agentId);
+  if (inflight) return inflight;
 
-  _policyInFlight = (async () => {
+  const promise = (async () => {
     try {
       const res = await el(
-        `/v1/convai/agents/${encodeURIComponent(elevenLabsConfig.agentId)}`,
+        `/v1/convai/agents/${encodeURIComponent(agentId)}`,
         { method: "GET", signal: AbortSignal.timeout(2500) },
       );
       const json = (await res.json()) as Record<string, unknown>;
@@ -395,23 +464,26 @@ export async function fetchOverridePolicy(
         language: Boolean(agent.language),
         ttsSpeed: Boolean(tts.speed),
       };
-      _policyCache = { value: policy, expiresAt: Date.now() + POLICY_TTL_MS };
+      _policyCache.set(agentId, { value: policy, expiresAt: Date.now() + POLICY_TTL_MS });
       return policy;
     } catch (e) {
       console.error("[elevenlabs] could not read the agent's override policy — " +
         "sending NO overrides for safety (calls will use the dashboard script)", e);
       return null;
     } finally {
-      _policyInFlight = null;
+      _policyInFlight.delete(agentId);
     }
   })();
 
-  return _policyInFlight;
+  _policyInFlight.set(agentId, promise);
+  return promise;
 }
 
-/** The last policy we successfully read, without hitting the network. */
-export function cachedOverridePolicy(): OverridePolicy | null {
-  return _policyCache && _policyCache.expiresAt > Date.now() ? _policyCache.value : null;
+/** The last policy we successfully read for an agent, without hitting the network. */
+export function cachedOverridePolicy(agentId?: string): OverridePolicy | null {
+  const id = (agentId || elevenLabsConfig.agentId).trim();
+  const cached = _policyCache.get(id);
+  return cached && cached.expiresAt > Date.now() ? cached.value : null;
 }
 
 export interface OverrideBuild {
@@ -537,7 +609,13 @@ export async function placeOutboundCall(opts: {
    * when omitted or not importable into ElevenLabs.
    */
   agentPhoneNumberId?: string;
+  /**
+   * Which ElevenLabs agent to dial as. Defaults to the primary agent, so existing
+   * callers are unchanged. The override policy is read for THIS agent.
+   */
+  agentId?: string;
 }): Promise<OutboundCallResult> {
+  const agentId = (opts.agentId || elevenLabsConfig.agentId).trim();
   const initData: Record<string, unknown> = {};
   if (opts.dynamicVariables) initData.dynamic_variables = opts.dynamicVariables;
 
@@ -547,7 +625,7 @@ export async function placeOutboundCall(opts: {
   // authority on what it will accept.
   const policy = elevenLabsConfig.useDashboardPrompt
     ? NO_OVERRIDES
-    : await fetchOverridePolicy();
+    : await fetchOverridePolicy({ agentId });
   const built = buildOverridePayload(opts, policy);
   if (built.override) initData.conversation_config_override = built.override;
 
@@ -561,7 +639,7 @@ export async function placeOutboundCall(opts: {
   const res = await el("/v1/convai/twilio/outbound-call", {
     method: "POST",
     body: JSON.stringify({
-      agent_id: elevenLabsConfig.agentId,
+      agent_id: agentId,
       agent_phone_number_id: agentPhoneNumberId,
       to_number: opts.toNumber,
       ...(Object.keys(initData).length
