@@ -20,7 +20,7 @@ import { Fragment, useMemo, useState } from "react";
 import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
-import type { Lead, LeadStatus } from "@/lib/types";
+import { LEAD_GROUPS, type Lead, type LeadStatus } from "@/lib/types";
 import { leadStatusConfig } from "@/lib/status";
 import { SMART_LISTS, countSmartLists, smartListById } from "@/lib/leads/smart-lists";
 import { cn, formatAddress, formatCurrency, formatPhone, initials } from "@/lib/utils";
@@ -34,6 +34,14 @@ const FILTERS: Array<{ value: LeadStatus | "all"; label: string }> = [
   { value: "callback", label: "Callback" },
   { value: "appointment", label: "Appointment" },
 ];
+
+const GROUP_LABELS: Record<(typeof LEAD_GROUPS)[number], string> = {
+  fresno: "Fresno",
+  houston: "Houston",
+  dallas: "Dallas",
+  california: "California",
+  manual: "Manual Dialing",
+};
 
 export function LeadsTable({
   leads,
@@ -57,6 +65,7 @@ export function LeadsTable({
   const [smartList, setSmartList] = useState<string | null>(null);
   const [campaignFilter, setCampaignFilter] = useState<string>("all");
   const [uploaderFilter, setUploaderFilter] = useState<string>("all");
+  const [groupFilter, setGroupFilter] = useState<string>("all");
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [assignTo, setAssignTo] = useState("");
   const [reassignTo, setReassignTo] = useState("");
@@ -105,6 +114,9 @@ export function LeadsTable({
         (campaignFilter === "none" ? !l.campaignId : l.campaignId === campaignFilter);
       const matchesUploader =
         uploaderFilter === "all" || l.ownerId === uploaderFilter;
+      const matchesGroup =
+        groupFilter === "all" ||
+        (groupFilter === "unsorted" ? !l.leadGroup : l.leadGroup === groupFilter);
       const q = query.trim().toLowerCase();
       const matchesQuery =
         !q ||
@@ -112,9 +124,16 @@ export function LeadsTable({
         l.city.toLowerCase().includes(q) ||
         l.phone.includes(q) ||
         l.utilityProvider.toLowerCase().includes(q);
-      return matchesFilter && matchesSmart && matchesCampaign && matchesUploader && matchesQuery;
+      return (
+        matchesFilter &&
+        matchesSmart &&
+        matchesCampaign &&
+        matchesUploader &&
+        matchesGroup &&
+        matchesQuery
+      );
     });
-  }, [leads, filter, activeSmartList, campaignFilter, uploaderFilter, query]);
+  }, [leads, filter, activeSmartList, campaignFilter, uploaderFilter, groupFilter, query]);
 
   const allSelected = filtered.length > 0 && filtered.every((l) => selected.has(l.id));
   const toggleAll = () =>
@@ -382,6 +401,22 @@ export function LeadsTable({
               {campaigns.map((c) => (
                 <option key={c.id} value={c.id}>
                   {c.name}
+                </option>
+              ))}
+            </select>
+          )}
+          {leads.some((l) => l.leadGroup) && (
+            <select
+              value={groupFilter}
+              onChange={(e) => setGroupFilter(e.target.value)}
+              aria-label="Filter by group"
+              className="h-9 rounded-lg border border-border bg-background/60 px-2.5 text-sm font-medium focus-visible:border-primary/50 focus-visible:outline-none"
+            >
+              <option value="all">All groups</option>
+              <option value="unsorted">Unsorted</option>
+              {LEAD_GROUPS.map((g) => (
+                <option key={g} value={g}>
+                  {GROUP_LABELS[g]}
                 </option>
               ))}
             </select>
@@ -676,11 +711,22 @@ export function LeadsTable({
                       </div>
                     </td>
                     <td className="px-4 py-3">
-                      {l.campaignId && campaignName.get(l.campaignId) ? (
-                        <Badge tone="accent">{campaignName.get(l.campaignId)}</Badge>
-                      ) : (
-                        <span className="text-xs text-muted-foreground">—</span>
-                      )}
+                      <div className="flex flex-wrap items-center gap-1">
+                        {l.campaignId && campaignName.get(l.campaignId) ? (
+                          <Badge tone="accent">{campaignName.get(l.campaignId)}</Badge>
+                        ) : null}
+                        {/* Manual Dialing and unsorted are structurally opposite (a
+                            deliberate human bucket vs. "AI couldn't place this") —
+                            distinct tones so they're never visually conflated. */}
+                        {l.leadGroup && (
+                          <Badge tone={l.leadGroup === "manual" ? "neutral" : "primary"}>
+                            {GROUP_LABELS[l.leadGroup]}
+                          </Badge>
+                        )}
+                        {!l.campaignId && !l.leadGroup && (
+                          <span className="text-xs text-muted-foreground">—</span>
+                        )}
+                      </div>
                     </td>
                     <td className="px-4 py-3 text-right font-semibold tabular">
                       {l.utilityBill ? formatCurrency(l.utilityBill) : "—"}

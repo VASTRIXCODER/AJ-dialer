@@ -1,6 +1,6 @@
 import { Download, Users } from "lucide-react";
 import { LeadsTable } from "@/components/leads/leads-table";
-import { CsvImport } from "@/components/leads/csv-import";
+import { GroupUploadGrid } from "@/components/leads/group-upload-grid";
 import { MetricCard } from "@/components/dashboard/metric-card";
 import { EmptyState } from "@/components/shared/empty-state";
 import { PageContainer, PageHeader } from "@/components/shared/page-header";
@@ -45,7 +45,6 @@ export default async function LeadsPage() {
       title="Leads"
       description="Every homeowner in your pipeline, scored and ready to dial."
     >
-      <CsvImport variant="button" campaigns={campaignList} />
       <Button variant="outline" size="sm" className="gap-2">
         <Download className="h-4 w-4" />
         Export
@@ -57,11 +56,15 @@ export default async function LeadsPage() {
     return (
       <PageContainer>
         {header}
+        <GroupUploadGrid canImport={canManage} />
         <EmptyState
           icon={Users}
           title="No leads yet"
-          description="Import a CSV or connect your CRM to start building your dialing queue."
-          action={{ label: "Import leads", href: "/admin" }}
+          description={
+            canManage
+              ? "Import a CSV above, or connect your CRM to start building your dialing queue."
+              : "Ask a manager or admin to import leads to start building your dialing queue."
+          }
         />
       </PageContainer>
     );
@@ -70,6 +73,7 @@ export default async function LeadsPage() {
   return (
     <PageContainer>
       {header}
+      <GroupUploadGrid canImport={canManage} />
 
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
         <MetricCard label="Total leads" value={formatNumber(leads.length)} icon={Users} accent="primary" />

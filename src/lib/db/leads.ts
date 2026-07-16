@@ -4,7 +4,7 @@ import { leads as fallbackLeads, getLeadById as fallbackById } from "../data";
 import { createAdminClient, isAdminConfigured } from "../supabase/admin";
 import { isSupabaseConfigured } from "../supabase/config";
 import { createClient } from "../supabase/server";
-import type { Lead, LeadStatus } from "../types";
+import type { Lead, LeadGroup, LeadStatus } from "../types";
 import { normalizePhone } from "../utils";
 import { canActOn, getScope } from "./scope";
 
@@ -71,6 +71,7 @@ export function rowToLead(r: Row): Lead {
     status: ((r.status as LeadStatus) ?? "new"),
     campaignId: (r.campaign_id as string) ?? "",
     assignedRepId: (r.assigned_rep_id as string) ?? undefined,
+    leadGroup: (r.lead_group as LeadGroup) ?? undefined,
     solarPayment: num(r.solar_payment),
     utilityBill: num(r.utility_bill),
     hasEV: Boolean(r.has_ev),
@@ -814,6 +815,9 @@ export interface LeadInput {
   utilityBill?: number;
   solarPayment?: number;
   campaignId?: string;
+  /** Fixed intake group. Explicit `null` stamps "unsorted" (distinct from
+   *  omitting the key, which leaves any existing lead_group untouched). */
+  leadGroup?: LeadGroup | null;
   notes?: string;
 }
 
@@ -862,6 +866,7 @@ export async function insertLeads(
           utility_bill: r.utilityBill ?? null,
           solar_payment: r.solarPayment ?? null,
           campaign_id: r.campaignId ?? null,
+          lead_group: r.leadGroup ?? null,
           notes: r.notes || null,
         };
       });

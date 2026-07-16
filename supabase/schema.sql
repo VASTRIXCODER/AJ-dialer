@@ -1225,3 +1225,31 @@ revoke execute on function public.enqueue_appointment_notification() from authen
 -- ═════════════════════════════════════════════════════════════════════════════
 create index if not exists leads_assigned_rep_idx
   on public.leads (assigned_rep_id) where assigned_rep_id is not null;
+
+-- ═════════════════════════════════════════════════════════════════════════════
+-- PART 14 — LEAD GEOGRAPHY GROUPS  (idempotent; safe to re-run)
+--
+-- Five fixed intake groups: fresno | houston | dallas | california | manual.
+-- NULL means "unsorted" — reachable ONLY via the AI auto-sort path, for a lead
+-- that doesn't clearly match one of the 4 geographic buckets. The AI classifier
+-- never writes 'manual' (enforced by its JSON schema's enum in
+-- src/lib/ai/geo-classify.ts, not just prompt wording) — that bucket exists
+-- only for a human to file a lead into on purpose.
+--
+-- Orthogonal to campaign_id: campaigns are named/scoped by UTILITY PROVIDER
+-- (e.g. "PG&E True-Up Recovery"), a different axis from geography — a lead
+-- carries both a group and a campaign at once.
+-- ═════════════════════════════════════════════════════════════════════════════
+alter table public.leads add column if not exists lead_group text;
+
+do $$
+begin
+  if not exists (select 1 from pg_constraint where conname = 'leads_lead_group_check') then
+    alter table public.leads
+      add constraint leads_lead_group_check
+      check (lead_group in ('fresno','houston','dallas','california','manual'));
+  end if;
+end $$;
+
+create index if not exists leads_lead_group_idx
+  on public.leads (lead_group) where lead_group is not null;
