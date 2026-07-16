@@ -196,6 +196,12 @@ async function el(path: string, init?: RequestInit): Promise<Response> {
     // Never serve a cached conversation read — the live transcript must reflect
     // the call as it progresses, not a stale snapshot from an earlier poll.
     cache: "no-store",
+    // This runs INLINE in page renders (reconcileOwnerActiveCalls, called at the
+    // top of the dashboard/appointments/callbacks loaders) — a bare fetch() has
+    // no default timeout, so one slow/unresponsive ElevenLabs call hangs the
+    // request forever, which hangs the page forever for every single person
+    // entering that org. Bound it so a provider hiccup fails fast instead.
+    signal: AbortSignal.timeout(10_000),
     ...init,
     headers: {
       "xi-api-key": elevenLabsConfig.apiKey,

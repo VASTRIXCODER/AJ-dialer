@@ -31,6 +31,18 @@ const CHECK_LIMIT = 8;
 const TERMINAL = new Set(["done", "completed", "failed", "processing"]);
 const inFlight = new Set<string>(); // guards against double-finalizing within an instance
 
+/**
+ * Never let a single slow external call hang the whole reconcile pass — this
+ * runs inline in page renders, so an unbounded await here stalls the page for
+ * every person entering the org until the provider responds (or forever).
+ */
+function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
+  return Promise.race([
+    p,
+    new Promise<T>((_, reject) => setTimeout(() => reject(new Error("timed out")), ms)),
+  ]);
+}
+
 const UNCONNECTED =
   /no[\s_-]?answer|voicemail|machine|answphone|answering|busy|invalid|not[\s_-]?in[\s_-]?service|unallocated|disconnected|timed?[\s_-]?out|timeout|cancel|no[\s_-]?response/i;
 
@@ -116,7 +128,7 @@ export async function reconcileViaTwilio(
   await Promise.all(
     legs.map(async (leg) => {
       try {
-        const call = await client.calls(leg.sid).fetch();
+        const call = await withTimeout(client.calls(leg.sid).fetch(), 8_000);
         const applied = await applyTwilioCallStatus({
           conversationId: leg.conversationId,
           agentCallSid: leg.callSid,
