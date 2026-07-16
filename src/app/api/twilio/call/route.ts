@@ -40,6 +40,8 @@ export async function POST(req: Request) {
     leads?: DialLeadInput[];
     room?: string;
     agentIdentity?: string;
+    /** Numbers the rep toggled off in the dialer's caller-ID picker (optional). */
+    excludedCallerIds?: string[];
   };
 
   const room = body.room?.trim();
@@ -100,9 +102,12 @@ export async function POST(req: Request) {
   const placed = await Promise.all(
     leads.map(async (leg, i) => {
       try {
-        // One rotated caller ID per leg (this rep's atomic counter → distinct seq).
-        // Pass the homeowner's number so local presence can match its area code.
-        const info = await nextCallerIdWithInfo(repKey, orgSettings, leg.to);
+        // One rotated caller ID per leg (this rep's atomic counter → distinct seq),
+        // drawn only from numbers the rep hasn't toggled off in the caller-ID
+        // picker — if that leaves just one number, every leg in this batch uses
+        // it. Pass the homeowner's number so local presence can match its area
+        // code among the still-eligible numbers.
+        const info = await nextCallerIdWithInfo(repKey, orgSettings, leg.to, body.excludedCallerIds);
         if (i === 0) poolInfo = info;
         const from = info.callerId || twilioConfig.callerId;
         const call = await client.calls.create({

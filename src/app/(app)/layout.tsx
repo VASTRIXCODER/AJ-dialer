@@ -4,6 +4,7 @@ import { MaintenanceScreen } from "@/components/layout/maintenance-screen";
 import { PaywallScreen } from "@/components/layout/paywall-screen";
 import { isAIConfigured } from "@/lib/ai/claude";
 import { getAppSettings, isAccountDisabled } from "@/lib/db/app-control";
+import { getPlatformPool } from "@/lib/dialer/rotation-server";
 import { agentLabels, isElevenLabsConfigured, isSecondAgentConfigured } from "@/lib/elevenlabs";
 import { getViewer } from "@/lib/org/membership";
 import { DEFAULT_FEATURES, resolveDialerAccess } from "@/lib/org/settings";
@@ -66,6 +67,12 @@ export default async function AppGroupLayout({
   // (mirrors getDialQueue's server-side scoping).
   const dialScope: "org" | "own" =
     viewer.role && ["owner", "admin", "manager"].includes(viewer.role) ? "org" : "own";
+  // The effective caller-ID pool (org settings, or the platform-locked env pool
+  // when TWILIO_CALLER_IDS is set) — lets the dialer's caller-ID picker offer
+  // exactly the numbers nextCallerId*() will actually validate an override against.
+  const { pool: callerIdPool, rotateEvery: callerIdRotateEvery } = getPlatformPool(
+    viewer.org?.settings ?? null,
+  );
   const dialerConfig = {
     userId: viewer.user?.id,
     voiceConfigured: isVoiceConfigured(),
@@ -79,6 +86,8 @@ export default async function AppGroupLayout({
     dialScope,
     // The org's voice-plan concurrency allowance — the dialer holds itself to it.
     maxAiConcurrency: viewer.org?.settings.ai.maxConcurrentCalls ?? 10,
+    callerIdPool,
+    callerIdRotateEvery,
   };
 
   return (

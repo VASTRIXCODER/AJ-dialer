@@ -30,6 +30,10 @@ export interface DialerConfig {
   dialScope: "org" | "own";
   /** The org's AI concurrency allowance (their voice plan's live-call limit). */
   maxAiConcurrency?: number;
+  /** The effective caller-ID rotation pool — powers the dialer's caller-ID picker. */
+  callerIdPool?: string[];
+  /** Rotation cadence for the pool above (calls per number before advancing). */
+  callerIdRotateEvery?: number;
 }
 
 type Campaign = { id: string; name: string };

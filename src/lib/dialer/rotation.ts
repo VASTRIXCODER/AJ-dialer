@@ -153,3 +153,22 @@ export function localPresenceMatches(
   if (!ac) return [];
   return pool.filter((n) => areaCodeOf(n) === ac);
 }
+
+/**
+ * Remove rep-excluded numbers (toggled off in the dialer's caller-ID picker)
+ * from the pool before rotation/local-presence runs, so an excluded number is
+ * never dialed from — not even as a local-presence match. Falls back to the
+ * full pool if excluding would leave nothing to dial from (e.g. a stale
+ * client-side exclusion list from before the org's pool shrank) — the picker
+ * UI also blocks excluding the last enabled number, but the server shouldn't
+ * trust that a payload honored it.
+ */
+export function filterExcluded(
+  pool: string[],
+  excluded?: string[] | null,
+): string[] {
+  if (!excluded || !excluded.length) return pool;
+  const set = new Set(normPool(excluded));
+  const kept = pool.filter((n) => !set.has(n));
+  return kept.length ? kept : pool;
+}

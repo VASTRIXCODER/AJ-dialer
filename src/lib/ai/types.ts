@@ -1,4 +1,4 @@
-import type { CallOutcome } from "@/lib/types";
+import type { CallOutcome, GeoLeadGroup } from "@/lib/types";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Shared output shapes for the Claude-powered intelligence layer.
@@ -81,6 +81,14 @@ export interface ExecutiveReport {
   risks: string[];
   opportunities: string[];
   recommendations: ReportRecommendation[];
+}
+
+/** One lead's geography classification. `group: null` = "unsorted" — doesn't
+ *  clearly belong to any of the 4 named regions. "manual" is not a member of
+ *  GeoLeadGroup, so it is structurally impossible for the classifier to emit it. */
+export interface GeoClassifyOutcome {
+  tempId: string;
+  group: GeoLeadGroup | null;
 }
 
 /** Claude's structured read of a completed AI (ElevenLabs) conversation. */

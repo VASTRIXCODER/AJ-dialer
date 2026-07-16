@@ -132,6 +132,8 @@ export interface PlaceAiCallResult {
  * @param baseUrl    public origin for recording callbacks (may be null)
  * @param record     record the conference (default true)
  * @param agentKey   which AI persona to dial as (default "primary")
+ * @param excludedCallerIds  numbers the rep toggled off in the dialer's
+ *   caller-ID picker; filtered out of the pool before rotation runs.
  */
 export async function placeAiCallForLead(opts: {
   org: OrgFull | null;
@@ -140,6 +142,7 @@ export async function placeAiCallForLead(opts: {
   baseUrl: string | null;
   record?: boolean;
   agentKey?: AgentKey;
+  excludedCallerIds?: string[] | null;
 }): Promise<PlaceAiCallResult> {
   const { org, repUserId, lead, baseUrl } = opts;
   const record = opts.record !== false;
@@ -197,7 +200,8 @@ export async function placeAiCallForLead(opts: {
   const el = resolveElevenLabsAgent(agentKey);
   const agent = resolveAgentConfig(org, el.key);
   // Caller-ID rotation + local presence, keyed on this rep/owner's counter.
-  const rotatedFrom = await nextCallerId(repUserId, org?.settings, toNumber);
+  // Numbers the rep toggled off in the caller-ID picker are excluded first.
+  const rotatedFrom = await nextCallerId(repUserId, org?.settings, toNumber, opts.excludedCallerIds);
 
   const bridge = isAIBridgeConfigured() && isRestConfigured();
   const dialTarget = bridge ? toE164(elevenLabsConfig.bridgeNumber) : toNumber;

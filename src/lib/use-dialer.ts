@@ -78,6 +78,9 @@ export interface DialerState {
   outboundSids: string[];
   /** Which caller ID is active and rotation pool info — shown in session bar. */
   callerIdInfo: CallerIdInfo | null;
+  /** Numbers the rep toggled off in the dialer's caller-ID picker; empty means
+   *  every pool number is eligible (default — matches today's full rotation). */
+  excludedCallerIds: string[];
   /** AI calling is the default; flip off for manual (human Twilio) dialing. */
   aiMode: boolean;
   /** Which AI persona AI calls dial as. Only meaningful when a second agent is
@@ -140,6 +143,37 @@ function sweepOldDialKeys(): void {
     toRemove.forEach((k) => window.localStorage.removeItem(k));
   } catch {
     /* best-effort */
+  }
+}
+
+// ── Excluded caller IDs (persists across refresh / logout) ────────────────────
+// Which pool numbers a rep has toggled OFF in the dialer's caller-ID picker.
+// Keyed by user only (no day component — unlike dialsToday, this isn't meant
+// to reset daily). Stale entries (a number since removed from the org pool)
+// are harmless: the server only ever intersects this against the live pool.
+const EXCLUDED_CALLER_ID_KEY_PREFIX = "aj:excludedCallerIds:";
+
+function excludedCallerIdStorageKey(userId?: string): string {
+  return `${EXCLUDED_CALLER_ID_KEY_PREFIX}${userId || "anon"}`;
+}
+
+function readExcludedCallerIds(userId?: string): string[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = window.localStorage.getItem(excludedCallerIdStorageKey(userId));
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed.filter((n) => typeof n === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeExcludedCallerIds(userId: string | undefined, value: string[]): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(excludedCallerIdStorageKey(userId), JSON.stringify(value));
+  } catch {
+    /* storage full / disabled — the choice just won't persist */
   }
 }
 
@@ -221,6 +255,7 @@ export function useDialer(
     room: null,
     outboundSids: [],
     callerIdInfo: null,
+    excludedCallerIds: [],
     aiMode: aiConfigured,
     activeAgent: "primary",
     aiCalls: [],
@@ -244,6 +279,7 @@ export function useDialer(
   const modeRef = useRef<DialerMode>("connecting");
   const aiModeRef = useRef(aiConfigured);
   const activeAgentRef = useRef<AgentKey>("primary");
+  const excludedCallerIdsRef = useRef<string[]>([]);
   const aiConfiguredRef = useRef(aiConfigured);
   const aiCursorRef = useRef(0);
   /**
@@ -665,6 +701,13 @@ export function useDialer(
     sweepOldDialKeys();
   }, [userId]);
 
+  // ── Seed excluded caller IDs from storage (per rep, no expiry) ─────────────
+  useEffect(() => {
+    const excluded = readExcludedCallerIds(userId);
+    excludedCallerIdsRef.current = excluded;
+    setState((s) => ({ ...s, excludedCallerIds: excluded }));
+  }, [userId]);
+
   useEffect(
     () => () => {
       stopTick();
@@ -888,7 +931,13 @@ export function useDialer(
           const res = await fetch("/api/elevenlabs/call", {
             method: "POST",
             headers: { "content-type": "application/json" },
-            body: JSON.stringify({ leadId: l.id, agent: activeAgentRef.current }),
+            body: JSON.stringify({
+              leadId: l.id,
+              agent: activeAgentRef.current,
+              excludedCallerIds: excludedCallerIdsRef.current.length
+                ? excludedCallerIdsRef.current
+                : undefined,
+            }),
           });
           const json = (await res.json().catch(() => ({}))) as {
             conversationId?: string;
@@ -1024,7 +1073,14 @@ export function useDialer(
         const res = await fetch("/api/elevenlabs/call", {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ phone: e164, lead: known, agent: activeAgentRef.current }),
+          body: JSON.stringify({
+            phone: e164,
+            lead: known,
+            agent: activeAgentRef.current,
+            excludedCallerIds: excludedCallerIdsRef.current.length
+              ? excludedCallerIdsRef.current
+              : undefined,
+          }),
         });
         const json = (await res.json().catch(() => ({}))) as {
           conversationId?: string;
@@ -1145,6 +1201,9 @@ export function useDialer(
             room,
             agentIdentity: identityRef.current,
             leads: leads.map((l) => ({ leadId: l.id, phone: l.phone })),
+            excludedCallerIds: excludedCallerIdsRef.current.length
+              ? excludedCallerIdsRef.current
+              : undefined,
           }),
         });
         if (!res.ok) {
@@ -1493,6 +1552,24 @@ export function useDialer(
     [patch],
   );
 
+  /** Flip a caller ID's excluded/included state from the dialer's toggle row.
+   *  Mirrored to a ref so in-flight/async call launches read the current
+   *  value, and to localStorage so the choice survives reloads. The picker UI
+   *  is responsible for not letting the rep exclude every number — this just
+   *  flips membership. */
+  const toggleExcludedCallerId = useCallback(
+    (callerId: string) => {
+      const cur = excludedCallerIdsRef.current;
+      const next = cur.includes(callerId)
+        ? cur.filter((n) => n !== callerId)
+        : [...cur, callerId];
+      excludedCallerIdsRef.current = next;
+      writeExcludedCallerIds(userIdRef.current, next);
+      patch({ excludedCallerIds: next });
+    },
+    [patch],
+  );
+
   return {
     state,
     startCall,
@@ -1510,6 +1587,7 @@ export function useDialer(
     setParallelCount,
     setAiMode,
     setActiveAgent,
+    toggleExcludedCallerId,
     launchNextAI,
     stopAICampaign,
     endAISession,

@@ -5,6 +5,7 @@ import { createAdminClient, isAdminConfigured } from "../supabase/admin";
 import { twilioConfig } from "../twilio";
 import {
   chooseFromPool,
+  filterExcluded,
   localPresenceMatches,
   poolOffsetForKey,
   resolveRotation,
@@ -62,19 +63,26 @@ export async function nextDialSeq(
  * @param repKey  the rep's user id — their personal rotation counter key
  * @param settings the org settings (shared number pool + cadence)
  * @param destNumber the number being dialed — enables local-presence matching
+ * @param excludedCallerIds  numbers the rep toggled off in the dialer's
+ *   caller-ID picker. Filtered out of the pool before local-presence matching
+ *   and rotation both — an excluded number is never dialed from, even as a
+ *   local-presence match. Excluding every pool number falls back to the full
+ *   pool (see filterExcluded) rather than failing to dial.
  */
 export async function nextCallerId(
   repKey: string | null | undefined,
   settings: OrgSettings | null | undefined,
   destNumber?: string | null,
+  excludedCallerIds?: string[] | null,
 ): Promise<string> {
-  const { pool, rotateEvery } = resolveRotation(settings, {
+  const { pool: fullPool, rotateEvery } = resolveRotation(settings, {
     envPool: ENV_POOL,
     envRotateEvery: ENV_ROTATE_EVERY,
     envSingle: twilioConfig.callerId,
     platformPriority: PLATFORM_POOL_LOCKED,
   });
-  if (!pool.length) return "";
+  if (!fullPool.length) return "";
+  const pool = filterExcluded(fullPool, excludedCallerIds);
 
   // Local presence: if enabled and a pool number shares the lead's area code,
   // dial from it (rotating among same-area-code numbers if there's more than
@@ -104,21 +112,28 @@ export interface CallerIdInfo {
 /**
  * Same as nextCallerId but also returns pool metadata so the UI can show which
  * number is active and when it will rotate.
+ *
+ * @param excludedCallerIds see nextCallerId. The returned `pool`/`poolIndex`
+ *   reflect the filtered (excluded numbers removed) pool actually used for
+ *   this call, so the "rotating among N" display is accurate to the rep's
+ *   current toggle choices, not the full org pool.
  */
 export async function nextCallerIdWithInfo(
   repKey: string | null | undefined,
   settings: OrgSettings | null | undefined,
   destNumber?: string | null,
+  excludedCallerIds?: string[] | null,
 ): Promise<CallerIdInfo> {
-  const { pool, rotateEvery } = resolveRotation(settings, {
+  const { pool: fullPool, rotateEvery } = resolveRotation(settings, {
     envPool: ENV_POOL,
     envRotateEvery: ENV_ROTATE_EVERY,
     envSingle: twilioConfig.callerId,
     platformPriority: PLATFORM_POOL_LOCKED,
   });
-  if (!pool.length) {
+  if (!fullPool.length) {
     return { callerId: "", pool: [], poolIndex: 0, rotateEvery: 1, localPresence: false };
   }
+  const pool = filterExcluded(fullPool, excludedCallerIds);
 
   // Local presence wins when enabled and a same-area-code number exists.
   if (settings?.dialing?.localPresence && destNumber) {

@@ -1,10 +1,12 @@
 import type { CallOutcome, Lead, MetricSummary } from "@/lib/types";
+import { classifyGeography } from "@/lib/leads/geography";
 import { readCall } from "./appointment";
 import type {
   CallCopilot,
   CallSummary,
   ConversationAnalysis,
   ExecutiveReport,
+  GeoClassifyOutcome,
   LeadBriefing,
   SemanticSearch,
 } from "./types";
@@ -407,4 +409,13 @@ export function simulateConversationAnalysis(input: {
         : ["Re-attempt during the early-evening window"],
     confidence: clamp(70 + (seed % 22)),
   };
+}
+
+/** Deterministic geography classification — the demo-mode fallback AND the
+ *  per-chunk fallback when a Claude classification call fails. Just runs the
+ *  pure classifier from src/lib/leads/geography.ts on every lead. */
+export function simulateGeoClassification(
+  leads: { tempId: string; city?: string; state?: string; zip?: string }[],
+): GeoClassifyOutcome[] {
+  return leads.map((l) => ({ tempId: l.tempId, group: classifyGeography(l) }));
 }

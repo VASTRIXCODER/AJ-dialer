@@ -12,7 +12,6 @@ import {
   Mic,
   MicOff,
   Pause,
-  Phone,
   PhoneOff,
   Play,
   Radio,
@@ -31,6 +30,7 @@ import type { CallOutcome, Lead } from "@/lib/types";
 import type { AiLaunch, DialerState, KnownInfo } from "@/lib/use-dialer";
 import { cn, formatDuration, initials } from "@/lib/utils";
 import { AiCallSummary } from "@/components/ai/call-summary";
+import { CallerIdPicker } from "./caller-id-picker";
 import { DialPad } from "./dial-pad";
 import { KnownInfoDialog } from "./known-info-dialog";
 import { OutcomeGrid } from "./outcome-grid";
@@ -95,6 +95,9 @@ export function CallStage({
   secondAgentConfigured = false,
   agentNames,
   onSetActiveAgent,
+  callerIdPool = [],
+  callerIdRotateEvery = 1,
+  onToggleExcludedCallerId,
   onStart,
   onManualDial,
   onAiDialNumber,
@@ -125,6 +128,10 @@ export function CallStage({
   /** Display labels for the two AI agents. */
   agentNames?: { primary: string; secondary: string };
   onSetActiveAgent?: (agent: "primary" | "secondary") => void;
+  /** The org's effective caller-ID rotation pool — powers the picker below. */
+  callerIdPool?: string[];
+  callerIdRotateEvery?: number;
+  onToggleExcludedCallerId: (callerId: string) => void;
   onStart: () => void;
   onManualDial: (number: string, name?: string) => void;
   onAiDialNumber: (phone: string, known: KnownInfo) => void;
@@ -198,25 +205,15 @@ export function CallStage({
               <b className="font-bold text-foreground tabular">{state.dialsToday}</b> today
             </span>
           )}
-          {/* Caller-ID rotation indicator */}
-          {state.callerIdInfo && state.callerIdInfo.pool.length > 0 && (
-            <span
-              title={`Pool: ${state.callerIdInfo.pool.join(", ")} · rotates every ${state.callerIdInfo.rotateEvery} call${state.callerIdInfo.rotateEvery === 1 ? "" : "s"}`}
-              className="flex items-center gap-1 rounded-md border border-border/60 bg-muted/50 px-2 py-0.5 text-[11px] font-medium text-muted-foreground"
-            >
-              <Phone className="h-3 w-3 text-primary" />
-              {state.callerIdInfo.callerId.replace(/^\+1/, "")}
-              {state.callerIdInfo.pool.length > 1 && (
-                <>
-                  <span className="text-muted-foreground/60">·</span>
-                  <RotateCcw className="h-3 w-3" />
-                  <span>
-                    {state.callerIdInfo.poolIndex + 1}/{state.callerIdInfo.pool.length}
-                  </span>
-                </>
-              )}
-            </span>
-          )}
+          {/* Caller-ID picker — toggle pool numbers in/out of rotation */}
+          <CallerIdPicker
+            pool={callerIdPool}
+            rotateEvery={callerIdRotateEvery}
+            excludedCallerIds={state.excludedCallerIds}
+            active={state.callerIdInfo}
+            disabled={state.status !== "idle"}
+            onToggle={onToggleExcludedCallerId}
+          />
         </div>
         <div className="flex items-center gap-2">
           {/* When the device drops (token lapse, network blip, Safari quirk) the

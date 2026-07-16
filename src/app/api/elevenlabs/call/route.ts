@@ -63,6 +63,8 @@ export async function POST(req: Request) {
     phone?: string;
     lead?: Record<string, unknown>;
     agent?: string;
+    /** Numbers the rep toggled off in the dialer's caller-ID picker (optional). */
+    excludedCallerIds?: string[];
   };
 
   // Which agent the rep picked in the dialer. Only honor "secondary" when it's
@@ -109,6 +111,7 @@ export async function POST(req: Request) {
     lead,
     baseUrl: getPublicBaseUrl(req),
     agentKey,
+    excludedCallerIds: body.excludedCallerIds,
   });
 
   // The placement layer REFUSED to dial (out of credits / breaker open). Pass
