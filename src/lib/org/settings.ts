@@ -209,7 +209,11 @@ export const DEFAULT_ORG_SETTINGS: OrgSettings = {
     callerId: "",
     callerIds: [],
     rotateEvery: 1,
-    localPresence: false,
+    // On by default: when the pool holds a number in the lead's area code, dial
+    // from it so the call shows as local and is answered more (and is flagged as
+    // spam less). No-ops safely when the pool has no matching area code, so it's
+    // safe to default on and pays off the moment regional numbers are added.
+    localPresence: true,
   },
   automation: {
     enabled: false,

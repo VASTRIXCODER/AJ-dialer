@@ -173,11 +173,12 @@ export default async function ReportsPage({
         <MetricCard label="Total calls" value={formatNumber(metrics.totalCalls)} icon={PhoneCall} accent="primary" />
         <MetricCard label="Connect rate" value={formatPercent(metrics.connectRate, 1)} icon={Zap} accent="accent" />
         <MetricCard label="Connections" value={formatNumber(metrics.connections)} icon={Users} accent="primary" />
-        {/* Same field Dashboard's "Appointments" KPI uses (live appointments-
-            table row count) — NOT funnel.appointments, which counts historical
-            call_records outcomes and never shrinks even after a lead is
-            re-dispositioned and its appointment row is removed. Using the same
-            source here keeps the two screens from ever disagreeing. */}
+        {/* Booked appointment ROWS (appointments table), non-cancelled, scoped to
+            the selected range — NOT funnel.appointments, which counts historical
+            call_records outcomes and never shrinks after a lead is re-dispositioned.
+            Same table the Dashboard + calendar use, so screens agree on the same
+            window; the Dashboard just shows all-time. (Range-scoping is why
+            Reports(Today) no longer reads "5 calls / 340 appointments".) */}
         <MetricCard label="Appointments" value={formatNumber(metrics.appointmentsBooked)} icon={Target} accent="success" />
         <MetricCard label="Avg talk time" value={formatDuration(metrics.avgCallLenSec)} icon={Clock} accent="warning" />
       </div>

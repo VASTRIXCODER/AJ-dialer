@@ -52,7 +52,12 @@ export function DialerClient({
   // powers the toggle's badge so a supervisor knows what to expect before
   // clicking it (e.g. not worth toggling if it'd show 0).
   const mineCount = useMemo(
-    () => (config.userId ? queue.filter((l) => l.ownerId === config.userId).length : 0),
+    () =>
+      config.userId
+        ? queue.filter(
+            (l) => l.ownerId === config.userId || l.assignedRepId === config.userId,
+          ).length
+        : 0,
     [queue, config.userId],
   );
 
@@ -224,8 +229,8 @@ export function DialerClient({
             )}
             title={
               myLeadsOnly
-                ? "Showing only leads you uploaded. Click to include the whole organization's pool again."
-                : "Only load the leads you personally uploaded."
+                ? "Showing only your leads (ones you uploaded or were assigned). Click to include the whole organization's pool again."
+                : "Only load your leads — ones you uploaded or were assigned. Your choice is remembered next time."
             }
           >
             <UserCheck className="h-4 w-4" />

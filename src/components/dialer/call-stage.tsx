@@ -181,10 +181,23 @@ export function CallStage({
           <span className="text-muted-foreground">
             <b className="font-bold text-foreground tabular">{state.callsThisSession}</b> dials
           </span>
-          <span className="text-muted-foreground">
-            <b className="font-bold text-foreground tabular">{state.connectsThisSession}</b> connects
-          </span>
+          {/* "Connects" is a human-dial fact (the rep's line went live). AI connect
+              state lives on the server / Live Monitor, not here, so showing a
+              client-side counter in AI mode only ever read a permanent "0 connects".
+              Hide it in AI mode rather than display a number we can't truthfully know. */}
+          {!ai && (
+            <span className="text-muted-foreground">
+              <b className="font-bold text-foreground tabular">{state.connectsThisSession}</b> connects
+            </span>
+          )}
           <span className="text-[11px] text-muted-foreground/70">this session</span>
+          {/* All-day dial counter (persisted across sessions/reloads), distinct
+              from the per-session count above. Was computed but never shown. */}
+          {state.dialsToday > 0 && (
+            <span className="text-muted-foreground">
+              <b className="font-bold text-foreground tabular">{state.dialsToday}</b> today
+            </span>
+          )}
           {/* Caller-ID rotation indicator */}
           {state.callerIdInfo && state.callerIdInfo.pool.length > 0 && (
             <span

@@ -1212,3 +1212,16 @@ revoke execute on function public.appointments_before_write() from authenticated
 revoke execute on function public.enqueue_appointment_notification() from public;
 revoke execute on function public.enqueue_appointment_notification() from anon;
 revoke execute on function public.enqueue_appointment_notification() from authenticated;
+
+-- ═════════════════════════════════════════════════════════════════════════════
+-- PART 13 — ASSIGNED-REP DIAL ROUTING  (idempotent; safe to re-run)
+--
+-- `assigned_rep_id` already existed on `leads` but nothing ever read it. It now
+-- routes leads into a rep's dial queue + Leads tab NON-DESTRUCTIVELY: a rep's
+-- scope became `owner_id = me OR assigned_rep_id = me` (getDialQueue / getLeads),
+-- so a supervisor can hand a bulk-imported list to a rep without rewriting who
+-- uploaded it. That OR-scan filters on this column on every rep load, so index it
+-- (it was an unindexed text column). Partial — only assigned rows are of interest.
+-- ═════════════════════════════════════════════════════════════════════════════
+create index if not exists leads_assigned_rep_idx
+  on public.leads (assigned_rep_id) where assigned_rep_id is not null;

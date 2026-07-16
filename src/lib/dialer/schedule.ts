@@ -44,6 +44,20 @@ export function zonedDayHour(
   return { day: DAY_INDEX[wd] ?? 0, hour, minute };
 }
 
+/**
+ * The UTC instant (ms) of midnight that starts the calendar day containing `at`,
+ * as seen in `timezone`. Used to build a `.gte("started_at", …)` "since today"
+ * bound for count queries. Exact to the millisecond: the hour/minute come from
+ * the zone (whole numbers), while seconds/ms are timezone-invariant.
+ */
+export function zonedDayStartMs(at: number, timezone: string): number {
+  const d = new Date(at);
+  const { hour, minute } = zonedDayHour(d, timezone);
+  const sinceMidnight =
+    ((hour * 60 + minute) * 60 + d.getUTCSeconds()) * 1000 + d.getUTCMilliseconds();
+  return at - sinceMidnight;
+}
+
 /** YYYY-MM-DD for `date` in `timezone` — used as a per-day counter key. */
 export function zonedDayKey(date: Date, timezone: string): string {
   try {

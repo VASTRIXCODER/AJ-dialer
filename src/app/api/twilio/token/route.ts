@@ -9,8 +9,9 @@ export const dynamic = "force-dynamic";
 
 /**
  * Mints a short-lived Twilio Voice access token for the browser SDK.
- * Returns `{ mode: "demo" }` with no token when Twilio isn't configured,
- * which puts the dialer into its fully-interactive simulation mode.
+ * Returns `{ mode: "offline" }` with no token when Twilio isn't configured (the
+ * client then shows the device as offline rather than crashing); the AI path
+ * still works server-side without a browser token.
  */
 export async function GET() {
   if (!isVoiceConfigured()) {

@@ -118,8 +118,13 @@ export async function getLeads(): Promise<Lead[]> {
     // Both branches PAGE — an un-ranged select silently stops at 1,000 rows, which
     // is why a 17,342-lead book rendered (and reported its total) as 1,000.
     if (!supervisor) {
+      // Own uploads OR leads assigned to this rep (assigned_rep_id) — the Leads
+      // tab mirrors the dial queue so a rep sees exactly what they can dial.
       const rows = await fetchAllPaged(() => {
-        let q = supabase.from("leads").select("*").eq("owner_id", user.id);
+        let q = supabase
+          .from("leads")
+          .select("*")
+          .or(`owner_id.eq.${user.id},assigned_rep_id.eq.${user.id}`);
         if (orgId) q = q.eq("org_id", orgId);
         return q.order("ai_score", { ascending: false, nullsFirst: false }).order("id", { ascending: true });
       });
@@ -313,6 +318,72 @@ export async function reassignLeads(
     return { updated };
   } catch (e) {
     return { updated: 0, error: e instanceof Error ? e.message : "Reassign failed." };
+  }
+}
+
+/**
+ * Assign leads to a rep NON-DESTRUCTIVELY — sets `assigned_rep_id` without
+ * touching `owner_id`, so the uploader/attribution is preserved but the lead
+ * enters that rep's dial queue + Leads tab (getDialQueue / getLeads match on
+ * owner OR assignee). Pass `toUserId: null` to clear the assignment. Supervisor-
+ * only, strictly org-scoped, and the target is verified to be an active member.
+ */
+export async function assignLeadsToRep(
+  leadIds: string[],
+  toUserId: string | null,
+): Promise<{ updated: number; error?: string }> {
+  if (!isSupabaseConfigured())
+    return { updated: 0, error: "Connect Supabase to manage leads." };
+  try {
+    const supabase = await createClient();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) return { updated: 0, error: "You must be signed in." };
+    const ids = [...new Set(leadIds.filter((id) => UUID.test(id)))];
+    if (!ids.length) return { updated: 0, error: "No valid leads selected." };
+    if (toUserId !== null && !UUID.test(toUserId))
+      return { updated: 0, error: "Pick a teammate to assign to." };
+
+    const { data: prof } = await supabase
+      .from("profiles")
+      .select("org_id, role")
+      .eq("id", user.id)
+      .maybeSingle();
+    const orgId = prof?.org_id ? String(prof.org_id) : null;
+    if (!orgId || !isSupervisorRole(prof?.role) || !isAdminConfigured())
+      return { updated: 0, error: "Only supervisors can assign leads." };
+
+    const admin = createAdminClient();
+    // A non-null target must be an active member of THIS org.
+    if (toUserId) {
+      const { data: member } = await admin
+        .from("organization_members")
+        .select("user_id")
+        .eq("org_id", orgId)
+        .eq("user_id", toUserId)
+        .eq("status", "active")
+        .maybeSingle();
+      if (!member)
+        return { updated: 0, error: "That person isn't a member of your organization." };
+    }
+
+    let updated = 0;
+    const CHUNK = 100;
+    for (let i = 0; i < ids.length; i += CHUNK) {
+      const batch = ids.slice(i, i + CHUNK);
+      const { data, error } = await admin
+        .from("leads")
+        .update({ assigned_rep_id: toUserId })
+        .in("id", batch)
+        .eq("org_id", orgId) // never touch leads outside the viewer's org
+        .select("id");
+      if (error) return { updated, error: error.message };
+      updated += data?.length ?? 0;
+    }
+    return { updated };
+  } catch (e) {
+    return { updated: 0, error: e instanceof Error ? e.message : "Assign failed." };
   }
 }
 
@@ -618,8 +689,17 @@ export async function getDialQueue(): Promise<Lead[]> {
       return dialable(rows.map((r) => rowToLead(r as Row)));
     }
 
+    // A rep's queue = leads they UPLOADED (owner_id) OR were ASSIGNED
+    // (assigned_rep_id). Assignment lets a supervisor route a bulk-imported list
+    // to a rep without changing who uploaded it, so a rep really can "only dial my
+    // leads" even when a manager did the import. RLS's shared-pool read lets a rep
+    // read a lead assigned to them but owned by someone else; this is the app scope.
     const rows = await fetchAllPaged(() => {
-      let q = supabase.from("leads").select("*").eq("owner_id", user.id).in("status", DIALABLE);
+      let q = supabase
+        .from("leads")
+        .select("*")
+        .or(`owner_id.eq.${user.id},assigned_rep_id.eq.${user.id}`)
+        .in("status", DIALABLE);
       if (orgId) q = q.eq("org_id", orgId);
       return q.order("ai_score", { ascending: false, nullsFirst: false }).order("id", { ascending: true });
     });

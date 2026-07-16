@@ -21,7 +21,6 @@ import { SpotlightCard } from "@/components/motion";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { CONNECTED_OUTCOMES } from "@/lib/call-analytics";
 import type { AILiveState, CallOutcome } from "@/lib/types";
 import { liveStateConfig, outcomeConfig } from "@/lib/status";
 import { cn, formatDuration } from "@/lib/utils";
@@ -121,6 +120,11 @@ export function AiLiveMonitor({
 }) {
   const [active, setActive] = useState<AICall[]>([]);
   const [recent, setRecent] = useState<AICall[]>([]);
+  // Whole-day totals for the KPI strip (server-computed via count queries), so
+  // the tiles don't swing on the last ≤12 cards.
+  const [today, setToday] = useState({
+    calls: 0, connects: 0, booked: 0, completed: 0, connectRate: 0,
+  });
   const [flash, setFlash] = useState<Flash[]>([]);
   const [now, setNow] = useState(() => Date.now());
   const [busy, setBusy] = useState<string | null>(null);
@@ -158,6 +162,7 @@ export function AiLiveMonitor({
         wasLive.current = liveNow;
         setActive(nextActive);
         setRecent(nextRecent);
+        if (j.today) setToday(j.today);
       })
       .catch(() => {});
   }, []);
@@ -226,14 +231,14 @@ export function AiLiveMonitor({
     );
   }
 
-  const connectedCount = recent.filter((c) => c.outcome && CONNECTED_OUTCOMES.has(c.outcome)).length;
   const kpis = {
     // "Live" counts calls actually on the phone — never the just-ended cards still
-    // fading off the board.
+    // fading off the board. The rest are whole-day totals from the server, so they
+    // reconcile with Reports instead of reflecting only the last ≤12 terminal cards.
     live: active.length,
-    completed: recent.length,
-    booked: recent.filter((c) => c.outcome === "appointment_booked").length,
-    connectRate: recent.length ? Math.round((connectedCount / recent.length) * 100) : 0,
+    completed: today.completed,
+    booked: today.booked,
+    connectRate: today.connectRate,
   };
 
   // The board = what's on the phone now, plus what just came off it. Anything the
@@ -251,9 +256,9 @@ export function AiLiveMonitor({
       {/* KPI strip */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         <StatCard icon={Radio} label="Live now" value={kpis.live} tone="primary" pulse={kpis.live > 0} />
-        <StatCard icon={CheckCircle2} label="Recently completed" value={kpis.completed} tone="success" />
-        <StatCard icon={CalendarCheck} label="Appointments" value={kpis.booked} tone="accent" />
-        <StatCard icon={Zap} label="Connect rate" value={`${kpis.connectRate}%`} tone="warning" />
+        <StatCard icon={CheckCircle2} label="Completed today" value={kpis.completed} tone="success" />
+        <StatCard icon={CalendarCheck} label="Booked today" value={kpis.booked} tone="accent" />
+        <StatCard icon={Zap} label="Connect rate · today" value={`${kpis.connectRate}%`} tone="warning" />
       </div>
 
       {error && (

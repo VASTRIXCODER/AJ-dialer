@@ -5,7 +5,7 @@ import {
   listActiveAICalls,
   listRecentAICalls,
 } from "@/lib/ai-call-store";
-import { getAIConversationsForMonitor } from "@/lib/db/records";
+import { getAIConversationsForMonitor, getAITodayStats } from "@/lib/db/records";
 import { isElevenLabsConfigured } from "@/lib/elevenlabs";
 import { viewerCan } from "@/lib/org/membership";
 import { isTerminalLiveState, liveStateRank } from "@/lib/types";
@@ -126,9 +126,15 @@ export async function GET() {
     [...fresh.active, ...fresh.recent],
   );
 
+  // Whole-day totals for the KPI strip. The `recent` list below stays a short
+  // feed of the just-finished calls; the tiles read from `today` so "Completed /
+  // Connect rate / Appointments" reflect the day, not the last ≤12 cards.
+  const today = await getAITodayStats();
+
   return NextResponse.json(
     {
       configured: isElevenLabsConfigured(),
+      today,
       active: merged
         .filter((c) => !isTerminalLiveState(c.state))
         .sort((a, b) => b.startedAt - a.startedAt),

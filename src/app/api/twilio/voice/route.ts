@@ -1,3 +1,4 @@
+import { nextCallerId } from "@/lib/dialer/rotation-server";
 import { elevenLabsConfig } from "@/lib/elevenlabs";
 import {
   getPublicBaseUrl,
@@ -106,9 +107,15 @@ export async function POST(req: Request) {
 
     // ── Single / manual dial: bridge to the homeowner over the PSTN ───────────
     if (to) {
-      // A valid caller ID is mandatory for a PSTN <Dial>. Without it Twilio
-      // rejects the call ("application error"), so fail with a clear message.
-      const callerId = twilioConfig.callerId.trim();
+      // Rotate the caller ID from the pool (per-caller counter) instead of always
+      // using the single number — the same spam-spreading rotation the primary
+      // conference flow (/api/twilio/call) uses. Falls back to the single env
+      // caller ID when no pool is configured. A valid caller ID is mandatory for
+      // a PSTN <Dial>; without it Twilio rejects the call ("application error"),
+      // so fail with a clear spoken message.
+      const fromId = String(form.get("From") ?? "").trim() || null;
+      const rotated = await nextCallerId(fromId, null, to).catch(() => "");
+      const callerId = (rotated || twilioConfig.callerId).trim();
       if (!callerId) {
         return say(
           "This dialer has no outbound caller I D configured. Please add a Twilio caller I D to place manual calls.",

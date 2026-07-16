@@ -225,6 +225,10 @@ export interface ReportingData {
   recentCalls: RecentCall[];
   liveCalls: LiveCall[];
   appointments: ApptLite[];
+  /** Connect rate for TODAY only (org tz) — the dashboard hero shows this beside
+   *  "Calls today" so the two figures share a window. Period/all-time connect
+   *  rate stays on `metrics.connectRate`. */
+  connectRateToday: number;
   /** "org" when the viewer is a supervisor (team-wide) else "own". */
   scope: "org" | "own";
 }
@@ -234,6 +238,49 @@ const pct = (n: number, d: number) => (d > 0 ? Math.round((n / d) * 1000) / 10 :
 const avg = (a: number[]) =>
   a.length ? Math.round(a.reduce((x, y) => x + y, 0) / a.length) : 0;
 const clamp = (n: number, lo = 0, hi = 100) => Math.max(lo, Math.min(hi, Math.round(n)));
+
+const DAY_MS = 86_400_000;
+// Row-based views (dispositions, funnel, avg talk, trends) are computed in JS
+// from the fetched rows, so the fetch must be COMPLETE for the window in play —
+// a fixed `.limit()` silently truncated it (a rep power-dialing hits the old
+// 2,000 cap in ~2 weeks, so every 30-day / all-time report undercounted "the
+// amount of calls"). We page instead. Ranged views only pull their window; the
+// all-time default pages up to this ceiling (the same order-desc-then-cap the
+// leaderboard already uses, so a truncation drops the OLDEST rows, never a
+// random subset). PAGE is Supabase's max rows per request.
+const PAGE = 1000;
+const MAX_ROWS = 50_000;
+
+/**
+ * Page a scoped query to completion (or a hard ceiling), so no figure is ever
+ * silently capped mid-window. `makeQuery` must apply `.range(from, to)` last and
+ * order deterministically (newest-first) so a ceiling hit drops oldest rows.
+ */
+async function fetchPaged(
+  makeQuery: (
+    from: number,
+    to: number,
+  ) => PromiseLike<{ data: unknown; error: { message: string } | null }>,
+  label: string,
+  cap: number = MAX_ROWS,
+): Promise<Row[]> {
+  const out: Row[] = [];
+  for (let from = 0; from < cap; from += PAGE) {
+    const { data, error } = await makeQuery(from, from + PAGE - 1);
+    if (error) {
+      console.error(`[metrics] ${label} page @${from} failed:`, error.message);
+      break;
+    }
+    const rows = (data ?? []) as Row[];
+    out.push(...rows);
+    if (rows.length < PAGE) break; // short page ⇒ end of data
+  }
+  if (out.length >= cap)
+    console.warn(
+      `[metrics] ${label} hit the ${cap}-row ceiling — the oldest rows are omitted from this window.`,
+    );
+  return out;
+}
 
 function fmtHour(h: number): string {
   if (h === 0) return "12a";
@@ -299,8 +346,19 @@ export async function getReportingData(
     // left (matters most right after joining/creating a fresh org).
     const ownScoped = !supervisor && orgId;
 
-    const [callsRes, apptsRes, leadsRes, monitor, memberRes, orgRes] = await Promise.all([
-      (() => {
+    // How far back the ROW fetch reaches. Row-based views (dispositions, funnel,
+    // avg talk, trends) are computed in JS from these rows, so the window must
+    // cover both the selected range and the fixed 30-day trend. All-time (null)
+    // pages the whole history. The +1 day of slack keeps the org-tz day-key
+    // filter below from clipping the boundary day; that filter does the precise
+    // per-day scoping — this bound is only a coarse floor to keep the fetch small.
+    const windowDays = rangeDays && rangeDays > 0 ? Math.max(rangeDays, 30) : null;
+    const callsSinceISO = windowDays
+      ? new Date(Date.now() - (windowDays + 1) * DAY_MS).toISOString()
+      : null;
+
+    const [calls, appts, leadsRes, monitor, memberRes, orgRes] = await Promise.all([
+      fetchPaged((from, to) => {
         let q = reader
           .from("call_records")
           .select(
@@ -308,23 +366,30 @@ export async function getReportingData(
           )
           .eq(scopeCol, scopeVal);
         if (ownScoped) q = q.eq("org_id", orgId as string);
-        return q.order("started_at", { ascending: false }).limit(supervisor ? 20000 : 2000);
-      })(),
-      (() => {
+        if (callsSinceISO) q = q.gte("started_at", callsSinceISO);
+        return q.order("started_at", { ascending: false }).range(from, to);
+      }, "call_records"),
+      fetchPaged((from, to) => {
+        // Appointments are low-volume and feed both the range-scoped "booked"
+        // count and the all-time upcoming list, so page them all.
         let q = reader
           .from("appointments")
           .select("id,status,source,lead_name,scheduled_label,scheduled_at,created_at")
           .eq(scopeCol, scopeVal);
         if (ownScoped) q = q.eq("org_id", orgId as string);
-        return q.order("created_at", { ascending: false }).limit(supervisor ? 5000 : 500);
-      })(),
+        return q.order("created_at", { ascending: false }).range(from, to);
+      }, "appointments"),
       (() => {
+        // Leads only feed bill/solar averages + ownership %, where a bounded
+        // SAMPLE is statistically fine — so a single capped request, NOT full
+        // pagination (this org's book is ~17k leads; paging it every load just
+        // for averages would be ~17 needless round-trips).
         let q = reader
           .from("leads")
           .select("utility_bill,solar_payment,has_ev,has_pool,has_battery")
           .eq(scopeCol, scopeVal);
         if (ownScoped) q = q.eq("org_id", orgId as string);
-        return q.limit(supervisor ? 50000 : 5000);
+        return q.limit(supervisor ? 20000 : 5000);
       })(),
       getAIConversationsForMonitor(),
       supervisor && orgId
@@ -342,18 +407,6 @@ export async function getReportingData(
         : Promise.resolve({ data: null as { timezone?: string } | null }),
     ]);
 
-    // Errors here would otherwise silently coerce to an empty array below,
-    // rendering as "no activity yet" — indistinguishable from a genuinely new
-    // account. Log so a real fetch failure is at least visible server-side.
-    if (callsRes.error)
-      console.error("[metrics] getReportingData call_records query failed:", callsRes.error.message);
-    if (apptsRes.error)
-      console.error("[metrics] getReportingData appointments query failed:", apptsRes.error.message);
-    if (leadsRes.error)
-      console.error("[metrics] getReportingData leads query failed:", leadsRes.error.message);
-
-    const calls = (callsRes.data ?? []) as Row[];
-    const appts = (apptsRes.data ?? []) as Row[];
     const leads = (leadsRes.data ?? []) as Row[];
     const nameById = new Map(
       ((memberRes.data ?? []) as Row[]).map((m) => [String(m.user_id), String(m.name ?? "")]),
@@ -406,9 +459,25 @@ export async function getReportingData(
     // Today's calls stay anchored to today (callsToday KPI + hourly chart),
     // independent of the selected range.
     const todays = calls.filter((c) => onDay(c));
+    // The dashboard hero shows "Calls today" beside a connect rate; that rate was
+    // all-time, so a rep with a great day but a mediocre lifetime saw a number
+    // that contradicted the count next to it. Give the dashboard TODAY's rate.
+    const connectRateToday = pct(todays.filter(isConnected).length, todays.length);
     const durations = periodCalls
       .map((c) => Number(c.duration_sec ?? 0))
       .filter((n) => n > 0);
+
+    // Appointments "booked" reacts to the selected range too (created_at in the
+    // org's day window), so Reports(Today) no longer shows "5 calls / 340 appts".
+    // Still sourced from the appointments TABLE (not funnel outcomes) so it agrees
+    // with the Dashboard + calendar; the Dashboard passes all-time (unchanged).
+    const periodAppts = rangeStartKey
+      ? appts.filter(
+          (a) =>
+            a.created_at &&
+            zonedDayKey(new Date(String(a.created_at)), timezone) >= rangeStartKey,
+        )
+      : appts;
 
     const bills = leads.map((l) => Number(l.utility_bill ?? 0)).filter((n) => n > 0);
     const solars = leads.map((l) => Number(l.solar_payment ?? 0)).filter((n) => n > 0);
@@ -430,10 +499,10 @@ export async function getReportingData(
       // keeps its history — but a review the rep re-dispositioned away was never a
       // booking, and counting it here would quietly inflate every report the day
       // that change shipped. Excluding cancelled reproduces the old count exactly.
-      appointmentsBooked: appts.filter((a) => a.status !== "cancelled").length,
-      appointmentsCompleted: appts.filter((a) => a.status === "completed").length,
-      noShows: appts.filter((a) => a.status === "no_show").length,
-      reschedules: appts.filter((a) => a.status === "rescheduled").length,
+      appointmentsBooked: periodAppts.filter((a) => a.status !== "cancelled").length,
+      appointmentsCompleted: periodAppts.filter((a) => a.status === "completed").length,
+      noShows: periodAppts.filter((a) => a.status === "no_show").length,
+      reschedules: periodAppts.filter((a) => a.status === "rescheduled").length,
       avgUtilityBill,
       avgSolarPayment,
       avgTotalEnergyCost: avgUtilityBill + avgSolarPayment,
@@ -533,12 +602,43 @@ export async function getReportingData(
       recentCalls,
       liveCalls,
       appointments,
+      connectRateToday,
       scope: supervisor ? "org" : "own",
     };
   } catch (e) {
     console.error("[metrics] getReportingData failed:", e instanceof Error ? e.message : e);
-    return fallbackReporting();
+    // We got here AFTER isSupabaseConfigured() passed, so Supabase IS configured
+    // and this is a real query failure — return an empty (not demo) result so a
+    // transient error never paints fabricated sample numbers over live data.
+    return emptyReporting();
   }
+}
+
+/** Zeroed-but-valid reporting — used when a configured Supabase query throws, so
+ *  the UI shows an honest empty state instead of demo data. */
+function emptyReporting(): ReportingData {
+  const empty: Row[] = [];
+  return {
+    metrics: {
+      totalCalls: 0, callsToday: 0, connections: 0, conversations: 0,
+      avgCallLenSec: 0, connectRate: 0, appointmentRate: 0, callbackRate: 0,
+      noAnswerRate: 0, appointmentsBooked: 0, appointmentsCompleted: 0,
+      noShows: 0, reschedules: 0, avgUtilityBill: 0, avgSolarPayment: 0,
+      avgTotalEnergyCost: 0, evOwnership: 0, poolOwnership: 0, batteryOwnership: 0,
+    },
+    kpiSeries: [],
+    trend30: [],
+    hourlyCalls: [],
+    outcomeBreakdown: [],
+    dispositions: dispositionBreakdown(empty),
+    channelStats: channelBreakdown(empty),
+    funnel: funnelOf(empty),
+    recentCalls: [],
+    liveCalls: [],
+    appointments: [],
+    connectRateToday: 0,
+    scope: "own",
+  };
 }
 
 // ── Demo / empty fallback (bundled data module) ──────────────────────────────
@@ -557,6 +657,7 @@ function fallbackReporting(): ReportingData {
     dispositions: dispositionBreakdown(demoRows),
     channelStats: channelBreakdown(demoRows),
     funnel: funnelOf(demoRows),
+    connectRateToday: sampleMetrics.connectRate,
     scope: "own",
     recentCalls: sampleRecords.map((r) => ({
       id: r.id,
@@ -691,7 +792,9 @@ export async function getTeamLeaderboard(): Promise<{
     return { reps: await aggregateTeamLeaderboard(orgId, timezone), meId: user.id };
   } catch (e) {
     console.error("[metrics] getTeamLeaderboard failed:", e instanceof Error ? e.message : e);
-    return { reps: fallbackLeaderboard(), meId: null };
+    // Supabase is configured (checked above) — a thrown query is a real failure,
+    // so return an empty board rather than the demo team over live data.
+    return { reps: [], meId: null };
   }
 }
 

@@ -60,6 +60,7 @@ export function LeadsTable({
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [assignTo, setAssignTo] = useState("");
   const [reassignTo, setReassignTo] = useState("");
+  const [assignRepTo, setAssignRepTo] = useState("");
   const [busy, setBusy] = useState(false);
   // Ids queued for deletion, awaiting confirmation (individual = 1, bulk = many).
   const [pendingDelete, setPendingDelete] = useState<string[] | null>(null);
@@ -171,6 +172,40 @@ export function LeadsTable({
       router.refresh();
     } catch {
       setErr("Network error while reassigning.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // Assign the selected leads to a rep WITHOUT changing the uploader — they enter
+  // that rep's dial queue + Leads tab (owner_id is untouched, so attribution to
+  // whoever imported the list is preserved). "" target clears the assignment.
+  async function assignToRep(clear = false) {
+    if (selected.size === 0 || (!clear && !assignRepTo)) return;
+    setBusy(true);
+    setErr("");
+    try {
+      const res = await fetch("/api/leads/assign-rep", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          leadIds: [...selected],
+          toUserId: clear ? null : assignRepTo,
+        }),
+      });
+      const json = (await res.json().catch(() => ({}))) as {
+        updated?: number;
+        error?: string;
+      };
+      if (!res.ok || json.error) {
+        setErr(json.error ?? "Couldn’t assign those leads.");
+        return;
+      }
+      setSelected(new Set());
+      setAssignRepTo("");
+      router.refresh();
+    } catch {
+      setErr("Network error while assigning.");
     } finally {
       setBusy(false);
     }
@@ -478,6 +513,45 @@ export function LeadsTable({
                   Distribute evenly
                 </Button>
               )}
+              {/* Non-destructive assignment: routes leads to a rep's queue while
+                  KEEPING the original uploader (unlike Reassign, which moves
+                  ownership). This is how a rep dials "only my leads" when a
+                  manager imported the list under their own account. */}
+              <span className="text-sm text-muted-foreground">Assign to rep</span>
+              <select
+                value={assignRepTo}
+                onChange={(e) => setAssignRepTo(e.target.value)}
+                aria-label="Assign selected leads to a rep (keeps the uploader)"
+                className="h-8 rounded-lg border border-border bg-background px-2 text-sm focus-visible:border-primary/50 focus-visible:outline-none"
+              >
+                <option value="">Choose teammate…</option>
+                {members.map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.id === meId ? "Me" : m.name || "Member"}
+                  </option>
+                ))}
+              </select>
+              <Button
+                size="sm"
+                variant="outline"
+                className="gap-1.5"
+                disabled={!assignRepTo || busy}
+                onClick={() => assignToRep(false)}
+                title="Add these leads to the chosen rep's dial queue without changing who uploaded them"
+              >
+                {busy && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                Assign
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                className="gap-1.5"
+                disabled={busy}
+                onClick={() => assignToRep(true)}
+                title="Clear the rep assignment on the selected leads"
+              >
+                Unassign
+              </Button>
             </>
           )}
           {canManage && (

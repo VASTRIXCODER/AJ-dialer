@@ -74,7 +74,11 @@ export default async function LeadsPage() {
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
         <MetricCard label="Total leads" value={formatNumber(leads.length)} icon={Users} accent="primary" />
         <MetricCard label="Qualified" value={formatNumber(qualified)} icon={Zap} accent="success" />
-        <MetricCard label="Appointments" value={formatNumber(appointmentsCount)} icon={CalendarCheck} accent="accent" />
+        {/* Labeled "In appointment stage" — NOT "Appointments" — because this
+            counts LEADS whose status is 'appointment', a different number from
+            the Reports/Dashboard "Appointments" KPI (booked appointment ROWS).
+            Three screens once showed three different "Appointments" totals. */}
+        <MetricCard label="In appointment stage" value={formatNumber(appointmentsCount)} icon={CalendarCheck} accent="accent" />
         <MetricCard label="Avg AI score" value={String(avgScore)} icon={Sparkles} accent="warning" />
       </div>
 

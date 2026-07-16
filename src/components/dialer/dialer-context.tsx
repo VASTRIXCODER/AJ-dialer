@@ -80,6 +80,29 @@ export function DialerProvider({
   const [campaignFilter, setCampaignFilter] = useState("");
   const [myLeadsOnly, setMyLeadsOnly] = useState(false);
   const [loadingLeads, setLoadingLeads] = useState(false);
+  // Remember the "My leads" choice per user across sessions, so a rep-manager who
+  // wants to dial only their own leads doesn't have to re-toggle it every visit.
+  // Loaded after mount (not in the initializer) to avoid a hydration mismatch.
+  const myLeadsKey = config.userId ? `aj:myLeadsOnly:${config.userId}` : null;
+  useEffect(() => {
+    if (!myLeadsKey) return;
+    try {
+      const saved = window.localStorage.getItem(myLeadsKey);
+      if (saved != null) setMyLeadsOnly(saved === "1");
+    } catch {
+      /* storage disabled — the toggle just won't persist */
+    }
+  }, [myLeadsKey]);
+  const setMyLeadsOnlyPersisted = (v: boolean) => {
+    setMyLeadsOnly(v);
+    if (myLeadsKey) {
+      try {
+        window.localStorage.setItem(myLeadsKey, v ? "1" : "0");
+      } catch {
+        /* noop */
+      }
+    }
+  };
   const [loadMsg, setLoadMsg] = useState<string | null>(null);
 
   const aiUsable = config.aiAgentConfigured && config.aiEnabled;
@@ -89,7 +112,17 @@ export function DialerProvider({
   // rather than hiding every lead just because `undefined === undefined`.
   const matchesFilters = (l: Lead) => {
     if (campaignFilter && l.campaignId !== campaignFilter) return false;
-    if (myLeadsOnly && config.userId && l.ownerId !== config.userId) return false;
+    // "My leads" = uploaded by me OR assigned to me (assigned_rep_id) — the same
+    // scope the server enforces for reps. The `config.userId &&` guard keeps this
+    // a no-op without an identity (demo / signed-out) instead of hiding every
+    // lead just because `undefined === undefined`.
+    if (
+      myLeadsOnly &&
+      config.userId &&
+      l.ownerId !== config.userId &&
+      l.assignedRepId !== config.userId
+    )
+      return false;
     return true;
   };
   const queueForDialer = queue.filter(matchesFilters);
@@ -180,7 +213,7 @@ export function DialerProvider({
     campaignFilter,
     setCampaignFilter,
     myLeadsOnly,
-    setMyLeadsOnly,
+    setMyLeadsOnly: setMyLeadsOnlyPersisted,
     campaigns,
     loadLeads,
     loadingLeads,

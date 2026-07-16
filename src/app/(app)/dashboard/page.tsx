@@ -48,7 +48,7 @@ const liveLabel = (s: string) =>
 
 export default async function DashboardPage() {
   const [
-    { metrics, kpiSeries, outcomeBreakdown, hourlyCalls, liveCalls, appointments },
+    { metrics, kpiSeries, outcomeBreakdown, hourlyCalls, liveCalls, appointments, connectRateToday },
     viewer,
     { reps: teamReps, meId },
   ] = await Promise.all([getReportingData(), getViewer(), getTeamLeaderboard()]);
@@ -130,10 +130,10 @@ export default async function DashboardPage() {
         />
         <MetricCard
           label="Connect rate"
-          value={formatPercent(metrics.connectRate, 1)}
+          value={formatPercent(connectRateToday, 1)}
           icon={Zap}
           accent="accent"
-          sub="conversations / dials"
+          sub="conversations / dials · today"
         />
         <MetricCard
           label="Appointments"

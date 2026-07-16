@@ -273,6 +273,9 @@ export function useDialer(
   const deviceGenRef = useRef(0);
   // Source of truth for state.queueLap (see DialerState.queueLap).
   const queueLapRef = useRef(0);
+  // Screen Wake Lock held while a dialing session is active, so a rep's phone
+  // doesn't suspend the tab (and drop the Twilio websocket) mid-session.
+  const wakeLockRef = useRef<WakeLockSentinel | null>(null);
 
   const patch = useCallback((p: Partial<DialerState>) => {
     setState((s) => ({ ...s, ...p }));
@@ -445,9 +448,18 @@ export function useDialer(
 
       device.on("unregistered", () => {
         // A network blip or token lapse dropped the registration. Don't disturb
-        // an active call; otherwise try to bring it back so dialing recovers.
+        // an active call (its media is a separate connection). Otherwise reflect
+        // the drop HONESTLY — a device left reading "Twilio Live" while actually
+        // dead is exactly why reps saw "it doesn't say I'm live" / "offline" and
+        // had to reload — then try to bring it back so dialing recovers on its own.
         if (deviceGenRef.current !== gen || callRef.current) return;
-        device.register().catch(() => {});
+        modeRef.current = "connecting";
+        patch({ mode: "connecting" });
+        device.register().catch(() => {
+          if (deviceGenRef.current !== gen || callRef.current) return;
+          modeRef.current = "offline";
+          patch({ mode: "offline" });
+        });
       });
 
       device.on("error", (err: { code?: number }) => {
@@ -493,6 +505,28 @@ export function useDialer(
     void setupDevice();
   }, [setupDevice]);
 
+  // Verify the device is actually registered and recover if not. Called on the
+  // three moments a silently-dropped websocket would otherwise strand the dialer
+  // "offline" until a manual reload: the rep returning to a backgrounded tab, the
+  // network coming back, and a periodic health check. Never disturbs a live call.
+  const ensureRegistered = useCallback(async () => {
+    if (!enabled || callRef.current) return;
+    const device = deviceRef.current;
+    if (!device || String(device.state) !== "registered") {
+      await setupDeviceRef.current?.();
+      return;
+    }
+    // Registered, but a token can lapse while the tab is frozen (a throttled timer
+    // never fires tokenWillExpire) — refresh so the next dial isn't rejected on a
+    // stale token.
+    try {
+      const fresh = await fetchVoiceToken();
+      if (fresh?.token) device.updateToken(fresh.token);
+    } catch {
+      /* the tokenWillExpire event + the re-register branch above are backstops */
+    }
+  }, [enabled, fetchVoiceToken]);
+
   useEffect(() => {
     // Only build the Twilio device once the dialer is actually in use. Flips
     // true on first activation and stays true, so the device (and any live
@@ -510,6 +544,83 @@ export function useDialer(
       deviceRef.current = null;
     };
   }, [setupDevice, enabled]);
+
+  // ── Recover the device on resume (backgrounding fix) ──────────────────────
+  // Mobile browsers freeze a backgrounded tab and tear down its websocket, so a
+  // rep who switched apps and came back found the dialer "offline" and had to
+  // fully exit + reload. Re-check registration on every resume signal instead.
+  // Debounced because one "return to tab" fires a burst (visibilitychange +
+  // focus + pageshow) that should collapse into a single recovery attempt.
+  useEffect(() => {
+    if (!enabled || typeof window === "undefined") return;
+    let debounce: ReturnType<typeof setTimeout> | null = null;
+    const kick = () => {
+      if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
+      if (debounce) clearTimeout(debounce);
+      debounce = setTimeout(() => void ensureRegistered(), 400);
+    };
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") kick();
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    window.addEventListener("pageshow", kick);
+    window.addEventListener("focus", kick);
+    window.addEventListener("online", kick);
+    return () => {
+      if (debounce) clearTimeout(debounce);
+      document.removeEventListener("visibilitychange", onVisibility);
+      window.removeEventListener("pageshow", kick);
+      window.removeEventListener("focus", kick);
+      window.removeEventListener("online", kick);
+    };
+  }, [enabled, ensureRegistered]);
+
+  // Periodic health check — catches a device that died while the tab STAYED open
+  // (a silent drop that emitted no unregistered/error event); the resume signals
+  // above would never see that. Cheap: only re-registers when actually needed.
+  useEffect(() => {
+    if (!enabled) return;
+    const id = setInterval(() => void ensureRegistered(), 25_000);
+    return () => clearInterval(id);
+  }, [enabled, ensureRegistered]);
+
+  // Hold a Screen Wake Lock while a session is active, so a rep's phone doesn't
+  // dim → suspend the tab → drop the call. Best-effort (unsupported browsers skip
+  // it); re-acquired on visibility since the lock auto-releases when hidden.
+  const sessionActive = state.status !== "idle";
+  useEffect(() => {
+    if (!sessionActive) return;
+    if (typeof navigator === "undefined" || !("wakeLock" in navigator)) return;
+    let released = false;
+    const acquire = async () => {
+      try {
+        if (document.visibilityState !== "visible" || wakeLockRef.current) return;
+        const lock = await navigator.wakeLock.request("screen");
+        if (released) {
+          void lock.release().catch(() => {});
+          return;
+        }
+        wakeLockRef.current = lock;
+        lock.addEventListener("release", () => {
+          if (wakeLockRef.current === lock) wakeLockRef.current = null;
+        });
+      } catch {
+        /* denied / unsupported — not critical */
+      }
+    };
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") void acquire();
+    };
+    void acquire();
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      released = true;
+      document.removeEventListener("visibilitychange", onVisibility);
+      const lock = wakeLockRef.current;
+      wakeLockRef.current = null;
+      if (lock) void lock.release().catch(() => {});
+    };
+  }, [sessionActive]);
 
   // Report status + current lead on every change, and keep a steady heartbeat
   // (independent of state changes) so a rep sitting genuinely idle doesn't age
@@ -989,10 +1100,13 @@ export function useDialer(
         room: null,
         outboundSids: [],
       });
-      recordDials(1);
+      // Count each LINE dialed, not each batch — a 3X parallel dial places three
+      // calls and must read as three dials (AI mode already counts per lead), so
+      // the session/day dial totals mean the same thing in both modes.
+      recordDials(leads.length);
       setState((s) => ({
         ...s,
-        callsThisSession: s.callsThisSession + 1,
+        callsThisSession: s.callsThisSession + leads.length,
         dialsToday: dialsTodayRef.current,
       }));
 
@@ -1094,9 +1208,11 @@ export function useDialer(
         stopPoll();
         let pollAttempts = 0;
         const pollAnswered = async () => {
-          // 90 polls × 2 s = 3 minutes max. Treats a hung Twilio response as
-          // no-answer so the rep isn't left waiting with no recourse.
-          if (++pollAttempts > 90) {
+          // 120 polls × 1.5 s = 3 minutes max. Faster cadence flips the UI to
+          // "live" within ~1.5 s of pickup (it was up to 2 s), tightening the gap
+          // reps hit as "I'm on a call but it still says dialing." Treats a hung
+          // Twilio response as no-answer so the rep isn't left waiting.
+          if (++pollAttempts > 120) {
             stopPoll();
             patch({ status: "idle", lines: [], error: "No answer — call timed out." });
             try { callRef.current?.disconnect(); } catch { /* noop */ }
@@ -1128,7 +1244,7 @@ export function useDialer(
             /* keep polling */
           }
         };
-        pollRef.current = setInterval(pollAnswered, 2000);
+        pollRef.current = setInterval(pollAnswered, 1500);
       } catch {
         clearHumanPresence();
         patch({ error: "Call failed to start.", status: "idle", lines: [] });

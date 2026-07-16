@@ -1,6 +1,7 @@
 import "server-only";
 
 import { CONNECTED_OUTCOMES } from "../call-analytics";
+import { zonedDayStartMs } from "../dialer/schedule";
 import { createAdminClient, isAdminConfigured } from "../supabase/admin";
 import { isSupabaseConfigured } from "../supabase/config";
 import { createClient } from "../supabase/server";
@@ -973,6 +974,88 @@ export interface MonitorAICall {
   summary?: string;
   outcome?: CallOutcome | null;
   recordingAvailable?: boolean;
+}
+
+/** Today's AI-calling totals for the Live Monitor KPI strip. */
+export interface AITodayStats {
+  /** Real calls placed today (excludes never-connected "not a real call" rows). */
+  calls: number;
+  /** Homeowners who picked up today. */
+  connects: number;
+  /** Appointments booked today. */
+  booked: number;
+  /** Calls that finished today. */
+  completed: number;
+  /** connects / calls, whole %. */
+  connectRate: number;
+}
+
+const EMPTY_AI_TODAY: AITodayStats = {
+  calls: 0, connects: 0, booked: 0, completed: 0, connectRate: 0,
+};
+
+/**
+ * Today's AI stats (org tz) for the Live Monitor KPIs. Previously the monitor
+ * derived "Recently completed / Connect rate / Appointments" from only the last
+ * ≤8 terminal calls, so those tiles were noisy and never reconciled with Reports.
+ * This computes them over the whole day via cheap COUNT queries (head-only, no
+ * rows transferred), matching the "not a real call" exclusion the schema defines
+ * (outcome NULL + failure_kind set ⇒ excluded from the connect-rate denominator).
+ */
+export async function getAITodayStats(): Promise<AITodayStats> {
+  if (!isSupabaseConfigured()) return EMPTY_AI_TODAY;
+  try {
+    const supabase = await createClient();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) return EMPTY_AI_TODAY;
+
+    const { data: prof } = await supabase
+      .from("profiles")
+      .select("org_id, role")
+      .eq("id", user.id)
+      .maybeSingle();
+    const orgId = prof?.org_id ? String(prof.org_id) : null;
+    const supervisor =
+      Boolean(orgId) && ["owner", "admin", "manager"].includes(String(prof?.role ?? "rep"));
+
+    const { data: org } = orgId
+      ? await supabase.from("organizations").select("timezone").eq("id", orgId).maybeSingle()
+      : { data: null as { timezone?: string } | null };
+    const tz = (org?.timezone as string) || "UTC";
+    const todayStartISO = new Date(zonedDayStartMs(Date.now(), tz)).toISOString();
+
+    // A fresh head-count query per metric, all sharing the same scope + "today".
+    const base = () => {
+      let q = supabase
+        .from("ai_conversations")
+        .select("*", { count: "exact", head: true });
+      q = supervisor ? q.eq("org_id", orgId as string) : q.eq("owner_id", user.id);
+      if (!supervisor && orgId) q = q.eq("org_id", orgId);
+      return q.gte("started_at", todayStartISO);
+    };
+
+    const [callsTotal, notReal, connects, booked, completed] = await Promise.all([
+      base(),
+      base().is("outcome", null).not("failure_kind", "is", null),
+      base().not("connected_at", "is", null),
+      base().eq("outcome", "appointment_booked"),
+      base().not("ended_at", "is", null),
+    ]);
+
+    const calls = Math.max(0, (callsTotal.count ?? 0) - (notReal.count ?? 0));
+    const connectCount = connects.count ?? 0;
+    return {
+      calls,
+      connects: connectCount,
+      booked: booked.count ?? 0,
+      completed: completed.count ?? 0,
+      connectRate: calls > 0 ? Math.round((connectCount / calls) * 100) : 0,
+    };
+  } catch {
+    return EMPTY_AI_TODAY;
+  }
 }
 
 /**
