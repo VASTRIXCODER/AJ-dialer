@@ -13,30 +13,63 @@ const DAY_INDEX: Record<string, number> = {
 
 const DAY_LABEL = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
+// `new Intl.DateTimeFormat(...)` is one of the most expensive calls in V8, and
+// these helpers run once per row in tight aggregation loops (dashboard trends,
+// leaderboard) that can iterate tens of thousands of times. Constructing a fresh
+// formatter every call turned a large org's dashboard render into minutes of pure
+// CPU. Build each `(timezone, shape)` formatter ONCE and reuse it — output is
+// identical, so nothing about behavior changes. An invalid timezone falls back to
+// UTC and is cached under its own key so the fallback path is paid at most once.
+const dayHourFmts = new Map<string, Intl.DateTimeFormat>();
+const dayKeyFmts = new Map<string, Intl.DateTimeFormat>();
+
+function dayHourFmt(timezone: string): Intl.DateTimeFormat {
+  const tz = timezone || "America/Chicago";
+  let f = dayHourFmts.get(tz);
+  if (!f) {
+    const opts: Intl.DateTimeFormatOptions = {
+      weekday: "short",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    };
+    try {
+      f = new Intl.DateTimeFormat("en-US", { timeZone: tz, ...opts });
+    } catch {
+      // Invalid timezone string — fall back to UTC rather than throwing.
+      f = new Intl.DateTimeFormat("en-US", { timeZone: "UTC", ...opts });
+    }
+    dayHourFmts.set(tz, f);
+  }
+  return f;
+}
+
+function dayKeyFmt(timezone: string): Intl.DateTimeFormat {
+  const tz = timezone || "America/Chicago";
+  let f = dayKeyFmts.get(tz);
+  if (!f) {
+    // en-CA renders as YYYY-MM-DD.
+    const opts: Intl.DateTimeFormatOptions = {
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    };
+    try {
+      f = new Intl.DateTimeFormat("en-CA", { timeZone: tz, ...opts });
+    } catch {
+      f = new Intl.DateTimeFormat("en-CA", { timeZone: "UTC", ...opts });
+    }
+    dayKeyFmts.set(tz, f);
+  }
+  return f;
+}
+
 /** The weekday (0–6) and hour (0–23) of `date` as seen in `timezone`. */
 export function zonedDayHour(
   date: Date,
   timezone: string,
 ): { day: number; hour: number; minute: number } {
-  let parts: Intl.DateTimeFormatPart[];
-  try {
-    parts = new Intl.DateTimeFormat("en-US", {
-      timeZone: timezone || "America/Chicago",
-      weekday: "short",
-      hour: "2-digit",
-      minute: "2-digit",
-      hour12: false,
-    }).formatToParts(date);
-  } catch {
-    // Invalid timezone string — fall back to UTC rather than throwing.
-    parts = new Intl.DateTimeFormat("en-US", {
-      timeZone: "UTC",
-      weekday: "short",
-      hour: "2-digit",
-      minute: "2-digit",
-      hour12: false,
-    }).formatToParts(date);
-  }
+  const parts = dayHourFmt(timezone).formatToParts(date);
   const wd = parts.find((p) => p.type === "weekday")?.value ?? "Sun";
   let hour = parseInt(parts.find((p) => p.type === "hour")?.value ?? "0", 10);
   if (hour === 24) hour = 0; // some runtimes render midnight as "24"
@@ -60,17 +93,7 @@ export function zonedDayStartMs(at: number, timezone: string): number {
 
 /** YYYY-MM-DD for `date` in `timezone` — used as a per-day counter key. */
 export function zonedDayKey(date: Date, timezone: string): string {
-  try {
-    // en-CA renders as YYYY-MM-DD.
-    return new Intl.DateTimeFormat("en-CA", {
-      timeZone: timezone || "America/Chicago",
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-    }).format(date);
-  } catch {
-    return date.toISOString().slice(0, 10);
-  }
+  return dayKeyFmt(timezone).format(date);
 }
 
 /** Is `now` inside an enabled day + hour window for this automation config? */

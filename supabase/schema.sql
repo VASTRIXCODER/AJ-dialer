@@ -458,6 +458,16 @@ create index if not exists callbacks_org_idx        on public.callbacks (org_id)
 create index if not exists ai_conversations_org_idx on public.ai_conversations (org_id, started_at desc);
 create index if not exists campaigns_org_idx        on public.campaigns (org_id);
 
+-- Performance indexes (also shipped standalone in supabase/perf-indexes.sql).
+-- Serve the ai_score-ordered lead lists (dialer queue / leads screen) so they
+-- index-scan instead of sorting, and cover the high-traffic lead_id foreign keys.
+create index if not exists leads_owner_ai_score_idx    on public.leads (owner_id, ai_score desc nulls last);
+create index if not exists leads_org_ai_score_idx      on public.leads (org_id, ai_score desc nulls last);
+create index if not exists call_records_lead_id_idx    on public.call_records (lead_id);
+create index if not exists ai_conversations_lead_id_idx on public.ai_conversations (lead_id);
+create index if not exists callbacks_lead_id_idx       on public.callbacks (lead_id);
+create index if not exists appointments_lead_id_idx    on public.appointments (lead_id);
+
 -- Backfill org_id from each row's owner profile.
 update public.leads            t set org_id = p.org_id from public.profiles p where p.id = t.owner_id and t.org_id is null;
 update public.call_records     t set org_id = p.org_id from public.profiles p where p.id = t.owner_id and t.org_id is null;

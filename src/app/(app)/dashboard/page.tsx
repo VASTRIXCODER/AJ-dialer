@@ -51,7 +51,13 @@ export default async function DashboardPage() {
     { metrics, kpiSeries, outcomeBreakdown, hourlyCalls, liveCalls, appointments, connectRateToday },
     viewer,
     { reps: teamReps, meId },
-  ] = await Promise.all([getReportingData(), getViewer(), getTeamLeaderboard()]);
+    // The dashboard's headline KPIs / dispositions / pipeline insights are scoped
+    // to the last 90 days rather than all-time. Rendering them used to page an
+    // org's ENTIRE call history into the server render — for the largest org that
+    // was tens of thousands of rows per load and grew unbounded with volume. A
+    // 90-day window keeps the dashboard fast and flat as the org grows (the 7-day
+    // trend and today's tiles are unaffected). Reports still offers true all-time.
+  ] = await Promise.all([getReportingData(90), getViewer(), getTeamLeaderboard()]);
 
   // Top performers today, org-wide (every onboarded member counts).
   const leaderboard = [...teamReps]
@@ -140,14 +146,14 @@ export default async function DashboardPage() {
           value={formatNumber(metrics.appointmentsBooked)}
           icon={CalendarCheck}
           accent="success"
-          sub="reviews booked · all-time"
+          sub="reviews booked · 90d"
         />
         <MetricCard
           label="Avg talk time"
           value={formatDuration(metrics.avgCallLenSec)}
           icon={Clock}
           accent="warning"
-          sub="per conversation · all-time"
+          sub="per conversation · 90d"
         />
       </div>
 
@@ -162,7 +168,7 @@ export default async function DashboardPage() {
           <TrendAreaChart data={kpiSeries} />
         </SectionCard>
 
-        <SectionCard title="Outcome mix" description="Disposition share">
+        <SectionCard title="Outcome mix" description="Disposition share · last 90 days">
           {outcomeBreakdown.length > 0 ? (
             <>
               <OutcomeDonut data={outcomeBreakdown} />
@@ -195,7 +201,7 @@ export default async function DashboardPage() {
 
         <SectionCard
           title={isSolar ? "Utility insights" : "Pipeline insights"}
-          description={isSolar ? "Across qualified homeowners" : "Conversion across the funnel"}
+          description={isSolar ? "Across qualified homeowners" : "Conversion · last 90 days"}
           action={{ label: "Details", href: "/reports" }}
         >
           <div className="space-y-4">

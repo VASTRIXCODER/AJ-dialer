@@ -450,6 +450,35 @@ export async function getReportingData(
     const outcomeOf = (r: Row) => (r.outcome as CallOutcome) ?? null;
     const isConnected = isConnectedRow;
 
+    // Precompute each call's org-local day key ONCE. The trend, "today", and
+    // period passes below would otherwise each re-derive it per row — ~37 passes
+    // over the whole fetched history for a supervisor. One O(rows) pass here
+    // (with the memoized formatter from schedule.ts) replaces all of them.
+    const callCount = calls.length;
+    const callDayKey: (string | null)[] = new Array(callCount);
+    for (let i = 0; i < callCount; i++) {
+      const ts = calls[i].started_at;
+      callDayKey[i] = ts ? zonedDayKey(new Date(String(ts)), timezone) : null;
+    }
+
+    // Bucket calls by org-local day once so the 7d/30d trend series become
+    // O(days) map lookups instead of O(rows × days) re-filters.
+    type DayAgg = { calls: number; conv: number; appts: number };
+    const dayAgg = new Map<string, DayAgg>();
+    for (let i = 0; i < callCount; i++) {
+      const key = callDayKey[i];
+      if (!key) continue;
+      let a = dayAgg.get(key);
+      if (!a) {
+        a = { calls: 0, conv: 0, appts: 0 };
+        dayAgg.set(key, a);
+      }
+      const c = calls[i];
+      a.calls++;
+      if (isConnected(c)) a.conv++;
+      if (outcomeOf(c) === "appointment_booked") a.appts++;
+    }
+
     // Optional date-range scope for the "period" figures (KPIs, dispositions,
     // funnel, channel split, recent calls). The 7d/30d trend + today's hourly
     // chart keep their own fixed windows. Compared by day-KEY (YYYY-MM-DD,
@@ -464,19 +493,16 @@ export async function getReportingData(
           })()
         : null;
     const periodCalls = rangeStartKey
-      ? calls.filter(
-          (c) =>
-            c.started_at &&
-            zonedDayKey(new Date(String(c.started_at)), timezone) >= rangeStartKey,
-        )
+      ? calls.filter((_c, i) => {
+          const k = callDayKey[i];
+          return k !== null && k >= rangeStartKey;
+        })
       : calls;
 
     // "Today" is evaluated in the org's own timezone — a server-local (UTC)
     // boundary rolls "today" over at the wrong wall-clock hour for any
     // non-UTC org, miscategorizing evening calls into the wrong day.
     const todayKey = zonedDayKey(new Date(), timezone);
-    const onDay = (r: Row, field = "started_at") =>
-      r[field] ? zonedDayKey(new Date(String(r[field])), timezone) === todayKey : false;
 
     // ── Counts (period-scoped) ──────────────────────────────────────────────
     const totalCalls = periodCalls.length;
@@ -492,7 +518,7 @@ export async function getReportingData(
 
     // Today's calls stay anchored to today (callsToday KPI + hourly chart),
     // independent of the selected range.
-    const todays = calls.filter((c) => onDay(c));
+    const todays = calls.filter((_c, i) => callDayKey[i] === todayKey);
     // The dashboard hero shows "Calls today" beside a connect rate; that rate was
     // all-time, so a rep with a great day but a mediocre lifetime saw a number
     // that contradicted the count next to it. Give the dashboard TODAY's rate.
@@ -549,20 +575,18 @@ export async function getReportingData(
         const d = new Date();
         d.setDate(d.getDate() - i);
         const dayKey = zonedDayKey(d, timezone);
-        const dayCalls = calls.filter(
-          (c) =>
-            c.started_at && zonedDayKey(new Date(String(c.started_at)), timezone) === dayKey,
-        );
-        const conv = dayCalls.filter(isConnected).length;
+        const a = dayAgg.get(dayKey);
+        const dayCalls = a?.calls ?? 0;
+        const conv = a?.conv ?? 0;
         out.push({
           label: d.toLocaleDateString(
             "en-US",
             days > 10 ? { month: "numeric", day: "numeric" } : { weekday: "short" },
           ),
-          calls: dayCalls.length,
+          calls: dayCalls,
           conversations: conv,
-          appointments: dayCalls.filter((c) => outcomeOf(c) === "appointment_booked").length,
-          connectRate: Math.round(pct(conv, dayCalls.length)),
+          appointments: a?.appts ?? 0,
+          connectRate: Math.round(pct(conv, dayCalls)),
         });
       }
       return out;
