@@ -179,13 +179,16 @@ export default async function ReportsPage({
             Same table the Dashboard + calendar use, so screens agree on the same
             window; the Dashboard just shows all-time. (Range-scoping is why
             Reports(Today) no longer reads "5 calls / 340 appointments".) */}
-        <MetricCard label="Appointments" value={formatNumber(metrics.appointmentsBooked)} icon={Target} accent="success" />
+        <MetricCard label="Appointments" value={formatNumber(metrics.appointmentsBooked)} icon={Target} accent="success" sub="reviews on the books" />
         <MetricCard label="Avg talk time" value={formatDuration(metrics.avgCallLenSec)} icon={Clock} accent="warning" />
       </div>
 
       {/* Funnel + channel split (channel split only when AI is in play) */}
       <div className={aiDialerEnabled ? "grid grid-cols-1 gap-4 lg:grid-cols-2" : "grid grid-cols-1 gap-4"}>
-        <SectionCard title="Conversion funnel" description="Dials → connects → appointments">
+        <SectionCard
+          title="Conversion funnel"
+          description="Dials → connects → appointments booked on calls (call outcomes, not the appointments calendar)"
+        >
           <ReportFunnel funnel={funnel} />
         </SectionCard>
         {aiDialerEnabled && (
@@ -270,8 +273,8 @@ export default async function ReportsPage({
         title="Call history"
         description={
           aiDialerEnabled
-            ? "Every call, newest first — click any for the full breakdown (transcript, summary, appointment & recording)"
-            : "Every call, newest first — click any for the full breakdown (summary, outcome & recording)"
+            ? "Every call, newest first (all time — not filtered by the date range above) — click any for the full breakdown (transcript, summary, appointment & recording)"
+            : "Every call, newest first (all time — not filtered by the date range above) — click any for the full breakdown (summary, outcome & recording)"
         }
         bodyClassName="p-0"
       >

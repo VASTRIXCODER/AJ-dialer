@@ -81,7 +81,9 @@ function mapRecentCall(
   nameById: Map<string, string>,
 ): RecentCall {
   const outcome = (r.outcome as CallOutcome) ?? null;
-  const channel = r.channel === "human" ? "human" : "ai";
+  // Only an explicit "ai" channel is an AI call; null/legacy rows are human
+  // (matches channelBreakdown so the split is consistent everywhere).
+  const channel = r.channel === "ai" ? "ai" : "human";
   const recordingUrl =
     channel === "human"
       ? toPlayableRecording((r.recording_url as string) ?? null)
@@ -357,7 +359,7 @@ export async function getReportingData(
       ? new Date(Date.now() - (windowDays + 1) * DAY_MS).toISOString()
       : null;
 
-    const [calls, appts, leadsRes, monitor, memberRes, orgRes] = await Promise.all([
+    const [calls, appts, leadAgg, monitor, memberRes, orgRes] = await Promise.all([
       fetchPaged((from, to) => {
         let q = reader
           .from("call_records")
@@ -379,17 +381,49 @@ export async function getReportingData(
         if (ownScoped) q = q.eq("org_id", orgId as string);
         return q.order("created_at", { ascending: false }).range(from, to);
       }, "appointments"),
-      (() => {
-        // Leads only feed bill/solar averages + ownership %, where a bounded
-        // SAMPLE is statistically fine — so a single capped request, NOT full
-        // pagination (this org's book is ~17k leads; paging it every load just
-        // for averages would be ~17 needless round-trips).
-        let q = reader
-          .from("leads")
-          .select("utility_bill,solar_payment,has_ev,has_pool,has_battery")
-          .eq(scopeCol, scopeVal);
-        if (ownScoped) q = q.eq("org_id", orgId as string);
-        return q.limit(supervisor ? 20000 : 5000);
+      (async () => {
+        // Leads feed the $ averages + EV/pool/battery ownership. Ownership % is now
+        // EXACT — head:true COUNT queries over the WHOLE book (no rows transferred,
+        // no truncation, no biased subset) — instead of dividing by the length of a
+        // capped, unordered 20k-row pull that both under-sampled big books and
+        // shipped megabytes per load. The $ averages come from a small,
+        // deterministically-ordered recent sample (stable across loads).
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const countWhere = async (apply?: (q: any) => any): Promise<number> => {
+          let q = reader
+            .from("leads")
+            .select("id", { count: "exact", head: true })
+            .eq(scopeCol, scopeVal);
+          if (ownScoped) q = q.eq("org_id", orgId as string);
+          if (apply) q = apply(q);
+          const { count } = await q;
+          return count ?? 0;
+        };
+        const sampleQ = (() => {
+          let q = reader
+            .from("leads")
+            .select("utility_bill,solar_payment")
+            .eq(scopeCol, scopeVal);
+          if (ownScoped) q = q.eq("org_id", orgId as string);
+          return q.order("created_at", { ascending: false }).limit(5000);
+        })();
+        const [total, ev, pool, battery, sample] = await Promise.all([
+          countWhere(),
+          countWhere((q) => q.eq("has_ev", true)),
+          countWhere((q) => q.eq("has_pool", true)),
+          countWhere((q) => q.eq("has_battery", true)),
+          sampleQ,
+        ]);
+        const rows = ((sample as { data?: Row[] }).data ?? []) as Row[];
+        const bills = rows.map((r) => Number(r.utility_bill ?? 0)).filter((n) => n > 0);
+        const solars = rows.map((r) => Number(r.solar_payment ?? 0)).filter((n) => n > 0);
+        return {
+          avgUtilityBill: avg(bills),
+          avgSolarPayment: avg(solars),
+          evOwnership: pct(ev, total),
+          poolOwnership: pct(pool, total),
+          batteryOwnership: pct(battery, total),
+        };
       })(),
       getAIConversationsForMonitor(),
       supervisor && orgId
@@ -407,7 +441,6 @@ export async function getReportingData(
         : Promise.resolve({ data: null as { timezone?: string } | null }),
     ]);
 
-    const leads = (leadsRes.data ?? []) as Row[];
     const nameById = new Map(
       ((memberRes.data ?? []) as Row[]).map((m) => [String(m.user_id), String(m.name ?? "")]),
     );
@@ -479,10 +512,7 @@ export async function getReportingData(
         )
       : appts;
 
-    const bills = leads.map((l) => Number(l.utility_bill ?? 0)).filter((n) => n > 0);
-    const solars = leads.map((l) => Number(l.solar_payment ?? 0)).filter((n) => n > 0);
-    const avgUtilityBill = avg(bills);
-    const avgSolarPayment = avg(solars);
+    const { avgUtilityBill, avgSolarPayment } = leadAgg;
 
     const metrics: MetricSummary = {
       totalCalls,
@@ -506,9 +536,9 @@ export async function getReportingData(
       avgUtilityBill,
       avgSolarPayment,
       avgTotalEnergyCost: avgUtilityBill + avgSolarPayment,
-      evOwnership: pct(leads.filter((l) => l.has_ev).length, leads.length),
-      poolOwnership: pct(leads.filter((l) => l.has_pool).length, leads.length),
-      batteryOwnership: pct(leads.filter((l) => l.has_battery).length, leads.length),
+      evOwnership: leadAgg.evOwnership,
+      poolOwnership: leadAgg.poolOwnership,
+      batteryOwnership: leadAgg.batteryOwnership,
     };
 
     // ── Trends (7-day weekday view + 30-day view) — bucketed by org-local day ──
@@ -742,26 +772,29 @@ async function aggregateTeamLeaderboard(
   const ids = members.map((m) => String(m.user_id));
 
   const sinceMonth = new Date(Date.now() - 30 * 86_400_000).toISOString();
-  const [{ data: profRows, error: profErr }, { data: callRows, error: callErr }] =
-    await Promise.all([
-      admin.from("profiles").select("id,full_name,avatar_color,team").in("id", ids),
-      admin
-        .from("call_records")
-        .select("owner_id,outcome,duration_sec,channel,started_at")
-        .eq("org_id", orgId)
-        .gte("started_at", sinceMonth)
-        // Without an explicit order, a result set past the 50000-row cap comes
-        // back in a non-deterministic subset — silently and unpredictably
-        // dropping calls (and the dropped set can change between loads) for
-        // any org with high enough 30-day volume. Most-recent-first ensures a
-        // truncation always drops the OLDEST calls, deterministically.
-        .order("started_at", { ascending: false })
-        .limit(50000),
-    ]);
+  // PAGE the 30-day call_records to completion — the SAME guarantee getReportingData
+  // uses. A single `.limit(50000)` returns only PostgREST's first 1,000 rows per
+  // request, so a high-volume floor's leaderboard was computed from ~1k of ~45k
+  // calls while Reports (fetchPaged) saw all of them — the two surfaces silently
+  // disagreed. fetchPaged orders newest-first, so a ceiling hit drops oldest, never
+  // a random subset.
+  const [{ data: profRows, error: profErr }, callRows] = await Promise.all([
+    admin.from("profiles").select("id,full_name,avatar_color,team").in("id", ids),
+    fetchPaged(
+      (from, to) =>
+        admin
+          .from("call_records")
+          .select("owner_id,outcome,duration_sec,channel,started_at")
+          .eq("org_id", orgId)
+          .gte("started_at", sinceMonth)
+          .order("started_at", { ascending: false })
+          .range(from, to),
+      "leaderboard call_records",
+    ),
+  ]);
   if (profErr) console.error("[metrics] aggregateTeamLeaderboard profiles query failed:", profErr.message);
-  if (callErr) console.error("[metrics] aggregateTeamLeaderboard call_records query failed:", callErr.message);
   const profById = new Map(((profRows ?? []) as Row[]).map((p) => [String(p.id), p]));
-  return composeLeaderboard(members, profById, (callRows ?? []) as Row[], Date.now(), timezone);
+  return composeLeaderboard(members, profById, callRows, Date.now(), timezone);
 }
 
 /** The org-wide leaderboard for the current viewer's organization, + their id. */

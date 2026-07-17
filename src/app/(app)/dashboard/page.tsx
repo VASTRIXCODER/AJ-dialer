@@ -140,14 +140,14 @@ export default async function DashboardPage() {
           value={formatNumber(metrics.appointmentsBooked)}
           icon={CalendarCheck}
           accent="success"
-          sub="reviews booked"
+          sub="reviews booked · all-time"
         />
         <MetricCard
           label="Avg talk time"
           value={formatDuration(metrics.avgCallLenSec)}
           icon={Clock}
           accent="warning"
-          sub="per conversation"
+          sub="per conversation · all-time"
         />
       </div>
 

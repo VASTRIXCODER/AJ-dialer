@@ -100,8 +100,14 @@ function channelStat(channel: "ai" | "human", list: Row[]): ChannelRow {
 
 /** AI vs human comparison (both rows always present). */
 export function channelBreakdown(calls: Row[]): ChannelRow[] {
-  const human = calls.filter((c) => c.channel === "human");
-  const ai = calls.filter((c) => c.channel !== "human");
+  // Only calls the AI agent explicitly logged (channel === "ai") count as AI.
+  // Everything else — "human" AND any null/legacy channel — is a human call. The
+  // old `channel !== "human"` test folded null-channel human/legacy rows into the
+  // AI bucket, inflating the AI agent's call/connect/appointment counts on the
+  // AI-vs-human panel. (call_records.channel defaults to "human"; the AI path
+  // always sets "ai" explicitly.)
+  const ai = calls.filter((c) => c.channel === "ai");
+  const human = calls.filter((c) => c.channel !== "ai");
   return [channelStat("ai", ai), channelStat("human", human)];
 }
 
