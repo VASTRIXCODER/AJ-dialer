@@ -1,8 +1,10 @@
 import { Radio } from "lucide-react";
 import { AiLiveMonitor } from "@/components/monitor/ai-live-monitor";
 import { HumanLiveMonitor } from "@/components/monitor/human-live-monitor";
+import { CallHistory } from "@/components/reports/call-history";
 import { EmptyState } from "@/components/shared/empty-state";
 import { PageContainer, PageHeader } from "@/components/shared/page-header";
+import { SectionCard } from "@/components/shared/section-card";
 import { isElevenLabsConfigured } from "@/lib/elevenlabs";
 import { getViewer } from "@/lib/org/membership";
 
@@ -66,6 +68,17 @@ export default async function MonitorPage({
 
       {/* Human rep calls — primary (always shown) when there's no AI view */}
       <HumanLiveMonitor canListen={canListen} primary={!aiConfigured} />
+
+      {/* Full call history — every call ever logged (not just the live/recent
+          panels above), paginated, each with its recording + transcript. Same
+          org-scoped source the Reports tab uses, so the two agree. */}
+      <SectionCard
+        title="Call history"
+        description="Every completed call, newest first — click any for the full breakdown (recording, transcript & summary)"
+        bodyClassName="p-0"
+      >
+        <CallHistory />
+      </SectionCard>
     </PageContainer>
   );
 }
