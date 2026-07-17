@@ -84,7 +84,15 @@ async function routeDisposition(
       .eq("status", "scheduled");
   }
 
-  if (outcome === "appointment_booked" || input.appointment) {
+  // Tie the appointment insert to the DISPOSITION only. The old `|| input.appointment`
+  // fallback would file an appointment row for a non-booking outcome (e.g. a
+  // do_not_call call that still carried a stray appointment object), putting a
+  // scheduled review on the calendar for a homeowner who declined or asked to
+  // never be called. We deliberately DON'T also require a resolved time here:
+  // legitimate bookings with no parsed clock time (manual rep bookings, or a
+  // model/agent-confirmed booking the resolver couldn't timestamp) are supported
+  // and land, time-less, in the "later" bucket for review.
+  if (outcome === "appointment_booked") {
     await client.from("appointments").insert({
       owner_id: ownerId,
       lead_id: leadId,

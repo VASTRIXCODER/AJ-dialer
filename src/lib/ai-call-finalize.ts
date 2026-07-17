@@ -2,6 +2,7 @@ import "server-only";
 
 import { recordCallSuccess, recordProviderFailure } from "./ai-call-breaker";
 import { getAICall, updateAICall } from "./ai-call-store";
+import { isAIConfigured } from "./ai/claude";
 import { readCall, resolveAppointment } from "./ai/appointment";
 import { analyzeConversation } from "./ai/services";
 import { classifyNonConversation, type FailureKind } from "./call-disposition";
@@ -116,7 +117,7 @@ export async function finalizeAIConversation(input: {
   if (connected) {
     const now = new Date();
     const tz = lead?.timezone || undefined;
-    const { data: analysis } = await analyzeConversation({
+    const { data: analysis, source } = await analyzeConversation({
       transcript,
       lead,
       now,
@@ -125,25 +126,45 @@ export async function finalizeAIConversation(input: {
     summary = analysis.summary;
     outcome = analysis.outcome;
     sentiment = analysis.sentiment;
-    if (analysis.appointment.requested) {
-      // Normalize the human-facing time deterministically from the transcript so
-      // it's always a concrete, timezone-anchored slot — even if the model left
-      // it relative ("tomorrow at 6"). Falls back to the model's value if the
-      // resolver can't parse a time.
+
+    // Build an appointment ONLY when a booking is corroborated — NEVER off the
+    // model's `appointment.requested` flag alone. resolveAppointment returns an
+    // empty iso whenever it can't parse a real clock time, and a bare
+    // "requested=true" with no time is agreement-in-principle, not a booked slot.
+    // Trusting it is exactly what filed phantom bookings AND appointment rows with
+    // no date/time. We accept two corroborated shapes:
+    //   • a concrete resolved slot (calendar-ready), or
+    //   • the model itself committing to outcome==="appointment_booked" (a stronger
+    //     signal than the flag) — a supported timeless proposal for the "later"
+    //     bucket, reviewed by a human before it's approved.
+    if (analysis.appointment.requested || outcome === "appointment_booked") {
       const slot = resolveAppointment(transcript, now, tz);
-      appointment = {
-        when: slot.when || analysis.appointment.when,
-        iso: slot.iso,
-        notes: analysis.appointment.notes || slot.notes,
-      };
+      if (slot.iso) {
+        appointment = {
+          when: slot.when,
+          iso: slot.iso,
+          notes: analysis.appointment.notes || slot.notes,
+        };
+      } else if (outcome === "appointment_booked") {
+        appointment = {
+          when: analysis.appointment.when || "",
+          notes:
+            analysis.appointment.notes ||
+            "Homeowner agreed to a no-cost account review.",
+        };
+      }
+      // else: requested=true but no resolvable time and the model didn't commit to
+      // a booking — agreement in principle only. Leave the model's own outcome and
+      // create no appointment (the readCall safety net below still catches a
+      // genuine agent-confirmed booking).
     }
     qualification = analysis.qualification;
     score = analysis.confidence;
 
     // Deterministic safety net (speaker-aware): a clear booking or DNC in the
-    // actual words beats a mislabeled disposition. This is what stops a booked
-    // appointment from being filed as "not interested" when the analyzer keys off
-    // the agent's own "you're all set". High precision — only unambiguous signals.
+    // actual words beats a mislabeled disposition. readCall is decline-aware, so
+    // the agent's scripted "you're all set" can no longer book over a customer's
+    // explicit "not interested". High precision — only unambiguous signals.
     const read = readCall(transcript, now, tz);
     if (read.dnc && outcome !== "do_not_call") {
       outcome = "do_not_call";
@@ -159,8 +180,35 @@ export async function finalizeAIConversation(input: {
         };
       }
     }
-    // If an appointment was genuinely agreed, the disposition must reflect it.
+
+    // An agreed appointment makes the disposition a booking. `appointment` is now
+    // only ever set when corroborated above, so this can no longer fire on a bare
+    // model flag and fabricate a booking.
     if (appointment && outcome !== "do_not_call") outcome = "appointment_booked";
+
+    // A non-booking outcome (DNC, callback, not-interested, qualified) must never
+    // carry a stray appointment — e.g. a DNC call that mentioned a time earlier —
+    // into the pipeline, or routeDisposition would file an appointment row for a
+    // lead that isn't booked.
+    if (outcome !== "appointment_booked") appointment = null;
+
+    // If the live analyzer SILENTLY fell back to the demo simulator (a thrown
+    // Claude call — timeout, rate-limit, parse error), its "qualified" default is
+    // a guess, not a read of the call. Only trust a fallback outcome that a
+    // deterministic transcript signal corroborates; otherwise leave the call
+    // unresolved (null → excluded from every rate) for human review rather than
+    // auto-filing a positive the homeowner never earned. Demo mode (no API key)
+    // is unaffected — its "qualified" is the intended label there.
+    const analyzerFellBack = isAIConfigured() && source !== "claude";
+    const corroborated =
+      read.dnc || read.declined || read.callback || read.booked || appointment != null;
+    if (analyzerFellBack && !corroborated) {
+      outcome = null;
+      summary =
+        "This connected call couldn't be analyzed automatically (the AI analyzer was " +
+        "temporarily unavailable) and no clear outcome signal was present in the transcript — " +
+        "left for human review rather than auto-categorized.";
+    }
   } else {
     // No two-way conversation. Decide WHY — and specifically, whether this was
     // the homeowner (a real outcome) or us (a system failure). Getting this wrong

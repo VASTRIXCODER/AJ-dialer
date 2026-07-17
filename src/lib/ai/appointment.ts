@@ -473,8 +473,14 @@ export function readCall(
     );
 
   const appointment = resolveAppointment(transcript, now, tz);
+  // The agent-only confirmation ("you're all set") counts as a booking ONLY when
+  // the customer did not decline — otherwise the agent's scripted close would
+  // book over an explicit "not interested". A STRONG customer acceptance paired
+  // with a concrete slot still wins even after an earlier decline (the skeptical-
+  // then-books case the analyzer prompt anticipates).
   const booked =
-    !dnc && (agentConfirmedBooking || (acceptedStrong && appointment.when !== ""));
+    !dnc &&
+    ((!declined && agentConfirmedBooking) || (acceptedStrong && appointment.when !== ""));
 
   const outcome: CallOutcome = dnc
     ? "do_not_call"

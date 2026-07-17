@@ -11,6 +11,7 @@
     "relay": "node server/media-stream-server.mjs",
     "verify:live-audio": "node scripts/verify-live-audio.mjs",
     "verify:disposition": "tsx scripts/verify-disposition.ts",
+    "verify:readcall": "tsx scripts/verify-readcall.ts",
     "verify:dialer": "tsx scripts/verify-dialer.ts",
     "verify:appointments": "tsx scripts/verify-appointments.ts",
     "verify:live-states": "tsx scripts/verify-live-states.ts",
