@@ -419,7 +419,7 @@ export function OrgSettingsForm({
             <div className="rounded-xl border border-border bg-muted/30 p-4">
               <p className="mb-2 flex items-center gap-2 text-xs font-bold uppercase tracking-wide text-muted-foreground">
                 <Lock className="h-3.5 w-3.5" />
-                Platform caller ID pool — managed by platform administrator
+                920 is the only active caller ID right now
               </p>
               <div className="space-y-1">
                 {platformPool.map((n) => (
@@ -430,10 +430,10 @@ export function OrgSettingsForm({
                 ))}
               </div>
               <p className="mt-3 text-xs text-muted-foreground">
-                Rotates every{" "}
-                <span className="font-semibold">{Math.max(1, platformRotateEvery)}</span>{" "}
-                call{platformRotateEvery === 1 ? "" : "s"} per rep. Contact{" "}
-                <span className="font-semibold">anasupalle17@gmail.com</span> to modify the pool.
+                Other numbers are under construction while we finish routing them — dialing
+                stays on 920 for every org until then. Contact{" "}
+                <span className="font-semibold">anasupalle17@gmail.com</span> to add numbers
+                back once they're ready.
               </p>
             </div>
           ) : (
@@ -442,8 +442,9 @@ export function OrgSettingsForm({
               {isSuperadmin && platformPoolLocked && (
                 <p className="mb-2 flex items-center gap-1.5 rounded-lg bg-warning/10 px-3 py-2 text-xs font-medium text-warning">
                   <Lock className="h-3.5 w-3.5" />
-                  Platform pool is active (TWILIO_CALLER_IDS env var). Org-level overrides are
-                  ignored while the env var is set — change it in Vercel to modify the pool.
+                  Only 920 is live platform-wide (TWILIO_CALLER_IDS env var) — other numbers
+                  are under construction. Org-level overrides are ignored until this is
+                  lifted; change TWILIO_CALLER_IDS in Vercel to add numbers back.
                 </p>
               )}
               <Field label="Caller ID rotation pool">
