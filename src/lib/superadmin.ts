@@ -1,5 +1,6 @@
 import "server-only";
 
+import { cache } from "react";
 import { getUser } from "./auth";
 import { isAccountDisabled, isPlatformAdmin } from "./db/app-control";
 
@@ -30,11 +31,11 @@ export function superadminAllowlist(): string[] {
  * emails are always superadmin (can't be locked out); DB-promoted superadmins
  * additionally lose access if their account is suspended.
  */
-export async function isSuperadmin(): Promise<boolean> {
+export const isSuperadmin = cache(async (): Promise<boolean> => {
   const user = await getUser();
   if (!user) return false;
   const email = (user.email || "").toLowerCase();
   if (email && ALLOWLIST.includes(email)) return true;
   if (await isPlatformAdmin(user.id)) return !(await isAccountDisabled(user.id));
   return false;
-}
+});

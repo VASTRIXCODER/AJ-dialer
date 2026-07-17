@@ -29,11 +29,17 @@ export default async function AppGroupLayout({
   const superadmin = await isSuperadmin();
 
   if (viewer.user && !superadmin) {
-    const settings = await getAppSettings();
+    // These two gates are independent — resolve them concurrently instead of
+    // serially (the app settings read and the per-user suspension check have no
+    // data dependency on each other).
+    const [settings, disabled] = await Promise.all([
+      getAppSettings(),
+      isAccountDisabled(viewer.user.id),
+    ]);
     if (settings.maintenance) {
       return <MaintenanceScreen message={settings.message} />;
     }
-    if (await isAccountDisabled(viewer.user.id)) {
+    if (disabled) {
       return <MaintenanceScreen suspended />;
     }
   }

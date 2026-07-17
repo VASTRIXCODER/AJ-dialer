@@ -1,5 +1,6 @@
 import "server-only";
 
+import { cache } from "react";
 import type { User } from "@supabase/supabase-js";
 import { getUser } from "../auth";
 import { writeAudit } from "../db/app-control";
@@ -170,8 +171,13 @@ const DEMO_ORG: OrgFull = {
   settings: DEFAULT_ORG_SETTINGS,
 };
 
-/** The full context for the current request: who, which org, what they can do. */
-export async function getViewer(): Promise<Viewer> {
+/**
+ * The full context for the current request: who, which org, what they can do.
+ * Request-scoped via cache() — the (app) layout and nearly every page call
+ * getViewer(), so without memoization one render resolved the viewer (auth +
+ * membership + org) several times over.
+ */
+export const getViewer = cache(async (): Promise<Viewer> => {
   // Demo mode (no Supabase): act as the owner of a demo Sunrun org so the whole
   // product — including Admin — is explorable without auth.
   if (!isSupabaseConfigured()) {
@@ -232,7 +238,7 @@ export async function getViewer(): Promise<Viewer> {
     permissions: effectivePermissions(membership.role, membership.permissions),
     membershipStatus: "active",
   };
-}
+});
 
 /** Does the current viewer hold a permission? (Demo = owner; reps = none.) */
 export async function viewerCan(permission: Permission): Promise<boolean> {
@@ -258,7 +264,7 @@ export async function viewerOrgId(): Promise<string | null> {
  * tracked on profiles.org_id (set when they enter/switch from the Hub), so a
  * user can belong to many orgs but work in one at a time.
  */
-export async function getActiveMembership(userId: string): Promise<Member | null> {
+export const getActiveMembership = cache(async (userId: string): Promise<Member | null> => {
   try {
     const supabase = await createClient();
     const { data: prof } = await supabase
@@ -297,7 +303,7 @@ export async function getActiveMembership(userId: string): Promise<Member | null
   } catch {
     return null;
   }
-}
+});
 
 /** Every active org the caller belongs to (powers the Hub workspace switcher). */
 export async function getMyMemberships(
@@ -334,12 +340,12 @@ export async function getMyMemberships(
       });
     }
 
-    const orgs = await Promise.all(members.map((m) => getOrgById(m.orgId)));
+    const byId = await getOrgsByIds(members.map((m) => m.orgId));
     const out: { org: OrgSummary; role: OrgRole; isActive: boolean }[] = [];
-    members.forEach((m, i) => {
-      const org = orgs[i];
+    for (const m of members) {
+      const org = byId.get(m.orgId);
       if (org) out.push({ org, role: m.role, isActive: m.orgId === activeOrgId });
-    });
+    }
     return out;
   } catch {
     return [];
@@ -359,12 +365,15 @@ export async function getMyPendingRequests(
       .eq("status", "pending")
       .order("requested_at", { ascending: false });
     const members = ((data ?? []) as Row[]).map(mapMember);
-    const orgs = await Promise.all(members.map((m) => getOrgById(m.orgId)));
-    return members.map((m, i) => ({
-      orgId: m.orgId,
-      orgName: orgs[i]?.name ?? "Organization",
-      requireApproval: orgs[i]?.requireApproval ?? true,
-    }));
+    const byId = await getOrgsByIds(members.map((m) => m.orgId));
+    return members.map((m) => {
+      const org = byId.get(m.orgId);
+      return {
+        orgId: m.orgId,
+        orgName: org?.name ?? "Organization",
+        requireApproval: org?.requireApproval ?? true,
+      };
+    });
   } catch {
     return [];
   }
@@ -439,7 +448,7 @@ export async function getPendingMembership(
   }
 }
 
-export async function getOrgById(id: string): Promise<OrgFull | null> {
+export const getOrgById = cache(async (id: string): Promise<OrgFull | null> => {
   try {
     const supabase = await createClient();
     const { data } = await supabase
@@ -451,6 +460,27 @@ export async function getOrgById(id: string): Promise<OrgFull | null> {
   } catch {
     return null;
   }
+});
+
+/**
+ * Resolve many orgs in ONE query, keyed by id — so callers with a list of
+ * memberships don't fire one organizations round-trip per row (the Hub's N+1).
+ */
+async function getOrgsByIds(ids: string[]): Promise<Map<string, OrgFull>> {
+  const out = new Map<string, OrgFull>();
+  const unique = [...new Set(ids.filter(Boolean))];
+  if (!unique.length) return out;
+  try {
+    const supabase = await createClient();
+    const { data } = await supabase.from("organizations").select("*").in("id", unique);
+    for (const o of (data ?? []) as Row[]) {
+      const org = mapOrg(o);
+      out.set(org.id, org);
+    }
+  } catch {
+    /* fall through — empty map */
+  }
+  return out;
 }
 
 /**

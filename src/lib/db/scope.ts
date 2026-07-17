@@ -1,5 +1,6 @@
 import "server-only";
 
+import { cache } from "react";
 import { createClient } from "../supabase/server";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -15,7 +16,10 @@ export interface Scope {
   supervisor: boolean;
 }
 
-export async function getScope(): Promise<Scope | null> {
+// Request-scoped: the pipeline surfaces (leads, campaigns, dispositions, …) each
+// call getScope() during one render — cache() collapses the repeated auth +
+// profiles lookups to one.
+export const getScope = cache(async (): Promise<Scope | null> => {
   const supabase = await createClient();
   const {
     data: { user },
@@ -31,7 +35,7 @@ export async function getScope(): Promise<Scope | null> {
     orgId && ["owner", "admin", "manager"].includes(String(prof?.role ?? "rep")),
   );
   return { userId: user.id, orgId, supervisor };
-}
+});
 
 /** May this actor read/modify a row owned by `rowOwnerId` in org `rowOrgId`? */
 export function canActOn(

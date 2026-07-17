@@ -10,7 +10,7 @@ import {
   outcomeBreakdown as sampleOutcomes,
   callRecords as sampleRecords,
 } from "../data";
-import { reconcileOwnerActiveCalls } from "../ai-call-reconcile";
+import { reconcileAndGetMonitor } from "../ai-call-reconcile";
 import {
   channelBreakdown,
   CONNECTED_OUTCOMES,
@@ -34,7 +34,6 @@ import type {
   LeaderboardStat,
   MetricSummary,
 } from "../types";
-import { getAIConversationsForMonitor } from "./records";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // DB-computed reporting. Every dashboard / report / leaderboard number is
@@ -322,9 +321,12 @@ export async function getReportingData(
     } = await supabase.auth.getUser();
     if (!user) return fallbackReporting();
 
-    // End + categorize any stuck calls first, so live counts and dispositions
-    // are accurate the moment the dashboard / reports load.
-    await reconcileOwnerActiveCalls();
+    // End + categorize any stuck calls first (bounded so a slow provider can't
+    // hang the render), so live counts and dispositions are accurate the moment
+    // the dashboard / reports load. This ALSO returns the live monitor feed, so
+    // we don't fetch it a second time below — one getAIConversationsForMonitor
+    // per load instead of two.
+    const monitor = await reconcileAndGetMonitor();
 
     // Scope: supervisors (manager/admin/owner) see the whole org; reps see their
     // own. Org-wide reads use the service-role client (RLS would otherwise hide
@@ -359,7 +361,7 @@ export async function getReportingData(
       ? new Date(Date.now() - (windowDays + 1) * DAY_MS).toISOString()
       : null;
 
-    const [calls, appts, leadAgg, monitor, memberRes, orgRes] = await Promise.all([
+    const [calls, appts, leadAgg, memberRes, orgRes] = await Promise.all([
       fetchPaged((from, to) => {
         let q = reader
           .from("call_records")
@@ -425,7 +427,6 @@ export async function getReportingData(
           batteryOwnership: pct(battery, total),
         };
       })(),
-      getAIConversationsForMonitor(),
       supervisor && orgId
         ? createAdminClient()
             .from("organization_members")

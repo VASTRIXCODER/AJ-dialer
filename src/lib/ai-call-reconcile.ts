@@ -223,19 +223,52 @@ export async function reconcileActiveCalls(active: ActiveRef[]): Promise<void> {
  * safety net is what let 6,164 calls sit unfinalized. The real guarantee is
  * reconcileStuckConversations() below, driven by cron.
  */
+// Hard cap on how long the render-path reconcile may take. The ElevenLabs pass
+// can otherwise spend up to CHECK_LIMIT × the fetch timeout (~10s) blocking the
+// page; past this budget we bail and let the cron / next poll finish the job.
+const RECONCILE_BUDGET_MS = 3000;
+
 export async function reconcileOwnerActiveCalls(): Promise<void> {
   if (!isElevenLabsConfigured()) return;
   try {
     const { active } = await getAIConversationsForMonitor();
     if (active.length === 0) return;
-    await reconcileActiveCalls(
-      active.map((c) => ({
-        conversationId: c.conversationId,
-        startedAt: c.startedAt,
-      })),
+    await withTimeout(
+      reconcileActiveCalls(
+        active.map((c) => ({
+          conversationId: c.conversationId,
+          startedAt: c.startedAt,
+        })),
+      ),
+      RECONCILE_BUDGET_MS,
     );
   } catch {
-    /* best-effort */
+    /* best-effort — bounded, so a slow provider never hangs the render */
+  }
+}
+
+/**
+ * Fetch the live monitor feed AND reconcile its active calls in one pass, then
+ * return the feed. Lets a caller that ALSO needs the monitor feed (getReportingData)
+ * avoid fetching it twice — once for reconciliation and once for display. When
+ * there are active calls we re-read after reconciling so the returned feed
+ * reflects any just-finalized ones; the common (no-active) case is a single read.
+ */
+export async function reconcileAndGetMonitor(): Promise<
+  Awaited<ReturnType<typeof getAIConversationsForMonitor>>
+> {
+  const feed = await getAIConversationsForMonitor();
+  if (!isElevenLabsConfigured() || feed.active.length === 0) return feed;
+  try {
+    await withTimeout(
+      reconcileActiveCalls(
+        feed.active.map((c) => ({ conversationId: c.conversationId, startedAt: c.startedAt })),
+      ),
+      RECONCILE_BUDGET_MS,
+    );
+    return await getAIConversationsForMonitor();
+  } catch {
+    return feed;
   }
 }
 

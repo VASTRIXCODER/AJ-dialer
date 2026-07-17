@@ -447,6 +447,11 @@ alter table public.ai_conversations add column if not exists org_id uuid referen
 alter table public.campaigns        add column if not exists org_id uuid references public.organizations (id) on delete set null;
 
 create index if not exists leads_org_idx            on public.leads (org_id);
+-- The supervisor dial-queue (org_id + status IN dialable, ordered by ai_score) and
+-- the bills-fine scan (org_id + status = 'bills_fine') both filter org_id AND status;
+-- a composite lets Postgres range-scan instead of filtering status in-heap after the
+-- org_id index. ai_score in the index also serves the dial-queue's ORDER BY.
+create index if not exists leads_org_status_idx      on public.leads (org_id, status, ai_score desc);
 create index if not exists call_records_org_idx     on public.call_records (org_id, started_at desc);
 create index if not exists appointments_org_idx     on public.appointments (org_id, created_at desc);
 create index if not exists callbacks_org_idx        on public.callbacks (org_id);
