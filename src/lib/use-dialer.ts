@@ -21,6 +21,8 @@ export interface AiLaunch {
   leadId: string;
   leadName: string;
   error?: string;
+  /** The outbound caller ID this call was actually placed from. */
+  callerId?: string | null;
 }
 
 /** What the user knows about an ad-hoc number when there's no lead record. */
@@ -943,6 +945,7 @@ export function useDialer(
             conversationId?: string;
             error?: string;
             halted?: boolean;
+            callerId?: string | null;
           };
 
           // The server REFUSED to dial (out of credits / breaker open). Stop the
@@ -985,6 +988,7 @@ export function useDialer(
                       ...c,
                       conversationId: json.conversationId ?? null,
                       error: res.ok ? undefined : json.error ?? "Call failed",
+                      callerId: json.callerId ?? null,
                     }
                   : c,
               ),
@@ -1085,6 +1089,7 @@ export function useDialer(
         const json = (await res.json().catch(() => ({}))) as {
           conversationId?: string;
           error?: string;
+          callerId?: string | null;
         };
         setState((s) => ({
           ...s,
@@ -1094,6 +1099,7 @@ export function useDialer(
                   ...c,
                   conversationId: json.conversationId ?? null,
                   error: res.ok ? undefined : json.error ?? "Call failed",
+                  callerId: json.callerId ?? null,
                 }
               : c,
           ),

@@ -12,6 +12,7 @@ import {
   Mic,
   MicOff,
   Pause,
+  Phone,
   PhoneOff,
   Play,
   Radio,
@@ -28,7 +29,7 @@ import { Button, buttonVariants } from "@/components/ui/button";
 import type { AiLockReason } from "@/lib/org/settings";
 import type { CallOutcome, Lead } from "@/lib/types";
 import type { AiLaunch, DialerState, KnownInfo } from "@/lib/use-dialer";
-import { cn, formatDuration, initials } from "@/lib/utils";
+import { cn, formatDuration, formatPhone, initials } from "@/lib/utils";
 import { AiCallSummary } from "@/components/ai/call-summary";
 import { CallerIdPicker } from "./caller-id-picker";
 import { DialPad } from "./dial-pad";
@@ -549,6 +550,12 @@ export function CallStage({
                 <p className="text-xs text-muted-foreground">
                   Connecting you to the first homeowner who answers
                 </p>
+                {state.callerIdInfo?.callerId && (
+                  <p className="mt-1.5 flex items-center justify-center gap-1 text-xs font-medium text-muted-foreground">
+                    <Phone className="h-3 w-3" />
+                    Dialing from {formatPhone(state.callerIdInfo.callerId)}
+                  </p>
+                )}
               </div>
               <ParallelLines lines={state.lines} />
               <Button variant="outline" className="w-full gap-2" onClick={onSkip}>
@@ -589,6 +596,12 @@ export function CallStage({
                 <p className="text-sm text-muted-foreground">
                   {focusLead.city ? `${focusLead.city}, ${focusLead.state}` : "Manual call"}
                 </p>
+                {state.callerIdInfo?.callerId && (
+                  <p className="mt-0.5 flex items-center justify-center gap-1 text-xs font-medium text-muted-foreground">
+                    <Phone className="h-3 w-3" />
+                    Dialing from {formatPhone(state.callerIdInfo.callerId)}
+                  </p>
+                )}
                 <div className="mt-2 inline-flex items-center gap-2 rounded-full bg-success/10 px-3 py-1 text-sm font-bold text-success tabular">
                   <span className="h-2 w-2 rounded-full bg-success" />
                   {formatDuration(state.durationSec)}
@@ -726,7 +739,15 @@ function AiSession({
             <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-solar/90 text-white">
               <Bot className="h-3.5 w-3.5" />
             </span>
-            <span className="min-w-0 flex-1 truncate text-sm font-medium">{c.leadName}</span>
+            <span className="min-w-0 flex-1">
+              <span className="block truncate text-sm font-medium">{c.leadName}</span>
+              {c.callerId && (
+                <span className="flex items-center gap-1 truncate text-[11px] text-muted-foreground">
+                  <Phone className="h-2.5 w-2.5 shrink-0" />
+                  from {formatPhone(c.callerId)}
+                </span>
+              )}
+            </span>
             {c.error ? (
               <Badge tone="danger" className="shrink-0">Failed</Badge>
             ) : c.conversationId ? (
