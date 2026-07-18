@@ -64,6 +64,26 @@ function didConnect(turns: Turn[], status: string): boolean {
   return human && s !== "failed" && s !== "error";
 }
 
+/**
+ * Did the agent deliver its scripted voicemail-drop message with nobody ever
+ * replying? Per agent-prompt.ts's "Voicemail" section, reaching an answering
+ * machine has the agent leave a full, specific message ("Hey {name}, it's
+ * Emily from your {company} account-support team…") rather than a trivial
+ * greeting — that length is exactly what a live call's opening line ISN'T
+ * (the homeowner would normally have replied by then). This is independent
+ * evidence for classifyNonConversation's voicemailSignal: without it, an
+ * answered-but-silent call had no way to be told apart from a broken audio
+ * path and sat as an ambiguous system-fault requiring manual review even when
+ * the transcript plainly showed a voicemail message being left.
+ */
+function looksLikeVoicemailDrop(turns: Turn[], hasHumanTurn: boolean): boolean {
+  if (hasHumanTurn) return false;
+  const agentChars = turns
+    .filter((t) => (t.role ?? t.speaker) === "agent")
+    .reduce((n, t) => n + (t.message ?? t.text ?? "").trim().length, 0);
+  return agentChars > 40;
+}
+
 export async function finalizeAIConversation(input: {
   conversationId: string;
   turns: Turn[];
@@ -220,6 +240,7 @@ export async function finalizeAIConversation(input: {
       errorCode: input.errorCode,
       errorReason: input.errorReason,
       hasHumanTurn,
+      voicemailSignal: looksLikeVoicemailDrop(turns, hasHumanTurn),
       failureKind: input.failureKind,
     });
     sentiment = "neutral";

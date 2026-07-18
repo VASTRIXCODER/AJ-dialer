@@ -42,7 +42,12 @@ export function useCsvUpload(opts: { leadGroup?: LeadGroup | null; campaignId?: 
         return;
       }
       const skipped = typeof json.invalidPhone === "number" ? json.invalidPhone : 0;
-      const skipNote = skipped > 0 ? ` (${skipped} without a valid phone — not dialable)` : "";
+      const duplicates = typeof json.duplicates === "number" ? json.duplicates : 0;
+      const notes = [
+        skipped > 0 ? `${skipped} without a valid phone — not dialable` : "",
+        duplicates > 0 ? `${duplicates} already in your org's leads — skipped` : "",
+      ].filter(Boolean);
+      const skipNote = notes.length ? ` (${notes.join("; ")})` : "";
       const how = json.source === "ai" ? " — columns mapped by AI" : "";
       if (json.aiError) {
         setStatus({

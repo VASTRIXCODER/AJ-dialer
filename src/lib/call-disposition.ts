@@ -44,8 +44,9 @@ export type FailureKind =
    *  couldn't pin down — typically a conversation_config_override the agent isn't
    *  allowed to accept. Same visible signature as a quota kill. */
   | "agent_terminated_on_connect"
-  /** Answered and stayed up, but the homeowner never spoke: voicemail (AMD is
-   *  off, so we can't tell), or a broken audio path. Review the recording. */
+  /** Answered and stayed up, but the homeowner never spoke, with no independent
+   *  signal (see `voicemailSignal`) confirming it was voicemail: could still be
+   *  voicemail we couldn't detect, or a broken audio path. Review the recording. */
   | "answered_no_human_turn"
   /** ElevenLabs reported an explicit error on the conversation. */
   | "provider_error"
@@ -145,6 +146,14 @@ export function classifyNonConversation(input: {
   errorReason?: string | null;
   /** Did the homeowner utter anything at all? */
   hasHumanTurn?: boolean;
+  /**
+   * Independent evidence THIS specific answered-but-silent call was a voicemail
+   * — the agent delivered its scripted voicemail-drop message with no reply, or
+   * carrier/Twilio machine detection confirmed it. Stronger and more specific
+   * than the generic "nobody spoke" catch-all below, which stays reserved for
+   * the genuinely ambiguous case (no signal either way).
+   */
+  voicemailSignal?: boolean;
   /** Set by callers that already KNOW the call never went out (e.g. a rejected dial). */
   failureKind?: FailureKind | null;
 }): NonConversation {
@@ -181,6 +190,15 @@ export function classifyNonConversation(input: {
   //    cannot produce this; only a broken agent can.
   if (answered && duration < KILL_ON_CONNECT_MAX_SEC && !input.hasHumanTurn) {
     return fail("agent_terminated_on_connect");
+  }
+
+  // 3.5. Independent, specific evidence this was voicemail — the agent left its
+  //      message, or AMD confirmed a machine. This is a real homeowner outcome
+  //      (the call reached them, just not live), so it's filed and excluded from
+  //      "connected" like every other non-conversation outcome — never left to
+  //      rot as an ambiguous system-fault requiring manual review.
+  if (answered && !input.hasHumanTurn && input.voicemailSignal) {
+    return filed("voicemail");
   }
 
   // 4. A dead/invalid number is a fact about the number — check before voicemail,
