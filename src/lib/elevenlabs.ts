@@ -244,6 +244,34 @@ export async function listPhoneNumbers(): Promise<ElevenLabsPhoneNumber[]> {
     []) as ElevenLabsPhoneNumber[];
 }
 
+/**
+ * Import a Twilio-owned number into ElevenLabs so it becomes eligible as an
+ * agent_phone_number_id for outbound AI calls. ElevenLabs stores the Twilio
+ * credentials itself in order to originate calls from this number.
+ */
+export async function importTwilioPhoneNumber(opts: {
+  phoneNumber: string;
+  label: string;
+  twilioAccountSid: string;
+  twilioAuthToken: string;
+}): Promise<string> {
+  const res = await el("/v1/convai/phone-numbers", {
+    method: "POST",
+    body: JSON.stringify({
+      phone_number: opts.phoneNumber,
+      label: opts.label,
+      sid: opts.twilioAccountSid,
+      token: opts.twilioAuthToken,
+      provider: "twilio",
+    }),
+  });
+  const json = (await res.json()) as { phone_number_id?: string };
+  if (!json.phone_number_id) {
+    throw new Error("ElevenLabs import did not return a phone_number_id");
+  }
+  return json.phone_number_id;
+}
+
 const _phoneIdCache = new Map<string, string>();
 
 /**

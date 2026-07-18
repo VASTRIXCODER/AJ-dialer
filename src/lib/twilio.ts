@@ -119,6 +119,20 @@ export async function getRestClient() {
   return twilio(twilioConfig.accountSid, twilioConfig.authToken);
 }
 
+/**
+ * Point a Twilio number's inbound Voice webhook at the app. A number left on
+ * Twilio's demo webhook (or any stale URL) can't be used for dialing correctly —
+ * see docs/CALLER_ID_DELIVERABILITY.md "config fixes".
+ */
+export async function setNumberVoiceWebhook(phoneNumber: string, voiceUrl: string): Promise<void> {
+  const client = await getRestClient();
+  if (!client) throw new Error("Twilio REST client not configured");
+  const matches = await client.incomingPhoneNumbers.list({ phoneNumber, limit: 1 });
+  const match = matches[0];
+  if (!match) throw new Error(`Twilio number ${phoneNumber} not found on this account`);
+  await client.incomingPhoneNumbers(match.sid).update({ voiceUrl, voiceMethod: "POST" });
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Supervisor live-listen authorization.
 //
