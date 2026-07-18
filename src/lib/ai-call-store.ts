@@ -132,16 +132,25 @@ export function getAICall(conversationId: string): AICall | null {
   return calls.get(conversationId) ?? null;
 }
 
-export function listActiveAICalls(): AICall[] {
+/**
+ * `orgId` is required so two orgs never see each other's live calls just
+ * because their requests happen to land on the same warm serverless instance
+ * (this Map is process-wide, not per-tenant). A call registered before its
+ * `orgId` was known (should not happen in practice, but defensively) is
+ * excluded rather than shown to everyone.
+ */
+export function listActiveAICalls(orgId: string): AICall[] {
   sweep(); // evict leaked entries on READ too — registerAICall may never run again
   return [...calls.values()]
-    .filter((c) => LIVE_STATES.includes(c.state))
+    .filter((c) => c.orgId === orgId && LIVE_STATES.includes(c.state))
     .sort((a, b) => b.startedAt - a.startedAt);
 }
 
-export function listRecentAICalls(limit = 8): AICall[] {
+export function listRecentAICalls(orgId: string, limit = 8): AICall[] {
   return [...calls.values()]
-    .filter((c) => c.state === "completed" || c.state === "failed")
+    .filter(
+      (c) => c.orgId === orgId && (c.state === "completed" || c.state === "failed"),
+    )
     .sort((a, b) => (b.endedAt ?? 0) - (a.endedAt ?? 0))
     .slice(0, limit);
 }

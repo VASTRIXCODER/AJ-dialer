@@ -7,7 +7,7 @@ import {
   fetchConversation,
   isElevenLabsConfigured,
 } from "@/lib/elevenlabs";
-import { viewerCan } from "@/lib/org/membership";
+import { viewerCan, viewerOrgId } from "@/lib/org/membership";
 import { getRestClient, isRestConfigured } from "@/lib/twilio";
 
 export const dynamic = "force-dynamic";
@@ -47,10 +47,22 @@ export async function POST(req: Request) {
   if (!(await viewerCan("monitor.intervene")))
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
+  const orgId = await viewerOrgId();
+  if (!orgId) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+
   // In bridge (conference) mode the agent dials our bridge number, so callSid is
   // the AGENT leg and customerSid is the homeowner's leg in the same room. In the
   // direct mode there's a single leg (callSid = homeowner).
-  const stored = getAICall(conversationId);
+  //
+  // The in-memory store is process-wide (not per-tenant — see ai-call-store.ts),
+  // so a supervisor from a DIFFERENT org could otherwise hang up, transfer, or
+  // take over this call just by knowing its conversationId. Fail closed: only
+  // trust a stored entry when it's confirmed to belong to the caller's own org.
+  const rawStored = getAICall(conversationId);
+  if (rawStored && rawStored.orgId !== orgId) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
+  const stored = rawStored;
   const customerSid = stored?.customerCallSid ?? null;
   const bridged = Boolean(customerSid);
 

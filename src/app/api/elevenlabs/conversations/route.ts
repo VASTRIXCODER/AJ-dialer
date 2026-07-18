@@ -7,7 +7,7 @@ import {
 } from "@/lib/ai-call-store";
 import { getAIConversationsForMonitor, getAITodayStats } from "@/lib/db/records";
 import { isElevenLabsConfigured } from "@/lib/elevenlabs";
-import { viewerCan } from "@/lib/org/membership";
+import { viewerCan, viewerOrgId } from "@/lib/org/membership";
 import { isTerminalLiveState, liveStateRank } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -95,8 +95,11 @@ export async function GET() {
   if (!(await viewerCan("monitor.view")))
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
+  const orgId = await viewerOrgId();
+  if (!orgId) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+
   const first = await getAIConversationsForMonitor();
-  const active = merge(listActiveAICalls(), first.active);
+  const active = merge(listActiveAICalls(orgId), first.active);
 
   let fresh = first;
   if (active.length > 0) {
@@ -122,7 +125,7 @@ export async function GET() {
   }
 
   const merged = merge(
-    [...listActiveAICalls(), ...listRecentAICalls(12)],
+    [...listActiveAICalls(orgId), ...listRecentAICalls(orgId, 12)],
     [...fresh.active, ...fresh.recent],
   );
 

@@ -13,7 +13,7 @@ import {
   isElevenLabsConfigured,
 } from "@/lib/elevenlabs";
 import { isMediaStreamConfigured } from "@/lib/media-stream";
-import { viewerCanAny } from "@/lib/org/membership";
+import { viewerCanAny, viewerOrgId } from "@/lib/org/membership";
 import { isRestConfigured } from "@/lib/twilio";
 import { type CallOutcome, liveStateRank } from "@/lib/types";
 
@@ -106,6 +106,30 @@ export async function GET(
   // supervisor-only. Reps can't read other people's call detail.
   if (!(await viewerCanAny(["monitor.view", "reports.view"])))
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+
+  const orgId = await viewerOrgId();
+  if (!orgId) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+
+  // The in-memory store is process-wide, not per-tenant (see ai-call-store.ts),
+  // and the live ElevenLabs read below isn't org-scoped at all (one shared
+  // ElevenLabs account serves every org) — without this check, a supervisor
+  // from org A could read org B's transcript, phone number, and lead name just
+  // by knowing (or guessing) its conversationId. When the call IS resident in
+  // this instance's memory, trust its recorded org. When it isn't (a different
+  // warm instance handled it), fall back to the RLS-scoped DB read, which
+  // returns null for any conversation outside the viewer's active org.
+  const authStore = getAICall(conversationId);
+  if (authStore) {
+    if (authStore.orgId !== orgId)
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  } else if (!(await getAIConversation(conversationId))) {
+    // Neither in this instance's memory nor visible under RLS to this org.
+    // The only legitimate reason is a call so fresh nothing has persisted it
+    // anywhere yet — but that race is indistinguishable from "belongs to a
+    // different org and RLS correctly hid it," so fail closed rather than
+    // fall through to the unscoped live ElevenLabs read below.
+    return NextResponse.json({ error: "Conversation not found" }, { status: 404 });
+  }
 
   // ── Live ElevenLabs read (best-effort; a still-ringing call may 404) ────────
   let rawTurns: Turn[] = [];

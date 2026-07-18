@@ -32,6 +32,26 @@ async function resolveAICallSid(conversationId: string): Promise<string | null> 
 }
 
 /**
+ * The in-memory AI-call store is process-wide, not per-tenant (see
+ * ai-call-store.ts) — a conversationId alone isn't proof it belongs to the
+ * viewer's org. Confirm ownership from whichever source can actually vouch
+ * for it: a matching stored orgId, or (when the call isn't resident in this
+ * instance's memory) the RLS-scoped DB read, which returns null for any
+ * conversation outside the viewer's active org. Fails closed if neither can
+ * confirm it — otherwise a supervisor who merely learns another org's
+ * conversationId could start listening to its live audio.
+ */
+async function ownsAIConversation(
+  conversationId: string,
+  orgId: string,
+): Promise<boolean> {
+  const stored = getAICall(conversationId);
+  if (stored) return stored.orgId === orgId;
+  const row = await getAIConversation(conversationId);
+  return Boolean(row);
+}
+
+/**
  * Authorize (or stop) passive live-listening on an in-progress call.
  *
  *  • Human rep↔customer call (`humanId`) → conference monitoring: the supervisor's
@@ -83,6 +103,14 @@ export async function POST(req: Request) {
 
   if (!conversationId)
     return NextResponse.json({ error: "conversationId or humanId required" }, { status: 400 });
+
+  // Scope to the viewer's org — a supervisor can only listen to their own org's
+  // AI calls, mirroring the human-call check above.
+  const viewer = await getViewer();
+  if (!viewer.org) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  if (action !== "stop" && !(await ownsAIConversation(conversationId, viewer.org.id))) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
 
   // ── AI conversation in a conference (bridge mode) → join MUTED, no relay ─────
   // Identical to human calls: hand back the room + a signed token the browser
