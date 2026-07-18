@@ -56,6 +56,16 @@ on. The code is ready the moment numbers are in the pool.
 > `TWILIO_CALLER_IDS` (env, platform-wide) **or** leave it unset and manage the
 > pool per-org in Admin. Adding CA numbers in Admin has no effect while the env
 > var is set.
+>
+> **As of 2026-07-18, `TWILIO_CALLER_IDS` is unset in Production** — per-org
+> pools are the standard going forward. Each org's `dialing.callerIds` is
+> exclusive to it (`updateOrganizationSettings()` rejects reusing a number
+> already assigned to a different org); `TWILIO_CALLER_ID` (the "920" number)
+> is the one number every org shares, used only when an org's own pool is
+> empty. Sunrun ("Sunrun AJ Dialer") and VICC ("Donny's Dialer") each have
+> their own 9/8-number dedicated pools, onboarded via
+> `POST /api/superadmin/provision-numbers` (points each number's Twilio Voice
+> webhook at the app and imports it into ElevenLabs for AI calling).
 
 ## Current number inventory & config gaps (as of 2026-07)
 
