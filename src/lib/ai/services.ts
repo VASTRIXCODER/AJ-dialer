@@ -274,6 +274,15 @@ export function analyzeConversation(input: {
           "tone/beep\") and/or the agent leaving its own message with no live back-and-forth, outcome MUST " +
           "be 'voicemail' — never 'qualified', 'appointment_booked', or 'not_interested', no matter how " +
           "warm or specific the greeting sounds. This did not connect to a live person.\n" +
+          "- Do NOT confuse an automated call-SCREENING prompt with voicemail. Some phones ask a short " +
+          "question first — \"Who's calling?\", \"Say your name and reason for calling\", \"May I ask who's " +
+          "calling?\" — before deciding whether to connect the call; that's a screener, not an answering " +
+          "machine, even if the agent then answers it and nobody else speaks afterward. The tell: a real " +
+          "voicemail greeting invites leaving a message after a tone/beep with no question asked; a " +
+          "screener asks a question expecting an answer. If the agent answered a screening question (gave " +
+          "her name/reason) rather than delivering the scripted voicemail message, do NOT mark this " +
+          "'voicemail' just because the call ended without the homeowner speaking — treat it the same as " +
+          "any other call that didn't connect to a live person (not a disposition on its own).\n" +
           "Also extract sentiment, qualification data (USD/month; use 0 when not stated), the exact agreed " +
           "time, and follow-ups.\n\n" +
           `${dateLine}\n\n` +

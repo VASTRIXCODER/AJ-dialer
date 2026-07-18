@@ -298,8 +298,17 @@ export interface ResolvedAppointment {
 
 /**
  * Extract the agreed appointment from a transcript, anchored to `now` (and the
- * homeowner's timezone when provided). Returns an empty result when no concrete
- * time is present — a passing mention of a day alone is never treated as a slot.
+ * homeowner's timezone when provided). Returns an empty result unless BOTH a
+ * concrete time AND an actual date reference ("tomorrow", "Tuesday", "the
+ * 29th", etc. — see findDay) are present in the transcript.
+ *
+ * A time alone used to be enough — the day was silently inferred as "today"
+ * or "tomorrow" from whether the time was still ahead of the current clock.
+ * That let a bare "6pm works?" / "yeah" exchange, with no date anyone ever
+ * actually said, resolve to a bookable slot — exactly the false-appointment
+ * pattern this function exists to prevent. Requiring an explicit date mention
+ * means "if a date was mentioned, there's an appointment; otherwise there
+ * isn't," full stop.
  */
 export function resolveAppointment(
   transcript: string,
@@ -316,22 +325,12 @@ export function resolveAppointment(
 
   const today = partsInTz(now, tz);
   const time = findTime(transcript);
-  if (!time) return empty; // no concrete time → nothing bookable
   const day = findDay(transcript, today);
+  if (!time || !day) return empty; // no concrete time+date → nothing bookable
 
-  // Day: use the explicit reference; otherwise infer (today if the time is still
-  // ahead of now, else tomorrow).
-  let off: number;
-  if (day) off = day.off;
-  else {
-    const nowMin = today.hour * 60 + today.minute;
-    const tMin = time.h * 60 + time.m;
-    off = tMin > nowMin + 5 ? 0 : 1;
-  }
-
-  const tgt = addDays(today.year, today.month, today.day, off);
+  const tgt = addDays(today.year, today.month, today.day, day.off);
   const label =
-    off === 0 ? "Today" : off === 1 ? "Tomorrow" : WD_LABEL[tgt.dow];
+    day.off === 0 ? "Today" : day.off === 1 ? "Tomorrow" : WD_LABEL[tgt.dow];
   const when = `${label} — ${WD_LABEL[tgt.dow].slice(0, 3)}, ${
     MON_SHORT[tgt.m - 1]
   } ${tgt.d} at ${fmtTime(time.h, time.m)}`;
@@ -478,8 +477,15 @@ export function readCall(
   // book over an explicit "not interested". A STRONG customer acceptance paired
   // with a concrete slot still wins even after an earlier decline (the skeptical-
   // then-books case the analyzer prompt anticipates).
+  //
+  // Either way, a real DATE must have been resolved (appointment.iso) — the
+  // agent saying "you're all set" is scripted closing language, not proof a
+  // date was actually agreed. Without this, a call where Emily delivers her
+  // closing line but no parseable date/time exists in the transcript still
+  // filed as a booked appointment with nothing to put on the calendar.
   const booked =
     !dnc &&
+    appointment.iso !== "" &&
     ((!declined && agentConfirmedBooking) || (acceptedStrong && appointment.when !== ""));
 
   const outcome: CallOutcome = dnc

@@ -67,21 +67,22 @@ function didConnect(turns: Turn[], status: string): boolean {
 /**
  * Did the agent deliver its scripted voicemail-drop message with nobody ever
  * replying? Per agent-prompt.ts's "Voicemail" section, reaching an answering
- * machine has the agent leave a full, specific message ("Hey {name}, it's
- * Emily from your {company} account-support team…") rather than a trivial
- * greeting — that length is exactly what a live call's opening line ISN'T
- * (the homeowner would normally have replied by then). This is independent
- * evidence for classifyNonConversation's voicemailSignal: without it, an
- * answered-but-silent call had no way to be told apart from a broken audio
- * path and sat as an ambiguous system-fault requiring manual review even when
- * the transcript plainly showed a voicemail message being left.
+ * machine has the agent leave a specific closing message ending "I'll try you
+ * again" — a phrase distinctive enough that matching it (rather than just
+ * counting characters) doesn't get confused with the agent briefly answering
+ * an automated call-SCREENING prompt ("who's calling?"), which per the
+ * "Call screening" prompt section she's now instructed to do plainly and
+ * keep going, not to bail into the voicemail message. A screener exchange can
+ * easily exceed 40 characters of agent speech too, so length alone isn't a
+ * safe signal for "this was voicemail" — it just means nobody replied.
  */
 function looksLikeVoicemailDrop(turns: Turn[], hasHumanTurn: boolean): boolean {
   if (hasHumanTurn) return false;
-  const agentChars = turns
+  const agentText = turns
     .filter((t) => (t.role ?? t.speaker) === "agent")
-    .reduce((n, t) => n + (t.message ?? t.text ?? "").trim().length, 0);
-  return agentChars > 40;
+    .map((t) => (t.message ?? t.text ?? "").trim())
+    .join(" ");
+  return /i'?ll try you again/i.test(agentText);
 }
 
 export async function finalizeAIConversation(input: {
@@ -147,16 +148,15 @@ export async function finalizeAIConversation(input: {
     outcome = analysis.outcome;
     sentiment = analysis.sentiment;
 
-    // Build an appointment ONLY when a booking is corroborated — NEVER off the
-    // model's `appointment.requested` flag alone. resolveAppointment returns an
-    // empty iso whenever it can't parse a real clock time, and a bare
-    // "requested=true" with no time is agreement-in-principle, not a booked slot.
-    // Trusting it is exactly what filed phantom bookings AND appointment rows with
-    // no date/time. We accept two corroborated shapes:
-    //   • a concrete resolved slot (calendar-ready), or
-    //   • the model itself committing to outcome==="appointment_booked" (a stronger
-    //     signal than the flag) — a supported timeless proposal for the "later"
-    //     bucket, reviewed by a human before it's approved.
+    // Build an appointment ONLY when a DATE was actually resolved from the
+    // transcript — never off the model's `appointment.requested`/`outcome`
+    // flags alone. resolveAppointment() now requires BOTH a concrete time AND
+    // an explicit date reference ("tomorrow", "Tuesday", a calendar date, …);
+    // if either is missing it returns an empty slot. Policy: if a date was
+    // mentioned, there's an appointment — otherwise there isn't, no matter how
+    // confidently the model says "appointment_booked". This used to also
+    // accept the model's bare outcome flag as a "timeless proposal," which is
+    // exactly what filed appointment rows with no date/time on them.
     if (analysis.appointment.requested || outcome === "appointment_booked") {
       const slot = resolveAppointment(transcript, now, tz);
       if (slot.iso) {
@@ -166,17 +166,17 @@ export async function finalizeAIConversation(input: {
           notes: analysis.appointment.notes || slot.notes,
         };
       } else if (outcome === "appointment_booked") {
-        appointment = {
-          when: analysis.appointment.when || "",
-          notes:
-            analysis.appointment.notes ||
-            "Homeowner agreed to a no-cost account review.",
-        };
+        // The model claimed a booking but no date was actually mentioned in
+        // the transcript — per policy that's not a booked appointment. The
+        // conversation itself was still good, so keep the signal as
+        // "qualified" rather than losing it (or worse, filing a dateless
+        // appointment row) outright.
+        outcome = "qualified";
       }
-      // else: requested=true but no resolvable time and the model didn't commit to
-      // a booking — agreement in principle only. Leave the model's own outcome and
-      // create no appointment (the readCall safety net below still catches a
-      // genuine agent-confirmed booking).
+      // else: requested=true but no resolvable date and the model didn't commit
+      // to a booking — agreement in principle only. Leave the model's own
+      // outcome and create no appointment (the readCall safety net below still
+      // catches a genuine agent-confirmed booking with a real date).
     }
     qualification = analysis.qualification;
     score = analysis.confidence;
