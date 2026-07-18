@@ -588,7 +588,21 @@ export async function getLeadById(id: string): Promise<Lead | null> {
       .select("*")
       .eq("id", id)
       .maybeSingle();
-    return data ? rowToLead(data) : null;
+    if (!data) return null;
+    // RLS alone isn't enough here: "leads read" grants access whenever the
+    // caller is an active member of the ROW's org, not just their CURRENTLY
+    // ACTIVE one — deliberate, for the shared-org-pool model, but it means a
+    // user who's an active member of two orgs (e.g. a platform admin) could
+    // have another org's lead handed back if any caller (AI briefing/copilot/
+    // summary, the AI-call route) is ever given that org's lead id. Every
+    // list function already re-scopes to the viewer's active org_id; do the
+    // same here rather than trusting RLS's broader membership check alone.
+    const rowOrgId = data.org_id ? String(data.org_id) : null;
+    if (rowOrgId) {
+      const scope = await getScope();
+      if (!scope || rowOrgId !== scope.orgId) return null;
+    }
+    return rowToLead(data);
   } catch {
     return null;
   }
