@@ -136,5 +136,6 @@ export async function POST(req: Request) {
   return NextResponse.json({
     conversationId: result.conversationId,
     callSid: result.callSid,
+    callerId: result.callerId ?? null,
   });
 }

@@ -68,11 +68,24 @@ const CASES: Case[] = [
     expect: { kind: "failure", failureKind: "agent_terminated_on_connect" },
   },
 
-  // ── The 25-second call that prod also filed as "no_answer". ────────────────
+  // ── The 25-second call that prod also filed as "no_answer". With no independent
+  //    signal either way, this must stay the ambiguous system-fault bucket — the
+  //    whole point of voicemailSignal is that it takes real evidence to leave it. ─
   {
-    name: "answered 25s, nobody ever spoke (voicemail; AMD is off)",
+    name: "answered 25s, nobody ever spoke, no voicemail signal → still ambiguous",
     input: { durationSec: 25, hasHumanTurn: false, status: "done" },
     expect: { kind: "failure", failureKind: "answered_no_human_turn" },
+  },
+  // ── Same shape, but the agent's own transcript proved it was voicemail. ────
+  {
+    name: "answered 25s, agent left its voicemail-drop message → voicemail (did not connect)",
+    input: { durationSec: 25, hasHumanTurn: false, status: "done", voicemailSignal: true },
+    expect: { kind: "outcome", outcome: "voicemail" },
+  },
+  {
+    name: "voicemail signal must NOT override a sub-5s kill-on-connect (still a system fault)",
+    input: { durationSec: 2, hasHumanTurn: false, status: "done", voicemailSignal: true },
+    expect: { kind: "failure", failureKind: "agent_terminated_on_connect" },
   },
 
   // ── Genuine homeowner outcomes must STILL be filed as outcomes. ────────────

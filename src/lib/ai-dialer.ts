@@ -5,7 +5,7 @@ import { armProbe, breakerStatus, recordProviderFailure } from "./ai-call-breake
 import { registerAICall } from "./ai-call-store";
 import { isQuotaMessage } from "./call-disposition";
 import { seedAIConversation } from "./db/records";
-import { nextCallerId } from "./dialer/rotation-server";
+import { nextCallerIdWithInfo } from "./dialer/rotation-server";
 import {
   type AgentKey,
   agentVariablesForLead,
@@ -114,6 +114,8 @@ export interface PlaceAiCallResult {
   room?: string;
   customerCallSid?: string;
   error?: string;
+  /** The outbound caller ID this call was actually placed from (rotation-resolved). */
+  callerId?: string | null;
   /**
    * Set when the call was REFUSED before dialing (out of credits, breaker open).
    * Callers must stop the campaign rather than move to the next lead — every
@@ -201,10 +203,22 @@ export async function placeAiCallForLead(opts: {
   const agent = resolveAgentConfig(org, el.key);
   // Caller-ID rotation + local presence, keyed on this rep/owner's counter.
   // Numbers the rep toggled off in the caller-ID picker are excluded first.
-  const rotatedFrom = await nextCallerId(repUserId, org?.settings, toNumber, opts.excludedCallerIds);
+  const callerIdInfo = await nextCallerIdWithInfo(
+    repUserId,
+    org?.settings,
+    toNumber,
+    opts.excludedCallerIds,
+  );
+  const rotatedFrom = callerIdInfo.callerId;
 
   const bridge = isAIBridgeConfigured() && isRestConfigured();
   const dialTarget = bridge ? toE164(elevenLabsConfig.bridgeNumber) : toNumber;
+  // The secondary agent's own dedicated number (when configured) is an ElevenLabs
+  // phone-number ID, not an E.164 string — we don't have the literal number to
+  // report in that one case, so callerId is honestly omitted rather than guessed.
+  const usingDedicatedSecondaryNumber =
+    !bridge && el.key === "secondary" && Boolean(elevenLabsConfig.agentPhoneNumberId2);
+  const reportedCallerId = usingDedicatedSecondaryNumber ? null : rotatedFrom || null;
 
   try {
     const result = await placeOutboundCall({
@@ -252,6 +266,7 @@ export async function placeAiCallForLead(opts: {
       conversationId: result.conversationId,
       callSid: result.callSid,
       leadId: lead.id.startsWith("manual-") ? null : lead.id,
+      orgId: org?.id ?? null,
       leadName,
       phone: toNumber,
       city: [lead.city, lead.state].filter(Boolean).join(", "),
@@ -274,7 +289,13 @@ export async function placeAiCallForLead(opts: {
       overrideMode: result.overrideMode,
     });
 
-    return { conversationId: result.conversationId, callSid: result.callSid, room, customerCallSid };
+    return {
+      conversationId: result.conversationId,
+      callSid: result.callSid,
+      room,
+      customerCallSid,
+      callerId: reportedCallerId,
+    };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
 

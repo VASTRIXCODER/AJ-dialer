@@ -2,8 +2,11 @@
 
 import { createContext, useContext, useEffect, useRef, useState } from "react";
 import type { AiLockReason } from "@/lib/org/settings";
-import type { Lead } from "@/lib/types";
+import type { Lead, LeadGroup } from "@/lib/types";
 import { useDialer } from "@/lib/use-dialer";
+
+/** "all" = no filter, "unsorted" = leadGroup is null, else an exact LeadGroup. */
+export type GroupFilter = "all" | "unsorted" | LeadGroup;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // App-wide dialer provider. Holds the ONE dialer engine (Twilio device + call
@@ -45,6 +48,9 @@ interface DialerContextValue {
   queueForDialer: Lead[];
   campaignFilter: string;
   setCampaignFilter: (id: string) => void;
+  /** Which lead-intake group ("dropbox") to dial — set from the load-leads picker. */
+  groupFilter: GroupFilter;
+  setGroupFilter: (g: GroupFilter) => void;
   /** Narrow the queue to leads this viewer personally uploaded. Meaningful for
    *  supervisors only — reps are already own-scoped server-side. */
   myLeadsOnly: boolean;
@@ -82,6 +88,7 @@ export function DialerProvider({
   const [queue, setQueue] = useState<Lead[]>([]);
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [campaignFilter, setCampaignFilter] = useState("");
+  const [groupFilter, setGroupFilter] = useState<GroupFilter>("all");
   const [myLeadsOnly, setMyLeadsOnly] = useState(false);
   const [loadingLeads, setLoadingLeads] = useState(false);
   // Remember the "My leads" choice per user across sessions, so a rep-manager who
@@ -116,6 +123,9 @@ export function DialerProvider({
   // rather than hiding every lead just because `undefined === undefined`.
   const matchesFilters = (l: Lead) => {
     if (campaignFilter && l.campaignId !== campaignFilter) return false;
+    if (groupFilter === "unsorted" && l.leadGroup) return false;
+    if (groupFilter !== "all" && groupFilter !== "unsorted" && l.leadGroup !== groupFilter)
+      return false;
     // "My leads" = uploaded by me OR assigned to me (assigned_rep_id) — the same
     // scope the server enforces for reps. The `config.userId &&` guard keeps this
     // a no-op without an identity (demo / signed-out) instead of hiding every
@@ -216,6 +226,8 @@ export function DialerProvider({
     queueForDialer,
     campaignFilter,
     setCampaignFilter,
+    groupFilter,
+    setGroupFilter,
     myLeadsOnly,
     setMyLeadsOnly: setMyLeadsOnlyPersisted,
     campaigns,

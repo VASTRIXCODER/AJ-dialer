@@ -269,6 +269,11 @@ export function analyzeConversation(input: {
           "skeptical questions (\"is this a scam?\", \"who are you?\") but still books is 'appointment_booked', " +
           "not negative. Refusing to answer ONE qualifying question is not a decline.\n" +
           "- 'do_not_call' only if they asked to stop being called / be removed.\n" +
+          "- If the transcript shows a voicemail/answering-machine greeting (e.g. \"you've reached the " +
+          "voicemail of…\", \"no one is available to take your call\", \"please leave a message after the " +
+          "tone/beep\") and/or the agent leaving its own message with no live back-and-forth, outcome MUST " +
+          "be 'voicemail' — never 'qualified', 'appointment_booked', or 'not_interested', no matter how " +
+          "warm or specific the greeting sounds. This did not connect to a live person.\n" +
           "Also extract sentiment, qualification data (USD/month; use 0 when not stated), the exact agreed " +
           "time, and follow-ups.\n\n" +
           `${dateLine}\n\n` +

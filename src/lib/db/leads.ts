@@ -616,21 +616,40 @@ export async function getLeadByIdAdmin(id: string): Promise<Lead | null> {
   }
 }
 
-/** Resolve a lead by phone (last 10 digits) with the service-role client. */
-export async function getLeadByPhoneAdmin(phone: string): Promise<Lead | null> {
+/**
+ * Resolve a lead by phone (last 10 digits) with the service-role client.
+ *
+ * Scope to `orgId` whenever it's known — pass it every time you have it. When
+ * it's omitted, the same phone number can legitimately exist as a lead row in
+ * MORE THAN ONE organization (two tenants working overlapping/purchased lead
+ * lists), and this function has no basis to pick between them. Rather than
+ * silently returning whichever row Postgres happens to return first — which is
+ * how one organization's homeowner data previously ended up personalizing
+ * another organization's AI call — it refuses to guess: if the digits match
+ * leads in more than one distinct org, it returns null.
+ */
+export async function getLeadByPhoneAdmin(
+  phone: string,
+  orgId?: string | null,
+): Promise<Lead | null> {
   const digits = last10(phone);
   if (!isAdminConfigured() || digits.length < 10) return null;
   try {
     const admin = createAdminClient();
-    const { data } = await admin
-      .from("leads")
-      .select("*")
-      .ilike("phone", `%${digits}%`)
-      .limit(5);
-    const hit = (data ?? []).find(
+    let q = admin.from("leads").select("*").ilike("phone", `%${digits}%`);
+    if (orgId) q = q.eq("org_id", orgId);
+    const { data } = await q.limit(orgId ? 5 : 20);
+    const matches = (data ?? []).filter(
       (r) => last10(String((r as Row).phone)) === digits,
     );
-    return hit ? rowToLead(hit as Row) : null;
+    if (matches.length === 0) return null;
+    if (!orgId) {
+      const distinctOrgs = new Set(
+        matches.map((r) => String((r as Row).org_id ?? "")).filter(Boolean),
+      );
+      if (distinctOrgs.size > 1) return null; // ambiguous across orgs — don't guess
+    }
+    return rowToLead(matches[0] as Row);
   } catch {
     return null;
   }
@@ -828,61 +847,99 @@ export interface LeadInput {
  * normalization the importer runs client-side) so stored data is clean and
  * dialable. Rows whose phone can't be normalized are still imported (data isn't
  * lost) but counted in `invalidPhone` so the UI can warn they won't be dialable.
+ *
+ * Duplicate phone numbers are skipped, not inserted — checked against every
+ * OTHER lead already in this account's organization (the shared pool a CSV
+ * re-upload or a second rep's list would otherwise silently double), plus
+ * duplicates within the batch itself. The comparison query is the RLS-scoped
+ * session client, so it is structurally incapable of seeing (or matching
+ * against) another organization's leads — dedupe never crosses an org boundary.
  */
 export async function insertLeads(
   rows: LeadInput[],
-): Promise<{ inserted: number; invalidPhone: number; error?: string }> {
+): Promise<{ inserted: number; invalidPhone: number; duplicates: number; error?: string }> {
   if (!isSupabaseConfigured())
-    return { inserted: 0, invalidPhone: 0, error: "Connect Supabase to save leads." };
+    return { inserted: 0, invalidPhone: 0, duplicates: 0, error: "Connect Supabase to save leads." };
   try {
     const supabase = await createClient();
     const {
       data: { user },
     } = await supabase.auth.getUser();
-    if (!user) return { inserted: 0, invalidPhone: 0, error: "You must be signed in." };
+    if (!user) return { inserted: 0, invalidPhone: 0, duplicates: 0, error: "You must be signed in." };
 
     let invalidPhone = 0;
-    const payload = rows
+    const candidates = rows
       .filter((r) => (r.phone && r.phone.trim()) || r.firstName)
       .map((r) => {
         const rawPhone = (r.phone ?? "").trim();
         const normalized = normalizePhone(rawPhone);
         if (rawPhone && !normalized) invalidPhone++;
+        const phone = normalized || rawPhone;
         return {
-          owner_id: user.id,
-          first_name: r.firstName ?? "",
-          last_name: r.lastName ?? "",
-          // Store the clean E.164 when we can; otherwise keep the original so
-          // the lead still carries whatever the user uploaded.
-          phone: normalized || rawPhone,
-          email: r.email || null,
-          address: r.address ?? "",
-          city: r.city ?? "",
-          state: r.state ?? "",
-          zip: r.zip ?? "",
-          utility_provider: r.utilityProvider ?? "",
-          solar_provider: r.solarProvider ?? "",
-          status: r.status ?? "new",
-          utility_bill: r.utilityBill ?? null,
-          solar_payment: r.solarPayment ?? null,
-          campaign_id: r.campaignId ?? null,
-          lead_group: r.leadGroup ?? null,
-          notes: r.notes || null,
+          digits: last10(phone),
+          row: {
+            owner_id: user.id,
+            first_name: r.firstName ?? "",
+            last_name: r.lastName ?? "",
+            // Store the clean E.164 when we can; otherwise keep the original so
+            // the lead still carries whatever the user uploaded.
+            phone,
+            email: r.email || null,
+            address: r.address ?? "",
+            city: r.city ?? "",
+            state: r.state ?? "",
+            zip: r.zip ?? "",
+            utility_provider: r.utilityProvider ?? "",
+            solar_provider: r.solarProvider ?? "",
+            status: r.status ?? "new",
+            utility_bill: r.utilityBill ?? null,
+            solar_payment: r.solarPayment ?? null,
+            campaign_id: r.campaignId ?? null,
+            lead_group: r.leadGroup ?? null,
+            notes: r.notes || null,
+          },
         };
       });
 
+    if (!candidates.length)
+      return { inserted: 0, invalidPhone, duplicates: 0, error: "No valid rows found." };
+
+    // Every phone this org already has on file, from any uploader — the shared
+    // pool means a duplicate is still a duplicate even if a different rep
+    // imported it. Paged: an un-ranged select silently caps at 1,000 rows.
+    const existingRows = await fetchAllPaged(() => supabase.from("leads").select("phone"));
+    const existingDigits = new Set(
+      existingRows.map((r) => last10(String(r.phone))).filter((d) => d.length === 10),
+    );
+
+    let duplicates = 0;
+    const seenInBatch = new Set<string>();
+    const payload = candidates
+      .filter((c) => {
+        // No usable phone digits (e.g. a name-only row) — nothing to dedupe on.
+        if (c.digits.length !== 10) return true;
+        if (existingDigits.has(c.digits) || seenInBatch.has(c.digits)) {
+          duplicates++;
+          return false;
+        }
+        seenInBatch.add(c.digits);
+        return true;
+      })
+      .map((c) => c.row);
+
     if (!payload.length)
-      return { inserted: 0, invalidPhone, error: "No valid rows found." };
+      return { inserted: 0, invalidPhone, duplicates, error: "Every row was already in your organization's leads." };
 
     const { error, count } = await supabase
       .from("leads")
       .insert(payload, { count: "exact" });
-    if (error) return { inserted: 0, invalidPhone, error: error.message };
-    return { inserted: count ?? payload.length, invalidPhone };
+    if (error) return { inserted: 0, invalidPhone, duplicates, error: error.message };
+    return { inserted: count ?? payload.length, invalidPhone, duplicates };
   } catch (e) {
     return {
       inserted: 0,
       invalidPhone: 0,
+      duplicates: 0,
       error: e instanceof Error ? e.message : "Import failed.",
     };
   }

@@ -15,6 +15,7 @@ import {
 import { createAdminClient, isAdminConfigured } from "../supabase/admin";
 import { isSupabaseConfigured } from "../supabase/config";
 import { createClient } from "../supabase/server";
+import { normalizePhone } from "../utils";
 import {
   type OrgBlueprint,
   type OrgSettings,
@@ -950,9 +951,58 @@ const COLUMN_MAP: Record<string, string> = {
   allowJoin: "allow_join",
 };
 
+/**
+ * Every OTHER organization's configured caller-ID numbers, normalized. Used
+ * only to check a candidate number for conflicts — never returned to the
+ * caller, so it can't be used to enumerate another org's numbers wholesale.
+ */
+async function otherOrgsCallerIds(excludeOrgId: string): Promise<Set<string>> {
+  if (!isAdminConfigured()) return new Set();
+  try {
+    const admin = createAdminClient();
+    const { data } = await admin
+      .from("organizations")
+      .select("id, settings")
+      .neq("id", excludeOrgId);
+    const out = new Set<string>();
+    for (const row of (data ?? []) as Row[]) {
+      const s = mergeSettings((row as Row).settings);
+      for (const n of [s.dialing.callerId, ...(s.dialing.callerIds ?? [])]) {
+        const norm = normalizePhone(String(n ?? ""));
+        if (norm) out.add(norm);
+      }
+    }
+    return out;
+  } catch {
+    return new Set();
+  }
+}
+
 export async function updateOrganizationSettings(patch: OrgUpdate): Promise<Result> {
   const auth = await authorize("org.edit");
   if (!auth.ok) return { ok: false, error: auth.error };
+
+  // Each organization needs its own dedicated outbound number(s) — sharing a
+  // caller ID across orgs is exactly the kind of cross-tenant mixing this
+  // platform has to prevent. Checked here, server-side, so it holds regardless
+  // of which admin screen or API caller is saving the setting.
+  if (patch.settings?.dialing) {
+    const d = patch.settings.dialing;
+    const candidates = [d.callerId, ...(d.callerIds ?? [])]
+      .map((n) => normalizePhone(String(n ?? "")))
+      .filter((n): n is string => Boolean(n));
+    if (candidates.length) {
+      const taken = await otherOrgsCallerIds(auth.actor.orgId);
+      const conflict = candidates.find((n) => taken.has(n));
+      if (conflict) {
+        return {
+          ok: false,
+          error: `${conflict} is already configured as a caller ID for another organization on this platform — each organization needs its own dedicated number(s).`,
+        };
+      }
+    }
+  }
+
   const admin = createAdminClient();
   const fields: Record<string, unknown> = {};
   for (const [key, column] of Object.entries(COLUMN_MAP)) {
