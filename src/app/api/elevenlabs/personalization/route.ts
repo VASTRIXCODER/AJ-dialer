@@ -1,12 +1,11 @@
 import { NextResponse } from "next/server";
-import { resolveAgentContextByPhone } from "@/lib/ai/agent-context";
+import { resolveAgentContext } from "@/lib/ai/agent-context";
 import {
   findByCallSid,
   getAICall,
   registerAICall,
   updateAICall,
 } from "@/lib/ai-call-store";
-import { getLeadByPhoneAdmin } from "@/lib/db/leads";
 import { markAIConversationActive } from "@/lib/db/records";
 import {
   NO_OVERRIDES,
@@ -41,9 +40,18 @@ export async function POST(req: Request) {
   const agentIdRaw = String(body.agent_id ?? "");
   const agentKey = agentKeyForId(agentIdRaw);
 
-  // DB-backed (admin client, no user session needed) — this webhook only ever
-  // fires for a real call ElevenLabs just placed, so there's nothing to "demo."
-  const lead = await getLeadByPhoneAdmin(calledNumber);
+  // Resolve the exact lead + organization THIS call belongs to. Every AI call in
+  // this product is placed by us, so conversationId/callSid — set the instant we
+  // placed the call — identify it exactly; phone-number matching is only a
+  // guarded last resort inside resolveAgentContext, never the primary signal, so
+  // two organizations that happen to share a homeowner's number can't cross-wire
+  // (see the comment atop agent-context.ts for the incident this prevents).
+  const { dynamicVariables, agentConfig, lead } = await resolveAgentContext({
+    calledNumber,
+    conversationId: conversationId || undefined,
+    callSid: callSid || undefined,
+    agentKey,
+  });
 
   // ── Who actually answered? ──────────────────────────────────────────────────
   // In BRIDGE mode the agent doesn't dial the homeowner — it dials our Twilio
@@ -91,11 +99,6 @@ export async function POST(req: Request) {
     // Durable advance so the call shows as connected on every instance.
     if (conversationId) await markAIConversationActive(conversationId);
   }
-
-  // Resolve the agent's prompt + voice from the matched lead's organization
-  // (Sunrun/solar → the exact Emily script), plus personalization variables.
-  const { dynamicVariables, agentConfig } =
-    await resolveAgentContextByPhone(calledNumber, agentKey);
 
   // Always return the personalization variables. Only send the override fields
   // THIS agent actually allows — a disallowed override here makes ElevenLabs

@@ -1,6 +1,15 @@
 "use client";
 
-import { AlertTriangle, Loader2, Megaphone, Phone, Settings, UserCheck, Users } from "lucide-react";
+import {
+  AlertTriangle,
+  ListFilter,
+  Loader2,
+  Phone,
+  Settings,
+  UserCheck,
+  Users,
+  X,
+} from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Badge } from "@/components/ui/badge";
@@ -13,6 +22,7 @@ import { CallStage } from "./call-stage";
 import { useDialerContext } from "./dialer-context";
 import { DialerFloor } from "./dialer-floor";
 import { LeadPanel } from "./lead-panel";
+import { groupLabel, LoadLeadsDialog } from "./load-leads-dialog";
 import { QualifyPanel } from "./qualify-panel";
 
 export function DialerClient({
@@ -38,6 +48,8 @@ export function DialerClient({
     queueForDialer,
     campaignFilter,
     setCampaignFilter,
+    groupFilter,
+    setGroupFilter,
     myLeadsOnly,
     setMyLeadsOnly,
     campaigns: ctxCampaigns,
@@ -47,6 +59,7 @@ export function DialerClient({
     activate,
   } = useDialerContext();
   const { state } = dialer;
+  const [showLoadDialog, setShowLoadDialog] = useState(false);
 
   // How many of the currently-loaded leads this viewer personally uploaded —
   // powers the toggle's badge so a supervisor knows what to expect before
@@ -199,13 +212,16 @@ export function DialerClient({
         </Card>
       )}
 
-      {/* Load leads into the dialer on demand + campaign filter */}
+      {/* Load leads into the dialer on demand + the group/campaign picker */}
       <div className="flex flex-wrap items-center gap-2.5">
         <Button
           size="sm"
           variant="outline"
           className="gap-2"
-          onClick={loadLeads}
+          onClick={async () => {
+            const fresh = await loadLeads();
+            if (fresh.length) setShowLoadDialog(true);
+          }}
           disabled={loadingLeads || state.status !== "idle"}
         >
           {loadingLeads ? (
@@ -215,6 +231,44 @@ export function DialerClient({
           )}
           Load leads
         </Button>
+        {queue.length > 0 && (
+          <button
+            type="button"
+            onClick={() => setShowLoadDialog(true)}
+            disabled={state.status !== "idle"}
+            className="flex h-9 items-center gap-1.5 rounded-xl border border-border bg-background/60 px-3 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted disabled:opacity-50"
+            title="Choose which lead group or campaign to dial"
+          >
+            <ListFilter className="h-4 w-4" />
+            Filters
+          </button>
+        )}
+        {groupFilter !== "all" && (
+          <Badge tone="primary" className="gap-1">
+            {groupLabel(groupFilter)}
+            <button
+              type="button"
+              onClick={() => setGroupFilter("all")}
+              aria-label="Clear group filter"
+              className="ml-0.5 hover:opacity-70"
+            >
+              <X className="h-3 w-3" />
+            </button>
+          </Badge>
+        )}
+        {campaignFilter && (
+          <Badge tone="accent" className="gap-1">
+            {campaignsForSelect.find((c) => c.id === campaignFilter)?.name ?? "Campaign"}
+            <button
+              type="button"
+              onClick={() => setCampaignFilter("")}
+              aria-label="Clear campaign filter"
+              className="ml-0.5 hover:opacity-70"
+            >
+              <X className="h-3 w-3" />
+            </button>
+          </Badge>
+        )}
         {config.dialScope === "org" && (
           <button
             type="button"
@@ -252,27 +306,6 @@ export function DialerClient({
           {config.dialScope === "org" && !myLeadsOnly ? "org" : "of your"} lead
           {queueForDialer.length === 1 ? "" : "s"} ready to dial
         </span>
-        {campaignsForSelect.length > 0 && (
-          <>
-            <span className="ml-1 flex items-center gap-1.5 text-sm font-medium text-muted-foreground">
-              <Megaphone className="h-4 w-4" />
-              Campaign
-            </span>
-            <select
-              value={campaignFilter}
-              onChange={(e) => setCampaignFilter(e.target.value)}
-              disabled={state.status !== "idle"}
-              className="h-9 rounded-xl border border-border bg-background/60 px-2.5 text-sm font-medium transition-colors focus-visible:border-primary/50 focus-visible:outline-none disabled:opacity-50"
-            >
-              <option value="">All leads</option>
-              {campaignsForSelect.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
-                </option>
-              ))}
-            </select>
-          </>
-        )}
         {loadMsg && (
           <span className="basis-full text-xs text-muted-foreground">{loadMsg}</span>
         )}
@@ -369,6 +402,18 @@ export function DialerClient({
           // Backing out files nothing at all: the rep mis-clicked, and the call
           // stays open on the same lead.
           onCancel={() => setBooking(null)}
+        />
+      )}
+
+      {showLoadDialog && (
+        <LoadLeadsDialog
+          leads={queue}
+          campaigns={campaignsForSelect}
+          campaignFilter={campaignFilter}
+          onCampaignFilterChange={setCampaignFilter}
+          groupFilter={groupFilter}
+          onGroupFilterChange={setGroupFilter}
+          onClose={() => setShowLoadDialog(false)}
         />
       )}
     </div>

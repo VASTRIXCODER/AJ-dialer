@@ -266,6 +266,7 @@ export async function placeAiCallForLead(opts: {
       conversationId: result.conversationId,
       callSid: result.callSid,
       leadId: lead.id.startsWith("manual-") ? null : lead.id,
+      orgId: org?.id ?? null,
       leadName,
       phone: toNumber,
       city: [lead.city, lead.state].filter(Boolean).join(", "),

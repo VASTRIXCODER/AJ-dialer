@@ -22,6 +22,8 @@ export interface AICall {
   conversationId: string;
   callSid: string | null;
   leadId: string | null;
+  /** The organization this call was placed for — set at registration when known. */
+  orgId?: string | null;
   leadName: string;
   phone: string;
   city: string;
@@ -80,6 +82,7 @@ export function registerAICall(input: {
   conversationId: string;
   callSid: string | null;
   leadId: string | null;
+  orgId?: string | null;
   leadName: string;
   phone: string;
   city?: string;
@@ -91,6 +94,7 @@ export function registerAICall(input: {
     conversationId: input.conversationId,
     callSid: input.callSid,
     leadId: input.leadId,
+    orgId: input.orgId ?? null,
     leadName: input.leadName,
     phone: input.phone,
     city: input.city ?? "",

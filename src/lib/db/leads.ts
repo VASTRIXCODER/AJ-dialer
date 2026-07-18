@@ -616,21 +616,40 @@ export async function getLeadByIdAdmin(id: string): Promise<Lead | null> {
   }
 }
 
-/** Resolve a lead by phone (last 10 digits) with the service-role client. */
-export async function getLeadByPhoneAdmin(phone: string): Promise<Lead | null> {
+/**
+ * Resolve a lead by phone (last 10 digits) with the service-role client.
+ *
+ * Scope to `orgId` whenever it's known — pass it every time you have it. When
+ * it's omitted, the same phone number can legitimately exist as a lead row in
+ * MORE THAN ONE organization (two tenants working overlapping/purchased lead
+ * lists), and this function has no basis to pick between them. Rather than
+ * silently returning whichever row Postgres happens to return first — which is
+ * how one organization's homeowner data previously ended up personalizing
+ * another organization's AI call — it refuses to guess: if the digits match
+ * leads in more than one distinct org, it returns null.
+ */
+export async function getLeadByPhoneAdmin(
+  phone: string,
+  orgId?: string | null,
+): Promise<Lead | null> {
   const digits = last10(phone);
   if (!isAdminConfigured() || digits.length < 10) return null;
   try {
     const admin = createAdminClient();
-    const { data } = await admin
-      .from("leads")
-      .select("*")
-      .ilike("phone", `%${digits}%`)
-      .limit(5);
-    const hit = (data ?? []).find(
+    let q = admin.from("leads").select("*").ilike("phone", `%${digits}%`);
+    if (orgId) q = q.eq("org_id", orgId);
+    const { data } = await q.limit(orgId ? 5 : 20);
+    const matches = (data ?? []).filter(
       (r) => last10(String((r as Row).phone)) === digits,
     );
-    return hit ? rowToLead(hit as Row) : null;
+    if (matches.length === 0) return null;
+    if (!orgId) {
+      const distinctOrgs = new Set(
+        matches.map((r) => String((r as Row).org_id ?? "")).filter(Boolean),
+      );
+      if (distinctOrgs.size > 1) return null; // ambiguous across orgs — don't guess
+    }
+    return rowToLead(matches[0] as Row);
   } catch {
     return null;
   }
