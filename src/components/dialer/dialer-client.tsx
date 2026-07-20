@@ -2,9 +2,11 @@
 
 import {
   AlertTriangle,
+  CalendarCheck2,
   ListFilter,
   Loader2,
   Phone,
+  PhoneCall,
   Settings,
   UserCheck,
   Users,
@@ -16,8 +18,10 @@ import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import type { BookedLead } from "@/lib/db/leads";
 import type { CallOutcome, Lead } from "@/lib/types";
 import { BookAppointmentDialog, type BookedAppointment } from "./book-appointment-dialog";
+import { BookedLeadsPanel } from "./booked-leads-panel";
 import { CallStage } from "./call-stage";
 import { useDialerContext } from "./dialer-context";
 import { DialerFloor } from "./dialer-floor";
@@ -60,6 +64,36 @@ export function DialerClient({
   } = useDialerContext();
   const { state } = dialer;
   const [showLoadDialog, setShowLoadDialog] = useState(false);
+
+  // ── Booked tab ────────────────────────────────────────────────────────────
+  // Leads with an appointment already on the calendar. getDialQueue already
+  // excludes them from the dial queue (status "appointment" isn't in DIALABLE),
+  // so this is purely a visibility tab — polling independently of the dial
+  // engine, the same pattern DialerFloor uses.
+  const [tab, setTab] = useState<"queue" | "booked">("queue");
+  const [bookedLeads, setBookedLeads] = useState<BookedLead[]>([]);
+  const [bookedLoading, setBookedLoading] = useState(true);
+  useEffect(() => {
+    let alive = true;
+    const load = async () => {
+      try {
+        const r = await fetch("/api/leads/booked", { cache: "no-store" });
+        if (!r.ok) return;
+        const j = (await r.json().catch(() => ({}))) as { leads?: BookedLead[] };
+        if (alive) setBookedLeads(Array.isArray(j.leads) ? j.leads : []);
+      } catch {
+        /* transient — keep the last snapshot */
+      } finally {
+        if (alive) setBookedLoading(false);
+      }
+    };
+    void load();
+    const t = setInterval(load, 15000);
+    return () => {
+      alive = false;
+      clearInterval(t);
+    };
+  }, []);
 
   // How many of the currently-loaded leads this viewer personally uploaded —
   // powers the toggle's badge so a supervisor knows what to expect before
@@ -212,6 +246,50 @@ export function DialerClient({
         </Card>
       )}
 
+      {/* Dial queue vs already-booked leads — booked leads are skipped by the
+          queue automatically; this tab is where they're visible instead of
+          just vanishing on the next reload. */}
+      <div className="flex items-center gap-1.5 border-b border-border/60">
+        <button
+          type="button"
+          onClick={() => setTab("queue")}
+          className={cn(
+            "flex items-center gap-1.5 border-b-2 px-3 py-2 text-sm font-medium transition-colors",
+            tab === "queue"
+              ? "border-primary text-foreground"
+              : "border-transparent text-muted-foreground hover:text-foreground",
+          )}
+        >
+          <PhoneCall className="h-4 w-4" />
+          Dial queue
+        </button>
+        <button
+          type="button"
+          onClick={() => setTab("booked")}
+          className={cn(
+            "flex items-center gap-1.5 border-b-2 px-3 py-2 text-sm font-medium transition-colors",
+            tab === "booked"
+              ? "border-primary text-foreground"
+              : "border-transparent text-muted-foreground hover:text-foreground",
+          )}
+        >
+          <CalendarCheck2 className="h-4 w-4" />
+          Booked
+          <Badge tone={tab === "booked" ? "success" : "neutral"} className="ml-0.5">
+            {bookedLeads.length}
+          </Badge>
+        </button>
+      </div>
+
+      {/* Shared live floor — who's dialing + calls today, org-wide */}
+      <DialerFloor />
+
+      {tab === "booked" ? (
+        <Card className="overflow-hidden">
+          <BookedLeadsPanel leads={bookedLeads} loading={bookedLoading} />
+        </Card>
+      ) : (
+        <>
       {/* Load leads into the dialer on demand + the group/campaign picker */}
       <div className="flex flex-wrap items-center gap-2.5">
         <Button
@@ -311,9 +389,6 @@ export function DialerClient({
         )}
       </div>
 
-      {/* Shared live floor — who's dialing + calls today, org-wide */}
-      <DialerFloor />
-
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-12">
         <Card className="overflow-hidden lg:col-span-3">
           <LeadPanel
@@ -384,6 +459,8 @@ export function DialerClient({
           </div>
         </Card>
       </div>
+        </>
+      )}
 
       {booking && (
         <BookAppointmentDialog

@@ -14,6 +14,17 @@ import { canActOn, getScope } from "./scope";
 
 const DIALABLE: LeadStatus[] = ["new", "no_answer", "callback"];
 
+/**
+ * Strip the `+00` Postgres tacks onto `appointments.scheduled_at` (declared
+ * timestamptz but holding a floating wall-clock — see
+ * src/lib/appointments/time.ts for the invariant). Mirrors the identical local
+ * helper in db/pipeline.ts; not shared because it's three lines.
+ */
+const toFloatingLocal = (v: string): string => {
+  const m = /^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2}(?::\d{2})?)/.exec(v);
+  return m ? `${m[1]}T${m[2]}` : v;
+};
+
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 type Row = Record<string, unknown>;
@@ -738,6 +749,115 @@ export async function getDialQueue(): Promise<Lead[]> {
       return q.order("ai_score", { ascending: false, nullsFirst: false }).order("id", { ascending: true });
     });
     return dialable(rows.map((r) => rowToLead(r as Row)));
+  } catch {
+    return [];
+  }
+}
+
+export interface BookedLead extends Lead {
+  appointmentId: string | null;
+  /** Floating wall-clock string, or null when the booking has no pinned time yet. */
+  scheduledAt: string | null;
+  /** The AI's human label ("Tomorrow afternoon") when there's no exact time. */
+  scheduledLabel: string;
+}
+
+/** Attach each lead's most recent non-cancelled appointment (time + id). */
+async function withAppointmentInfo(leads: Lead[]): Promise<BookedLead[]> {
+  const empty = (l: Lead): BookedLead => ({
+    ...l,
+    appointmentId: null,
+    scheduledAt: null,
+    scheduledLabel: "",
+  });
+  if (!leads.length || !isAdminConfigured()) return leads.map(empty);
+  try {
+    const admin = createAdminClient();
+    const { data } = await admin
+      .from("appointments")
+      .select("id,lead_id,scheduled_at,scheduled_label,status,created_at")
+      .in("lead_id", leads.map((l) => l.id))
+      .neq("status", "cancelled")
+      .order("created_at", { ascending: false });
+    const byLead = new Map<string, Row>();
+    for (const r of (data ?? []) as Row[]) {
+      const leadId = String(r.lead_id ?? "");
+      // Rows arrive newest-first, so the first hit per lead is the latest booking.
+      if (leadId && !byLead.has(leadId)) byLead.set(leadId, r);
+    }
+    return leads.map((l) => {
+      const a = byLead.get(l.id);
+      if (!a) return empty(l);
+      return {
+        ...l,
+        appointmentId: String(a.id),
+        scheduledAt: a.scheduled_at ? toFloatingLocal(String(a.scheduled_at)) : null,
+        scheduledLabel: String(a.scheduled_label ?? ""),
+      };
+    });
+  } catch {
+    return leads.map(empty);
+  }
+}
+
+/**
+ * Leads that already have an appointment booked — the exact leads `getDialQueue`
+ * excludes (status "appointment" isn't in DIALABLE), in the SAME scope (rep →
+ * own, supervisor → org pool). Backs the dialer's "Booked" tab: instead of a
+ * converted homeowner just vanishing from the queue on the next reload, they
+ * land here — visibly skipped, not silently dropped. Sorted soonest-first, with
+ * unscheduled ("sometime next week") bookings last.
+ */
+export async function getBookedLeads(): Promise<BookedLead[]> {
+  const sort = (leads: BookedLead[]) =>
+    leads.sort((a, b) => {
+      if (a.scheduledAt && b.scheduledAt) return a.scheduledAt < b.scheduledAt ? -1 : 1;
+      if (a.scheduledAt) return -1;
+      if (b.scheduledAt) return 1;
+      return 0;
+    });
+
+  if (!isSupabaseConfigured())
+    return sort(await withAppointmentInfo(fallbackLeads.filter((l) => l.status === "appointment")));
+  try {
+    const supabase = await createClient();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) return [];
+
+    const { data: prof } = await supabase
+      .from("profiles")
+      .select("org_id, role")
+      .eq("id", user.id)
+      .maybeSingle();
+    const orgId = prof?.org_id ? String(prof.org_id) : null;
+    const supervisor =
+      Boolean(orgId) && isSupervisorRole(prof?.role) && isAdminConfigured();
+
+    if (supervisor) {
+      const admin = createAdminClient();
+      const rows = await fetchAllPaged(() =>
+        admin
+          .from("leads")
+          .select("*")
+          .eq("org_id", orgId as string)
+          .eq("status", "appointment")
+          .order("id", { ascending: true }),
+      );
+      return sort(await withAppointmentInfo(rows.map((r) => rowToLead(r as Row))));
+    }
+
+    const rows = await fetchAllPaged(() => {
+      let q = supabase
+        .from("leads")
+        .select("*")
+        .or(`owner_id.eq.${user.id},assigned_rep_id.eq.${user.id}`)
+        .eq("status", "appointment");
+      if (orgId) q = q.eq("org_id", orgId);
+      return q.order("id", { ascending: true });
+    });
+    return sort(await withAppointmentInfo(rows.map((r) => rowToLead(r as Row))));
   } catch {
     return [];
   }
