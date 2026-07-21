@@ -482,6 +482,21 @@ export function OrgSettingsForm({
             onChange={(v) => setDialing({ ...dialing, localPresence: v })}
           />
           <Toggle
+            label="Double-dial no-answers (AI)"
+            hint="When the AI bot gets a no-answer, ring the same number once more a few seconds later before moving on. Two quick missed calls read as an important call and lift pickup rate."
+            checked={dialing.doubleDial ?? false}
+            onChange={(v) => setDialing({ ...dialing, doubleDial: v })}
+          />
+          {(dialing.doubleDial ?? false) && (
+            <NumberField
+              label="Double-dial gap (sec)"
+              value={dialing.doubleDialGapSec ?? 15}
+              onChange={(n) =>
+                setDialing({ ...dialing, doubleDialGapSec: Math.max(5, Math.min(60, n)) })
+              }
+            />
+          )}
+          <Toggle
             label="Record calls"
             checked={dialing.recording}
             onChange={(v) => setDialing({ ...dialing, recording: v })}

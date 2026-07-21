@@ -37,6 +37,9 @@ export interface DialerConfig {
   callerIdPool?: string[];
   /** Rotation cadence for the pool above (calls per number before advancing). */
   callerIdRotateEvery?: number;
+  /** AI double-dial: re-ring a no-answer once after `doubleDialGapSec` before moving on. */
+  doubleDial?: boolean;
+  doubleDialGapSec?: number;
 }
 
 type Campaign = { id: string; name: string };
@@ -147,6 +150,8 @@ export function DialerProvider({
     config.userId,
     activated,
     config.maxAiConcurrency ?? 10,
+    config.doubleDial ?? false,
+    config.doubleDialGapSec ?? 15,
   );
   const { state } = dialer;
 

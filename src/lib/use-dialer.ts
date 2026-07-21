@@ -237,6 +237,10 @@ export function useDialer(
   enabled = true,
   /** The org's AI concurrency allowance (their voice plan's live-call limit). */
   maxAiConcurrency = 10,
+  /** AI double-dial: re-ring a NO-ANSWER once, `doubleDialGapSec` later, before
+   *  moving on. Two quick missed calls read as important and lift pickup. */
+  doubleDial = false,
+  doubleDialGapSec = 15,
 ) {
   const [state, setState] = useState<DialerState>({
     status: "idle",
@@ -307,6 +311,23 @@ export function useDialer(
   useEffect(() => {
     maxAiRef.current = maxAiConcurrency;
   }, [maxAiConcurrency]);
+  // ── AI double-dial (double-tap) ────────────────────────────────────────────
+  const doubleDialRef = useRef(doubleDial);
+  const doubleDialGapMsRef = useRef(Math.max(5, doubleDialGapSec) * 1000);
+  useEffect(() => {
+    doubleDialRef.current = doubleDial;
+    doubleDialGapMsRef.current = Math.max(5, doubleDialGapSec) * 1000;
+  }, [doubleDial, doubleDialGapSec]);
+  /** How many times we've dialed each lead THIS session (1 = first, 2 = the tap). */
+  const attemptsRef = useRef<Map<string, number>>(new Map());
+  /** conversationId → the lead it was for, so a no-answer can find its lead to re-ring. */
+  const convLeadRef = useRef<Map<string, Lead>>(new Map());
+  /** Leads waiting for their second (double-tap) dial, keyed by lead id. Each also
+   *  holds a `redial:<id>` slot in inflightRef through the gap, so the pump keeps a
+   *  line free for the re-ring instead of racing ahead to the next lead. */
+  const redialsRef = useRef<Map<string, { dueAt: number; lead: Lead }>>(new Map());
+  /** Fires each pending re-ring at its own due time (see tickRedials). */
+  const redialTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const aiTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const humanIdRef = useRef<string | null>(null);
   // Monotonically incremented on every AI session start/end so in-flight fetch
@@ -736,6 +757,9 @@ export function useDialer(
       stopTick();
       stopPoll();
       stopAITimer();
+      // Clear the double-tap timer directly (purgeRedials is declared later, and
+      // on unmount the whole hook goes anyway — only the live timer needs killing).
+      if (redialTimerRef.current) clearTimeout(redialTimerRef.current);
       clearHumanPresence();
       clearMyPresence();
     },
@@ -872,11 +896,181 @@ export function useDialer(
 
   // ── AI calling (default) ──────────────────────────────────────────────────
 
+  /** Abandon every pending double-tap re-ring (out of credits, session ended, …). */
+  const purgeRedials = useCallback(() => {
+    if (redialTimerRef.current) {
+      clearTimeout(redialTimerRef.current);
+      redialTimerRef.current = null;
+    }
+    for (const leadId of redialsRef.current.keys()) {
+      inflightRef.current.delete(`redial:${leadId}`);
+      slotAgeRef.current.delete(`redial:${leadId}`);
+    }
+    redialsRef.current.clear();
+  }, []);
+
+  /**
+   * Place ONE AI call for a lead — the shared dial used by BOTH the new-lead pump
+   * and the double-tap re-ring, so an attempt and its re-ring behave identically
+   * (same reservation, credit-halt handling, live-call bookkeeping). Reserves the
+   * line up front, counts the dial + the per-lead attempt, then swaps the
+   * reservation for the real conversation id (recording which lead it was for, so
+   * a no-answer can find its way back here for the tap).
+   */
+  const launchAICall = useCallback(
+    async (l: Lead, gen: number) => {
+      const slotKey = `lead:${l.id}`;
+      inflightRef.current.add(slotKey);
+      slotAgeRef.current.set(slotKey, Date.now());
+      attemptsRef.current.set(l.id, (attemptsRef.current.get(l.id) ?? 0) + 1);
+      recordDials(1);
+      const leadName = `${l.firstName} ${l.lastName}`.trim() || formatPhone(l.phone);
+      setState((s) =>
+        sessionGenRef.current !== gen
+          ? s
+          : {
+              ...s,
+              status: "ai",
+              error: null,
+              callsThisSession: s.callsThisSession + 1,
+              dialsToday: dialsTodayRef.current,
+              aiCampaign: autoDialRef.current ? "running" : s.aiCampaign,
+              aiCalls: [
+                { conversationId: null, leadId: l.id, leadName },
+                ...s.aiCalls,
+              ].slice(0, 40),
+            },
+      );
+      try {
+        const res = await fetch("/api/elevenlabs/call", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            leadId: l.id,
+            agent: activeAgentRef.current,
+            excludedCallerIds: excludedCallerIdsRef.current.length
+              ? excludedCallerIdsRef.current
+              : undefined,
+          }),
+        });
+        const json = (await res.json().catch(() => ({}))) as {
+          conversationId?: string;
+          error?: string;
+          halted?: boolean;
+          callerId?: string | null;
+        };
+
+        // The server REFUSED to dial (out of credits / breaker open). Stop the
+        // whole campaign — including any owed re-rings — every further call would
+        // fail identically and spend a real homeowner for nothing.
+        if (json.halted) {
+          inflightRef.current.delete(slotKey);
+          slotAgeRef.current.delete(slotKey);
+          stopAITimer();
+          autoDialRef.current = false;
+          purgeRedials();
+          setState((s) =>
+            sessionGenRef.current !== gen
+              ? s
+              : {
+                  ...s,
+                  autoDial: false,
+                  aiCampaign: "idle",
+                  error: json.error ?? "AI dialing halted.",
+                },
+          );
+          return;
+        }
+
+        inflightRef.current.delete(slotKey);
+        slotAgeRef.current.delete(slotKey);
+        if (res.ok && json.conversationId) {
+          inflightRef.current.add(json.conversationId);
+          slotAgeRef.current.set(json.conversationId, Date.now());
+          convLeadRef.current.set(json.conversationId, l);
+        }
+        setState((s) => {
+          if (sessionGenRef.current !== gen) return s;
+          return {
+            ...s,
+            aiCalls: s.aiCalls.map((c) =>
+              c.leadId === l.id && c.conversationId === null && !c.error
+                ? {
+                    ...c,
+                    conversationId: json.conversationId ?? null,
+                    error: res.ok ? undefined : json.error ?? "Call failed",
+                    callerId: json.callerId ?? null,
+                  }
+                : c,
+            ),
+          };
+        });
+      } catch {
+        inflightRef.current.delete(slotKey);
+        slotAgeRef.current.delete(slotKey);
+        setState((s) => {
+          if (sessionGenRef.current !== gen) return s;
+          return {
+            ...s,
+            aiCalls: s.aiCalls.map((c) =>
+              c.leadId === l.id && c.conversationId === null && !c.error
+                ? { ...c, error: "Network error" }
+                : c,
+            ),
+          };
+        });
+      }
+    },
+    [purgeRedials, recordDials, stopAITimer],
+  );
+
+  /**
+   * Fire every DUE double-tap re-ring, then re-arm for the next one at its exact
+   * due time. Runs on its own timer (not the new-lead pump) so a re-ring lands
+   * ~gap seconds after the miss even at one line at a time, and even when
+   * auto-dial is off. Each re-ring gave up its reserved `redial:` slot for a live
+   * line here, so it never exceeds the concurrency ceiling.
+   */
+  const tickRedials = useCallback(() => {
+    if (redialTimerRef.current) {
+      clearTimeout(redialTimerRef.current);
+      redialTimerRef.current = null;
+    }
+    if (!redialsRef.current.size) return;
+    const now = Date.now();
+    const gen = sessionGenRef.current;
+    let soonest = Infinity;
+    for (const [leadId, r] of [...redialsRef.current.entries()]) {
+      if (r.dueAt <= now) {
+        redialsRef.current.delete(leadId);
+        inflightRef.current.delete(`redial:${leadId}`);
+        slotAgeRef.current.delete(`redial:${leadId}`);
+        void launchAICall(r.lead, gen);
+      } else {
+        soonest = Math.min(soonest, r.dueAt);
+      }
+    }
+    if (redialsRef.current.size && soonest < Infinity) {
+      redialTimerRef.current = setTimeout(
+        () => tickRedials(),
+        Math.max(250, soonest - Date.now()),
+      );
+    }
+  }, [launchAICall]);
+  const tickRedialsRef = useRef(tickRedials);
+  useEffect(() => {
+    tickRedialsRef.current = tickRedials;
+  }, [tickRedials]);
+
   /**
    * Retire slots whose calls have ended, so the pump can top the floor back up.
    * Force-releases any slot older than AI_SLOT_MAX_MS — otherwise a conversation
    * that never reaches a terminal state holds its line forever and the campaign
    * quietly stalls at N-1, which presents as "the dialer just stopped".
+   *
+   * Also the trigger point for the double-tap: a call that ended as a genuine
+   * NO-ANSWER (and only that — never a real conversation, never a system failure)
+   * gets one re-ring queued after the gap, holding the line it just freed.
    */
   const reapInflight = useCallback(async () => {
     const now = Date.now();
@@ -884,9 +1078,12 @@ export function useDialer(
       if (now - at > AI_SLOT_MAX_MS) {
         inflightRef.current.delete(id);
         slotAgeRef.current.delete(id);
+        if (id.startsWith("redial:")) redialsRef.current.delete(id.slice(7));
       }
     }
-    const ids = [...inflightRef.current].filter((id) => !id.startsWith("lead:"));
+    const ids = [...inflightRef.current].filter(
+      (id) => !id.startsWith("lead:") && !id.startsWith("redial:"),
+    );
     if (!ids.length) return;
     try {
       const res = await fetch("/api/elevenlabs/inflight", {
@@ -894,36 +1091,61 @@ export function useDialer(
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ ids }),
       });
-      const json = (await res.json().catch(() => ({}))) as { active?: string[] };
+      const json = (await res.json().catch(() => ({}))) as {
+        active?: string[];
+        ended?: { id: string; outcome: string | null }[];
+      };
       const live = new Set(json.active ?? []);
+      const endedOutcome = new Map(
+        (json.ended ?? []).map((e) => [e.id, e.outcome] as const),
+      );
+      let scheduled = false;
       for (const id of ids) {
-        if (!live.has(id)) {
-          inflightRef.current.delete(id);
-          slotAgeRef.current.delete(id);
+        if (live.has(id)) continue;
+        inflightRef.current.delete(id);
+        slotAgeRef.current.delete(id);
+        const lead = convLeadRef.current.get(id);
+        convLeadRef.current.delete(id);
+        if (
+          doubleDialRef.current &&
+          endedOutcome.get(id) === "no_answer" &&
+          lead &&
+          (attemptsRef.current.get(lead.id) ?? 0) < 2 &&
+          !redialsRef.current.has(lead.id)
+        ) {
+          // Hold the freed line for the re-ring instead of letting the pump race
+          // ahead to a new lead — that's what makes the two calls land back to back.
+          redialsRef.current.set(lead.id, {
+            dueAt: now + doubleDialGapMsRef.current,
+            lead,
+          });
+          inflightRef.current.add(`redial:${lead.id}`);
+          slotAgeRef.current.set(`redial:${lead.id}`, now);
+          scheduled = true;
         }
       }
+      if (scheduled) tickRedialsRef.current();
     } catch {
       /* the age guard above is the backstop */
     }
   }, []);
 
   /**
-   * The pump. Tops the floor up to `parallelCount` LIVE calls — no more.
+   * The new-lead pump. Tops the floor up to `parallelCount` LIVE calls — no more.
    *
-   * This used to launch N fresh calls every 8 seconds regardless of whether the
-   * previous ones had ended. An AI call runs 2-5 minutes, so "3X" meant 3 NEW
-   * calls every 8 seconds — about 22 a minute, peaking near 70 simultaneous
-   * within ten minutes (and ~230 at "10X"). It was a throughput dial wearing a
-   * concurrency label, and it is how a 10-concurrent plan got flooded and a
-   * credit balance drained in an afternoon.
-   *
-   * Now it asks how many lines are free and launches exactly that many.
+   * It asks how many lines are free and launches exactly that many (never N fresh
+   * calls every tick regardless of whether the last ones ended — that throughput-
+   * dial-wearing-a-concurrency-label is how a 10-line plan got flooded to ~70
+   * simultaneous). Double-tap re-rings run on their OWN timer (tickRedials); their
+   * held `redial:` reservations count toward the ceiling here, so the pump keeps a
+   * line free for a re-ring instead of launching a new lead on top of it.
    */
   const launchAIBatch = useCallback(async () => {
     await reapInflight();
+    const gen = sessionGenRef.current;
     const slots = Math.max(0, parallelRef.current - inflightRef.current.size);
 
-    // Every line is busy — come back when one frees up. Launch NOTHING.
+    // Every line is busy (or held for a pending re-ring) — come back when one frees.
     if (slots === 0) {
       if (autoDialRef.current) {
         aiTimerRef.current = setTimeout(() => void launchAIBatch(), AI_PUMP_MS);
@@ -934,8 +1156,9 @@ export function useDialer(
     const start = aiCursorRef.current;
     const leads = queue.slice(start, start + slots);
     if (!leads.length) {
-      // Out of leads — but only "done" once the calls still on the wire finish.
-      if (inflightRef.current.size > 0) {
+      // Out of NEW leads — but don't declare "done" while calls are live OR a
+      // double-tap is still owed.
+      if (inflightRef.current.size > 0 || redialsRef.current.size > 0) {
         if (autoDialRef.current) {
           aiTimerRef.current = setTimeout(() => void launchAIBatch(), AI_PUMP_MS);
         }
@@ -947,142 +1170,32 @@ export function useDialer(
     }
     aiCursorRef.current = start + leads.length;
     queueIndexRef.current = Math.min(aiCursorRef.current, queue.length);
-
-    // Capture the session generation so stale callbacks from a prior session
-    // (e.g. if endAISession() fires while fetch() is in-flight) are discarded.
-    const gen = sessionGenRef.current;
-
-    const pending: AiLaunch[] = leads.map((l) => ({
-      conversationId: null,
-      leadId: l.id,
-      leadName: `${l.firstName} ${l.lastName}`.trim() || formatPhone(l.phone),
-    }));
-
-    recordDials(leads.length);
-    setState((s) => ({
-      ...s,
-      status: "ai",
-      error: null,
+    patch({
       queueIndex: queueIndexRef.current,
-      callsThisSession: s.callsThisSession + leads.length,
-      dialsToday: dialsTodayRef.current,
       aiCampaign: autoDialRef.current ? "running" : "idle",
-      aiCalls: [...pending, ...s.aiCalls].slice(0, 40),
-    }));
+    });
 
-    // Reserve a slot per lead the INSTANT we launch, keyed by lead id until the
-    // real conversationId comes back. Counting only calls that had already
-    // returned an id would let the next tick see empty lines and over-launch.
-    for (const l of leads) {
-      inflightRef.current.add(`lead:${l.id}`);
-      slotAgeRef.current.set(`lead:${l.id}`, Date.now());
-    }
-
-    await Promise.all(
-      leads.map(async (l) => {
-        const slotKey = `lead:${l.id}`;
-        try {
-          const res = await fetch("/api/elevenlabs/call", {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({
-              leadId: l.id,
-              agent: activeAgentRef.current,
-              excludedCallerIds: excludedCallerIdsRef.current.length
-                ? excludedCallerIdsRef.current
-                : undefined,
-            }),
-          });
-          const json = (await res.json().catch(() => ({}))) as {
-            conversationId?: string;
-            error?: string;
-            halted?: boolean;
-            callerId?: string | null;
-          };
-
-          // The server REFUSED to dial (out of credits / breaker open). Stop the
-          // whole campaign — every further call would fail identically and spend
-          // a real homeowner for nothing.
-          if (json.halted) {
-            inflightRef.current.delete(slotKey);
-            slotAgeRef.current.delete(slotKey);
-            stopAITimer();
-            autoDialRef.current = false;
-            setState((s) =>
-              sessionGenRef.current !== gen
-                ? s
-                : {
-                    ...s,
-                    autoDial: false,
-                    aiCampaign: "idle",
-                    error: json.error ?? "AI dialing halted.",
-                  },
-            );
-            return;
-          }
-
-          // Hand the slot to the real conversation id so reapInflight() can retire
-          // it when the call ends. A call that failed to launch frees its line now.
-          inflightRef.current.delete(slotKey);
-          slotAgeRef.current.delete(slotKey);
-          if (res.ok && json.conversationId) {
-            inflightRef.current.add(json.conversationId);
-            slotAgeRef.current.set(json.conversationId, Date.now());
-          }
-
-          setState((s) => {
-            if (sessionGenRef.current !== gen) return s;
-            return {
-              ...s,
-              aiCalls: s.aiCalls.map((c) =>
-                c.leadId === l.id && c.conversationId === null && !c.error
-                  ? {
-                      ...c,
-                      conversationId: json.conversationId ?? null,
-                      error: res.ok ? undefined : json.error ?? "Call failed",
-                      callerId: json.callerId ?? null,
-                    }
-                  : c,
-              ),
-            };
-          });
-        } catch {
-          inflightRef.current.delete(slotKey);
-          slotAgeRef.current.delete(slotKey);
-          setState((s) => {
-            if (sessionGenRef.current !== gen) return s;
-            return {
-              ...s,
-              aiCalls: s.aiCalls.map((c) =>
-                c.leadId === l.id && c.conversationId === null && !c.error
-                  ? { ...c, error: "Network error" }
-                  : c,
-              ),
-            };
-          });
-        }
-      }),
-    );
+    await Promise.all(leads.map((l) => launchAICall(l, gen)));
 
     // Keep pumping while auto-dial is on. The next tick re-checks free lines, so
     // this can't run away: if all N are still busy it launches nothing.
     if (autoDialRef.current && aiCursorRef.current < queue.length) {
       aiTimerRef.current = setTimeout(() => void launchAIBatch(), AI_PUMP_MS);
     } else if (aiCursorRef.current >= queue.length) {
-      // End of this pass. Wait for the calls still on the wire before declaring
-      // the lap over — otherwise the parent refetches while N calls are live and
-      // the next lap starts on top of them, stacking concurrency lap over lap.
-      if (inflightRef.current.size > 0 && autoDialRef.current) {
+      // End of this pass. Wait for calls on the wire AND any owed re-rings before
+      // declaring the lap over — otherwise the parent refetches mid-flight and the
+      // next lap stacks on top of live calls.
+      if (
+        (inflightRef.current.size > 0 || redialsRef.current.size > 0) &&
+        autoDialRef.current
+      ) {
         aiTimerRef.current = setTimeout(() => void launchAIBatch(), AI_PUMP_MS);
         return;
       }
-      // Bump queueLap so the parent (which owns fetching the queue) refetches —
-      // dropping anything just dispositioned this pass — and restarts via
-      // restartAutoDialLap(). If auto-dial is off, this leaves it at "done".
       queueLapRef.current += 1;
       patch({ aiCampaign: "done", queueLap: queueLapRef.current });
     }
-  }, [patch, queue, recordDials, stopAITimer]);
+  }, [launchAICall, patch, queue, reapInflight, stopAITimer]);
 
   const startAISession = useCallback(() => {
     stopAITimer();
@@ -1092,6 +1205,9 @@ export function useDialer(
     // would make the pump believe the floor was busy and launch nothing.
     inflightRef.current.clear();
     slotAgeRef.current.clear();
+    purgeRedials();
+    attemptsRef.current.clear();
+    convLeadRef.current.clear();
     setState((s) => ({
       ...s,
       status: "ai",
@@ -1100,7 +1216,7 @@ export function useDialer(
       error: null,
     }));
     void launchAIBatch();
-  }, [launchAIBatch, stopAITimer]);
+  }, [launchAIBatch, purgeRedials, stopAITimer]);
 
   /** AI-dial an ad-hoc number with whatever the user knows about it. */
   const aiDialNumber = useCallback(
@@ -1490,8 +1606,11 @@ export function useDialer(
   const endAISession = useCallback(() => {
     stopAITimer();
     sessionGenRef.current += 1;
+    purgeRedials();
+    attemptsRef.current.clear();
+    convLeadRef.current.clear();
     patch({ status: "idle", aiCalls: [], aiCampaign: "idle" });
-  }, [patch, stopAITimer]);
+  }, [patch, purgeRedials, stopAITimer]);
 
   const toggleMute = useCallback(() => {
     setState((s) => {
@@ -1579,6 +1698,9 @@ export function useDialer(
       clearHumanPresence();
       inflightRef.current.clear();
       slotAgeRef.current.clear();
+      purgeRedials();
+      attemptsRef.current.clear();
+      convLeadRef.current.clear();
 
       // Re-clamp: the ceilings differ per mode. Switching AI(10x) -> human without
       // this would leave one rep with ten lines ringing, and nine of those

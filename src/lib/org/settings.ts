@@ -114,6 +114,15 @@ export interface OrgSettings {
      * rotation when no pool number shares the lead's area code.
      */
     localPresence: boolean;
+    /**
+     * Double-dial ("double tap"): when the AI bot gets a NO-ANSWER, ring the same
+     * number once more after a short gap before moving on. Two missed calls in
+     * quick succession read as an important call and lift pickup rate. Off by
+     * default. Applies to the AI dialer only.
+     */
+    doubleDial: boolean;
+    /** Seconds to wait after a no-answer before the second (double-tap) dial. */
+    doubleDialGapSec: number;
   };
   /**
    * Unattended AI calling schedule. When enabled, a server-side cron places AI
@@ -214,6 +223,8 @@ export const DEFAULT_ORG_SETTINGS: OrgSettings = {
     // spam less). No-ops safely when the pool has no matching area code, so it's
     // safe to default on and pays off the moment regional numbers are added.
     localPresence: true,
+    doubleDial: false,
+    doubleDialGapSec: 15,
   },
   automation: {
     enabled: false,

@@ -51,23 +51,30 @@ export async function POST(req: Request) {
     const reader = isAdminConfigured() ? createAdminClient() : supabase;
     let query = reader
       .from("ai_conversations")
-      .select("conversation_id, state")
+      .select("conversation_id, state, outcome")
       .eq("owner_id", user.id);
     if (orgId) query = query.eq("org_id", orgId);
-    const { data } = await query
-      .in("conversation_id", ids)
-      // LIVE_STATES, not a hand-written list — a call whose phone is RINGING is
-      // very much still in flight. Omitting 'ringing' here would free its
-      // concurrency slot the moment it started ringing, and the pump would launch
-      // a replacement call on top of it: silent over-dialing, every batch.
-      .in("state", LIVE_STATES as unknown as string[]);
+    // No state filter: we want BOTH the still-live rows (to hold their concurrency
+    // slot) AND the just-ended ones' outcomes (so the pump's double-dial can tell a
+    // no-answer from a real conversation without a second round-trip).
+    const { data } = await query.in("conversation_id", ids);
 
-    return NextResponse.json({
-      active: (data ?? []).map((r) => String(r.conversation_id)),
-    });
+    const live = new Set(LIVE_STATES as unknown as string[]);
+    const rows = (data ?? []) as { conversation_id: unknown; state: unknown; outcome: unknown }[];
+    const active: string[] = [];
+    const ended: { id: string; outcome: string | null }[] = [];
+    for (const r of rows) {
+      const id = String(r.conversation_id);
+      // 'ringing' counts as live — freeing its slot the moment it rings would let
+      // the pump launch a replacement on top of it (silent over-dialing).
+      if (live.has(String(r.state))) active.push(id);
+      else ended.push({ id, outcome: r.outcome == null ? null : String(r.outcome) });
+    }
+
+    return NextResponse.json({ active, ended });
   } catch {
     // On error, report nothing active. Releasing a slot we shouldn't have is
     // recoverable (we dial one extra); stalling the pump forever is not.
-    return NextResponse.json({ active: [] });
+    return NextResponse.json({ active: [], ended: [] });
   }
 }

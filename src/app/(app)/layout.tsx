@@ -94,6 +94,9 @@ export default async function AppGroupLayout({
     maxAiConcurrency: viewer.org?.settings.ai.maxConcurrentCalls ?? 10,
     callerIdPool,
     callerIdRotateEvery,
+    // Double-dial (double-tap): AI bot re-rings a no-answer once after a short gap.
+    doubleDial: viewer.org?.settings.dialing.doubleDial ?? false,
+    doubleDialGapSec: viewer.org?.settings.dialing.doubleDialGapSec ?? 15,
   };
 
   return (
