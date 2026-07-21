@@ -820,7 +820,21 @@ export function useDialer(
       call.on("disconnect", () => endCall());
       call.on("cancel", () => resetToIdle());
       call.on("reject", () => resetToIdle());
-      call.on("error", () => resetToIdle());
+      call.on("error", () => {
+        // The SDK fires `error` for many conditions, not all of them fatal. When a
+        // call is genuinely ending it ALSO fires `disconnect` (→ endCall), which
+        // wraps up cleanly — so this handler tearing the call down too is at best
+        // redundant. On a RECOVERABLE error, though, resetting here abandons a call
+        // the customer is still on: the rep's screen drops to idle while they're
+        // actually still connected, which reads as "the call just cut off." Only
+        // reset when the call is truly closed; otherwise let `disconnect` decide.
+        try {
+          if (callRef.current && callRef.current.status() !== "closed") return;
+        } catch {
+          /* status() unavailable — fall through and reset */
+        }
+        resetToIdle();
+      });
       // Transient media/signaling blip: the SDK is auto-recovering the SAME call
       // leg — it is NOT over. Ride it out (show "Reconnecting…") rather than let a
       // 2-second wobble read as a dropped call. If recovery ultimately fails the
