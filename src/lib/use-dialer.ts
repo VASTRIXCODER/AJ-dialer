@@ -267,6 +267,13 @@ export function useDialer(
   const queueIndexRef = useRef(0);
   const deviceRef = useRef<Device | null>(null);
   const callRef = useRef<Call | null>(null);
+  /**
+   * A token-expiry error (20104/31205) that arrived WHILE a call was live. The
+   * fix for that error is to rebuild the Device — but rebuilding destroys it,
+   * which would drop the very call the rep is on. So we defer: flag it here and
+   * rebuild the instant the call ends (see endCall/resetToIdle), never during.
+   */
+  const pendingRebuildRef = useRef(false);
   const tickRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const presenceTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -502,8 +509,17 @@ export function useDialer(
 
       device.on("error", (err: { code?: number }) => {
         if (deviceGenRef.current !== gen) return;
-        // Access token expired/invalid → rebuild from a fresh token.
+        // Access token expired/invalid → rebuild from a fresh token. But a rebuild
+        // DESTROYS the device, and destroying it mid-call hangs up the rep on a
+        // live homeowner — the exact "the phone just cuts off while I'm talking"
+        // failure. If a call is up, defer: rebuild the moment it ends (endCall/
+        // resetToIdle consume this flag), never during. The live call's media is a
+        // separate PeerConnection that a lapsed *registration* token doesn't sever.
         if (err?.code === 20104 || err?.code === 31205) {
+          if (callRef.current) {
+            pendingRebuildRef.current = true;
+            return;
+          }
           void setupDeviceRef.current?.();
           return;
         }
@@ -759,13 +775,23 @@ export function useDialer(
     [postHuman, startTick, stopPoll],
   );
 
+  // A token-expiry error that arrived mid-call deferred its device rebuild so it
+  // wouldn't drop the call. The call is over now — honor it, so the device
+  // recovers instead of quietly running on a stale/expired token.
+  const consumePendingRebuild = useCallback(() => {
+    if (!pendingRebuildRef.current) return;
+    pendingRebuildRef.current = false;
+    void setupDeviceRef.current?.();
+  }, []);
+
   const resetToIdle = useCallback(() => {
     stopTick();
     stopPoll();
     clearHumanPresence();
     callRef.current = null;
     patch({ status: "idle", lines: [], connectedLead: null, durationSec: 0 });
-  }, [clearHumanPresence, patch, stopTick, stopPoll]);
+    consumePendingRebuild();
+  }, [clearHumanPresence, consumePendingRebuild, patch, stopTick, stopPoll]);
 
   const endCall = useCallback(() => {
     stopTick();
@@ -779,7 +805,8 @@ export function useDialer(
     }
     callRef.current = null;
     patch({ status: "wrapup", callSid: sid });
-  }, [clearHumanPresence, patch, stopTick, stopPoll]);
+    consumePendingRebuild();
+  }, [clearHumanPresence, consumePendingRebuild, patch, stopTick, stopPoll]);
 
   const attachCallHandlers = useCallback(
     (call: Call, onAccept?: () => void) => {
