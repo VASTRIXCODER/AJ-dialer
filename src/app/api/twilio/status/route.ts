@@ -110,21 +110,37 @@ export async function POST(req: Request) {
     }
   }
 
-  // ── Parallel-dial winner: hang up the losing legs ───────────────────────────
+  // ── Parallel-dial winner: release the losing legs ───────────────────────────
+  // CRITICAL: only release a leg that is still RINGING. A leg that already
+  // ANSWERED must never be hung up here. In a 3X dial two homeowners can pick up
+  // within the same ~1.5s window, and the two "who won?" authorities can disagree:
+  // this webhook picks the winner by which `answered` callback arrived FIRST
+  // (markAnswered), while the rep's browser bridges the call to the first answered
+  // leg in PLACEMENT order (the /api/twilio/answered poll). When those differ, the
+  // old code — which completed every non-winner leg regardless of status — hung up
+  // the very homeowner the rep was now talking to, dropping the call the instant
+  // "connected" appeared. Fetching each loser's live status and skipping any that
+  // is no longer ringing makes an answered leg untouchable no matter which
+  // authority labeled it a "loser"; at worst a rare double-answer leaves one extra
+  // homeowner in the room briefly, which the rep can end — never a dropped call.
   if (room && leadId && ANSWERED_STATUSES.has(callStatus)) {
     const isWinner = markAnswered(room, leadId);
     if (isWinner) {
       const client = await getRestClient();
       if (client) {
+        const STILL_RINGING = new Set(["queued", "initiated", "ringing"]);
         await Promise.all(
-          losingLegs(room, leadId).map((leg) =>
-            leg.sid
-              ? client
-                  .calls(leg.sid)
-                  .update({ status: "completed" })
-                  .catch(() => undefined)
-              : undefined,
-          ),
+          losingLegs(room, leadId).map(async (leg) => {
+            if (!leg.sid) return;
+            try {
+              const c = await client.calls(leg.sid).fetch();
+              if (STILL_RINGING.has(c.status)) {
+                await client.calls(leg.sid).update({ status: "completed" });
+              }
+            } catch {
+              /* leg already gone — nothing to release */
+            }
+          }),
         );
       }
     }

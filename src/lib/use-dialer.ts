@@ -61,6 +61,10 @@ export interface DialerState {
   maxParallel: number;
   lastOutcome: CallOutcome | null;
   mode: DialerMode;
+  /** The active call's media briefly dropped and the Twilio SDK is auto-recovering
+   *  it. The call is NOT over — this rides out a transient blip instead of letting
+   *  it read as a dead call the rep hangs up on. */
+  reconnecting: boolean;
   callsThisSession: number;
   connectsThisSession: number;
   /** Running dial total for the whole local day — persists across refresh/logout. */
@@ -247,6 +251,7 @@ export function useDialer(
     maxParallel: aiConfigured ? maxAiConcurrency : MAX_PARALLEL_HUMAN,
     lastOutcome: null,
     mode: "connecting",
+    reconnecting: false,
     callsThisSession: 0,
     connectsThisSession: 0,
     dialsToday: 0,
@@ -789,7 +794,7 @@ export function useDialer(
     stopPoll();
     clearHumanPresence();
     callRef.current = null;
-    patch({ status: "idle", lines: [], connectedLead: null, durationSec: 0 });
+    patch({ status: "idle", lines: [], connectedLead: null, durationSec: 0, reconnecting: false });
     consumePendingRebuild();
   }, [clearHumanPresence, consumePendingRebuild, patch, stopTick, stopPoll]);
 
@@ -804,7 +809,7 @@ export function useDialer(
       /* noop */
     }
     callRef.current = null;
-    patch({ status: "wrapup", callSid: sid });
+    patch({ status: "wrapup", callSid: sid, reconnecting: false });
     consumePendingRebuild();
   }, [clearHumanPresence, consumePendingRebuild, patch, stopTick, stopPoll]);
 
@@ -816,6 +821,12 @@ export function useDialer(
       call.on("cancel", () => resetToIdle());
       call.on("reject", () => resetToIdle());
       call.on("error", () => resetToIdle());
+      // Transient media/signaling blip: the SDK is auto-recovering the SAME call
+      // leg — it is NOT over. Ride it out (show "Reconnecting…") rather than let a
+      // 2-second wobble read as a dropped call. If recovery ultimately fails the
+      // SDK fires `disconnect`, which wraps up normally.
+      call.on("reconnecting", () => patch({ reconnecting: true }));
+      call.on("reconnected", () => patch({ reconnecting: false }));
     },
     [endCall, resetToIdle],
   );

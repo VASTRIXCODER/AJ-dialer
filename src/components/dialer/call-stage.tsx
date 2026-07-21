@@ -612,6 +612,12 @@ export function CallStage({
                     </span>
                   )}
                 </div>
+                {state.reconnecting && (
+                  <p className="mt-1.5 flex items-center justify-center gap-1.5 text-xs font-semibold text-warning">
+                    <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-warning" />
+                    Reconnecting — hold on, the call is still connected
+                  </p>
+                )}
               </div>
 
               <Waveform
