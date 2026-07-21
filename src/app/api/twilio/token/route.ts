@@ -18,7 +18,15 @@ export async function GET() {
     return NextResponse.json({ mode: "offline" });
   }
 
-  const identity = `agent-${Date.now().toString(36)}`;
+  // The Voice SDK identity MUST be globally unique across every rep. Two browser
+  // Devices that register with the SAME Twilio identity collide — Twilio treats
+  // them as one client, and registration/signaling for one can disrupt the other
+  // (a real "another rep's activity interfered with my call" vector). A bare
+  // millisecond timestamp collides whenever two reps load or reconnect the dialer
+  // in the same millisecond — entirely plausible org-wide at shift start or right
+  // after a deploy, when everyone reconnects at once — so mix in a random suffix
+  // to make a collision effectively impossible.
+  const identity = `agent-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
   const token = await createVoiceToken(identity);
 
   if (!token) {
