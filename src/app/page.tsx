@@ -1,403 +1,562 @@
 import {
   ArrowRight,
   BarChart3,
-  Bot,
+  Bell,
+  Building2,
+  CalendarCheck,
+  Car,
   Check,
-  Headphones,
+  Contact,
+  FileText,
+  HeartPulse,
+  Landmark,
   Layers,
+  ListChecks,
+  Megaphone,
+  Mic,
+  Music,
   PhoneCall,
+  PhoneOutgoing,
   Radio,
-  Recycle,
+  RadioTower,
+  Repeat,
+  ShieldCheck,
   Sparkles,
-  Sun,
+  Store,
+  TrendingUp,
   Trophy,
+  Upload,
+  UsersRound,
   Users,
-  Zap,
+  Wrench,
 } from "lucide-react";
 import Link from "next/link";
-import { LogoMark } from "@/components/brand/logo";
 import { AmbientBackground } from "@/components/layout/ambient-background";
-import { DialingPreview } from "@/components/marketing/dialing-preview";
+import { LeaderboardPreview } from "@/components/marketing/leaderboard-preview";
 import { MarketingNav } from "@/components/marketing/marketing-nav";
+import { SalesDashboard } from "@/components/marketing/sales-dashboard";
 import { Reveal, RevealItem, Stagger } from "@/components/motion";
 import { Badge } from "@/components/ui/badge";
 import { buttonVariants } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 
-const stats = [
-  { value: "3X", label: "More conversations per hour" },
-  { value: "+42%", label: "Appointment volume" },
-  { value: "<2s", label: "Connect to first answer" },
-  { value: "100%", label: "Browser-based, no hardware" },
-];
-
 const features = [
-  { icon: PhoneCall, title: "Browser-based dialer", desc: "Click-to-call, power, auto, and parallel dialing — straight from the browser. No desk phones." },
-  { icon: Layers, title: "3X parallel dialing", desc: "Ring three homeowners at once. The first to answer connects instantly; the rest are released automatically." },
-  { icon: Radio, title: "Live call monitoring", desc: "Listen in, whisper-coach, and watch every active conversation on the floor in real time." },
-  { icon: Bot, title: "AI qualification agent", desc: "An always-on agent that dials, qualifies, and books account reviews — then hands them to your reps." },
-  { icon: Users, title: "Smart lead distribution", desc: "Route leads by rep, team, campaign, territory, utility, or solar provider — automatically." },
-  { icon: BarChart3, title: "Real-time analytics", desc: "Calls, connect rate, appointments, utility-bill insights, and leaderboards — all live." },
+  { icon: Layers, title: "Multiline Power Dialing", desc: "Call multiple leads simultaneously and connect a rep the instant a live person answers." },
+  { icon: Contact, title: "Built-In CRM", desc: "Track every lead, conversation, follow-up, appointment, outcome, and opportunity from one workspace." },
+  { icon: Trophy, title: "Gamified Leaderboards", desc: "Live rankings for calls, conversations, appointments, sales, and team performance." },
+  { icon: Radio, title: "Live Call Monitoring", desc: "See who's active, listen to live conversations, and coach reps in real time." },
+  { icon: Sparkles, title: "AI Call Notes", desc: "Automatically summarize every conversation and save key details to the lead profile." },
+  { icon: FileText, title: "Call Transcripts", desc: "Searchable transcripts so managers can review conversations without listening to every recording." },
+  { icon: Users, title: "Lead Management", desc: "Import, organize, assign, filter, tag, prioritize, and track leads through the entire process." },
+  { icon: Mic, title: "Call Recordings", desc: "Automatically record and organize calls for training, quality control, and compliance." },
+  { icon: Repeat, title: "Sales Automations", desc: "Create follow-ups, update stages, send reminders, assign tasks, and trigger workflows by outcome." },
+  { icon: Megaphone, title: "Campaign Management", desc: "Build campaigns, upload lists, assign reps, control dialing rules, and monitor results." },
+  { icon: Music, title: "Background Music", desc: "Let reps play optional background music while dialing to keep energy and focus between calls." },
+  { icon: CalendarCheck, title: "Appointments & Callbacks", desc: "Schedule appointments, create callbacks, and track upcoming follow-ups inside the platform." },
+  { icon: BarChart3, title: "Real-Time Analytics", desc: "Answer rates, talk time, appointment and conversion rates, rep activity, and campaign performance." },
+  { icon: UsersRound, title: "Team Management", desc: "Add reps, assign permissions, manage access, and monitor individual and team performance." },
+  { icon: ListChecks, title: "Smart Dispositions", desc: "Mark outcomes fast — interested, appointment booked, follow-up, no answer, voicemail, bad number, or do not call." },
 ];
 
-const dialerIncludes = [
-  "Browser dialer & power dialing",
-  "3X parallel dialing",
-  "Auto dialing",
+const workflow = [
+  { icon: Upload, label: "Lead Imported" },
+  { icon: PhoneOutgoing, label: "Call Attempted" },
+  { icon: Mic, label: "Conversation Recorded" },
+  { icon: Sparkles, label: "AI Notes Created" },
+  { icon: TrendingUp, label: "Lead Status Updated" },
+  { icon: CalendarCheck, label: "Follow-Up Scheduled" },
+  { icon: Bell, label: "Manager Notified" },
+];
+
+const industries = [
+  { icon: Wrench, label: "Home Services" },
+  { icon: ShieldCheck, label: "Insurance" },
+  { icon: Building2, label: "Real Estate" },
+  { icon: Megaphone, label: "Marketing Agencies" },
+  { icon: Car, label: "Automotive" },
+  { icon: RadioTower, label: "Telecommunications" },
+  { icon: Landmark, label: "Financial Services" },
+  { icon: Contact, label: "Recruiting" },
+  { icon: HeartPulse, label: "Healthcare" },
+  { icon: Store, label: "Local Businesses" },
+];
+
+const pricingIncludes = [
+  "Multiline power dialer",
+  "Built-in CRM",
+  "AI call notes",
+  "Call transcripts",
   "Call recordings",
+  "Lead management",
   "Live call monitoring",
-  "Leaderboards",
-  "Lead & callback management",
-  "Appointment scheduling",
-  "Reporting dashboards",
+  "Gamified leaderboard",
+  "Campaign management",
+  "Sales analytics",
+  "Automations",
+  "Appointments & callbacks",
+  "Team management",
+  "Human support",
 ];
 
-const aiIncludes = [
-  "Outbound AI calling",
-  "Solar qualification workflow",
-  "Utility-bill identification",
-  "Appointment booking",
-  "AI call summaries",
-  "Lead scoring",
-  "Automated follow-up",
+const comparison = [
+  "Power dialing",
+  "CRM",
+  "Call recording",
+  "Call monitoring",
+  "AI notes",
+  "Transcripts",
+  "Leaderboards",
+  "Lead management",
+  "Automations",
+  "Analytics",
 ];
+
+const managementPoints = [
+  "Monitor active representatives",
+  "Listen to live calls",
+  "Review recordings & transcripts",
+  "Compare performance side by side",
+  "Spot coaching opportunities early",
+  "One dashboard for the whole floor",
+];
+
+function PriceChip() {
+  return (
+    <span className="inline-flex items-center gap-1.5 rounded-full border border-primary/25 bg-primary-soft/50 px-3 py-1 text-xs font-semibold text-primary">
+      <span className="h-1.5 w-1.5 rounded-full bg-primary" />
+      Just $30 per seat / month
+    </span>
+  );
+}
 
 export default function LandingPage() {
   return (
-    <div className="relative min-h-screen">
-      {/* Living ambient backdrop — consistent with the app shell */}
+    <div className="dark relative min-h-screen overflow-x-hidden bg-background text-foreground">
       <AmbientBackground />
-
       <MarketingNav />
 
-      {/* Hero */}
+      {/* ── Hero ─────────────────────────────────────────────────────────── */}
       <section className="relative overflow-hidden pt-16">
         <div className="pointer-events-none absolute inset-0 bg-grid [mask-image:radial-gradient(ellipse_at_top,black,transparent_70%)]" />
-        <div className="pointer-events-none absolute -top-32 left-1/2 h-[480px] w-[820px] -translate-x-1/2 rounded-full bg-solar opacity-[0.18] blur-[120px]" />
+        <div className="pointer-events-none absolute -top-32 left-1/2 h-[460px] w-[820px] -translate-x-1/2 rounded-full bg-solar opacity-[0.16] blur-[130px]" />
 
         <div className="relative mx-auto grid max-w-7xl items-center gap-12 px-4 py-16 sm:px-6 lg:grid-cols-2 lg:py-24">
           <div className="animate-fade-up">
-            <Badge tone="primary" className="gap-1.5">
-              <Sun className="h-3.5 w-3.5" />
-              Solar Resolution Dialer
-            </Badge>
-            <h1 className="mt-5 text-4xl font-bold leading-[1.05] tracking-tight sm:text-5xl lg:text-6xl">
-              Find homeowners{" "}
-              <span className="text-gradient-solar">overpaying</span> on solar &
-              utility bills.
+            <PriceChip />
+            <h1 className="mt-5 text-4xl font-black leading-[1.05] tracking-tight sm:text-5xl lg:text-6xl">
+              More Conversations. More Appointments.{" "}
+              <span className="text-gradient-solar">More Revenue.</span>
             </h1>
             <p className="mt-5 max-w-xl text-lg text-muted-foreground">
-              An Apple-grade, Twilio-powered outbound platform built for solar
-              teams. Dial three lines at once, qualify with AI, and book account
-              reviews — all from the browser.
+              Give your sales team a complete power dialer, CRM, call intelligence,
+              lead management, and performance platform — for only{" "}
+              <span className="font-semibold text-foreground">$30 per seat</span>.
             </p>
             <div className="mt-8 flex flex-wrap items-center gap-3">
-              <Link
-                href="/signup"
-                className={buttonVariants({ size: "lg", className: "gap-2" })}
-              >
+              <Link href="/signup" className={buttonVariants({ size: "lg", className: "gap-2" })}>
                 <PhoneCall className="h-5 w-5" />
-                Get started
+                Start Building Your Sales Team
               </Link>
               <Link
-                href="/login"
-                className={buttonVariants({
-                  size: "lg",
-                  variant: "outline",
-                  className: "gap-2",
-                })}
+                href="/signup"
+                className={buttonVariants({ size: "lg", variant: "outline", className: "gap-2" })}
               >
-                Sign in
+                Book a Live Demo
                 <ArrowRight className="h-4 w-4" />
               </Link>
             </div>
             <p className="mt-4 text-sm text-muted-foreground">
-              Create your account to start dialing — AI calling built in.
+              Built for sales teams of every size and every industry.
             </p>
           </div>
 
           <div className="flex justify-center lg:justify-end">
-            <DialingPreview />
-          </div>
-        </div>
-
-        {/* Stats band */}
-        <div className="relative mx-auto max-w-7xl px-4 pb-16 sm:px-6">
-          <div className="grid grid-cols-2 gap-4 rounded-3xl border border-border bg-card/60 p-6 backdrop-blur sm:p-8 lg:grid-cols-4">
-            {stats.map((s) => (
-              <div key={s.label} className="text-center">
-                <p className="text-3xl font-black tracking-tight text-gradient-solar sm:text-4xl">
-                  {s.value}
-                </p>
-                <p className="mt-1 text-sm text-muted-foreground">{s.label}</p>
-              </div>
-            ))}
+            <SalesDashboard />
           </div>
         </div>
       </section>
 
-      {/* Features */}
+      {/* ── Core value ───────────────────────────────────────────────────── */}
       <section id="platform" className="mx-auto max-w-7xl px-4 py-16 sm:px-6 lg:py-24">
         <Reveal className="mx-auto max-w-2xl text-center">
           <Badge tone="accent">One platform</Badge>
           <h2 className="mt-4 text-3xl font-bold tracking-tight sm:text-4xl">
-            Everything your floor needs to scale outbound
+            Everything Your Sales Team Needs in One Platform
           </h2>
           <p className="mt-3 text-muted-foreground">
-            High-volume dialing, live management, scheduling, and AI
-            qualification — unified in one beautifully simple system.
+            Stop paying for separate dialers, CRMs, monitoring tools, call recording
+            software, analytics platforms, and sales management systems. Run your
+            entire outbound operation from one place.
           </p>
         </Reveal>
 
-        <Stagger className="mt-12 grid grid-cols-1 gap-5 md:grid-cols-2 lg:grid-cols-3">
+        <div id="features" className="scroll-mt-24" aria-hidden />
+        <Stagger className="mt-12 grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
           {features.map((f) => (
             <RevealItem key={f.title}>
-              <Card className="group h-full p-6 hover-lift sheen">
-                <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-primary-soft text-primary transition-transform duration-300 group-hover:scale-110">
-                  <f.icon className="h-6 w-6" />
+              <Card className="group h-full p-6 hover-lift">
+                <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-primary-soft text-primary transition-transform duration-300 group-hover:scale-110">
+                  <f.icon className="h-5 w-5" />
                 </div>
-                <h3 className="mt-4 text-lg font-semibold">{f.title}</h3>
+                <h3 className="mt-4 text-base font-semibold">{f.title}</h3>
                 <p className="mt-2 text-sm text-muted-foreground">{f.desc}</p>
+              </Card>
+            </RevealItem>
+          ))}
+        </Stagger>
+
+        <Reveal className="mt-12 flex flex-col items-center gap-4 text-center">
+          <PriceChip />
+          <Link href="/signup" className={buttonVariants({ size: "lg", className: "gap-2" })}>
+            Start Building Your Sales Team
+            <ArrowRight className="h-4 w-4" />
+          </Link>
+        </Reveal>
+      </section>
+
+      {/* ── Automation ───────────────────────────────────────────────────── */}
+      <section className="border-y border-border/60 bg-surface-muted/40">
+        <div className="mx-auto max-w-7xl px-4 py-16 sm:px-6 lg:py-24">
+          <Reveal className="mx-auto max-w-2xl text-center">
+            <Badge tone="primary">Automation</Badge>
+            <h2 className="mt-4 text-3xl font-bold tracking-tight sm:text-4xl">
+              Your Sales Process Should Not Depend on Memory
+            </h2>
+            <p className="mt-3 text-muted-foreground">
+              The platform automatically captures conversations, updates records,
+              creates follow-ups, organizes leads, and keeps managers informed. Your
+              reps can focus on selling instead of administrative work.
+            </p>
+          </Reveal>
+
+          <Stagger className="mt-12 flex flex-wrap items-stretch justify-center gap-3">
+            {workflow.map((w, i) => (
+              <RevealItem key={w.label} className="flex items-center gap-3">
+                <Card className="flex w-40 flex-col items-center gap-2 p-4 text-center">
+                  <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary-soft text-primary">
+                    <w.icon className="h-5 w-5" />
+                  </span>
+                  <span className="text-xs font-semibold leading-tight">{w.label}</span>
+                </Card>
+                {i < workflow.length - 1 && (
+                  <ArrowRight className="hidden h-4 w-4 shrink-0 text-muted-foreground lg:block" />
+                )}
+              </RevealItem>
+            ))}
+          </Stagger>
+        </div>
+      </section>
+
+      {/* ── Performance ──────────────────────────────────────────────────── */}
+      <section className="mx-auto max-w-7xl px-4 py-16 sm:px-6 lg:py-24">
+        <div className="grid items-center gap-12 lg:grid-cols-2">
+          <Reveal>
+            <Badge tone="accent" className="gap-1.5">
+              <Trophy className="h-3.5 w-3.5" />
+              Performance
+            </Badge>
+            <h2 className="mt-4 text-3xl font-bold tracking-tight sm:text-4xl">
+              Turn Sales Into a Team Sport
+            </h2>
+            <p className="mt-3 text-muted-foreground">
+              Live leaderboards, performance goals, call statistics, appointment
+              tracking, and activity feeds help managers build a more accountable and
+              competitive sales culture.
+            </p>
+            <Link
+              href="/signup"
+              className={buttonVariants({ className: "mt-7 gap-2" })}
+            >
+              Book a Live Demo
+              <ArrowRight className="h-4 w-4" />
+            </Link>
+          </Reveal>
+          <Reveal delay={0.1}>
+            <LeaderboardPreview />
+          </Reveal>
+        </div>
+      </section>
+
+      {/* ── Management ───────────────────────────────────────────────────── */}
+      <section className="border-y border-border/60 bg-surface-muted/40">
+        <div className="mx-auto grid max-w-7xl items-center gap-12 px-4 py-16 sm:px-6 lg:grid-cols-2 lg:py-24">
+          <Reveal className="order-2 lg:order-1">
+            <div className="grid grid-cols-2 gap-3">
+              {managementPoints.map((p) => (
+                <Card key={p} className="flex items-start gap-2.5 p-4">
+                  <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-success/15 text-success">
+                    <Check className="h-3 w-3" />
+                  </span>
+                  <span className="text-sm font-medium leading-snug">{p}</span>
+                </Card>
+              ))}
+            </div>
+          </Reveal>
+          <Reveal className="order-1 lg:order-2">
+            <Badge tone="primary" className="gap-1.5">
+              <Radio className="h-3.5 w-3.5" />
+              Live management
+            </Badge>
+            <h2 className="mt-4 text-3xl font-bold tracking-tight sm:text-4xl">
+              See What Your Team Is Doing in Real Time
+            </h2>
+            <p className="mt-3 text-muted-foreground">
+              Managers can monitor active representatives, listen to live calls,
+              review recordings, inspect transcripts, compare performance, and
+              identify coaching opportunities — all from one dashboard.
+            </p>
+            <Link href="/signup" className={buttonVariants({ className: "mt-7 gap-2" })}>
+              Book a Live Demo
+              <ArrowRight className="h-4 w-4" />
+            </Link>
+          </Reveal>
+        </div>
+      </section>
+
+      {/* ── Industries ───────────────────────────────────────────────────── */}
+      <section id="industries" className="mx-auto max-w-7xl px-4 py-16 sm:px-6 lg:py-24">
+        <Reveal className="mx-auto max-w-2xl text-center">
+          <Badge tone="accent">Industries</Badge>
+          <h2 className="mt-4 text-3xl font-bold tracking-tight sm:text-4xl">
+            Built for Any Team That Sells Over the Phone
+          </h2>
+          <p className="mt-3 text-muted-foreground">
+            One platform, endlessly configurable. Every team customizes its own
+            campaigns, lead stages, outcomes, scripts, and workflows — no
+            industry-specific version required.
+          </p>
+        </Reveal>
+
+        <Stagger className="mt-12 grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">
+          {industries.map((it) => (
+            <RevealItem key={it.label}>
+              <Card className="flex h-full flex-col items-center gap-3 p-6 text-center hover-lift">
+                <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-primary-soft text-primary">
+                  <it.icon className="h-6 w-6" />
+                </span>
+                <span className="text-sm font-semibold">{it.label}</span>
               </Card>
             </RevealItem>
           ))}
         </Stagger>
       </section>
 
-      {/* Parallel dialing */}
-      <section id="parallel" className="border-y border-border bg-surface-muted/50">
-        <div className="mx-auto grid max-w-7xl items-center gap-12 px-4 py-16 sm:px-6 lg:grid-cols-2 lg:py-24">
-          <Reveal>
-            <Badge tone="primary" className="gap-1.5">
-              <Layers className="h-3.5 w-3.5" />
-              3X Parallel Dialing
-            </Badge>
-            <h2 className="mt-4 text-3xl font-bold tracking-tight sm:text-4xl">
-              Stop waiting on dial tones
-            </h2>
-            <p className="mt-3 text-muted-foreground">
-              Instead of calling one lead at a time, the system rings up to three
-              homeowners simultaneously. The moment someone picks up, your rep is
-              connected and the other lines are released.
-            </p>
-            <ul className="mt-6 space-y-3">
-              {[
-                "More conversations per hour",
-                "Less time on unanswered calls",
-                "Higher rep productivity & appointment volume",
-              ].map((b) => (
-                <li key={b} className="flex items-center gap-3">
-                  <span className="flex h-6 w-6 items-center justify-center rounded-full bg-success/15 text-success">
-                    <Check className="h-3.5 w-3.5" />
-                  </span>
-                  <span className="text-sm font-medium">{b}</span>
-                </li>
-              ))}
-            </ul>
-            <div className="mt-8 flex items-center gap-4">
-              {["Lead A", "Lead B", "Lead C"].map((l, i) => (
-                <div key={l} className="flex items-center gap-4">
-                  <div
-                    className={`rounded-xl border px-4 py-2 text-sm font-semibold ${
-                      i === 0
-                        ? "border-success/40 bg-success/10 text-success"
-                        : "border-border bg-card text-muted-foreground"
-                    }`}
-                  >
-                    {l}
-                    {i === 0 && " ✓"}
-                  </div>
-                  {i < 2 && <span className="text-muted-foreground">+</span>}
-                </div>
-              ))}
-            </div>
-          </Reveal>
-          <Reveal delay={0.1} className="flex justify-center">
-            <DialingPreview />
-          </Reveal>
-        </div>
-      </section>
-
-      {/* AI agent */}
-      <section id="ai" className="mx-auto max-w-7xl px-4 py-16 sm:px-6 lg:py-24">
-        <Reveal>
-          <Card className="relative overflow-hidden border-0 bg-solar p-8 text-white shadow-glow sm:p-12">
-          <div className="pointer-events-none absolute -right-20 -top-20 h-72 w-72 rounded-full bg-white/20 blur-3xl" />
-          <div className="pointer-events-none absolute -bottom-24 left-10 h-64 w-64 rounded-full bg-white/10 blur-3xl" />
-          <div className="relative grid items-center gap-10 lg:grid-cols-2">
-            <div>
-              <span className="inline-flex items-center gap-2 rounded-full bg-white/15 px-3 py-1 text-xs font-bold uppercase tracking-wide backdrop-blur">
-                <Sparkles className="h-3.5 w-3.5" />
-                Optional AI add-on
-              </span>
-              <h2 className="mt-4 text-3xl font-bold tracking-tight sm:text-4xl">
-                Let AI handle qualification
-              </h2>
-              <p className="mt-3 max-w-lg text-white/80">
-                The Solar Resolution AI Agent makes outbound calls, asks
-                qualification questions, identifies utility-bill issues, books
-                appointments, and writes summaries — so your reps only talk to
-                warm, qualified homeowners.
-              </p>
-              <Link
-                href="/signup"
-                className={buttonVariants({
-                  size: "lg",
-                  variant: "secondary",
-                  className: "mt-7 gap-2",
-                })}
-              >
-                <Bot className="h-5 w-5" />
-                Get started
-              </Link>
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              {[
-                { icon: PhoneCall, label: "Outbound calling" },
-                { icon: Zap, label: "Bill identification" },
-                { icon: Headphones, label: "Books appointments" },
-                { icon: Recycle, label: "Automated follow-up" },
-              ].map((it) => (
-                <div
-                  key={it.label}
-                  className="rounded-2xl bg-white/10 p-5 ring-1 ring-inset ring-white/15 backdrop-blur"
-                >
-                  <it.icon className="h-6 w-6" />
-                  <p className="mt-3 text-sm font-semibold">{it.label}</p>
-                </div>
-              ))}
-            </div>
-          </div>
-          </Card>
-        </Reveal>
-      </section>
-
-      {/* Pricing */}
-      <section id="pricing" className="border-t border-border bg-surface-muted/50">
-        <div className="mx-auto max-w-5xl px-4 py-16 sm:px-6 lg:py-24">
+      {/* ── Pricing ──────────────────────────────────────────────────────── */}
+      <section id="pricing" className="border-y border-border/60 bg-surface-muted/40">
+        <div className="mx-auto max-w-4xl px-4 py-16 sm:px-6 lg:py-24">
           <Reveal className="mx-auto max-w-2xl text-center">
             <Badge tone="primary">Pricing</Badge>
             <h2 className="mt-4 text-3xl font-bold tracking-tight sm:text-4xl">
-              Simple, scale-friendly pricing
+              Enterprise Sales Tools Without Enterprise Pricing
             </h2>
-            <p className="mt-3 text-muted-foreground">
-              Pay for active reps. Add the AI agent whenever you’re ready.
-            </p>
           </Reveal>
 
-          <Reveal className="mt-12 grid gap-6 lg:grid-cols-2">
-            <Card className="flex flex-col p-8">
-              <div className="flex items-center gap-3">
-                <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-primary-soft text-primary">
-                  <PhoneCall className="h-5 w-5" />
+          <Reveal className="mt-12">
+            <Card className="relative overflow-hidden p-8 ring-2 ring-primary sm:p-10">
+              <div className="pointer-events-none absolute -right-16 -top-16 h-56 w-56 rounded-full bg-solar opacity-20 blur-3xl" />
+              <div className="relative grid gap-8 lg:grid-cols-[auto_1fr]">
+                <div className="lg:border-r lg:border-border/60 lg:pr-8">
+                  <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-solar text-white">
+                    <PhoneCall className="h-6 w-6" />
+                  </div>
+                  <div className="mt-6 flex items-end gap-1.5">
+                    <span className="text-5xl font-black tracking-tight">$30</span>
+                    <span className="mb-1 text-muted-foreground">/ seat / month</span>
+                  </div>
+                  <p className="mt-2 max-w-xs text-sm text-muted-foreground">
+                    The complete platform — every feature included. Add seats as your
+                    team grows.
+                  </p>
+                  <Link
+                    href="/signup"
+                    className={buttonVariants({ size: "lg", className: "mt-7 w-full gap-2" })}
+                  >
+                    Book Your Demo
+                    <ArrowRight className="h-4 w-4" />
+                  </Link>
                 </div>
-                <h3 className="text-lg font-semibold">Dialer Platform</h3>
-              </div>
-              <div className="mt-6">
-                <span className="text-4xl font-black tracking-tight">$15</span>
-                <span className="text-muted-foreground">
-                  {" "}
-                  / active rep / month
-                </span>
-              </div>
-              <ul className="mt-6 flex-1 space-y-3">
-                {dialerIncludes.map((f) => (
-                  <li key={f} className="flex items-center gap-3 text-sm">
-                    <Check className="h-4 w-4 shrink-0 text-success" />
-                    {f}
-                  </li>
-                ))}
-              </ul>
-              <Link
-                href="/signup"
-                className={buttonVariants({ className: "mt-8 w-full" })}
-              >
-                Get started
-              </Link>
-            </Card>
 
-            <Card className="relative flex flex-col overflow-hidden p-8 ring-2 ring-primary">
-              <span className="absolute right-6 top-6">
-                <Badge tone="primary" className="gap-1">
-                  <Sparkles className="h-3 w-3" />
-                  Add-on
-                </Badge>
-              </span>
-              <div className="flex items-center gap-3">
-                <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-solar text-white">
-                  <Bot className="h-5 w-5" />
-                </div>
-                <h3 className="text-lg font-semibold">Solar Resolution AI</h3>
+                <ul className="grid gap-3 sm:grid-cols-2">
+                  {pricingIncludes.map((f) => (
+                    <li key={f} className="flex items-center gap-2.5 text-sm">
+                      <Check className="h-4 w-4 shrink-0 text-success" />
+                      <span className="font-medium">{f}</span>
+                    </li>
+                  ))}
+                </ul>
               </div>
-              <div className="mt-6">
-                <span className="text-4xl font-black tracking-tight">$175</span>
-                <span className="text-muted-foreground"> / month + usage</span>
-              </div>
-              <ul className="mt-6 flex-1 space-y-3">
-                {aiIncludes.map((f) => (
-                  <li key={f} className="flex items-center gap-3 text-sm">
-                    <Check className="h-4 w-4 shrink-0 text-success" />
-                    {f}
-                  </li>
-                ))}
-              </ul>
-              <Link
-                href="/signup"
-                className={buttonVariants({ className: "mt-8 w-full gap-2" })}
-              >
-                <Sparkles className="h-4 w-4" />
-                Add AI agent
-              </Link>
+
+              <p className="relative mt-8 rounded-xl border border-border/60 bg-surface/50 px-4 py-3 text-xs text-muted-foreground">
+                Usage-based calling costs may apply depending on call volume and
+                selected phone services.
+              </p>
             </Card>
           </Reveal>
         </div>
       </section>
 
-      {/* CTA */}
-      <section className="mx-auto max-w-7xl px-4 py-20 sm:px-6">
-        <Reveal>
-          <div className="relative overflow-hidden rounded-3xl bg-solar px-6 py-16 text-center text-white shadow-glow sm:px-12">
-          <div className="pointer-events-none absolute inset-0 bg-dots opacity-20" />
-          <div className="relative mx-auto max-w-2xl">
-            <Trophy className="mx-auto h-10 w-10" />
-            <h2 className="mt-4 text-3xl font-bold tracking-tight sm:text-4xl">
-              Recover at-risk solar customers — before they churn
-            </h2>
-            <p className="mt-3 text-white/85">
-              Proactively reach homeowners with utility-bill issues and connect
-              them with the right account manager.
-            </p>
-            <Link
-              href="/signup"
-              className={buttonVariants({
-                size: "lg",
-                variant: "secondary",
-                className: "mt-8 gap-2",
-              })}
+      {/* ── Comparison ───────────────────────────────────────────────────── */}
+      <section className="mx-auto max-w-5xl px-4 py-16 sm:px-6 lg:py-24">
+        <Reveal className="mx-auto max-w-2xl text-center">
+          <Badge tone="accent">One platform, not ten</Badge>
+          <h2 className="mt-4 text-3xl font-bold tracking-tight sm:text-4xl">
+            Replace Multiple Sales Tools With One Platform
+          </h2>
+          <p className="mt-3 text-muted-foreground">
+            Most teams stitch together a different subscription for every one of
+            these. You get them all in a single platform.
+          </p>
+        </Reveal>
+
+        <Reveal className="mt-12 overflow-hidden rounded-3xl border border-border/70 bg-card/70">
+          <div className="grid grid-cols-[1fr_auto_auto] items-center border-b border-border/60 px-5 py-3 text-[11px] font-bold uppercase tracking-wide text-muted-foreground sm:px-8">
+            <span>Capability</span>
+            <span className="px-4 text-center">Separate tools</span>
+            <span className="pl-4 text-center text-primary">AIATWORK</span>
+          </div>
+          {comparison.map((c) => (
+            <div
+              key={c}
+              className="grid grid-cols-[1fr_auto_auto] items-center border-b border-border/40 px-5 py-3.5 text-sm last:border-0 sm:px-8"
             >
-              Get started
+              <span className="font-medium">{c}</span>
+              <span className="px-4 text-center text-xs font-medium text-muted-foreground">
+                Extra subscription
+              </span>
+              <span className="flex justify-center pl-4">
+                <span className="flex h-5 w-5 items-center justify-center rounded-full bg-success/15 text-success">
+                  <Check className="h-3 w-3" />
+                </span>
+              </span>
+            </div>
+          ))}
+          <div className="flex flex-col items-center gap-3 bg-primary-soft/30 px-5 py-6 text-center sm:px-8">
+            <p className="text-sm text-muted-foreground">
+              Everything above — one login, one bill.
+            </p>
+            <p className="text-2xl font-black tracking-tight">
+              All included for <span className="text-gradient-solar">$30 / seat</span>
+            </p>
+            <Link href="/signup" className={buttonVariants({ className: "mt-1 gap-2" })}>
+              Book a Live Demo
               <ArrowRight className="h-4 w-4" />
             </Link>
-          </div>
           </div>
         </Reveal>
       </section>
 
-      {/* Footer */}
-      <footer className="border-t border-border">
-        <div className="mx-auto flex max-w-7xl flex-col items-center justify-between gap-4 px-4 py-8 sm:flex-row sm:px-6">
-          <div className="flex items-center gap-2.5">
-            <LogoMark className="h-8 w-8" />
-            <div className="leading-none">
-              <p className="text-sm font-bold">AIATWORK</p>
-              <p className="text-xs text-muted-foreground">Solar Resolution Dialer</p>
+      {/* ── Final CTA ────────────────────────────────────────────────────── */}
+      <section className="mx-auto max-w-7xl px-4 pb-20 sm:px-6">
+        <Reveal>
+          <div className="relative overflow-hidden rounded-3xl bg-solar px-6 py-16 text-center text-white shadow-glow sm:px-12">
+            <div className="pointer-events-none absolute inset-0 bg-dots opacity-20" />
+            <div className="relative mx-auto max-w-2xl">
+              <TrendingUp className="mx-auto h-10 w-10" />
+              <h2 className="mt-4 text-3xl font-bold tracking-tight sm:text-4xl">
+                Build a Faster, Smarter, More Accountable Sales Team
+              </h2>
+              <p className="mt-3 text-white/85">
+                See how one platform helps your reps make more calls, have better
+                conversations, book more appointments, and gives managers complete
+                visibility.
+              </p>
+              <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
+                <Link
+                  href="/signup"
+                  className={buttonVariants({ size: "lg", variant: "secondary", className: "gap-2" })}
+                >
+                  Book a Live Demo
+                </Link>
+                <Link
+                  href="/signup"
+                  className="inline-flex h-12 items-center justify-center gap-2 rounded-xl px-7 text-base font-semibold text-white ring-1 ring-inset ring-white/40 transition-colors hover:bg-white/10"
+                >
+                  Get Started
+                  <ArrowRight className="h-4 w-4" />
+                </Link>
+              </div>
+              <p className="mt-5 text-sm font-medium text-white/80">
+                Just $30 per seat / month.
+              </p>
             </div>
           </div>
-          <p className="text-xs text-muted-foreground">
-            © {new Date().getFullYear()} AIATWORK. Powered by Twilio.
-          </p>
+        </Reveal>
+      </section>
+
+      {/* ── Footer ───────────────────────────────────────────────────────── */}
+      <footer className="border-t border-border/60">
+        <div className="mx-auto max-w-7xl px-4 py-12 sm:px-6">
+          <div className="grid gap-10 sm:grid-cols-2 lg:grid-cols-4">
+            <div>
+              <div className="flex items-center gap-2.5">
+                <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-solar text-white shadow-glow">
+                  <PhoneCall className="h-4 w-4" />
+                </span>
+                <span className="text-[15px] font-bold tracking-tight">AIATWORK</span>
+              </div>
+              <p className="mt-4 max-w-xs text-sm text-muted-foreground">
+                The complete sales dialer, CRM, and performance platform built for
+                modern outbound teams.
+              </p>
+              <p className="mt-4 text-sm font-semibold text-primary">$30 per seat / month</p>
+            </div>
+
+            <FooterCol
+              title="Platform"
+              links={[
+                ["Features", "#features"],
+                ["Industries", "#industries"],
+                ["Pricing", "#pricing"],
+              ]}
+            />
+            <FooterCol
+              title="Company"
+              links={[
+                ["Support", "/login"],
+                ["Contact", "/signup"],
+                ["Book a Demo", "/signup"],
+              ]}
+            />
+            <FooterCol
+              title="Legal"
+              links={[
+                ["Privacy Policy", "/login"],
+                ["Terms of Service", "/login"],
+                ["Log In", "/login"],
+              ]}
+            />
+          </div>
+
+          <div className="mt-10 flex flex-col items-center justify-between gap-3 border-t border-border/60 pt-6 sm:flex-row">
+            <p className="text-xs text-muted-foreground">
+              © {new Date().getFullYear()} AIATWORK. All rights reserved.
+            </p>
+            <p className="text-xs text-muted-foreground">
+              The complete sales platform for modern outbound teams.
+            </p>
+          </div>
         </div>
       </footer>
+    </div>
+  );
+}
+
+function FooterCol({ title, links }: { title: string; links: [string, string][] }) {
+  return (
+    <div>
+      <p className="text-sm font-semibold">{title}</p>
+      <ul className="mt-4 space-y-2.5">
+        {links.map(([label, href]) => (
+          <li key={label}>
+            <Link
+              href={href}
+              className="text-sm text-muted-foreground transition-colors hover:text-foreground"
+            >
+              {label}
+            </Link>
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }

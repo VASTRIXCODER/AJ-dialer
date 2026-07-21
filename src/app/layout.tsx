@@ -17,12 +17,12 @@ const jetbrainsMono = JetBrains_Mono({
 
 export const metadata: Metadata = {
   title: {
-    default: "AIATWORK · Solar Resolution Dialer",
-    template: "%s · AIATWORK Solar Dialer",
+    default: "AIATWORK · Sales Dialer, CRM & Team Performance Platform",
+    template: "%s · AIATWORK",
   },
   description:
-    "An Apple-grade, Twilio-powered AI outbound calling platform that helps solar teams find homeowners overpaying on utility bills, qualify them, and book account reviews.",
-  applicationName: "AIATWORK Solar Resolution Dialer",
+    "A powerful multichannel sales dialer, CRM, and team performance platform for any outbound sales team — power dialing, call intelligence, lead management, live monitoring, and leaderboards for only $30 per seat.",
+  applicationName: "AIATWORK Sales Platform",
 };
 
 export const viewport: Viewport = {
