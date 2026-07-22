@@ -62,6 +62,8 @@ async function routeDisposition(
     source: "ai" | "rep";
     /** The call this disposition came from — links the appointment to its call. */
     callRecordId?: string | null;
+    /** Which AI persona closed it ("primary"/"secondary"); null for rep bookings. */
+    agentKey?: string | null;
   },
 ): Promise<void> {
   const { ownerId, leadId, outcome } = input;
@@ -106,6 +108,9 @@ async function routeDisposition(
       location: input.appointment?.location ?? "",
       notes: input.appointment?.notes ?? input.summary ?? "",
       source: input.source,
+      // Which AI agent closed it (Agent 1 / Agent 2), so the calendar can be split
+      // by agent. Null for rep-booked reviews.
+      agent_key: input.source === "ai" ? input.agentKey ?? null : null,
       status: "scheduled",
       // AI bookings are proposals pending human approval; rep-created are final.
       approved: input.source !== "ai",
@@ -271,6 +276,10 @@ export async function seedAIConversation(input: {
   customerCallSid?: string | null;
   /** Which override fields actually went out — forensics for a killed call. */
   overrideMode?: string;
+  /** Which AI persona placed this call ("primary" = Agent 1, "secondary" = Agent 2).
+   *  Carried onto the conversation so the appointment it books can be attributed
+   *  to the agent that closed it. */
+  agentKey?: string | null;
 }): Promise<void> {
   if (!isSupabaseConfigured()) return;
   try {
@@ -288,6 +297,7 @@ export async function seedAIConversation(input: {
       call_sid: input.callSid,
       customer_call_sid: input.customerCallSid ?? null,
       override_mode: input.overrideMode ?? null,
+      agent_key: input.agentKey ?? null,
       state: "initiated",
     });
   } catch {
@@ -403,7 +413,7 @@ export async function completeAIConversation(input: {
     const admin = createAdminClient();
     const { data: existing } = await admin
       .from("ai_conversations")
-      .select("owner_id, lead_id, lead_name, phone, call_sid, state, outcome, started_at")
+      .select("owner_id, lead_id, lead_name, phone, call_sid, state, outcome, started_at, agent_key")
       .eq("conversation_id", input.conversationId)
       .maybeSingle();
 
@@ -518,6 +528,7 @@ export async function completeAIConversation(input: {
       summary: input.summary,
       appointment: input.appointment ?? null,
       source: "ai",
+      agentKey: (existing?.agent_key as string) ?? null,
     });
   } catch {
     /* best-effort */

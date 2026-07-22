@@ -330,8 +330,8 @@ export function CallStage({
                       const active = state.activeAgent === key;
                       const label =
                         key === "primary"
-                          ? agentNames?.primary || "Emily"
-                          : agentNames?.secondary || "Emily (Sunrun)";
+                          ? agentNames?.primary || "Agent 1"
+                          : agentNames?.secondary || "Agent 2";
                       return (
                         <button
                           key={key}

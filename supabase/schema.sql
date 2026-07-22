@@ -1268,3 +1268,18 @@ end $$;
 
 create index if not exists leads_lead_group_idx
   on public.leads (lead_group) where lead_group is not null;
+
+-- ═════════════════════════════════════════════════════════════════════════════
+-- PART 15 — AI AGENT ATTRIBUTION  (idempotent; safe to re-run)
+--
+-- Which AI persona ("primary" = Agent 1, "secondary" = Agent 2) placed a call,
+-- and therefore closed any appointment it books. Stamped on the conversation at
+-- placement (ai-dialer → seedAIConversation) and copied onto the appointment
+-- when the booking is filed (routeDisposition), so the Appointments tab can be
+-- split into a tab per agent. Null on rep-booked reviews and on legacy AI rows
+-- from before this column existed (those simply appear only under "All").
+-- ═════════════════════════════════════════════════════════════════════════════
+alter table public.ai_conversations add column if not exists agent_key text;
+alter table public.appointments     add column if not exists agent_key text;
+create index if not exists appointments_agent_idx
+  on public.appointments (org_id, agent_key) where agent_key is not null;

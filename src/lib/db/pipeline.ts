@@ -214,6 +214,9 @@ export interface AppointmentRow {
   leadName: string;
   status: string;
   source: string;
+  /** Which AI persona closed it: "primary" = Agent 1, "secondary" = Agent 2.
+   *  null for rep-booked reviews and legacy AI rows from before attribution. */
+  agent: "primary" | "secondary" | null;
   /** AI bookings are proposals (false) until a human approves them. */
   approved: boolean;
   scheduledLabel: string;
@@ -308,6 +311,12 @@ export async function getAppointments(): Promise<AppointmentRow[]> {
         leadName: s(r.lead_name) || "Homeowner",
         status: s(r.status) || "scheduled",
         source: s(r.source) || "ai",
+        agent:
+          r.agent_key === "primary"
+            ? "primary"
+            : r.agent_key === "secondary"
+              ? "secondary"
+              : null,
         // Treat legacy rows (column absent → null) as approved, not pending.
         approved: r.approved == null ? true : Boolean(r.approved),
         scheduledLabel: s(r.scheduled_label),

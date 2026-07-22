@@ -622,14 +622,21 @@ function Toolbar({
         )}
 
         <div className="flex items-center rounded-xl border border-border/60 bg-surface/50 p-1">
-          {(["all", "ai", "rep"] as SourceFilter[]).map((s) => (
+          {(
+            [
+              ["all", "All"],
+              ["agent1", "Agent 1"],
+              ["agent2", "Agent 2"],
+              ["rep", "Rep"],
+            ] as [SourceFilter, string][]
+          ).map(([s, label]) => (
             <button
               key={s}
               type="button"
               onClick={() => setSource(s)}
               className={cn(seg, source === s ? on : off)}
             >
-              {s === "all" ? "All" : s === "ai" ? "AI" : "Rep"}
+              {label}
             </button>
           ))}
         </div>

@@ -19,6 +19,8 @@ export interface ApptLike {
   status: string;
   approved: boolean;
   source: string;
+  /** "primary" = Agent 1, "secondary" = Agent 2; null for rep/legacy. */
+  agent?: "primary" | "secondary" | null;
   scheduledAt: string | null;
   createdAt: string;
   repName?: string;
@@ -50,13 +52,23 @@ export function bucketOf(a: ApptLike, now: number = Date.now()): ApptBucket {
 }
 
 export interface ApptFilters {
-  source?: "all" | "ai" | "rep";
+  source?: "all" | "ai" | "rep" | "agent1" | "agent2";
   rep?: string; // "all" or a rep name
   search?: string;
 }
 
 export function matchesFilters(a: ApptLike, f: ApptFilters): boolean {
-  if (f.source && f.source !== "all" && a.source !== f.source) return false;
+  if (f.source && f.source !== "all") {
+    // Agent tabs: only AI bookings closed by that specific persona.
+    if (f.source === "agent1") {
+      if (!(a.source === "ai" && a.agent === "primary")) return false;
+    } else if (f.source === "agent2") {
+      if (!(a.source === "ai" && a.agent === "secondary")) return false;
+    } else if (a.source !== f.source) {
+      // "ai" (legacy) or "rep"
+      return false;
+    }
+  }
   if (f.rep && f.rep !== "all" && (a.repName ?? "") !== f.rep) return false;
   const q = (f.search ?? "").trim().toLowerCase();
   if (q) {

@@ -77,9 +77,20 @@ export function isSecondAgentConfigured() {
   return Boolean(elevenLabsConfig.agentId2.trim());
 }
 
-/** The display labels reps see in the dialer's agent picker. */
+/**
+ * The display labels reps see in the dialer's agent picker and on the
+ * appointments tabs. These are UI labels only — the name the AI actually says on
+ * a call comes from org.settings.ai.agentName (the prompt), so relabeling here
+ * never changes what a homeowner hears. "primary" is Agent 1 (the Emily agent);
+ * "secondary" is Agent 2 (the Emily/Sunrun agent).
+ */
 export function agentLabels(): { primary: string; secondary: string } {
-  return { primary: elevenLabsConfig.agentName, secondary: elevenLabsConfig.agentName2 };
+  return { primary: "Agent 1", secondary: "Agent 2" };
+}
+
+/** Map an internal agent key to its human label (Agent 1 / Agent 2). */
+export function agentLabelFor(key: AgentKey | string | null | undefined): string {
+  return key === "secondary" ? "Agent 2" : "Agent 1";
 }
 
 /**

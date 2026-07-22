@@ -287,6 +287,9 @@ export async function placeAiCallForLead(opts: {
       // Records exactly which override fields went out, so a future "why did every
       // call die?" is answerable from the data alone.
       overrideMode: result.overrideMode,
+      // Which persona placed the call (Agent 1 / Agent 2), so a booking it closes
+      // is attributed to the right agent on the appointments tabs.
+      agentKey: el.key,
     });
 
     return {

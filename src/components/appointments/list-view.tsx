@@ -149,7 +149,8 @@ function ApptRow({ a, api }: { a: AppointmentRow; api: ListApi }) {
           <p className={cn("truncate font-semibold", compact && "text-sm")}>{a.leadName}</p>
           {a.source === "ai" && (
             <Badge tone="accent" className="hidden gap-1 sm:inline-flex">
-              <Sparkles className="h-3 w-3" /> AI
+              <Sparkles className="h-3 w-3" />
+              {a.agent === "secondary" ? "Agent 2" : a.agent === "primary" ? "Agent 1" : "AI"}
             </Badge>
           )}
           {a.notifyStatus === "failed" && (

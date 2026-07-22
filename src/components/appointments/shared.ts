@@ -5,7 +5,9 @@ import type { AppointmentRow } from "@/lib/db/pipeline";
 // "no-show" is spelled and coloured the same everywhere.
 
 export type Density = "comfortable" | "compact";
-export type SourceFilter = "all" | "ai" | "rep";
+// "ai" is kept for back-compat with saved prefs; the UI now splits AI bookings
+// into "agent1" (Agent 1) and "agent2" (Agent 2).
+export type SourceFilter = "all" | "ai" | "rep" | "agent1" | "agent2";
 export type SortKey = "smart" | "soonest" | "newest" | "name";
 export type ViewKey = "list" | "month" | "week" | "day";
 
