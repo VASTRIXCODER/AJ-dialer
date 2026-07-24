@@ -95,11 +95,18 @@ export async function createVoiceToken(identity: string): Promise<string | null>
   const AccessToken = twilio.jwt.AccessToken;
   const VoiceGrant = AccessToken.VoiceGrant;
 
+  // A short (1h) TTL meant the token lapsed roughly every hour, and any live
+  // call crossing that boundary had to survive an in-place token renewal — a
+  // renewal that, if it hiccupped, dropped the call ("hangs up randomly in the
+  // middle"). Twilio permits up to 24h; use the max so a token minted at the
+  // start of a shift never expires mid-call. Idle renewal still runs client-side
+  // (see use-dialer's ensureRegistered), so this only removes the mid-call
+  // boundary, it doesn't weaken rotation between calls.
   const token = new AccessToken(
     twilioConfig.accountSid,
     twilioConfig.apiKeySid,
     twilioConfig.apiKeySecret,
-    { identity, ttl: 3600 },
+    { identity, ttl: 86400 },
   );
 
   token.addGrant(
