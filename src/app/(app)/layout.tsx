@@ -97,6 +97,9 @@ export default async function AppGroupLayout({
     // Double-dial (double-tap): AI bot re-rings a no-answer once after a short gap.
     doubleDial: viewer.org?.settings.dialing.doubleDial ?? false,
     doubleDialGapSec: viewer.org?.settings.dialing.doubleDialGapSec ?? 15,
+    // Per-tenant qualification-panel shape (solar field + third toggle label).
+    qualifyShowSolarPayment: viewer.org?.settings.qualify?.showSolarPayment ?? true,
+    qualifyOtherLabel: viewer.org?.settings.qualify?.otherToggleLabel ?? "Battery",
   };
 
   return (

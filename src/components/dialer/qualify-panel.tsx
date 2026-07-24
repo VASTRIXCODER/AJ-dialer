@@ -1,7 +1,7 @@
 "use client";
 
 import { motion } from "framer-motion";
-import { BatteryCharging, Car, Waves } from "lucide-react";
+import { BatteryCharging, Car, CircleEllipsis, Waves } from "lucide-react";
 import { useState } from "react";
 import { AiBriefing } from "@/components/ai/lead-briefing";
 import { CountUp } from "@/components/motion";
@@ -43,9 +43,15 @@ function Toggle({
 export function QualifyPanel({
   lead,
   onNotesChange,
+  showSolarPayment = true,
+  otherLabel = "Battery",
 }: {
   lead: Lead | null;
   onNotesChange?: (notes: string) => void;
+  /** Solar orgs show the "Solar payment" field; non-solar tenants hide it. */
+  showSolarPayment?: boolean;
+  /** Label for the third home-profile toggle (default "Battery"). */
+  otherLabel?: string;
 }) {
   const [utility, setUtility] = useState("");
   const [solar, setSolar] = useState("");
@@ -68,7 +74,7 @@ export function QualifyPanel({
         <p className="mb-2.5 text-xs font-bold uppercase tracking-wide text-muted-foreground">
           Billing
         </p>
-        <div className="grid grid-cols-2 gap-3">
+        <div className={cn("grid gap-3", showSolarPayment ? "grid-cols-2" : "grid-cols-1")}>
           <div>
             <Label>Monthly utility</Label>
             <Input
@@ -78,27 +84,33 @@ export function QualifyPanel({
               onChange={(e) => setUtility(e.target.value)}
             />
           </div>
-          <div>
-            <Label>Solar payment</Label>
-            <Input
-              inputMode="decimal"
-              placeholder={lead?.solarPayment ? `$${lead.solarPayment}` : "$0"}
-              value={solar}
-              onChange={(e) => setSolar(e.target.value)}
-            />
+          {showSolarPayment && (
+            <div>
+              <Label>Solar payment</Label>
+              <Input
+                inputMode="decimal"
+                placeholder={lead?.solarPayment ? `$${lead.solarPayment}` : "$0"}
+                value={solar}
+                onChange={(e) => setSolar(e.target.value)}
+              />
+            </div>
+          )}
+        </div>
+        {/* With no solar payment the "total" would just echo the utility bill, so
+            only show the combined energy-cost line when both figures are present. */}
+        {showSolarPayment && (
+          <div className="mt-3 flex items-center justify-between rounded-xl bg-muted px-3.5 py-2.5">
+            <span className="text-sm text-muted-foreground">Total energy cost</span>
+            <span className="text-lg font-bold tabular text-primary">
+              <CountUp
+                value={total}
+                duration={0.5}
+                format={(n) => formatCurrency(Math.round(n))}
+              />
+              <span className="text-xs font-normal text-muted-foreground">/mo</span>
+            </span>
           </div>
-        </div>
-        <div className="mt-3 flex items-center justify-between rounded-xl bg-muted px-3.5 py-2.5">
-          <span className="text-sm text-muted-foreground">Total energy cost</span>
-          <span className="text-lg font-bold tabular text-primary">
-            <CountUp
-              value={total}
-              duration={0.5}
-              format={(n) => formatCurrency(Math.round(n))}
-            />
-            <span className="text-xs font-normal text-muted-foreground">/mo</span>
-          </span>
-        </div>
+        )}
       </div>
 
       <div>
@@ -119,8 +131,8 @@ export function QualifyPanel({
             onClick={() => setFlags((f) => ({ ...f, pool: !f.pool }))}
           />
           <Toggle
-            label="Battery"
-            icon={BatteryCharging}
+            label={otherLabel}
+            icon={otherLabel === "Battery" ? BatteryCharging : CircleEllipsis}
             active={flags.battery}
             onClick={() => setFlags((f) => ({ ...f, battery: !f.battery }))}
           />

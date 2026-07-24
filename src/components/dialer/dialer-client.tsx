@@ -452,6 +452,8 @@ export function DialerClient({
             <QualifyPanel
               key={focusLead?.id ?? "none"}
               lead={focusLead}
+              showSolarPayment={config.qualifyShowSolarPayment !== false}
+              otherLabel={config.qualifyOtherLabel || "Battery"}
               onNotesChange={(n) => {
                 notesRef.current = n;
               }}
