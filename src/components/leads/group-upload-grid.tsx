@@ -12,6 +12,7 @@ import {
 import { useRef, useState } from "react";
 import { Card } from "@/components/ui/card";
 import type { LeadGroup } from "@/lib/types";
+import { applyLabelOverride } from "@/lib/leads/group-labels";
 import { cn } from "@/lib/utils";
 import { GeoPreviewReview, type GeoPreviewResponse } from "./geo-preview-review";
 import { useCsvUpload } from "./use-csv-upload";
@@ -204,7 +205,14 @@ function AutoSortTile({ onPreview }: { onPreview: (p: GeoPreviewResponse) => voi
  * screen instead of importing immediately. Replaces the single "Import CSV"
  * button that used to sit in the Leads page header.
  */
-export function GroupUploadGrid({ canImport }: { canImport: boolean }) {
+export function GroupUploadGrid({
+  canImport,
+  labelOverrides,
+}: {
+  canImport: boolean;
+  /** Per-org display-label overrides for the dropbox groups (display only). */
+  labelOverrides?: Record<string, string>;
+}) {
   const [open, setOpen] = useState(false);
   const [preview, setPreview] = useState<GeoPreviewResponse | null>(null);
 
@@ -216,6 +224,7 @@ export function GroupUploadGrid({ canImport }: { canImport: boolean }) {
         preview={preview}
         onDone={() => setPreview(null)}
         onCancel={() => setPreview(null)}
+        labelOverrides={labelOverrides}
       />
     );
   }
@@ -242,7 +251,11 @@ export function GroupUploadGrid({ canImport }: { canImport: boolean }) {
       {open && (
         <div className="grid grid-cols-2 gap-3 border-t border-border p-5 sm:grid-cols-3 lg:grid-cols-6">
           {TILES.map((t) => (
-            <UploadTile key={t.group} {...t} />
+            <UploadTile
+              key={t.group}
+              {...t}
+              label={applyLabelOverride(t.group, t.label, labelOverrides)}
+            />
           ))}
           <AutoSortTile onPreview={setPreview} />
         </div>

@@ -15,6 +15,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import type { ParsedLead } from "@/lib/leads/csv";
+import { applyLabelOverride } from "@/lib/leads/group-labels";
 import type { LeadGroup } from "@/lib/types";
 import { formatPhone } from "@/lib/utils";
 
@@ -52,10 +53,13 @@ export function GeoPreviewReview({
   preview,
   onDone,
   onCancel,
+  labelOverrides,
 }: {
   preview: GeoPreviewResponse;
   onDone: () => void;
   onCancel: () => void;
+  /** Per-org display-label overrides for the dropbox groups (display only). */
+  labelOverrides?: Record<string, string>;
 }) {
   const router = useRouter();
 
@@ -197,7 +201,7 @@ export function GeoPreviewReview({
                   ) : (
                     <MapPin className="h-3.5 w-3.5 text-primary" />
                   )}
-                  {meta.label}
+                  {applyLabelOverride(key, meta.label, labelOverrides)}
                 </span>
                 <Badge tone={meta.tone}>{list.length}</Badge>
               </div>
@@ -236,7 +240,7 @@ export function GeoPreviewReview({
                       >
                         {BUCKET_KEYS.map((k) => (
                           <option key={k} value={k}>
-                            {SECTION_META[k].label}
+                            {applyLabelOverride(k, SECTION_META[k].label, labelOverrides)}
                           </option>
                         ))}
                       </select>

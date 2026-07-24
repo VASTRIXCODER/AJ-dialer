@@ -23,6 +23,9 @@ export default async function LeadsPage() {
   // Lead management (delete / reassign) is for managers+ (leads.import). Pull the
   // org's members so a supervisor can reassign leads between accounts.
   const canManage = viewer.permissions.includes("leads.import");
+  // Per-org "dropbox" label overrides (display only) — e.g. show "San Antonio"
+  // where the underlying bucket key is still "fresno".
+  const groupLabels = viewer.org?.settings.leadGroupLabels ?? {};
   const members =
     canManage && viewer.org
       ? (await listMembers(viewer.org.id)).map((m) => ({ id: m.userId, name: m.name }))
@@ -56,7 +59,7 @@ export default async function LeadsPage() {
     return (
       <PageContainer>
         {header}
-        <GroupUploadGrid canImport={canManage} />
+        <GroupUploadGrid canImport={canManage} labelOverrides={groupLabels} />
         <EmptyState
           icon={Users}
           title="No leads yet"
@@ -92,6 +95,7 @@ export default async function LeadsPage() {
         canManage={canManage}
         meId={viewer.user?.id ?? null}
         members={members}
+        labelOverrides={groupLabels}
       />
     </PageContainer>
   );

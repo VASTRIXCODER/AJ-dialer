@@ -323,7 +323,7 @@ export function DialerClient({
         )}
         {groupFilter !== "all" && (
           <Badge tone="primary" className="gap-1">
-            {groupLabel(groupFilter)}
+            {groupLabel(groupFilter, config.leadGroupLabels)}
             <button
               type="button"
               onClick={() => setGroupFilter("all")}
@@ -493,6 +493,7 @@ export function DialerClient({
           groupFilter={groupFilter}
           onGroupFilterChange={setGroupFilter}
           onClose={() => setShowLoadDialog(false)}
+          leadGroupLabels={config.leadGroupLabels}
         />
       )}
     </div>

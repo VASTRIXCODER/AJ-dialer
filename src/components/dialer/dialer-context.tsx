@@ -44,6 +44,8 @@ export interface DialerConfig {
   qualifyShowSolarPayment?: boolean;
   /** Label for the third home-profile toggle in the qualification panel. */
   qualifyOtherLabel?: string;
+  /** Per-org display-label overrides for the lead-group "dropboxes" (display only). */
+  leadGroupLabels?: Record<string, string>;
 }
 
 type Campaign = { id: string; name: string };

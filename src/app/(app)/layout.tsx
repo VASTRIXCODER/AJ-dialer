@@ -100,6 +100,8 @@ export default async function AppGroupLayout({
     // Per-tenant qualification-panel shape (solar field + third toggle label).
     qualifyShowSolarPayment: viewer.org?.settings.qualify?.showSolarPayment ?? true,
     qualifyOtherLabel: viewer.org?.settings.qualify?.otherToggleLabel ?? "Battery",
+    // Per-org "dropbox" label overrides (display only).
+    leadGroupLabels: viewer.org?.settings.leadGroupLabels ?? {},
   };
 
   return (

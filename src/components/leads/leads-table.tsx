@@ -22,6 +22,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { LEAD_GROUPS, type Lead, type LeadStatus } from "@/lib/types";
 import { leadStatusConfig } from "@/lib/status";
+import { applyLabelOverride } from "@/lib/leads/group-labels";
 import { SMART_LISTS, countSmartLists, smartListById } from "@/lib/leads/smart-lists";
 import { cn, formatAddress, formatCurrency, formatPhone, initials } from "@/lib/utils";
 import { EditLeadDialog } from "./edit-lead-dialog";
@@ -49,6 +50,7 @@ export function LeadsTable({
   canManage = false,
   meId = null,
   members = [],
+  labelOverrides,
 }: {
   leads: Lead[];
   campaigns?: { id: string; name: string }[];
@@ -58,6 +60,8 @@ export function LeadsTable({
   meId?: string | null;
   /** Org members (id = user id) — targets for reassigning leads between accounts. */
   members?: { id: string; name: string }[];
+  /** Per-org display-label overrides for the dropbox groups (display only). */
+  labelOverrides?: Record<string, string>;
 }) {
   const router = useRouter();
   const [query, setQuery] = useState("");
@@ -416,7 +420,7 @@ export function LeadsTable({
               <option value="unsorted">Unsorted</option>
               {LEAD_GROUPS.map((g) => (
                 <option key={g} value={g}>
-                  {GROUP_LABELS[g]}
+                  {applyLabelOverride(g, GROUP_LABELS[g], labelOverrides)}
                 </option>
               ))}
             </select>
@@ -720,7 +724,7 @@ export function LeadsTable({
                             distinct tones so they're never visually conflated. */}
                         {l.leadGroup && (
                           <Badge tone={l.leadGroup === "manual" ? "neutral" : "primary"}>
-                            {GROUP_LABELS[l.leadGroup]}
+                            {applyLabelOverride(l.leadGroup, GROUP_LABELS[l.leadGroup], labelOverrides)}
                           </Badge>
                         )}
                         {!l.campaignId && !l.leadGroup && (

@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Select } from "@/components/ui/input";
 import { Portal } from "@/components/ui/portal";
+import { applyLabelOverride } from "@/lib/leads/group-labels";
 import { LEAD_GROUPS, type Lead, type LeadGroup } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import type { GroupFilter } from "./dialer-context";
@@ -35,10 +36,13 @@ function matchesGroup(l: Lead, g: GroupFilter): boolean {
   return l.leadGroup === g;
 }
 
-export function groupLabel(g: GroupFilter): string {
+export function groupLabel(
+  g: GroupFilter,
+  overrides?: Record<string, string> | null,
+): string {
   if (g === "all") return "All groups";
   if (g === "unsorted") return "Unsorted";
-  return GROUP_META[g].label;
+  return applyLabelOverride(g, GROUP_META[g].label, overrides);
 }
 
 export function LoadLeadsDialog({
@@ -49,6 +53,7 @@ export function LoadLeadsDialog({
   groupFilter,
   onGroupFilterChange,
   onClose,
+  leadGroupLabels,
 }: {
   /** The full, just-loaded dial queue (before any filter is applied). */
   leads: Lead[];
@@ -58,6 +63,8 @@ export function LoadLeadsDialog({
   groupFilter: GroupFilter;
   onGroupFilterChange: (g: GroupFilter) => void;
   onClose: () => void;
+  /** Per-org display-label overrides for the dropbox groups (display only). */
+  leadGroupLabels?: Record<string, string>;
 }) {
   const reduce = useReducedMotion();
 
@@ -85,7 +92,11 @@ export function LoadLeadsDialog({
 
   const groupOptions: { value: GroupFilter; label: string; icon: typeof MapPin }[] = [
     { value: "all", label: "All groups", icon: Layers },
-    ...LEAD_GROUPS.map((g) => ({ value: g as GroupFilter, ...GROUP_META[g] })),
+    ...LEAD_GROUPS.map((g) => ({
+      value: g as GroupFilter,
+      icon: GROUP_META[g].icon,
+      label: applyLabelOverride(g, GROUP_META[g].label, leadGroupLabels),
+    })),
     { value: "unsorted", label: "Unsorted", icon: CircleHelp },
   ];
 

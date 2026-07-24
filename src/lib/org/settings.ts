@@ -186,6 +186,12 @@ export interface OrgSettings {
   /** Domain noun the dialer uses for a contact, e.g. "homeowner". */
   leadNoun: string;
   leadNounPlural: string;
+  /**
+   * Per-org display-label overrides for the fixed lead-group "dropboxes", keyed
+   * by group key (e.g. {"fresno":"San Antonio"}). Display-only — the underlying
+   * keys and the geo-classifier are global and untouched. Empty = default labels.
+   */
+  leadGroupLabels: Record<string, string>;
 }
 
 export const DEFAULT_NOTIFICATIONS: NotificationSettings = {
@@ -292,6 +298,7 @@ export const DEFAULT_ORG_SETTINGS: OrgSettings = {
   billing: { ...DEFAULT_BILLING },
   leadNoun: "lead",
   leadNounPlural: "leads",
+  leadGroupLabels: {},
 };
 
 /** Why the AI dialer is locked for a viewer: a plan upgrade vs a role limit. */
@@ -362,6 +369,10 @@ export function mergeSettings(raw: unknown): OrgSettings {
     billing: { ...DEFAULT_BILLING, ...(s.billing ?? {}) },
     leadNoun: s.leadNoun ?? DEFAULT_ORG_SETTINGS.leadNoun,
     leadNounPlural: s.leadNounPlural ?? DEFAULT_ORG_SETTINGS.leadNounPlural,
+    leadGroupLabels:
+      s.leadGroupLabels && typeof s.leadGroupLabels === "object"
+        ? s.leadGroupLabels
+        : {},
   };
 }
 
