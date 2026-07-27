@@ -323,7 +323,7 @@ export function DialerClient({
         )}
         {groupFilter !== "all" && (
           <Badge tone="primary" className="gap-1">
-            {groupLabel(groupFilter)}
+            {groupLabel(groupFilter, config.leadGroupLabels)}
             <button
               type="button"
               onClick={() => setGroupFilter("all")}
@@ -452,6 +452,8 @@ export function DialerClient({
             <QualifyPanel
               key={focusLead?.id ?? "none"}
               lead={focusLead}
+              showSolarPayment={config.qualifyShowSolarPayment !== false}
+              otherLabel={config.qualifyOtherLabel || "Battery"}
               onNotesChange={(n) => {
                 notesRef.current = n;
               }}
@@ -491,6 +493,7 @@ export function DialerClient({
           groupFilter={groupFilter}
           onGroupFilterChange={setGroupFilter}
           onClose={() => setShowLoadDialog(false)}
+          leadGroupLabels={config.leadGroupLabels}
         />
       )}
     </div>

@@ -89,6 +89,19 @@ export interface NotificationSettings {
   fromName: string;
 }
 
+/**
+ * Per-tenant customization of the dialer's right-hand qualification panel.
+ * Solar orgs keep the solar-loan framing; non-solar tenants (e.g. a workspace
+ * that isn't selling against a solar payment) turn the solar field off and
+ * relabel the third home-profile toggle to something that fits their pitch.
+ */
+export interface QualifySettings {
+  /** Show the "Solar payment" billing field + energy-cost total. */
+  showSolarPayment: boolean;
+  /** Label for the third home-profile toggle (default "Battery"). */
+  otherToggleLabel: string;
+}
+
 export interface OrgSettings {
   dialing: {
     mode: "preview" | "progressive" | "predictive";
@@ -165,12 +178,20 @@ export interface OrgSettings {
     consentRequired: boolean;
   };
   dispositions: { label: string; tone: DispositionTone }[];
+  /** Qualification-panel customization (solar field + third toggle label). */
+  qualify: QualifySettings;
   notifications: NotificationSettings;
   features: OrgFeatures;
   billing: OrgBilling;
   /** Domain noun the dialer uses for a contact, e.g. "homeowner". */
   leadNoun: string;
   leadNounPlural: string;
+  /**
+   * Per-org display-label overrides for the fixed lead-group "dropboxes", keyed
+   * by group key (e.g. {"fresno":"San Antonio"}). Display-only — the underlying
+   * keys and the geo-classifier are global and untouched. Empty = default labels.
+   */
+  leadGroupLabels: Record<string, string>;
 }
 
 export const DEFAULT_NOTIFICATIONS: NotificationSettings = {
@@ -180,6 +201,11 @@ export const DEFAULT_NOTIFICATIONS: NotificationSettings = {
   appointmentEmails: [],
   ccBookingRep: false,
   fromName: "",
+};
+
+export const DEFAULT_QUALIFY: QualifySettings = {
+  showSolarPayment: true,
+  otherToggleLabel: "Battery",
 };
 
 export const DEFAULT_FEATURES: OrgFeatures = {
@@ -266,11 +292,13 @@ export const DEFAULT_ORG_SETTINGS: OrgSettings = {
     { label: "Not interested", tone: "danger" },
     { label: "No answer", tone: "neutral" },
   ],
+  qualify: { ...DEFAULT_QUALIFY },
   notifications: { ...DEFAULT_NOTIFICATIONS },
   features: { ...DEFAULT_FEATURES },
   billing: { ...DEFAULT_BILLING },
   leadNoun: "lead",
   leadNounPlural: "leads",
+  leadGroupLabels: {},
 };
 
 /** Why the AI dialer is locked for a viewer: a plan upgrade vs a role limit. */
@@ -327,6 +355,7 @@ export function mergeSettings(raw: unknown): OrgSettings {
     dispositions: Array.isArray(s.dispositions)
       ? s.dispositions
       : DEFAULT_ORG_SETTINGS.dispositions,
+    qualify: { ...DEFAULT_QUALIFY, ...(s.qualify ?? {}) },
     notifications: {
       ...DEFAULT_NOTIFICATIONS,
       ...(s.notifications ?? {}),
@@ -340,6 +369,10 @@ export function mergeSettings(raw: unknown): OrgSettings {
     billing: { ...DEFAULT_BILLING, ...(s.billing ?? {}) },
     leadNoun: s.leadNoun ?? DEFAULT_ORG_SETTINGS.leadNoun,
     leadNounPlural: s.leadNounPlural ?? DEFAULT_ORG_SETTINGS.leadNounPlural,
+    leadGroupLabels:
+      s.leadGroupLabels && typeof s.leadGroupLabels === "object"
+        ? s.leadGroupLabels
+        : {},
   };
 }
 

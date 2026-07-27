@@ -40,6 +40,12 @@ export interface DialerConfig {
   /** AI double-dial: re-ring a no-answer once after `doubleDialGapSec` before moving on. */
   doubleDial?: boolean;
   doubleDialGapSec?: number;
+  /** Show the "Solar payment" field in the qualification panel (per-tenant). */
+  qualifyShowSolarPayment?: boolean;
+  /** Label for the third home-profile toggle in the qualification panel. */
+  qualifyOtherLabel?: string;
+  /** Per-org display-label overrides for the lead-group "dropboxes" (display only). */
+  leadGroupLabels?: Record<string, string>;
 }
 
 type Campaign = { id: string; name: string };
