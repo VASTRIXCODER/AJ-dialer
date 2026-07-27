@@ -17,6 +17,7 @@ import { Card } from "@/components/ui/card";
 import type { ParsedLead } from "@/lib/leads/csv";
 import type { LeadGroup } from "@/lib/types";
 import { formatPhone } from "@/lib/utils";
+import { CampaignCertificationDialog } from "./campaign-certification-dialog";
 
 type PreviewLead = ParsedLead & { tempId: string };
 type BucketKey = LeadGroup | "unsorted";
@@ -77,6 +78,11 @@ export function GeoPreviewReview({
   const [bucketState, setBucketState] = useState<Record<string, BucketState>>({});
   const [bucketMsg, setBucketMsg] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
+  // This flow never sets a campaign, so any bucket that trips the gate is
+  // certifying the org-wide "no campaign" bucket — one dialog covers all of
+  // them; onCertified re-runs confirm(), whose own "not already done" filter
+  // naturally retries just the buckets that were waiting on it.
+  const [certPrompt, setCertPrompt] = useState<{ campaignId: string | null } | null>(null);
 
   const buckets = useMemo(() => {
     const out: Record<BucketKey, PreviewLead[]> = {
@@ -105,6 +111,13 @@ export function GeoPreviewReview({
         }),
       });
       const json = await res.json().catch(() => ({}));
+      if (json.certificationRequired) {
+        // Not a failure — back to idle so confirm()'s retry picks it up once
+        // the dialog's onCertified calls confirm() again.
+        setBucketState((s) => ({ ...s, [key]: "idle" }));
+        setCertPrompt((prev) => prev ?? { campaignId: json.campaignId ?? null });
+        return false;
+      }
       if (!res.ok || json.error) {
         setBucketState((s) => ({ ...s, [key]: "error" }));
         setBucketMsg((s) => ({ ...s, [key]: json.error ?? "Import failed." }));
@@ -142,6 +155,16 @@ export function GeoPreviewReview({
 
   return (
     <Card className="p-5">
+      {certPrompt && (
+        <CampaignCertificationDialog
+          campaignId={certPrompt.campaignId}
+          onCertified={() => {
+            setCertPrompt(null);
+            void confirm();
+          }}
+          onCancel={() => setCertPrompt(null)}
+        />
+      )}
       <div className="flex flex-wrap items-start justify-between gap-3 border-b border-border pb-4">
         <div>
           <h3 className="flex items-center gap-2 font-semibold tracking-tight">

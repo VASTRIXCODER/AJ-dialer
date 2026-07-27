@@ -11,6 +11,8 @@ import { createClient } from "@/lib/supabase/client";
 import { isSupabaseConfigured } from "@/lib/supabase/config";
 import { cn } from "@/lib/utils";
 
+const legalLinkClass = "font-semibold text-primary hover:underline";
+
 /** Official multi-color Google "G". */
 function GoogleIcon({ className }: { className?: string }) {
   return (
@@ -44,12 +46,20 @@ export function AuthForm({ mode }: { mode: "login" | "signup" }) {
   const [googleLoading, setGoogleLoading] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  // Signup-only clickwrap: unchecked by default, blocks BOTH signup paths below
+  // until affirmatively checked. Irrelevant (and hidden) in login mode.
+  const [agreed, setAgreed] = useState(false);
 
   const isLogin = mode === "login";
+  const canSubmit = isLogin || agreed;
 
   async function signInWithGoogle() {
     if (!configured) {
       setError("Supabase isn’t configured yet — add your keys to enable accounts.");
+      return;
+    }
+    if (!canSubmit) {
+      setError("Please agree to the Terms of Service to continue.");
       return;
     }
     setGoogleLoading(true);
@@ -58,11 +68,15 @@ export function AuthForm({ mode }: { mode: "login" | "signup" }) {
     const supabase = createClient();
     const next =
       new URLSearchParams(window.location.search).get("redirect") || "/hub";
+    const callback = new URL(`${window.location.origin}/auth/callback`);
+    callback.searchParams.set("next", next);
+    // Tells /auth/callback to record the clickwrap acceptance once the OAuth
+    // round-trip lands back with a real session — see that route for why.
+    if (!isLogin) callback.searchParams.set("tos", "1");
     const { error } = await supabase.auth.signInWithOAuth({
       provider: "google",
       options: {
-        // Google → Supabase → this app route, which exchanges the code.
-        redirectTo: `${window.location.origin}/auth/callback?next=${encodeURIComponent(next)}`,
+        redirectTo: callback.toString(),
         queryParams: { access_type: "offline", prompt: "consent" },
       },
     });
@@ -81,6 +95,11 @@ export function AuthForm({ mode }: { mode: "login" | "signup" }) {
 
     if (!configured) {
       setError("Supabase isn’t configured yet — add your keys to enable accounts.");
+      setLoading(false);
+      return;
+    }
+    if (!canSubmit) {
+      setError("Please agree to the Terms of Service to continue.");
       setLoading(false);
       return;
     }
@@ -105,6 +124,16 @@ export function AuthForm({ mode }: { mode: "login" | "signup" }) {
         if (error) {
           setError(error.message);
           return;
+        }
+        // Best-effort — the account is already created either way, so a hiccup
+        // here (network, table not migrated yet) must never surface as a
+        // signup failure. See /api/legal/accept for why the id is trustworthy.
+        if (data.user) {
+          fetch("/api/legal/accept", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ userId: data.user.id, email }),
+          }).catch(() => {});
         }
         if (data.session) {
           router.push("/hub");
@@ -150,7 +179,7 @@ export function AuthForm({ mode }: { mode: "login" | "signup" }) {
             size="lg"
             className="mt-6 w-full gap-2.5"
             onClick={signInWithGoogle}
-            disabled={loading || googleLoading}
+            disabled={loading || googleLoading || !canSubmit}
           >
             {googleLoading ? (
               <Loader2 className="h-4 w-4 animate-spin" />
@@ -211,6 +240,35 @@ export function AuthForm({ mode }: { mode: "login" | "signup" }) {
           />
         </div>
 
+        {!isLogin && (
+          <label className="flex cursor-pointer items-start gap-2.5 text-xs leading-relaxed text-muted-foreground">
+            <input
+              type="checkbox"
+              checked={agreed}
+              onChange={(e) => setAgreed(e.target.checked)}
+              required
+              className="mt-0.5 h-4 w-4 shrink-0 rounded border-input accent-primary"
+            />
+            <span>
+              I have read and agree to the AIATWORK{" "}
+              <Link href="/terms" target="_blank" className={legalLinkClass}>
+                Terms of Service
+              </Link>
+              ,{" "}
+              <Link href="/privacy" target="_blank" className={legalLinkClass}>
+                Privacy Policy
+              </Link>
+              , and{" "}
+              <Link href="/acceptable-use" target="_blank" className={legalLinkClass}>
+                Acceptable Use Policy
+              </Link>
+              . I understand that I am solely responsible for my calling campaigns, contact
+              lists, consent records, scripts, opt-outs, and compliance with all applicable
+              telemarketing laws.
+            </span>
+          </label>
+        )}
+
         {error && <p className="text-sm font-medium text-danger">{error}</p>}
         {notice && (
           <p className="flex items-center gap-1.5 text-sm font-medium text-success">
@@ -219,7 +277,7 @@ export function AuthForm({ mode }: { mode: "login" | "signup" }) {
           </p>
         )}
 
-        <Button type="submit" size="lg" className="w-full gap-2" disabled={loading}>
+        <Button type="submit" size="lg" className="w-full gap-2" disabled={loading || !canSubmit}>
           {loading ? (
             <Loader2 className="h-4 w-4 animate-spin" />
           ) : isLogin ? (

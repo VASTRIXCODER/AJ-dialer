@@ -1283,3 +1283,74 @@ alter table public.ai_conversations add column if not exists agent_key text;
 alter table public.appointments     add column if not exists agent_key text;
 create index if not exists appointments_agent_idx
   on public.appointments (org_id, agent_key) where agent_key is not null;
+
+-- ═════════════════════════════════════════════════════════════════════════════
+-- PART 16 — LEGAL ACCEPTANCE + CAMPAIGN COMPLIANCE CERTIFICATION
+--           (idempotent; safe to re-run)
+--
+-- Two distinct compliance controls, deliberately kept in separate tables:
+--
+--   legal_acceptances       — the account-level clickwrap: "I agree to the
+--                             Terms of Service / Privacy Policy / Acceptable
+--                             Use Policy", captured once at signup with the
+--                             audit trail a real dispute would need (who, what
+--                             exact text, what version, from where, when).
+--                             Append-only — never updated or deleted. A new
+--                             row is added if a user re-accepts a bumped
+--                             version; history is never overwritten.
+--
+--   campaign_certifications — the PER-CAMPAIGN (or org-wide "no campaign"
+--                             bucket, campaign_id null) certification that a
+--                             specific list of numbers has been legally
+--                             vetted. Re-required whenever CAMPAIGN_CERT_VERSION
+--                             bumps. This is what makes it possible to show a
+--                             customer certified responsibility for THIS
+--                             specific campaign, not just the platform in
+--                             general months earlier.
+--
+-- Service-role only (RLS on, no policies): both are written exclusively by the
+-- server AFTER an application-code auth/permission check (getUser() /
+-- getScope()), exactly like audit_log and dial_counters above.
+-- ═════════════════════════════════════════════════════════════════════════════
+create table if not exists public.legal_acceptances (
+  id               uuid primary key default gen_random_uuid(),
+  user_id          uuid references auth.users (id) on delete set null,
+  email            text not null default '',
+  -- Filled in later if/when the user creates or joins an org — nothing about
+  -- a business exists yet at the moment of account creation.
+  org_id           uuid references public.organizations (id) on delete set null,
+  business_name    text default '',
+  terms_version    text not null,
+  privacy_version  text not null,
+  aup_version      text not null,
+  -- The EXACT checkbox label shown, verbatim — proof of what was agreed to,
+  -- independent of whatever the copy says today.
+  acceptance_text  text not null,
+  ip_address       text default '',
+  user_agent       text default '',
+  created_at       timestamptz not null default now()
+);
+create index if not exists legal_acceptances_user_idx on public.legal_acceptances (user_id, created_at desc);
+alter table public.legal_acceptances enable row level security;
+
+-- No uniqueness constraint on (org_id, campaign_id, version) on purpose: a
+-- plain `unique` column set treats two NULL campaign_ids as distinct (standard
+-- SQL), so it would silently fail to dedupe the org-wide "no campaign" bucket
+-- anyway. A second certification row for the same campaign isn't a bug worth
+-- a partial-index workaround for — it's harmless (the gate only checks
+-- whether AT LEAST ONE current-version row exists) and arguably better audit
+-- history: several people certifying the same campaign over time is real
+-- signal, not noise.
+create table if not exists public.campaign_certifications (
+  id            uuid primary key default gen_random_uuid(),
+  org_id        uuid not null references public.organizations (id) on delete cascade,
+  -- null = the org-wide "no campaign" bucket (ad-hoc / manual-group imports).
+  campaign_id   uuid references public.campaigns (id) on delete cascade,
+  certified_by  uuid references auth.users (id) on delete set null,
+  version       text not null,
+  cert_text     text not null,
+  created_at    timestamptz not null default now()
+);
+create index if not exists campaign_certifications_org_idx
+  on public.campaign_certifications (org_id, campaign_id, version);
+alter table public.campaign_certifications enable row level security;

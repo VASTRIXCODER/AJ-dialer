@@ -11,6 +11,7 @@ import { useRouter } from "next/navigation";
 import { useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { CampaignCertificationDialog } from "./campaign-certification-dialog";
 
 type Status = { type: "idle" | "working" | "done" | "error"; message?: string };
 
@@ -26,6 +27,56 @@ export function CsvImport({
   const [status, setStatus] = useState<Status>({ type: "idle" });
   const [dragOver, setDragOver] = useState(false);
   const [campaignId, setCampaignId] = useState("");
+  // Set when /api/leads/import blocks on an uncertified campaign — the file's
+  // already-read text is kept so certifying can retry the SAME import without
+  // asking the rep to re-pick or re-drop the file.
+  const [certPrompt, setCertPrompt] = useState<{ campaignId: string | null } | null>(null);
+  const pendingTextRef = useRef<string | null>(null);
+
+  async function runImport(text: string) {
+    // The server parses + maps the CSV — using Claude to read any layout
+    // (including header-less broker exports) when the simple mapper can't.
+    setStatus({ type: "working", message: "Reading your columns…" });
+    const res = await fetch("/api/leads/import", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ csv: text, campaignId: campaignId || null }),
+    });
+    const json = await res.json().catch(() => ({}));
+
+    if (json.certificationRequired) {
+      pendingTextRef.current = text;
+      setCertPrompt({ campaignId: json.campaignId ?? null });
+      setStatus({ type: "idle" });
+      return;
+    }
+    if (!res.ok || json.error) {
+      setStatus({ type: "error", message: json.error ?? "Import failed." });
+      return;
+    }
+    const skipped = typeof json.invalidPhone === "number" ? json.invalidPhone : 0;
+    const duplicates = typeof json.duplicates === "number" ? json.duplicates : 0;
+    const notes = [
+      skipped > 0 ? `${skipped} without a valid phone — not dialable` : "",
+      duplicates > 0 ? `${duplicates} already in your org's leads — skipped` : "",
+    ].filter(Boolean);
+    const skipNote = notes.length ? ` (${notes.join("; ")})` : "";
+    const how = json.source === "ai" ? " — columns mapped by AI" : "";
+    // If the file needed AI mapping but it wasn't available/failed, the import
+    // still ran with best-effort header detection — warn so it's not silent.
+    if (json.aiError) {
+      setStatus({
+        type: "error",
+        message: `Imported ${json.inserted} leads, but AI column mapping didn't run: ${json.aiError}`,
+      });
+    } else {
+      setStatus({
+        type: "done",
+        message: `Imported ${json.inserted} leads${skipNote}${how}.`,
+      });
+    }
+    router.refresh();
+  }
 
   async function handleFile(file: File) {
     setStatus({ type: "working", message: `Reading ${file.name}…` });
@@ -35,44 +86,27 @@ export function CsvImport({
         setStatus({ type: "error", message: "That file looks empty." });
         return;
       }
-      // The server parses + maps the CSV — using Claude to read any layout
-      // (including header-less broker exports) when the simple mapper can't.
-      setStatus({ type: "working", message: "Reading your columns…" });
-      const res = await fetch("/api/leads/import", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ csv: text, campaignId: campaignId || null }),
-      });
-      const json = await res.json().catch(() => ({}));
-      if (!res.ok || json.error) {
-        setStatus({ type: "error", message: json.error ?? "Import failed." });
-        return;
-      }
-      const skipped = typeof json.invalidPhone === "number" ? json.invalidPhone : 0;
-      const duplicates = typeof json.duplicates === "number" ? json.duplicates : 0;
-      const notes = [
-        skipped > 0 ? `${skipped} without a valid phone — not dialable` : "",
-        duplicates > 0 ? `${duplicates} already in your org's leads — skipped` : "",
-      ].filter(Boolean);
-      const skipNote = notes.length ? ` (${notes.join("; ")})` : "";
-      const how = json.source === "ai" ? " — columns mapped by AI" : "";
-      // If the file needed AI mapping but it wasn't available/failed, the import
-      // still ran with best-effort header detection — warn so it's not silent.
-      if (json.aiError) {
-        setStatus({
-          type: "error",
-          message: `Imported ${json.inserted} leads, but AI column mapping didn't run: ${json.aiError}`,
-        });
-      } else {
-        setStatus({
-          type: "done",
-          message: `Imported ${json.inserted} leads${skipNote}${how}.`,
-        });
-      }
-      router.refresh();
+      await runImport(text);
     } catch {
       setStatus({ type: "error", message: "Couldn’t read that file." });
     }
+  }
+
+  async function certifyAndRetry() {
+    const text = pendingTextRef.current;
+    if (!text) return;
+    setCertPrompt(null);
+    try {
+      await runImport(text);
+    } catch {
+      setStatus({ type: "error", message: "Couldn’t read that file." });
+    }
+  }
+
+  function cancelCert() {
+    pendingTextRef.current = null;
+    setCertPrompt(null);
+    setStatus({ type: "idle" });
   }
 
   const onPick = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -129,10 +163,19 @@ export function CsvImport({
     </p>
   );
 
+  const certDialog = certPrompt && (
+    <CampaignCertificationDialog
+      campaignId={certPrompt.campaignId}
+      onCertified={certifyAndRetry}
+      onCancel={cancelCert}
+    />
+  );
+
   if (variant === "button") {
     return (
       <>
         {hiddenInput}
+        {certDialog}
         <div className="flex items-center gap-2">
           {campaignPicker}
           <Button
@@ -158,6 +201,7 @@ export function CsvImport({
   return (
     <div>
       {hiddenInput}
+      {certDialog}
       {campaignPicker && <div className="mb-3 flex justify-center">{campaignPicker}</div>}
       <button
         type="button"

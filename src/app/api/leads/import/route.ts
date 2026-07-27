@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { insertLeads, type LeadInput } from "@/lib/db/leads";
+import { hasCurrentCertification, normalizeCampaignId } from "@/lib/legal/campaign-cert";
 import type { ParsedLead } from "@/lib/leads/csv";
 import { parseCsvToLeads } from "@/lib/leads/parse-request";
 import { LEAD_GROUPS, type LeadGroup } from "@/lib/types";
@@ -40,6 +41,27 @@ export async function POST(req: Request) {
       { inserted: 0, error: `Invalid leadGroup. Must be one of: ${LEAD_GROUPS.join(", ")}.` },
       { status: 400 },
     );
+  }
+
+  // Compliance gate: a list can't be dialed until someone has certified this
+  // specific campaign (or the org-wide "no campaign" bucket) has the legal
+  // right to be contacted, at the current certification version. Checked
+  // BEFORE parsing so an uncertified import never spends an AI column-mapping
+  // call on a file that's about to be blocked anyway.
+  const certCampaignId = normalizeCampaignId(body.campaignId);
+  if (viewer.org?.id) {
+    const certified = await hasCurrentCertification(viewer.org.id, certCampaignId);
+    if (!certified) {
+      return NextResponse.json(
+        {
+          inserted: 0,
+          error: "This campaign needs a compliance certification before you can import leads into it.",
+          certificationRequired: true,
+          campaignId: certCampaignId,
+        },
+        { status: 403 },
+      );
+    }
   }
 
   let leads: ParsedLead[] | LeadInput[] = [];

@@ -13,6 +13,7 @@ import { useRef, useState } from "react";
 import { Card } from "@/components/ui/card";
 import type { LeadGroup } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import { CampaignCertificationDialog } from "./campaign-certification-dialog";
 import { GeoPreviewReview, type GeoPreviewResponse } from "./geo-preview-review";
 import { useCsvUpload } from "./use-csv-upload";
 
@@ -25,12 +26,21 @@ const TILES: { group: LeadGroup; label: string; hint: string }[] = [
 ];
 
 function UploadTile({ group, label, hint }: { group: LeadGroup; label: string; hint: string }) {
-  const { status, handleFile } = useCsvUpload({ leadGroup: group });
+  const { status, handleFile, certPrompt, certifyAndRetry, cancelCert } = useCsvUpload({
+    leadGroup: group,
+  });
   const inputRef = useRef<HTMLInputElement>(null);
   const [dragOver, setDragOver] = useState(false);
 
   return (
     <div>
+      {certPrompt && (
+        <CampaignCertificationDialog
+          campaignId={certPrompt.campaignId}
+          onCertified={certifyAndRetry}
+          onCancel={cancelCert}
+        />
+      )}
       <input
         ref={inputRef}
         type="file"

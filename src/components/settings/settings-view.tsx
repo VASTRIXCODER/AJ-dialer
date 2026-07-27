@@ -14,6 +14,7 @@ import {
   Sun,
 } from "lucide-react";
 import { useTheme } from "next-themes";
+import Link from "next/link";
 import { useEffect, useState } from "react";
 import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
@@ -205,6 +206,17 @@ export function SettingsView({
             <Button size="sm" onClick={saveProfile} disabled={saving}>
               {saving ? "Saving…" : "Save changes"}
             </Button>
+          </div>
+          <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-border pt-4 text-xs text-muted-foreground">
+            <Link href="/terms" target="_blank" className="font-medium hover:text-foreground hover:underline">
+              Terms of Service
+            </Link>
+            <Link href="/privacy" target="_blank" className="font-medium hover:text-foreground hover:underline">
+              Privacy Policy
+            </Link>
+            <Link href="/acceptable-use" target="_blank" className="font-medium hover:text-foreground hover:underline">
+              Acceptable Use Policy
+            </Link>
           </div>
         </Card>
 
