@@ -723,6 +723,23 @@ create table if not exists public.pending_recordings (
 -- Service-role only (no policies) — written by the webhook, claimed on insert.
 alter table public.pending_recordings enable row level security;
 
+-- Twilio's own verdict on the call (answered? which error code?) races the call
+-- record the exact same way, and for the exact same reason: `completed` fires the
+-- instant the call ends, while the record isn't written until the rep saves the
+-- disposition. Keyed by room and claimed on insert, just like the recording above.
+-- Without this the verdict update matches zero rows on every call and these
+-- columns stay null forever — which is how 21210/21212 (bad caller ID), 21610
+-- (blocked) and 13224 (geo) failures become invisible.
+create table if not exists public.pending_call_verdicts (
+  room               text primary key,
+  twilio_call_status text,
+  twilio_error_code  integer,
+  answered_by        text,
+  created_at         timestamptz not null default now()
+);
+-- Service-role only (no policies) — written by the webhook, claimed on insert.
+alter table public.pending_call_verdicts enable row level security;
+
 -- ═════════════════════════════════════════════════════════════════════════════
 -- PART 7 — SHARED ORG LEAD POOL  (idempotent; safe to re-run)
 --

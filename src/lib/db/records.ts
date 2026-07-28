@@ -208,6 +208,26 @@ export async function insertCallRecord(input: {
       }
     }
 
+    // Claim Twilio's verdict on the call the same way — it lands before this row
+    // exists for the same reason the recording does (the rep was still wrapping
+    // up when Twilio reported the call completed).
+    if (recordId && input.room && isAdminConfigured()) {
+      try {
+        const admin = createAdminClient();
+        const { data: parked } = await admin
+          .from("pending_call_verdicts")
+          .select("twilio_call_status,twilio_error_code,answered_by")
+          .eq("room", input.room)
+          .maybeSingle();
+        if (parked) {
+          await admin.from("call_records").update(parked).eq("id", recordId);
+          await admin.from("pending_call_verdicts").delete().eq("room", input.room);
+        }
+      } catch {
+        /* best-effort */
+      }
+    }
+
     if (!input.outcome) return recordId;
 
     // Reflect the disposition on the lead + route it to the right pipeline tab.

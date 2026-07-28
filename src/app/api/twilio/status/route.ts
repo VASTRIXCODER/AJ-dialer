@@ -166,7 +166,22 @@ export async function POST(req: Request) {
         answered_by: String(form.get("AnsweredBy") ?? "") || null,
       };
       if (room) {
-        await admin.from("call_records").update(verdict).eq("room", room);
+        const { data: updated } = await admin
+          .from("call_records")
+          .update(verdict)
+          .eq("room", room)
+          .select("id");
+        // Matching on `room` fixed the wrong-SID half of this bug, but not the
+        // ORDERING half: `completed` arrives the moment the call ends, while the
+        // record is only written when the rep saves their disposition seconds
+        // later. So this update still found nothing on essentially every call.
+        // Park the verdict; insertCallRecord claims it — the same rescue the
+        // recording path above has always had.
+        if (!updated || updated.length === 0) {
+          await admin
+            .from("pending_call_verdicts")
+            .upsert({ room, ...verdict }, { onConflict: "room" });
+        }
       } else if (callSid) {
         await admin.from("call_records").update(verdict).eq("call_sid", callSid);
       }
