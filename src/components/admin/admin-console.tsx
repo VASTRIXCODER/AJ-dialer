@@ -24,7 +24,7 @@ import {
   XCircle,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { NotificationsSettings } from "@/components/admin/notifications-settings";
 import { CsvImport } from "@/components/leads/csv-import";
 import { OrgSettingsForm } from "@/components/admin/org-settings-form";
@@ -192,7 +192,13 @@ function MembersTab({
   const router = useRouter();
   const [busy, setBusy] = useState<string | null>(null);
   const [err, setErr] = useState("");
-  const [copied, setCopied] = useState(false);
+  // Which field was just copied ("link" | "code" | "invite"), for the ✓ swap.
+  const [copied, setCopied] = useState<string | null>(null);
+  // The origin is only knowable in the browser, and reading window during
+  // render would desync the server-rendered HTML — resolve it after mount and
+  // render a neutral placeholder until then.
+  const [origin, setOrigin] = useState("");
+  useEffect(() => setOrigin(window.location.origin), []);
 
   const pending = members.filter((m) => m.status === "pending");
   const active = members.filter((m) => m.status === "active");
@@ -222,11 +228,21 @@ function MembersTab({
     }
   }
 
-  function copyInvite() {
-    const text = `Join ${org.name} on the AI dialer. Sign up, then enter join code ${org.joinCode}.`;
+  // Where a teammate actually lands. Signup is the right target: the join code
+  // is entered after creating an account, so sending them to /dialer just
+  // bounces them through the auth gate first.
+  const dialerLink = origin ? `${origin}/signup` : "";
+
+  function copy(what: "link" | "code" | "invite") {
+    const text =
+      what === "link"
+        ? dialerLink
+        : what === "code"
+          ? org.joinCode
+          : `Join ${org.name} on the AI dialer.\n\n1. Go to ${dialerLink}\n2. Create your account\n3. Enter join code ${org.joinCode}`;
     navigator.clipboard?.writeText(text);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+    setCopied(what);
+    setTimeout(() => setCopied(null), 2000);
   }
 
   return (
@@ -237,22 +253,75 @@ function MembersTab({
 
       {/* Invite / join code */}
       {permissions.includes("members.invite") && (
-        <div className="flex flex-wrap items-center gap-3 rounded-xl border border-border bg-surface/40 p-4">
-          <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary-soft text-primary">
-            <KeyRound className="h-5 w-5" />
-          </span>
-          <div className="min-w-0 flex-1">
-            <p className="text-sm font-semibold">Invite teammates</p>
-            <p className="text-xs text-muted-foreground">
-              Share the join code{" "}
-              <span className="font-mono font-bold tracking-widest">{org.joinCode}</span> — they’ll
-              appear here to approve.
-            </p>
+        <div className="rounded-xl border border-border bg-surface/40 p-4">
+          <div className="flex flex-wrap items-center gap-3">
+            <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary-soft text-primary">
+              <KeyRound className="h-5 w-5" />
+            </span>
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-semibold">Invite teammates</p>
+              <p className="text-xs text-muted-foreground">
+                Send them the link and the code — they’ll appear here to approve.
+              </p>
+            </div>
+            <Button size="sm" variant="outline" className="gap-1.5" onClick={() => copy("invite")}>
+              {copied === "invite" ? (
+                <Check className="h-3.5 w-3.5" />
+              ) : (
+                <Copy className="h-3.5 w-3.5" />
+              )}
+              {copied === "invite" ? "Copied" : "Copy invite"}
+            </Button>
           </div>
-          <Button size="sm" variant="outline" className="gap-1.5" onClick={copyInvite}>
-            {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
-            {copied ? "Copied" : "Copy invite"}
-          </Button>
+
+          <div className="mt-3 grid gap-2 sm:grid-cols-[1fr_auto]">
+            {/* Dialer link */}
+            <div className="min-w-0 rounded-lg border border-border/70 bg-background/60 px-3 py-2">
+              <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                Dialer link
+              </p>
+              <p className="truncate font-mono text-sm" title={dialerLink}>
+                {dialerLink || "…"}
+              </p>
+            </div>
+            <Button
+              size="sm"
+              variant="ghost"
+              className="gap-1.5 sm:self-stretch"
+              onClick={() => copy("link")}
+              disabled={!dialerLink}
+            >
+              {copied === "link" ? (
+                <Check className="h-3.5 w-3.5" />
+              ) : (
+                <Copy className="h-3.5 w-3.5" />
+              )}
+              {copied === "link" ? "Copied" : "Copy link"}
+            </Button>
+
+            {/* Join code */}
+            <div className="min-w-0 rounded-lg border border-border/70 bg-background/60 px-3 py-2">
+              <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                Join code
+              </p>
+              <p className="truncate font-mono text-sm font-bold tracking-widest">
+                {org.joinCode}
+              </p>
+            </div>
+            <Button
+              size="sm"
+              variant="ghost"
+              className="gap-1.5 sm:self-stretch"
+              onClick={() => copy("code")}
+            >
+              {copied === "code" ? (
+                <Check className="h-3.5 w-3.5" />
+              ) : (
+                <Copy className="h-3.5 w-3.5" />
+              )}
+              {copied === "code" ? "Copied" : "Copy code"}
+            </Button>
+          </div>
         </div>
       )}
 
