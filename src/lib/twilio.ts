@@ -58,19 +58,30 @@ function isPublicHttpUrl(value: string): boolean {
 }
 
 /**
- * Resolve the public origin Twilio should call back to. Prefers an explicit,
- * public NEXT_PUBLIC_APP_URL; otherwise derives it from the incoming request's
- * forwarded host (works automatically in production). Returns null when no
- * publicly-reachable URL is available — callers then OMIT the callback rather
- * than sending an unreachable/relative one (which causes Twilio 21609 / 11200).
+ * Resolve the public origin Twilio should call back to. Prefers the origin THIS
+ * request actually arrived on, falling back to NEXT_PUBLIC_APP_URL (needed for
+ * request-less callers). Returns null when no publicly-reachable URL is
+ * available — callers then OMIT the callback rather than sending an
+ * unreachable/relative one (which causes Twilio 21609 / 11200).
+ *
+ * The request origin wins on purpose. NEXT_PUBLIC_APP_URL used to win, and a
+ * stale value silently broke every callback in production: it pointed at a
+ * vercel.app host that 307-redirects to another vercel.app host, so Twilio was
+ * handed a URL that never resolved to the app in one hop. Nothing surfaced —
+ * callbacks are fire-and-forget, so recordings and call verdicts simply never
+ * came back, for months. The host a rep is genuinely using is reachable by
+ * definition and needs no redirect, which makes this self-healing: point the app
+ * at any domain and its callbacks follow, no env var to keep in sync.
  */
 export function getPublicBaseUrl(req?: Request): string | null {
   const candidates: string[] = [];
-  if (process.env.NEXT_PUBLIC_APP_URL) candidates.push(process.env.NEXT_PUBLIC_APP_URL);
   if (req) {
     const proto = req.headers.get("x-forwarded-proto") ?? "https";
     const host = req.headers.get("x-forwarded-host") ?? req.headers.get("host");
     if (host) candidates.push(`${proto}://${host}`);
+  }
+  if (process.env.NEXT_PUBLIC_APP_URL) candidates.push(process.env.NEXT_PUBLIC_APP_URL);
+  if (req) {
     try {
       candidates.push(new URL(req.url).origin);
     } catch {
