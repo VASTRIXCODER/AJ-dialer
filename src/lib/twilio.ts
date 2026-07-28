@@ -58,23 +58,40 @@ function isPublicHttpUrl(value: string): boolean {
 }
 
 /**
- * Resolve the public origin Twilio should call back to. Prefers the origin THIS
- * request actually arrived on, falling back to NEXT_PUBLIC_APP_URL (needed for
- * request-less callers). Returns null when no publicly-reachable URL is
- * available — callers then OMIT the callback rather than sending an
- * unreachable/relative one (which causes Twilio 21609 / 11200).
+ * Where Twilio's webhooks should land, when we want them somewhere specific.
  *
- * The request origin wins on purpose. NEXT_PUBLIC_APP_URL used to win, and a
- * stale value silently broke every callback in production: it pointed at a
- * vercel.app host that 307-redirects to another vercel.app host, so Twilio was
- * handed a URL that never resolved to the app in one hop. Nothing surfaced —
- * callbacks are fire-and-forget, so recordings and call verdicts simply never
- * came back, for months. The host a rep is genuinely using is reachable by
- * definition and needs no redirect, which makes this self-healing: point the app
- * at any domain and its callbacks follow, no env var to keep in sync.
+ * Defaults to the Vercel origin rather than the Cloudflare-fronted custom domain
+ * ON PURPOSE: these are machine-to-machine callbacks, so they gain nothing from
+ * the CDN and stand to lose from it — a WAF false-positive or a rate limit
+ * during the callback burst of a 3X parallel dial would silently eat them, the
+ * same way they were silently eaten before. Going straight to Vercel keeps the
+ * path as short and as boring as possible. This is also the origin the Supabase
+ * pg_cron jobs already call.
+ *
+ * Set TWILIO_CALLBACK_BASE_URL to repoint it without a code change; set it to an
+ * empty string to unpin entirely and fall back to the request's own origin.
+ */
+const DEFAULT_CALLBACK_BASE_URL = "https://aiatworkdialer.vercel.app";
+const CALLBACK_BASE_URL =
+  process.env.TWILIO_CALLBACK_BASE_URL ?? DEFAULT_CALLBACK_BASE_URL;
+
+/**
+ * Resolve the public origin Twilio should call back to. Order: the pinned
+ * callback origin, then the origin THIS request actually arrived on, then
+ * NEXT_PUBLIC_APP_URL (needed for request-less callers). Returns null when no
+ * publicly-reachable URL is available — callers then OMIT the callback rather
+ * than sending an unreachable/relative one (which causes Twilio 21609 / 11200).
+ *
+ * NEXT_PUBLIC_APP_URL is deliberately LAST. It used to win, and a stale value
+ * silently broke every callback in production: the Vercel project had been
+ * renamed, so it pointed at an alias that 307-redirects to the current one.
+ * Twilio followed the redirect as a GET, hit a POST-only route, and logged 405
+ * — but callbacks are fire-and-forget, so nothing surfaced and recordings and
+ * call verdicts simply never came back. Every remaining candidate here is one
+ * that resolves in a single hop.
  */
 export function getPublicBaseUrl(req?: Request): string | null {
-  const candidates: string[] = [];
+  const candidates: string[] = [CALLBACK_BASE_URL];
   if (req) {
     const proto = req.headers.get("x-forwarded-proto") ?? "https";
     const host = req.headers.get("x-forwarded-host") ?? req.headers.get("host");
