@@ -39,9 +39,12 @@ export async function POST(req: Request) {
     contact: CONTACT.includes(body.contact as ContactFilter)
       ? (body.contact as ContactFilter)
       : "any",
+    // Falls back to upload order, matching the builder's default. ai_score is a
+    // moving target (each call rewrites it), so it must be chosen explicitly
+    // rather than being what an unspecified request silently gets.
     order: ORDER.includes(body.order as SessionOrder)
       ? (body.order as SessionOrder)
-      : "ai_score",
+      : "oldest",
     limit: Math.max(1, Math.min(Number(body.limit) || 100, MAX_SESSION_LEADS)),
     campaignId: body.campaignId ?? null,
     leadIds: Array.isArray(body.leadIds) ? body.leadIds.slice(0, MAX_SESSION_LEADS) : undefined,

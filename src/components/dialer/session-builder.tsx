@@ -66,7 +66,10 @@ export function SessionBuilder({
   const [report, setReport] = useState<SegmentReport | null>(null);
   const [statuses, setStatuses] = useState<string[]>(DEFAULT_SEGMENTS);
   const [contact, setContact] = useState<ContactFilter>("any");
-  const [order, setOrder] = useState<SessionOrder>("ai_score");
+  // Upload order by default: a rep works a list the way it was handed to them,
+  // and it's the only option whose sort key can't shift mid-session (ai_score is
+  // rewritten by each call, which re-sorts the list underneath them).
+  const [order, setOrder] = useState<SessionOrder>("oldest");
   const [limit, setLimit] = useState(100);
   const [available, setAvailable] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
