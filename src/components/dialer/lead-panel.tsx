@@ -364,6 +364,31 @@ function LeadBrowser({
     );
   }, [q, queue]);
 
+  /**
+   * One row per HOUSEHOLD, not per phone number.
+   *
+   * Purchased/skip-traced lists ship a homeowner with several numbers, and the
+   * importer dedupes on phone — correctly, they're all worth dialing — so each
+   * number becomes its own lead row. Searching a name then returned the same
+   * person ten times over, which is what reps were seeing.
+   *
+   * Grouped on name + full address so two genuinely different people who share
+   * a name stay separate; only rows that are the same person at the same
+   * address collapse. Nothing is discarded — the alternate numbers are still in
+   * the dial queue, and the row shows how many there are.
+   */
+  const households = useMemo(() => {
+    const norm = (s: string | undefined) => (s ?? "").trim().toLowerCase().replace(/\s+/g, " ");
+    const byKey = new Map<string, Lead[]>();
+    for (const l of results) {
+      const key = [l.firstName, l.lastName, l.address, l.city, l.state].map(norm).join("|");
+      const bucket = byKey.get(key);
+      if (bucket) bucket.push(l);
+      else byKey.set(key, [l]);
+    }
+    return [...byKey.values()];
+  }, [results]);
+
   return (
     <Portal>
     <motion.div
@@ -404,40 +429,54 @@ function LeadBrowser({
           </button>
         </div>
         <div className="overflow-y-auto p-2">
-          {results.length === 0 ? (
+          {households.length === 0 ? (
             <p className="px-3 py-8 text-center text-sm text-muted-foreground">
               No leads match “{q.trim()}”.
             </p>
           ) : (
-            results.slice(0, 200).map((l) => (
-              <button
-                key={l.id}
-                type="button"
-                onClick={() => onPick(l.id)}
-                className={`flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left transition-colors hover:bg-muted/60 ${
-                  l.id === currentId ? "bg-primary-soft" : ""
-                }`}
-              >
-                <Avatar
-                  initials={initials(`${l.firstName} ${l.lastName}`)}
-                  color="#0EA5E9"
-                  size="sm"
-                />
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-semibold">
-                    {l.firstName} {l.lastName}
-                  </p>
-                  <p className="truncate text-xs text-muted-foreground tabular">
-                    {formatPhone(l.phone)} · {[l.city, l.state].filter(Boolean).join(", ")}
-                  </p>
-                </div>
-                {l.aiScore != null && (
-                  <span className="shrink-0 text-xs font-bold text-muted-foreground tabular">
-                    {l.aiScore}
-                  </span>
-                )}
-              </button>
-            ))
+            households.slice(0, 200).map((group) => {
+              // Prefer the entry the dialer is already on, so picking the
+              // household keeps the rep on the number they're working.
+              const l = group.find((g) => g.id === currentId) ?? group[0];
+              const extra = group.length - 1;
+              return (
+                <button
+                  key={l.id}
+                  type="button"
+                  onClick={() => onPick(l.id)}
+                  className={`flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left transition-colors hover:bg-muted/60 ${
+                    group.some((g) => g.id === currentId) ? "bg-primary-soft" : ""
+                  }`}
+                >
+                  <Avatar
+                    initials={initials(`${l.firstName} ${l.lastName}`)}
+                    color="#0EA5E9"
+                    size="sm"
+                  />
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-semibold">
+                      {l.firstName} {l.lastName}
+                    </p>
+                    <p className="truncate text-xs text-muted-foreground tabular">
+                      {formatPhone(l.phone)} · {[l.city, l.state].filter(Boolean).join(", ")}
+                    </p>
+                  </div>
+                  {extra > 0 && (
+                    <span
+                      className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-[10px] font-bold text-muted-foreground"
+                      title={`${group.length} numbers on file for this household`}
+                    >
+                      +{extra} number{extra === 1 ? "" : "s"}
+                    </span>
+                  )}
+                  {l.aiScore != null && (
+                    <span className="shrink-0 text-xs font-bold text-muted-foreground tabular">
+                      {l.aiScore}
+                    </span>
+                  )}
+                </button>
+              );
+            })
           )}
         </div>
       </motion.div>
