@@ -103,6 +103,19 @@ function isSupervisorRole(role: unknown): boolean {
   return ["owner", "admin", "manager"].includes(String(role ?? "rep"));
 }
 
+/**
+ * ORDERING: upload order (created_at, then id) — the order rows came out of the
+ * uploaded sheet, matching the dial queue so the Leads tab and the dialer agree.
+ *
+ * This used to sort by ai_score desc, which is not a fixed property of a lead:
+ * recordAIOutcome() writes a fresh score back to the row after every call, so
+ * the list re-sorted itself as reps worked it and leads appeared to shuffle.
+ *
+ * Rows imported before per-row created_at stamping (see insertLeads) all share
+ * one batch timestamp, so they order by id within a batch — batches are still
+ * correctly ordered relative to each other, but a pre-existing list can't
+ * recover its original in-file order without a re-import.
+ */
 export async function getLeads(): Promise<Lead[]> {
   // Bundled sample leads ONLY in demo mode (no Supabase). A configured
   // deployment never shows placeholder data — a fresh org reads as empty.
@@ -138,7 +151,8 @@ export async function getLeads(): Promise<Lead[]> {
           .select("*")
           .or(`owner_id.eq.${user.id},assigned_rep_id.eq.${user.id}`);
         if (orgId) q = q.eq("org_id", orgId);
-        return q.order("ai_score", { ascending: false, nullsFirst: false }).order("id", { ascending: true });
+        // Upload order — see the ORDERING note above getLeads().
+        return q.order("created_at", { ascending: true }).order("id", { ascending: true });
       });
       return rows.map(rowToLead);
     }
@@ -186,7 +200,16 @@ export async function getLeads(): Promise<Lead[]> {
         ...l,
         ownerName: l.ownerId ? nameById.get(l.ownerId) || "" : "",
       }))
-      .sort((a, b) => (b.aiScore ?? 0) - (a.aiScore ?? 0));
+      // Upload order. Sorted here rather than in SQL because this list is the
+      // union of two queries (org pool + own pre-org rows); id breaks ties so
+      // the order is total and stable across reloads.
+      .sort((a, b) =>
+        a.createdAt === b.createdAt
+          ? a.id.localeCompare(b.id)
+          : a.createdAt < b.createdAt
+            ? -1
+            : 1,
+      );
   } catch {
     return [];
   }
