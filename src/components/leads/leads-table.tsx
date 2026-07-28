@@ -16,7 +16,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Fragment, useMemo, useState } from "react";
+import { Fragment, useCallback, useMemo, useState } from "react";
 import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -80,8 +80,32 @@ export function LeadsTable({
   const [err, setErr] = useState("");
   const [editing, setEditing] = useState<Lead | null>(null);
 
-  // Checkboxes are useful for bulk-assign (campaigns) and bulk-delete (canManage).
-  const selectable = canManage || campaigns.length > 0;
+  // Checkboxes are useful for bulk-assign (campaigns) and bulk-delete. Every
+  // viewer can now bulk-delete SOMETHING (a rep, their own uploads), so the
+  // column is no longer supervisor-only.
+  const selectable = canManage || campaigns.length > 0 || Boolean(meId);
+
+  // Mirrors deleteLeads()' server-side scoping: a supervisor may delete anything
+  // in the org pool, a rep only what they uploaded. Kept in lockstep so the UI
+  // never offers a delete the API will refuse.
+  const canDeleteLead = useCallback(
+    (l: Lead) => canManage || (Boolean(meId) && l.ownerId === meId),
+    [canManage, meId],
+  );
+
+  const leadById = useMemo(() => new Map(leads.map((l) => [l.id, l])), [leads]);
+
+  // The selected ids this viewer is actually allowed to delete. A rep who
+  // selects a mixed batch deletes only their own rows rather than seeing the
+  // whole action fail.
+  const deletableSelected = useMemo(
+    () =>
+      [...selected].filter((id) => {
+        const l = leadById.get(id);
+        return l ? canDeleteLead(l) : false;
+      }),
+    [selected, leadById, canDeleteLead],
+  );
 
   const campaignName = useMemo(
     () => new Map(campaigns.map((c) => [c.id, c.name])),
@@ -593,15 +617,22 @@ export function LeadsTable({
               </Button>
             </>
           )}
-          {canManage && (
+          {deletableSelected.length > 0 && (
             <Button
               variant="danger"
               size="sm"
               className="gap-1.5"
-              onClick={() => setPendingDelete([...selected])}
+              onClick={() => setPendingDelete(deletableSelected)}
+              title={
+                deletableSelected.length < selected.size
+                  ? "Only the leads you uploaded can be deleted"
+                  : undefined
+              }
             >
               <Trash2 className="h-3.5 w-3.5" />
               Delete
+              {deletableSelected.length < selected.size &&
+                ` ${deletableSelected.length} of ${selected.size}`}
             </Button>
           )}
           <button
@@ -783,7 +814,7 @@ export function LeadsTable({
                             <Pencil className="h-3.5 w-3.5" />
                           </button>
                         )}
-                        {canManage && (
+                        {canDeleteLead(l) && (
                           <button
                             type="button"
                             onClick={() => setPendingDelete([l.id])}

@@ -223,17 +223,28 @@ export async function deleteLeads(
     const ids = [...new Set(leadIds.filter((id) => UUID.test(id)))];
     if (!ids.length) return { deleted: 0, error: "No valid leads selected." };
 
-    // Resolve the viewer's org so we can clear the SHARED pool, not just leads
-    // this user personally owns. With an org + service role, use the admin client
-    // and scope deletes in code; otherwise the session client (RLS → own leads).
+    // WHO MAY DELETE WHAT.
+    //   • Supervisor (owner/admin/manager) → the shared org pool, since they're
+    //     the ones responsible for clearing out a bad or finished list.
+    //   • Everyone else (a rep) → STRICTLY the leads they uploaded themselves.
+    //
+    // The role check is what makes that split real. This previously read only
+    // `org_id`, so the org-wide branch was taken by ANY member of an org — the
+    // moment a rep could reach this function at all, they could delete a
+    // teammate's uploads out of the shared pool. Reps now get the session client
+    // (whose RLS delete policy is already owner-or-supervisor) AND an explicit
+    // owner_id filter below, so neither layer is load-bearing on its own.
     const { data: prof } = await supabase
       .from("profiles")
-      .select("org_id")
+      .select("org_id, role")
       .eq("id", user.id)
       .maybeSingle();
     const orgId = prof?.org_id ? String(prof.org_id) : null;
-    const scopeByOrg = Boolean(orgId && UUID.test(orgId)) && isAdminConfigured();
-    const client = scopeByOrg ? createAdminClient() : supabase;
+    const supervisor =
+      Boolean(orgId && UUID.test(orgId)) &&
+      isSupervisorRole(prof?.role) &&
+      isAdminConfigured();
+    const client = supervisor ? createAdminClient() : supabase;
 
     const CHUNK = 100; // keep each request URL small (≈4KB) — never hits the limit
     const WAVE = 8; // bounded parallelism so big deletes stay fast but safe
@@ -247,10 +258,12 @@ export async function deleteLeads(
       const results = await Promise.all(
         wave.map((batch) => {
           const q = client.from("leads").delete().in("id", batch);
-          // Admin client bypasses RLS, so scope to the viewer's reach in code.
-          const scoped = scopeByOrg
+          // Supervisor: the admin client bypasses RLS, so scope to their org in
+          // code. Rep: never past their own uploads — an id they don't own
+          // simply matches nothing and is reported as not-deleted.
+          const scoped = supervisor
             ? q.or(`org_id.eq.${orgId},owner_id.eq.${user.id}`)
-            : q;
+            : q.eq("owner_id", user.id);
           return scoped.select("id");
         }),
       );

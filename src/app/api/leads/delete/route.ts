@@ -5,16 +5,23 @@ import { getViewer } from "@/lib/org/membership";
 export const dynamic = "force-dynamic";
 
 /**
- * Delete leads (individual or bulk) from the shared org pool. Gated on the
- * lead-management permission (managers/admins/owners) so reps working the pool
- * can't wipe it; RLS additionally restricts deletes to the caller's own org.
+ * Delete leads, individually or in bulk.
+ *
+ * There is deliberately NO permission gate here, because "may this account
+ * delete leads at all" is the wrong question — the answer depends on WHICH
+ * leads. deleteLeads() resolves that per row: a supervisor (owner/admin/
+ * manager) may clear the shared org pool, while a rep may only delete leads
+ * they uploaded themselves. Gating the route on `leads.import` instead would
+ * mean a rep couldn't tidy up their own bad import, and passing that gate
+ * would NOT be sufficient authority to delete a teammate's uploads anyway.
+ * Ids the caller isn't entitled to match nothing and come back as not-deleted.
  */
 export async function POST(req: Request) {
   const viewer = await getViewer();
-  if (!viewer.permissions.includes("leads.import")) {
+  if (!viewer.user && !viewer.isDemo) {
     return NextResponse.json(
-      { deleted: 0, error: "You don't have permission to delete leads." },
-      { status: 403 },
+      { deleted: 0, error: "You must be signed in to delete leads." },
+      { status: 401 },
     );
   }
 
