@@ -4,7 +4,7 @@ import { GroupUploadGrid } from "@/components/leads/group-upload-grid";
 import { MetricCard } from "@/components/dashboard/metric-card";
 import { EmptyState } from "@/components/shared/empty-state";
 import { PageContainer, PageHeader } from "@/components/shared/page-header";
-import { Button } from "@/components/ui/button";
+import { buttonVariants } from "@/components/ui/button";
 import { CalendarCheck, Sparkles, Zap } from "lucide-react";
 import { getLeads } from "@/lib/db/leads";
 import { getCampaigns } from "@/lib/db/pipeline";
@@ -48,10 +48,18 @@ export default async function LeadsPage() {
       title="Leads"
       description="Every homeowner in your pipeline, scored and ready to dial."
     >
-      <Button variant="outline" size="sm" className="gap-2">
-        <Download className="h-4 w-4" />
-        Export
-      </Button>
+      {/* Hidden for reps: /api/leads/export is gated on leads.import, so showing
+          it to everyone would just hand a rep a 403 page. */}
+      {canManage && (
+        <a
+          href="/api/leads/export"
+          download
+          className={buttonVariants({ variant: "outline", size: "sm", className: "gap-2" })}
+        >
+          <Download className="h-4 w-4" />
+          Export CSV
+        </a>
+      )}
     </PageHeader>
   );
 
@@ -76,7 +84,7 @@ export default async function LeadsPage() {
   return (
     <PageContainer>
       {header}
-      <GroupUploadGrid canImport={canManage} />
+      <GroupUploadGrid canImport={canManage} labelOverrides={groupLabels} />
 
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
         <MetricCard label="Total leads" value={formatNumber(leads.length)} icon={Users} accent="primary" />
