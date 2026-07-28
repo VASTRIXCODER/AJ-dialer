@@ -688,13 +688,17 @@ export async function getDialQueue(): Promise<Lead[]> {
   //                   otherwise an admin sees leads they physically can't call.
   // Any lead with a plausibly-dialable number (10+ digits) and a dialable status
   // is included; exact E.164 normalization happens at dial time.
+  //
+  // ORDER IS UPLOAD ORDER — deliberately NOT re-sorted here. Reps work a list
+  // top-to-bottom the way they handed it over (and expect row 1 of the CSV to be
+  // call 1), so the queue preserves the order rows were imported in: the SQL
+  // below orders by created_at, and insertLeads stamps a per-row created_at so
+  // rows inside one CSV keep their file order instead of sharing one batch
+  // timestamp. This used to sort by ai_score desc, which scrambled the list.
   const dialable = (leads: Lead[]) =>
-    leads
-      .filter(
-        (l) =>
-          DIALABLE.includes(l.status) && l.phone.replace(/\D/g, "").length >= 10,
-      )
-      .sort((a, b) => (b.aiScore ?? 0) - (a.aiScore ?? 0));
+    leads.filter(
+      (l) => DIALABLE.includes(l.status) && l.phone.replace(/\D/g, "").length >= 10,
+    );
 
   if (!isSupabaseConfigured()) return dialable(fallbackLeads);
   try {
@@ -728,7 +732,7 @@ export async function getDialQueue(): Promise<Lead[]> {
           .select("*")
           .eq("org_id", orgId as string)
           .in("status", DIALABLE)
-          .order("ai_score", { ascending: false, nullsFirst: false })
+          .order("created_at", { ascending: true })
           .order("id", { ascending: true }),
       );
       return dialable(rows.map((r) => rowToLead(r as Row)));
@@ -746,7 +750,7 @@ export async function getDialQueue(): Promise<Lead[]> {
         .or(`owner_id.eq.${user.id},assigned_rep_id.eq.${user.id}`)
         .in("status", DIALABLE);
       if (orgId) q = q.eq("org_id", orgId);
-      return q.order("ai_score", { ascending: false, nullsFirst: false }).order("id", { ascending: true });
+      return q.order("created_at", { ascending: true }).order("id", { ascending: true });
     });
     return dialable(rows.map((r) => rowToLead(r as Row)));
   } catch {
@@ -1064,9 +1068,22 @@ export async function insertLeads(
     if (!payload.length)
       return { inserted: 0, invalidPhone, duplicates, error: "Every row was already in your organization's leads." };
 
+    // PRESERVE CSV ROW ORDER. `created_at` defaults to now(), which in Postgres
+    // is the TRANSACTION timestamp — so every row of a bulk insert gets the
+    // IDENTICAL value and the file's order is unrecoverable (ordering then falls
+    // back to random UUIDs). The dial queue orders by created_at, so stamp each
+    // row 1ms apart in file order: row 0 sorts before row 1, and a later import
+    // still lands after an earlier one. Drift is one millisecond per row (5s for
+    // a 5,000-row file), which is irrelevant to every consumer of this column.
+    const base = Date.now();
+    const stamped = payload.map((row, i) => ({
+      ...row,
+      created_at: new Date(base + i).toISOString(),
+    }));
+
     const { error, count } = await supabase
       .from("leads")
-      .insert(payload, { count: "exact" });
+      .insert(stamped, { count: "exact" });
     if (error) return { inserted: 0, invalidPhone, duplicates, error: error.message };
     return { inserted: count ?? payload.length, invalidPhone, duplicates };
   } catch (e) {
