@@ -11,12 +11,13 @@ import {
   Sparkles,
   Trash2,
   UploadCloud,
+  UserCheck,
   Users,
   Waves,
 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Fragment, useCallback, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -69,6 +70,33 @@ export function LeadsTable({
   const [smartList, setSmartList] = useState<string | null>(null);
   const [campaignFilter, setCampaignFilter] = useState<string>("all");
   const [uploaderFilter, setUploaderFilter] = useState<string>("all");
+  // "My leads" = uploaded by me OR assigned to me — the same working set the
+  // dialer's toggle uses, so the two screens agree on what "mine" means.
+  // Deliberately broader than the "Your uploads" option in the uploader
+  // dropdown, which is owner-only and would hide leads a manager routed to you.
+  const [mineOnly, setMineOnly] = useState(false);
+  // Remembered per user across visits, matching the dialer's toggle. Read after
+  // mount rather than in the initializer so the server-rendered markup matches.
+  const mineKey = meId ? `aj:leadsMineOnly:${meId}` : null;
+  useEffect(() => {
+    if (!mineKey) return;
+    try {
+      const saved = window.localStorage.getItem(mineKey);
+      if (saved != null) setMineOnly(saved === "1");
+    } catch {
+      /* storage disabled — the toggle just won't persist */
+    }
+  }, [mineKey]);
+  const setMineOnlyPersisted = (v: boolean) => {
+    setMineOnly(v);
+    if (mineKey) {
+      try {
+        window.localStorage.setItem(mineKey, v ? "1" : "0");
+      } catch {
+        /* noop */
+      }
+    }
+  };
   const [groupFilter, setGroupFilter] = useState<string>("all");
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [assignTo, setAssignTo] = useState("");
@@ -128,6 +156,15 @@ export function LeadsTable({
     return [...m.entries()].map(([id, name]) => ({ id, name }));
   }, [leads, meId]);
 
+  // Is there anything for "My leads" to hide? False for a rep who only ever
+  // sees their own book, in which case the toggle is pointless noise.
+  const hasOthersLeads = useMemo(
+    () =>
+      Boolean(meId) &&
+      leads.some((l) => l.ownerId !== meId && l.assignedRepId !== meId),
+    [leads, meId],
+  );
+
   // Counts for the smart-list chips — over ALL leads so they stay stable as
   // other filters change. Cheap pure evaluation, same idiom as the row filter.
   const smartCounts = useMemo(() => countSmartLists(leads), [leads]);
@@ -142,6 +179,8 @@ export function LeadsTable({
         (campaignFilter === "none" ? !l.campaignId : l.campaignId === campaignFilter);
       const matchesUploader =
         uploaderFilter === "all" || l.ownerId === uploaderFilter;
+      const matchesMine =
+        !mineOnly || (Boolean(meId) && (l.ownerId === meId || l.assignedRepId === meId));
       const matchesGroup =
         groupFilter === "all" ||
         (groupFilter === "unsorted" ? !l.leadGroup : l.leadGroup === groupFilter);
@@ -157,11 +196,22 @@ export function LeadsTable({
         matchesSmart &&
         matchesCampaign &&
         matchesUploader &&
+        matchesMine &&
         matchesGroup &&
         matchesQuery
       );
     });
-  }, [leads, filter, activeSmartList, campaignFilter, uploaderFilter, groupFilter, query]);
+  }, [
+    leads,
+    filter,
+    activeSmartList,
+    campaignFilter,
+    uploaderFilter,
+    mineOnly,
+    meId,
+    groupFilter,
+    query,
+  ]);
 
   const allSelected = filtered.length > 0 && filtered.every((l) => selected.has(l.id));
   const toggleAll = () =>
@@ -403,11 +453,31 @@ export function LeadsTable({
           />
         </div>
         <div className="flex flex-wrap items-center gap-1.5">
+          {/* Only worth showing when there's something to filter OUT — a rep
+              whose leads are all their own would just get a no-op control. */}
+          {hasOthersLeads && (
+            <button
+              type="button"
+              onClick={() => setMineOnlyPersisted(!mineOnly)}
+              aria-pressed={mineOnly}
+              title="Show only leads you uploaded or that are assigned to you"
+              className={cn(
+                "flex h-9 items-center gap-1.5 rounded-lg border px-2.5 text-sm font-medium transition-colors",
+                mineOnly
+                  ? "border-primary/60 bg-primary-soft text-primary"
+                  : "border-border bg-background/60 text-muted-foreground hover:bg-muted",
+              )}
+            >
+              <UserCheck className="h-3.5 w-3.5" />
+              My leads
+            </button>
+          )}
           {uploaders.length > 1 && (
             <select
               value={uploaderFilter}
               onChange={(e) => setUploaderFilter(e.target.value)}
               aria-label="Filter by uploader"
+              disabled={mineOnly}
               className="h-9 rounded-lg border border-border bg-background/60 px-2.5 text-sm font-medium focus-visible:border-primary/50 focus-visible:outline-none"
             >
               <option value="all">All uploaders</option>
