@@ -35,7 +35,7 @@ export const SMART_LISTS: SmartList[] = [
   {
     id: "high_bill",
     label: "High bill",
-    description: "Utility bill $200+/mo — the strongest solar-savings pitch.",
+    description: "Utility bill $200+/mo — the strongest savings pitch.",
     tone: "success",
     match: (l) => (l.utilityBill ?? 0) >= 200,
   },

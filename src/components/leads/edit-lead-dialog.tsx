@@ -102,7 +102,16 @@ function Flag({
  * and notes. POSTs a sparse patch to /api/leads/update — the server enforces
  * that the actor owns this lead or is a supervisor in its org.
  */
-export function EditLeadDialog({ lead, onClose }: { lead: Lead; onClose: () => void }) {
+export function EditLeadDialog({
+  lead,
+  onClose,
+  showSolarPayment = true,
+}: {
+  lead: Lead;
+  onClose: () => void;
+  /** Show solar-specific fields (per-tenant — off for non-solar orgs). */
+  showSolarPayment?: boolean;
+}) {
   const router = useRouter();
   const [f, setF] = useState<FormState>(() => toForm(lead));
   const [busy, setBusy] = useState(false);
@@ -245,13 +254,15 @@ export function EditLeadDialog({ lead, onClose }: { lead: Lead; onClose: () => v
                   onChange={(e) => set("utilityProvider", e.target.value)}
                 />
               </div>
-              <div>
-                <Label>Solar provider</Label>
-                <Input
-                  value={f.solarProvider}
-                  onChange={(e) => set("solarProvider", e.target.value)}
-                />
-              </div>
+              {showSolarPayment && (
+                <div>
+                  <Label>Solar provider</Label>
+                  <Input
+                    value={f.solarProvider}
+                    onChange={(e) => set("solarProvider", e.target.value)}
+                  />
+                </div>
+              )}
               <div>
                 <Label>Utility bill ($/mo)</Label>
                 <Input
@@ -261,15 +272,17 @@ export function EditLeadDialog({ lead, onClose }: { lead: Lead; onClose: () => v
                   onChange={(e) => set("utilityBill", e.target.value)}
                 />
               </div>
-              <div>
-                <Label>Solar payment ($/mo)</Label>
-                <Input
-                  type="number"
-                  inputMode="decimal"
-                  value={f.solarPayment}
-                  onChange={(e) => set("solarPayment", e.target.value)}
-                />
-              </div>
+              {showSolarPayment && (
+                <div>
+                  <Label>Solar payment ($/mo)</Label>
+                  <Input
+                    type="number"
+                    inputMode="decimal"
+                    value={f.solarPayment}
+                    onChange={(e) => set("solarPayment", e.target.value)}
+                  />
+                </div>
+              )}
               <div className="col-span-2">
                 <Label>Status</Label>
                 {statusLocked ? (
@@ -321,15 +334,17 @@ export function EditLeadDialog({ lead, onClose }: { lead: Lead; onClose: () => v
                   onClick={() => set("hasBattery", !f.hasBattery)}
                 />
               </div>
-              <label className="mt-2 flex items-center gap-2 text-sm text-muted-foreground">
-                <input
-                  type="checkbox"
-                  checked={f.multipleSystems}
-                  onChange={(e) => set("multipleSystems", e.target.checked)}
-                  className="h-4 w-4 rounded border-border"
-                />
-                Multiple solar systems on the property
-              </label>
+              {showSolarPayment && (
+                <label className="mt-2 flex items-center gap-2 text-sm text-muted-foreground">
+                  <input
+                    type="checkbox"
+                    checked={f.multipleSystems}
+                    onChange={(e) => set("multipleSystems", e.target.checked)}
+                    className="h-4 w-4 rounded border-border"
+                  />
+                  Multiple solar systems on the property
+                </label>
+              )}
             </div>
 
             <div>

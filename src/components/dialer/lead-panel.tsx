@@ -28,7 +28,7 @@ import { Ring } from "@/components/ui/progress";
 import type { Lead } from "@/lib/types";
 import { outcomeConfig } from "@/lib/status";
 import type { CallOutcome } from "@/lib/types";
-import { formatAddress, formatCurrency, formatDuration, formatPhone, initials, relativeTime } from "@/lib/utils";
+import { cn, formatAddress, formatCurrency, formatDuration, formatPhone, initials, relativeTime } from "@/lib/utils";
 
 export function LeadPanel({
   lead,
@@ -42,6 +42,7 @@ export function LeadPanel({
   navDisabled = false,
   onLoadLeads,
   loadingLeads = false,
+  showSolarPayment = true,
 }: {
   lead: Lead | null;
   upNext: Lead[];
@@ -55,6 +56,8 @@ export function LeadPanel({
   /** Pull the shared lead pool into the dialer on demand. */
   onLoadLeads?: () => void;
   loadingLeads?: boolean;
+  /** Show solar-specific fields (per-tenant — off for non-solar orgs). */
+  showSolarPayment?: boolean;
 }) {
   const [browseOpen, setBrowseOpen] = useState(false);
 
@@ -123,7 +126,7 @@ export function LeadPanel({
           </p>
         </div>
       ) : (
-        <LeadDetail lead={lead} upNext={upNext} />
+        <LeadDetail lead={lead} upNext={upNext} showSolarPayment={showSolarPayment} />
       )}
 
       {browseOpen && (
@@ -141,7 +144,15 @@ export function LeadPanel({
   );
 }
 
-function LeadDetail({ lead, upNext }: { lead: Lead; upNext: Lead[] }) {
+function LeadDetail({
+  lead,
+  upNext,
+  showSolarPayment,
+}: {
+  lead: Lead;
+  upNext: Lead[];
+  showSolarPayment: boolean;
+}) {
   const name = `${lead.firstName} ${lead.lastName}`;
   const flags = [
     { on: lead.hasEV, icon: Car, label: "EV" },
@@ -194,7 +205,7 @@ function LeadDetail({ lead, upNext }: { lead: Lead; upNext: Lead[] }) {
               <span>{lead.utilityProvider}</span>
             </div>
           )}
-          {lead.solarProvider && (
+          {showSolarPayment && lead.solarProvider && (
             <div className="flex items-center gap-2.5 text-muted-foreground">
               <Sun className="h-4 w-4 shrink-0" />
               <span>{lead.solarProvider}</span>
@@ -202,7 +213,7 @@ function LeadDetail({ lead, upNext }: { lead: Lead; upNext: Lead[] }) {
           )}
         </div>
 
-        <div className="mt-4 grid grid-cols-2 gap-2">
+        <div className={cn("mt-4 grid gap-2", showSolarPayment ? "grid-cols-2" : "grid-cols-1")}>
           <div className="rounded-xl bg-muted px-3 py-2">
             <p className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground">
               Utility bill
@@ -211,14 +222,16 @@ function LeadDetail({ lead, upNext }: { lead: Lead; upNext: Lead[] }) {
               {lead.utilityBill ? formatCurrency(lead.utilityBill) : "—"}
             </p>
           </div>
-          <div className="rounded-xl bg-muted px-3 py-2">
-            <p className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground">
-              Solar pmt
-            </p>
-            <p className="text-base font-bold tabular">
-              {lead.solarPayment ? formatCurrency(lead.solarPayment) : "—"}
-            </p>
-          </div>
+          {showSolarPayment && (
+            <div className="rounded-xl bg-muted px-3 py-2">
+              <p className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground">
+                Solar pmt
+              </p>
+              <p className="text-base font-bold tabular">
+                {lead.solarPayment ? formatCurrency(lead.solarPayment) : "—"}
+              </p>
+            </div>
+          )}
         </div>
 
         {flags.length > 0 && (

@@ -51,6 +51,7 @@ export function LeadsTable({
   meId = null,
   members = [],
   labelOverrides,
+  showSolarPayment = true,
 }: {
   leads: Lead[];
   campaigns?: { id: string; name: string }[];
@@ -62,6 +63,8 @@ export function LeadsTable({
   members?: { id: string; name: string }[];
   /** Per-org display-label overrides for the dropbox groups (display only). */
   labelOverrides?: Record<string, string>;
+  /** Show solar-specific fields (per-tenant — off for non-solar orgs). */
+  showSolarPayment?: boolean;
 }) {
   const router = useRouter();
   const [query, setQuery] = useState("");
@@ -738,9 +741,11 @@ export function LeadsTable({
                         ) : (
                           <p>—</p>
                         )}
-                        {(l.utilityProvider || l.solarProvider) && (
+                        {(l.utilityProvider || (showSolarPayment && l.solarProvider)) && (
                           <p className="truncate text-xs">
-                            {[l.utilityProvider, l.solarProvider].filter(Boolean).join(" · ")}
+                            {[l.utilityProvider, showSolarPayment ? l.solarProvider : null]
+                              .filter(Boolean)
+                              .join(" · ")}
                           </p>
                         )}
                       </div>
@@ -844,7 +849,13 @@ export function LeadsTable({
         Showing {filtered.length} of {leads.length} leads
       </p>
 
-      {editing && <EditLeadDialog lead={editing} onClose={() => setEditing(null)} />}
+      {editing && (
+        <EditLeadDialog
+          lead={editing}
+          onClose={() => setEditing(null)}
+          showSolarPayment={showSolarPayment}
+        />
+      )}
     </div>
   );
 }

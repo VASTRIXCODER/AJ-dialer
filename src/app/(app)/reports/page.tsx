@@ -31,6 +31,7 @@ import { PageContainer, PageHeader } from "@/components/shared/page-header";
 import { SectionCard } from "@/components/shared/section-card";
 import { Badge } from "@/components/ui/badge";
 import { buttonVariants } from "@/components/ui/button";
+import { Progress } from "@/components/ui/progress";
 import { getReportingData, getTeamLeaderboard } from "@/lib/db/metrics";
 import { getViewer } from "@/lib/org/membership";
 import { outcomeConfig } from "@/lib/status";
@@ -126,10 +127,16 @@ export default async function ReportsPage({
   }
 
   const teamWide = scope === "org";
+  const isSolar = viewer.org?.dialerTemplate === "solar";
   const homeStats = [
     { label: "EV ownership", value: metrics.evOwnership, icon: Car },
     { label: "Pool ownership", value: metrics.poolOwnership, icon: Waves },
     { label: "Battery storage", value: metrics.batteryOwnership, icon: Battery },
+  ];
+  const pipelineInsights = [
+    { label: "Appointment rate", value: metrics.appointmentRate },
+    { label: "Callback rate", value: metrics.callbackRate },
+    { label: "No-answer rate", value: metrics.noAnswerRate },
   ];
 
   // CSV export — disposition summary + the recent-call log.
@@ -236,35 +243,51 @@ export default async function ReportsPage({
         <SectionCard title="Hourly productivity" description="Dials & connects (today)" className="lg:col-span-2">
           <HourlyBarChart data={hourlyCalls} />
         </SectionCard>
-        <SectionCard title="Utility-bill insights" description="Across qualified homeowners">
-          <div className="space-y-4">
-            <div className="grid grid-cols-3 gap-2 text-center">
-              <div className="rounded-xl bg-muted p-3">
-                <p className="text-lg font-bold tabular">{formatCurrency(metrics.avgUtilityBill)}</p>
-                <p className="text-[10px] text-muted-foreground">Avg bill</p>
+        {isSolar ? (
+          <SectionCard title="Utility-bill insights" description="Across qualified homeowners">
+            <div className="space-y-4">
+              <div className="grid grid-cols-3 gap-2 text-center">
+                <div className="rounded-xl bg-muted p-3">
+                  <p className="text-lg font-bold tabular">{formatCurrency(metrics.avgUtilityBill)}</p>
+                  <p className="text-[10px] text-muted-foreground">Avg bill</p>
+                </div>
+                <div className="rounded-xl bg-muted p-3">
+                  <p className="text-lg font-bold tabular">{formatCurrency(metrics.avgSolarPayment)}</p>
+                  <p className="text-[10px] text-muted-foreground">Avg solar</p>
+                </div>
+                <div className="rounded-xl bg-primary-soft p-3">
+                  <p className="text-lg font-bold tabular text-primary">{formatCurrency(metrics.avgTotalEnergyCost)}</p>
+                  <p className="text-[10px] text-muted-foreground">Total cost</p>
+                </div>
               </div>
-              <div className="rounded-xl bg-muted p-3">
-                <p className="text-lg font-bold tabular">{formatCurrency(metrics.avgSolarPayment)}</p>
-                <p className="text-[10px] text-muted-foreground">Avg solar</p>
-              </div>
-              <div className="rounded-xl bg-primary-soft p-3">
-                <p className="text-lg font-bold tabular text-primary">{formatCurrency(metrics.avgTotalEnergyCost)}</p>
-                <p className="text-[10px] text-muted-foreground">Total cost</p>
+              <div className="space-y-3 pt-1">
+                {homeStats.map((s) => (
+                  <div key={s.label} className="flex items-center gap-3">
+                    <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-accent-soft text-accent">
+                      <s.icon className="h-4 w-4" />
+                    </div>
+                    <span className="flex-1 text-sm text-muted-foreground">{s.label}</span>
+                    <span className="text-sm font-bold tabular">{s.value}%</span>
+                  </div>
+                ))}
               </div>
             </div>
-            <div className="space-y-3 pt-1">
-              {homeStats.map((s) => (
-                <div key={s.label} className="flex items-center gap-3">
-                  <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-accent-soft text-accent">
-                    <s.icon className="h-4 w-4" />
+          </SectionCard>
+        ) : (
+          <SectionCard title="Pipeline insights" description="Conversion across the funnel">
+            <div className="space-y-4">
+              {pipelineInsights.map((it) => (
+                <div key={it.label} className="space-y-1.5">
+                  <div className="flex items-center justify-between text-sm">
+                    <span className="text-muted-foreground">{it.label}</span>
+                    <span className="font-semibold tabular">{formatPercent(it.value, 1)}</span>
                   </div>
-                  <span className="flex-1 text-sm text-muted-foreground">{s.label}</span>
-                  <span className="text-sm font-bold tabular">{s.value}%</span>
+                  <Progress value={it.value} />
                 </div>
               ))}
             </div>
-          </div>
-        </SectionCard>
+          </SectionCard>
+        )}
       </div>
 
       {aiDialerEnabled && <AiExecReport />}

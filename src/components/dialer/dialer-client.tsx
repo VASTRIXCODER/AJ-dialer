@@ -403,6 +403,7 @@ export function DialerClient({
             navDisabled={state.status !== "idle"}
             onLoadLeads={loadLeads}
             loadingLeads={loadingLeads}
+            showSolarPayment={config.qualifyShowSolarPayment !== false}
           />
         </Card>
 
@@ -443,9 +444,13 @@ export function DialerClient({
 
         <Card className="overflow-hidden lg:col-span-4">
           <div className="border-b border-border px-5 py-3">
-            <h3 className="font-semibold">Solar resolution workflow</h3>
+            <h3 className="font-semibold">
+              {config.qualifyShowSolarPayment !== false
+                ? "Solar resolution workflow"
+                : "Qualification workflow"}
+            </h3>
             <p className="text-xs text-muted-foreground">
-              Qualify the homeowner & capture the account review
+              Qualify the lead & capture the account review
             </p>
           </div>
           <div className="p-5">

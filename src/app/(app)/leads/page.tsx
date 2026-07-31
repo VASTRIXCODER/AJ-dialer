@@ -104,6 +104,7 @@ export default async function LeadsPage() {
         meId={viewer.user?.id ?? null}
         members={members}
         labelOverrides={groupLabels}
+        showSolarPayment={viewer.org?.settings.qualify?.showSolarPayment ?? true}
       />
     </PageContainer>
   );

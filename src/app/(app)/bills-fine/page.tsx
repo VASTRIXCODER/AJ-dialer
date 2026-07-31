@@ -9,6 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import { buttonVariants } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { getBillsFine } from "@/lib/db/pipeline";
+import { getViewer } from "@/lib/org/membership";
 import { formatCurrency, formatPhone, initials, relativeTime } from "@/lib/utils";
 
 export const metadata = { title: "Bills Are Fine" };
@@ -21,7 +22,9 @@ const BF_STATUS_OPTIONS = [
 ];
 
 export default async function BillsFinePage() {
-  const leads = await getBillsFine();
+  const [leads, viewer] = await Promise.all([getBillsFine(), getViewer()]);
+  const isSolar = viewer.org?.dialerTemplate === "solar";
+  const secondPaymentLabel = isSolar ? "Solar" : "Other";
 
   if (leads.length === 0) {
     return (
@@ -96,7 +99,9 @@ export default async function BillsFinePage() {
                   <p className="mt-0.5 text-xs text-muted-foreground tabular">
                     {lead.utilityBill ? `Utility: ${formatCurrency(lead.utilityBill)}/mo` : ""}
                     {lead.utilityBill && lead.solarPayment ? " · " : ""}
-                    {lead.solarPayment ? `Solar: ${formatCurrency(lead.solarPayment)}/mo` : ""}
+                    {lead.solarPayment
+                      ? `${secondPaymentLabel}: ${formatCurrency(lead.solarPayment)}/mo`
+                      : ""}
                   </p>
                 )}
               </div>

@@ -3,16 +3,23 @@ import { chatComplete, isAIConfigured } from "@/lib/ai/claude";
 import { getUser } from "@/lib/auth";
 import { getLeadStats } from "@/lib/db/leads";
 import { getReportingData } from "@/lib/db/metrics";
+import { getViewer } from "@/lib/org/membership";
 
 export const dynamic = "force-dynamic";
 
 type ChatMsg = { role: "user" | "assistant"; content: string };
 
-const SYSTEM = (ctx: string) =>
-  "You are the AI Command Center assistant for AIATWORK, a solar resolution " +
-  "auto-dialer. Solar reps (and an AI voice agent) call homeowners who already " +
-  "have solar but still overpay their utility, qualify them, and book no-cost " +
-  "account reviews. You help the user oversee the floor: brief them on " +
+const SYSTEM = (ctx: string, isSolar: boolean) =>
+  (isSolar
+    ? "You are the AI Command Center assistant for AIATWORK, a solar resolution " +
+      "auto-dialer. Solar reps (and an AI voice agent) call homeowners who already " +
+      "have solar but still overpay their utility, qualify them, and book no-cost " +
+      "account reviews. "
+    : "You are the AI Command Center assistant for AIATWORK, an outbound sales " +
+      "auto-dialer. Reps (and an AI voice agent, where enabled) call leads, qualify " +
+      "them, and book appointments — never assume or mention solar, utility bills, " +
+      "or energy costs unless they're explicitly present in the data below. ") +
+  "You help the user oversee the floor: brief them on " +
   "performance, suggest who to call, interpret reports, and explain how to use " +
   "any part of the app (Power Dialer with AI/manual dialing, Live Monitor, " +
   "Leads, Appointments, Callbacks, Reports, Leaderboard, Admin/User management). " +
@@ -83,14 +90,15 @@ export async function POST(req: Request) {
   const history = Array.isArray(messages) ? messages.slice(-12) : [];
   const last = history.filter((m) => m.role === "user").at(-1)?.content ?? "";
 
-  const ctx = await buildContext();
+  const [ctx, viewer] = await Promise.all([buildContext(), getViewer()]);
+  const isSolar = viewer.org ? viewer.org.dialerTemplate === "solar" : true;
 
   if (!isAIConfigured()) {
     return NextResponse.json({ reply: demoReply(ctx, last), source: "demo" });
   }
   try {
     const reply = await chatComplete({
-      system: SYSTEM(JSON.stringify(ctx)),
+      system: SYSTEM(JSON.stringify(ctx), isSolar),
       messages: history,
     });
     return NextResponse.json({ reply: reply || demoReply(ctx, last), source: "claude" });
