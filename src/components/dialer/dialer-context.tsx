@@ -166,8 +166,26 @@ export function DialerProvider({
     setLoadMsg(null);
     try {
       const res = await fetch("/api/leads/queue", { cache: "no-store" });
-      const json = (await res.json().catch(() => ({}))) as { leads?: Lead[]; total?: number };
-      const leads = Array.isArray(json.leads) ? json.leads : [];
+      const json = (await res.json().catch(() => ({}))) as {
+        leads?: Lead[];
+        total?: number;
+        error?: string;
+      };
+
+      // NEVER wipe an already-loaded queue because a refetch failed. res.ok was
+      // unchecked and a non-array `leads` collapsed to [], so any hiccup — an
+      // expired session, a 500, a truncated body — ran setQueue([]) and every
+      // lead vanished from the dialer the instant the rep pressed the button.
+      // A failed reload has to leave what's on screen exactly as it was.
+      if (!res.ok || !Array.isArray(json.leads)) {
+        setLoadMsg(
+          json.error ??
+            "Couldn’t reload your leads just now — your list is unchanged. Try again in a moment.",
+        );
+        return [];
+      }
+
+      const leads = json.leads;
       setQueue(leads);
       if (leads.length) {
         setLoadMsg(`Loaded ${leads.length} lead${leads.length === 1 ? "" : "s"} into the dialer.`);

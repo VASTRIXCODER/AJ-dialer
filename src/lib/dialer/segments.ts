@@ -124,10 +124,18 @@ export type ContactFilter = "any" | "never" | "contacted";
 /** How to order the session queue. */
 export type SessionOrder = "ai_score" | "oldest" | "least_recent";
 
+// Key order here is the order the choices render in — upload order first,
+// because it's the default and what most reps expect when working a list.
+//
+// "Best leads first" is the one option whose sort key MOVES UNDER YOU: a call
+// rewrites the lead's ai_score (see recordAIOutcome in db/records.ts), so the
+// list genuinely re-sorts as you work it and leads appear to shuffle. That's
+// fine when you want the AI to keep floating the best prospect to the top, but
+// it's why it can't be the default for reps working a list end to end.
 export const ORDER_LABELS: Record<SessionOrder, string> = {
-  ai_score: "Best leads first (AI score)",
-  oldest: "Oldest leads first",
+  oldest: "Upload order (first uploaded first)",
   least_recent: "Least recently contacted first",
+  ai_score: "Best leads first (AI score — re-sorts as you call)",
 };
 
 /** What a session is: the exact, replayable definition of who gets called. */
