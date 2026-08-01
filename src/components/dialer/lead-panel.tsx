@@ -28,7 +28,16 @@ import { Ring } from "@/components/ui/progress";
 import type { Lead } from "@/lib/types";
 import { outcomeConfig } from "@/lib/status";
 import type { CallOutcome } from "@/lib/types";
-import { cn, formatAddress, formatCurrency, formatDuration, formatPhone, initials, relativeTime } from "@/lib/utils";
+import {
+  cn,
+  digitsOnly,
+  formatAddress,
+  formatCurrency,
+  formatDuration,
+  formatPhone,
+  initials,
+  relativeTime,
+} from "@/lib/utils";
 
 export function LeadPanel({
   lead,
@@ -370,10 +379,16 @@ function LeadBrowser({
   const results = useMemo(() => {
     const needle = q.trim().toLowerCase();
     if (!needle) return queue;
-    return queue.filter((l) =>
-      `${l.firstName} ${l.lastName} ${l.city} ${l.state} ${l.phone} ${l.utilityProvider}`
-        .toLowerCase()
-        .includes(needle),
+    // Phone is stored E.164 ("+14085551234"); typing the formatted number shown
+    // on screen ("(408) 555-1234") won't substring-match that, so also compare
+    // digits-only once the query has enough of them to be a real number fragment.
+    const needleDigits = digitsOnly(q);
+    return queue.filter(
+      (l) =>
+        `${l.firstName} ${l.lastName} ${l.city} ${l.state} ${l.phone} ${l.utilityProvider}`
+          .toLowerCase()
+          .includes(needle) ||
+        (needleDigits.length >= 3 && digitsOnly(l.phone).includes(needleDigits)),
     );
   }, [q, queue]);
 

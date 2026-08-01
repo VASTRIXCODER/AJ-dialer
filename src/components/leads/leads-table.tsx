@@ -25,7 +25,7 @@ import { LEAD_GROUPS, type Lead, type LeadStatus } from "@/lib/types";
 import { leadStatusConfig } from "@/lib/status";
 import { applyLabelOverride } from "@/lib/leads/group-labels";
 import { SMART_LISTS, countSmartLists, smartListById } from "@/lib/leads/smart-lists";
-import { cn, formatAddress, formatCurrency, formatPhone, initials } from "@/lib/utils";
+import { cn, digitsOnly, formatAddress, formatCurrency, formatPhone, initials } from "@/lib/utils";
 import { EditLeadDialog } from "./edit-lead-dialog";
 
 const FILTERS: Array<{ value: LeadStatus | "all"; label: string }> = [
@@ -188,11 +188,18 @@ export function LeadsTable({
         groupFilter === "all" ||
         (groupFilter === "unsorted" ? !l.leadGroup : l.leadGroup === groupFilter);
       const q = query.trim().toLowerCase();
+      // Phone numbers are stored E.164 ("+14085551234") but reps type what they
+      // see formatted ("(408) 555-1234") — a plain substring check never matches
+      // punctuation against the raw digits, so numbers effectively never turn up
+      // in search. Compare digits-only too whenever the query has enough of them
+      // to mean something (guards against a 1-2 digit fragment matching everyone).
+      const qDigits = digitsOnly(query);
       const matchesQuery =
         !q ||
         `${l.firstName} ${l.lastName}`.toLowerCase().includes(q) ||
         l.city.toLowerCase().includes(q) ||
         l.phone.includes(q) ||
+        (qDigits.length >= 3 && digitsOnly(l.phone).includes(qDigits)) ||
         l.utilityProvider.toLowerCase().includes(q);
       return (
         matchesFilter &&
