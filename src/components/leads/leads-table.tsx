@@ -25,7 +25,7 @@ import { LEAD_GROUPS, type Lead, type LeadStatus } from "@/lib/types";
 import { leadStatusConfig } from "@/lib/status";
 import { applyLabelOverride } from "@/lib/leads/group-labels";
 import { SMART_LISTS, countSmartLists, smartListById } from "@/lib/leads/smart-lists";
-import { cn, formatAddress, formatCurrency, formatPhone, initials } from "@/lib/utils";
+import { cn, digitsOnly, formatAddress, formatCurrency, formatPhone, initials } from "@/lib/utils";
 import { EditLeadDialog } from "./edit-lead-dialog";
 
 const FILTERS: Array<{ value: LeadStatus | "all"; label: string }> = [
@@ -52,7 +52,7 @@ export function LeadsTable({
   meId = null,
   members = [],
   labelOverrides,
-  isSolar = true,
+  showSolarPayment = true,
 }: {
   leads: Lead[];
   campaigns?: { id: string; name: string }[];
@@ -64,8 +64,8 @@ export function LeadsTable({
   members?: { id: string; name: string }[];
   /** Per-org display-label overrides for the dropbox groups (display only). */
   labelOverrides?: Record<string, string>;
-  /** Solar vertical? Hides solar-only fields in the edit dialog. */
-  isSolar?: boolean;
+  /** Show solar-specific fields (per-tenant — off for non-solar orgs). */
+  showSolarPayment?: boolean;
 }) {
   const router = useRouter();
   const [query, setQuery] = useState("");
@@ -188,11 +188,18 @@ export function LeadsTable({
         groupFilter === "all" ||
         (groupFilter === "unsorted" ? !l.leadGroup : l.leadGroup === groupFilter);
       const q = query.trim().toLowerCase();
+      // Phone numbers are stored E.164 ("+14085551234") but reps type what they
+      // see formatted ("(408) 555-1234") — a plain substring check never matches
+      // punctuation against the raw digits, so numbers effectively never turn up
+      // in search. Compare digits-only too whenever the query has enough of them
+      // to mean something (guards against a 1-2 digit fragment matching everyone).
+      const qDigits = digitsOnly(query);
       const matchesQuery =
         !q ||
         `${l.firstName} ${l.lastName}`.toLowerCase().includes(q) ||
         l.city.toLowerCase().includes(q) ||
         l.phone.includes(q) ||
+        (qDigits.length >= 3 && digitsOnly(l.phone).includes(qDigits)) ||
         l.utilityProvider.toLowerCase().includes(q);
       return (
         matchesFilter &&
@@ -811,9 +818,11 @@ export function LeadsTable({
                         ) : (
                           <p>—</p>
                         )}
-                        {(l.utilityProvider || l.solarProvider) && (
+                        {(l.utilityProvider || (showSolarPayment && l.solarProvider)) && (
                           <p className="truncate text-xs">
-                            {[l.utilityProvider, l.solarProvider].filter(Boolean).join(" · ")}
+                            {[l.utilityProvider, showSolarPayment ? l.solarProvider : null]
+                              .filter(Boolean)
+                              .join(" · ")}
                           </p>
                         )}
                       </div>
@@ -918,7 +927,11 @@ export function LeadsTable({
       </p>
 
       {editing && (
-        <EditLeadDialog lead={editing} onClose={() => setEditing(null)} isSolar={isSolar} />
+        <EditLeadDialog
+          lead={editing}
+          onClose={() => setEditing(null)}
+          showSolarPayment={showSolarPayment}
+        />
       )}
     </div>
   );

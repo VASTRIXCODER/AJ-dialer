@@ -4,23 +4,21 @@ import { getUser } from "@/lib/auth";
 import { getLeadStats } from "@/lib/db/leads";
 import { getReportingData } from "@/lib/db/metrics";
 import { getViewer } from "@/lib/org/membership";
-import { isSolarVertical } from "@/lib/org/vertical";
 
 export const dynamic = "force-dynamic";
 
 type ChatMsg = { role: "user" | "assistant"; content: string };
 
-// The assistant describes the workspace it's answering for. Framing every org
-// as a solar operation put words in the mouth of tenants that sell something
-// else entirely, so the vertical-specific sentence is swapped out per org.
 const SYSTEM = (ctx: string, isSolar: boolean) =>
-  "You are the AI Command Center assistant for AIATWORK, " +
   (isSolar
-    ? "a solar resolution auto-dialer. Solar reps (and an AI voice agent) call " +
-      "homeowners who already have solar but still overpay their utility, " +
-      "qualify them, and book no-cost account reviews. "
-    : "an outbound sales auto-dialer. Reps (and an AI voice agent) call " +
-      "contacts, qualify them, and book appointments. ") +
+    ? "You are the AI Command Center assistant for AIATWORK, a solar resolution " +
+      "auto-dialer. Solar reps (and an AI voice agent) call homeowners who already " +
+      "have solar but still overpay their utility, qualify them, and book no-cost " +
+      "account reviews. "
+    : "You are the AI Command Center assistant for AIATWORK, an outbound sales " +
+      "auto-dialer. Reps (and an AI voice agent, where enabled) call leads, qualify " +
+      "them, and book appointments — never assume or mention solar, utility bills, " +
+      "or energy costs unless they're explicitly present in the data below. ") +
   "You help the user oversee the floor: brief them on " +
   "performance, suggest who to call, interpret reports, and explain how to use " +
   "any part of the app (Power Dialer with AI/manual dialing, Live Monitor, " +
@@ -92,9 +90,8 @@ export async function POST(req: Request) {
   const history = Array.isArray(messages) ? messages.slice(-12) : [];
   const last = history.filter((m) => m.role === "user").at(-1)?.content ?? "";
 
-  const ctx = await buildContext();
-  const viewer = await getViewer();
-  const isSolar = isSolarVertical(viewer.org?.dialerTemplate);
+  const [ctx, viewer] = await Promise.all([buildContext(), getViewer()]);
+  const isSolar = viewer.org ? viewer.org.dialerTemplate === "solar" : true;
 
   if (!isAIConfigured()) {
     return NextResponse.json({ reply: demoReply(ctx, last), source: "demo" });

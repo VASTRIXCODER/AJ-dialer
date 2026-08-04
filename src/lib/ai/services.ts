@@ -51,12 +51,25 @@ function obj(
   };
 }
 
-const SYSTEM =
-  "You are the embedded intelligence layer of AIATWORK, a solar resolution dialer. " +
-  "Solar reps call homeowners who already have solar but still overpay their utility, " +
-  "qualify them, and book no-cost account reviews. You are precise, commercially sharp, " +
-  "and never invent facts beyond the data provided. Always respond with a single JSON " +
-  "object that matches the requested schema — no prose, no markdown.";
+/**
+ * The system prompt is org-vertical-aware: solar orgs get the solar-resolution
+ * framing; every other vertical gets a generic sales-dialer framing so the
+ * model never invents solar-specific content for leads that don't have any.
+ */
+function systemPrompt(isSolar: boolean): string {
+  return isSolar
+    ? "You are the embedded intelligence layer of AIATWORK, a solar resolution dialer. " +
+        "Solar reps call homeowners who already have solar but still overpay their utility, " +
+        "qualify them, and book no-cost account reviews. You are precise, commercially sharp, " +
+        "and never invent facts beyond the data provided. Always respond with a single JSON " +
+        "object that matches the requested schema — no prose, no markdown."
+    : "You are the embedded intelligence layer of AIATWORK, an outbound sales resolution " +
+        "dialer. Reps call leads, qualify them, and book appointments or account reviews. " +
+        "You are precise, commercially sharp, and never invent facts beyond the data " +
+        "provided — never assume or mention solar, utility bills, or energy costs unless " +
+        "they're explicitly present in the lead data. Always respond with a single JSON " +
+        "object that matches the requested schema — no prose, no markdown.";
+}
 
 function leadContext(lead: Lead): string {
   return JSON.stringify({
@@ -77,11 +90,14 @@ function leadContext(lead: Lead): string {
 }
 
 // ── Lead intelligence briefing ───────────────────────────────────────────────
-export function getLeadBriefing(lead: Lead): Promise<AIResult<LeadBriefing>> {
+export function getLeadBriefing(
+  lead: Lead,
+  isSolar = true,
+): Promise<AIResult<LeadBriefing>> {
   return runAI(
     () =>
       generateJSON<LeadBriefing>({
-        system: SYSTEM,
+        system: systemPrompt(isSolar),
         prompt:
           "Produce an executive briefing for this homeowner before the rep dials. " +
           "Scores are 0-100; estimatedValue is annual USD opportunity. Be specific to the data.\n\n" +
@@ -111,11 +127,14 @@ export function getLeadBriefing(lead: Lead): Promise<AIResult<LeadBriefing>> {
 }
 
 // ── Live call copilot ────────────────────────────────────────────────────────
-export function getCallCopilot(lead: Lead): Promise<AIResult<CallCopilot>> {
+export function getCallCopilot(
+  lead: Lead,
+  isSolar = true,
+): Promise<AIResult<CallCopilot>> {
   return runAI(
     () =>
       generateJSON<CallCopilot>({
-        system: SYSTEM,
+        system: systemPrompt(isSolar),
         prompt:
           "The rep is mid-call with this homeowner. Act as a real-time sales copilot: " +
           "track the stage, recommend the single next best question, surface live signals, " +
@@ -146,11 +165,12 @@ export function getCallCopilot(lead: Lead): Promise<AIResult<CallCopilot>> {
 export function getCallSummary(
   lead: Lead,
   outcome?: CallOutcome,
+  isSolar = true,
 ): Promise<AIResult<CallSummary>> {
   return runAI(
     () =>
       generateJSON<CallSummary>({
-        system: SYSTEM,
+        system: systemPrompt(isSolar),
         prompt:
           "Write structured documentation for the call that just ended. " +
           `${outcome ? `The rep dispositioned it as "${outcome}". ` : ""}` +
@@ -192,6 +212,7 @@ export function getCallSummary(
 export function getSemanticSearch(
   query: string,
   leads: Lead[],
+  isSolar = true,
 ): Promise<AIResult<SemanticSearch>> {
   const compact = leads.slice(0, 80).map((l) => ({
     id: l.id,
@@ -209,7 +230,7 @@ export function getSemanticSearch(
   return runAI(
     () =>
       generateJSON<SemanticSearch>({
-        system: SYSTEM,
+        system: systemPrompt(isSolar),
         prompt:
           "Interpret the user's natural-language query and return the matching homeowners " +
           "from the provided list, best first (max 8). For each match give a short reason. " +
@@ -250,7 +271,7 @@ export function analyzeConversation(input: {
   return runAI(
     () =>
       generateJSON<ConversationAnalysis>({
-        system: SYSTEM,
+        system: systemPrompt(true),
         prompt:
           "Analyze this completed AI sales call transcript carefully — base every field on what was " +
           "actually said, never on assumptions.\n" +
@@ -319,11 +340,12 @@ export function analyzeConversation(input: {
 // ── Executive reporting narrative ────────────────────────────────────────────
 export function getExecutiveReport(
   metrics: MetricSummary,
+  isSolar = true,
 ): Promise<AIResult<ExecutiveReport>> {
   return runAI(
     () =>
       generateJSON<ExecutiveReport>({
-        system: SYSTEM,
+        system: systemPrompt(isSolar),
         prompt:
           "Turn these floor metrics into an executive narrative for a sales manager: " +
           "explain what happened and why, surface trends, risks, and opportunities, and end " +

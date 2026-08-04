@@ -31,6 +31,11 @@ export function formatDuration(totalSeconds: number) {
   return h > 0 ? `${h}:${pad(m)}:${pad(sec)}` : `${m}:${pad(sec)}`;
 }
 
+/** Strip everything but digits — the shared basis for phone-number search matching. */
+export function digitsOnly(raw: string): string {
+  return raw.replace(/\D/g, "");
+}
+
 export function formatPhone(raw: string) {
   const digits = raw.replace(/\D/g, "");
   const local = digits.length === 11 && digits.startsWith("1") ? digits.slice(1) : digits;

@@ -1,12 +1,17 @@
 import { NextResponse } from "next/server";
 import { getLeadBriefing } from "@/lib/ai/services";
 import { getLeadById } from "@/lib/db/leads";
+import { getViewer } from "@/lib/org/membership";
 
 export async function POST(req: Request) {
   const { leadId } = (await req.json().catch(() => ({}))) as { leadId?: string };
-  const lead = leadId ? await getLeadById(leadId) : null;
+  const [lead, viewer] = await Promise.all([
+    leadId ? getLeadById(leadId) : Promise.resolve(null),
+    getViewer(),
+  ]);
   if (!lead) {
     return NextResponse.json({ error: "Lead not found" }, { status: 404 });
   }
-  return NextResponse.json(await getLeadBriefing(lead));
+  const isSolar = viewer.org ? viewer.org.dialerTemplate === "solar" : true;
+  return NextResponse.json(await getLeadBriefing(lead, isSolar));
 }

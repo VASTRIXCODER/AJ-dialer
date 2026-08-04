@@ -23,9 +23,11 @@ export function KnownInfoDialog({
   onSubmit: (info: KnownInfo) => void;
   onClose: () => void;
 }) {
-  // Solar-only fields disappear for other verticals (see lib/org/vertical.ts).
+  // Solar-only fields disappear for non-solar tenants. qualifyShowSolarPayment
+  // already carries both signals (the org's vertical AND its qualify setting) —
+  // see the dialerConfig assembled in app/(app)/layout.tsx.
   const ctx = useDialerContextOptional();
-  const isSolar = ctx?.config.isSolar !== false;
+  const isSolar = ctx?.config.qualifyShowSolarPayment !== false;
   const [f, setF] = useState<KnownInfo>({});
   const set = (k: keyof KnownInfo, v: string) =>
     setF((prev) => ({

@@ -35,7 +35,7 @@ const CHUNK_SIZE = 200;
 const CONCURRENCY = 4;
 
 const SYSTEM =
-  "You classify solar homeowner leads into ONE of four geographic buckets by " +
+  "You classify sales leads into ONE of four geographic buckets by " +
   "city/state/zip: fresno, houston, dallas, california. These are the ONLY " +
   "valid non-null outputs. There is a fifth bucket called \"manual\" that " +
   "exists in this product for leads a human explicitly files by hand — it is " +

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getSemanticSearch } from "@/lib/ai/services";
 import { getLeads } from "@/lib/db/leads";
+import { getViewer } from "@/lib/org/membership";
 
 export async function POST(req: Request) {
   const { query } = await req.json().catch(() => ({}) as { query?: string });
@@ -8,8 +9,9 @@ export async function POST(req: Request) {
     return NextResponse.json({ source: "demo", interpretation: "", matches: [] });
   }
 
-  const leads = await getLeads();
-  const { data, source } = await getSemanticSearch(query, leads);
+  const [leads, viewer] = await Promise.all([getLeads(), getViewer()]);
+  const isSolar = viewer.org ? viewer.org.dialerTemplate === "solar" : true;
+  const { data, source } = await getSemanticSearch(query, leads, isSolar);
   const byId = new Map(leads.map((l) => [l.id, l]));
 
   // Enrich AI matches with display fields so the palette can render rich rows.

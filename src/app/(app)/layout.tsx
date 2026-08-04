@@ -105,8 +105,6 @@ export default async function AppGroupLayout({
       isSolarVertical(viewer.org?.dialerTemplate) &&
       (viewer.org?.settings.qualify?.showSolarPayment ?? true),
     qualifyOtherLabel: viewer.org?.settings.qualify?.otherToggleLabel ?? "Battery",
-    // Org vertical — hides solar-only fields/copy for other industries.
-    isSolar: isSolarVertical(viewer.org?.dialerTemplate),
     // Per-org "dropbox" label overrides (display only).
     leadGroupLabels: viewer.org?.settings.leadGroupLabels ?? {},
   };

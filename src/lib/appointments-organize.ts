@@ -4,6 +4,8 @@
 // can be unit-tested; the view + page compose it.
 // ─────────────────────────────────────────────────────────────────────────────
 
+import { digitsOnly } from "./utils";
+
 export type ApptBucket =
   | "review" // AI proposal awaiting human approval
   | "overdue" // approved, scheduled time already passed, not yet completed
@@ -73,7 +75,11 @@ export function matchesFilters(a: ApptLike, f: ApptFilters): boolean {
   const q = (f.search ?? "").trim().toLowerCase();
   if (q) {
     const hay = `${a.leadName ?? ""} ${a.phone ?? ""} ${a.notes ?? ""}`.toLowerCase();
-    if (!hay.includes(q)) return false;
+    // Phone is stored E.164; a formatted query ("(408) 555-1234") won't substring
+    // match it, so also compare digits-only for anything that looks like a number.
+    const qDigits = digitsOnly(f.search ?? "");
+    const matchesPhoneDigits = qDigits.length >= 3 && digitsOnly(a.phone ?? "").includes(qDigits);
+    if (!hay.includes(q) && !matchesPhoneDigits) return false;
   }
   return true;
 }

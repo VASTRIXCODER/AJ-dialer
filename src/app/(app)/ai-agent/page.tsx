@@ -25,21 +25,22 @@ import { Card } from "@/components/ui/card";
 import { isAIConfigured } from "@/lib/ai/claude";
 import { isElevenLabsConfigured } from "@/lib/elevenlabs";
 import { getViewer } from "@/lib/org/membership";
-import { isSolarVertical } from "@/lib/org/vertical";
 import { cn } from "@/lib/utils";
 
 export const metadata = { title: "AI Command Center" };
 export const dynamic = "force-dynamic";
 
-const capabilitiesFor = (isSolar: boolean) => [
-  "Places outbound qualification calls",
-  `Asks the ${isSolar ? "solar resolution" : "qualification"} script`,
-  "Gathers billing & home information",
-  "Identifies utility-bill overpayment",
-  "Books account-review appointments",
-  "Ends the call itself when finished",
-  "Writes AI call summaries & lead scores",
-];
+function capabilitiesFor(isSolar: boolean) {
+  return [
+    "Places outbound qualification calls",
+    isSolar ? "Asks the solar resolution script" : "Asks the qualification script",
+    "Gathers billing & home information",
+    isSolar ? "Identifies utility-bill overpayment" : "Identifies buying signals",
+    "Books account-review appointments",
+    "Ends the call itself when finished",
+    "Writes AI call summaries & lead scores",
+  ];
+}
 
 const services: Array<{ icon: LucideIcon; name: string; desc: string }> = [
   { icon: Brain, name: "Lead Intelligence", desc: "Executive briefings, scores & probabilities the moment a lead opens." },
@@ -54,19 +55,28 @@ const services: Array<{ icon: LucideIcon; name: string; desc: string }> = [
   { icon: TrendingUp, name: "Predictive Analytics", desc: "Forecasts contact, conversion & no-show risk." },
 ];
 
-const tips = [
-  "“Brief me on today and tell me what to prioritize.”",
-  "“Which leads have the highest overpayment signal?”",
-  "“Walk me through starting a 3× AI calling session.”",
-  "“What's my connect rate and how do I improve it?”",
-  "“Summarize my upcoming appointments and due callbacks.”",
-];
+function tipsFor(isSolar: boolean) {
+  return [
+    "“Brief me on today and tell me what to prioritize.”",
+    isSolar
+      ? "“Which leads have the highest overpayment signal?”"
+      : "“Which leads have the highest buying signal?”",
+    "“Walk me through starting a 3× AI calling session.”",
+    "“What's my connect rate and how do I improve it?”",
+    "“Summarize my upcoming appointments and due callbacks.”",
+  ];
+}
 
 export default async function AiAgentPage() {
   const viewer = await getViewer();
-  const isSolar = isSolarVertical(viewer.org?.dialerTemplate);
   const aiLive = isAIConfigured();
   const voiceLive = isElevenLabsConfigured();
+  const isSolar = viewer.org?.dialerTemplate === "solar";
+  const capabilities = capabilitiesFor(isSolar);
+  const tips = tipsFor(isSolar);
+  const intelligenceLayerDesc = isSolar
+    ? "Your central AI assistant — it briefs you, oversees the floor, and powers the whole solar-resolution intelligence layer."
+    : "Your central AI assistant — it briefs you, oversees the floor, and powers the whole calling intelligence layer.";
   const aiOrgEnabled =
     viewer.org?.settings?.features?.aiDialer !== false &&
     viewer.org?.settings?.features?.aiAgent !== false;
@@ -74,10 +84,7 @@ export default async function AiAgentPage() {
   if (!aiOrgEnabled) {
     return (
       <PageContainer>
-        <PageHeader
-          title="AI Command Center"
-          description={`Your central AI assistant — it briefs you, oversees the floor, and powers the whole ${isSolar ? "solar-resolution " : ""}intelligence layer.`}
-        />
+        <PageHeader title="AI Command Center" description={intelligenceLayerDesc} />
         <Card className="flex flex-col items-center gap-6 px-8 py-16 text-center">
           <span className="flex h-20 w-20 items-center justify-center rounded-3xl border-2 border-dashed border-border bg-muted/40">
             <Lock className="h-9 w-9 text-muted-foreground/60" />
@@ -110,10 +117,7 @@ export default async function AiAgentPage() {
 
   return (
     <PageContainer>
-      <PageHeader
-        title="AI Command Center"
-        description={`Your central AI assistant — it briefs you, oversees the floor, and powers the whole ${isSolar ? "solar-resolution " : ""}intelligence layer.`}
-      >
+      <PageHeader title="AI Command Center" description={intelligenceLayerDesc}>
         <Badge tone={aiLive ? "success" : "warning"} dot>
           {aiLive ? "Intelligence live" : "Demo intelligence"}
         </Badge>
@@ -177,7 +181,7 @@ export default async function AiAgentPage() {
 
         <SectionCard title="What the agent does" description="On every outbound call">
           <ul className="space-y-3">
-            {capabilitiesFor(isSolar).map((c) => (
+            {capabilities.map((c) => (
               <li key={c} className="flex items-center gap-3 text-sm">
                 <CheckCircle2 className="h-4 w-4 shrink-0 text-success" />
                 <span>{c}</span>

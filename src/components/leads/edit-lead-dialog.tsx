@@ -105,12 +105,12 @@ function Flag({
 export function EditLeadDialog({
   lead,
   onClose,
-  isSolar = true,
+  showSolarPayment = true,
 }: {
   lead: Lead;
   onClose: () => void;
-  /** Solar-only fields are hidden for other verticals (lib/org/vertical.ts). */
-  isSolar?: boolean;
+  /** Show solar-specific fields (per-tenant — off for non-solar orgs). */
+  showSolarPayment?: boolean;
 }) {
   const router = useRouter();
   const [f, setF] = useState<FormState>(() => toForm(lead));
@@ -254,7 +254,7 @@ export function EditLeadDialog({
                   onChange={(e) => set("utilityProvider", e.target.value)}
                 />
               </div>
-              {isSolar && (
+              {showSolarPayment && (
                 <div>
                   <Label>Solar provider</Label>
                   <Input
@@ -272,7 +272,7 @@ export function EditLeadDialog({
                   onChange={(e) => set("utilityBill", e.target.value)}
                 />
               </div>
-              {isSolar && (
+              {showSolarPayment && (
                 <div>
                   <Label>Solar payment ($/mo)</Label>
                   <Input
@@ -334,15 +334,17 @@ export function EditLeadDialog({
                   onClick={() => set("hasBattery", !f.hasBattery)}
                 />
               </div>
-              <label className="mt-2 flex items-center gap-2 text-sm text-muted-foreground">
-                <input
-                  type="checkbox"
-                  checked={f.multipleSystems}
-                  onChange={(e) => set("multipleSystems", e.target.checked)}
-                  className="h-4 w-4 rounded border-border"
-                />
-                {isSolar ? "Multiple solar systems on the property" : "Multiple systems on the property"}
-              </label>
+              {showSolarPayment && (
+                <label className="mt-2 flex items-center gap-2 text-sm text-muted-foreground">
+                  <input
+                    type="checkbox"
+                    checked={f.multipleSystems}
+                    onChange={(e) => set("multipleSystems", e.target.checked)}
+                    className="h-4 w-4 rounded border-border"
+                  />
+                  Multiple solar systems on the property
+                </label>
+              )}
             </div>
 
             <div>

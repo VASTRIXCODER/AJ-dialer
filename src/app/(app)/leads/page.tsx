@@ -105,7 +105,12 @@ export default async function LeadsPage() {
         meId={viewer.user?.id ?? null}
         members={members}
         labelOverrides={groupLabels}
-        isSolar={isSolarVertical(viewer.org?.dialerTemplate)}
+        // Both signals, one prop: a non-solar vertical drops the solar fields
+        // outright, and a solar org can still switch them off per-tenant.
+        showSolarPayment={
+          isSolarVertical(viewer.org?.dialerTemplate) &&
+          (viewer.org?.settings.qualify?.showSolarPayment ?? true)
+        }
       />
     </PageContainer>
   );

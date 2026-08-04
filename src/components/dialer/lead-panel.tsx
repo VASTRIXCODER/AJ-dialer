@@ -24,12 +24,20 @@ import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Portal } from "@/components/ui/portal";
-import { useDialerContextOptional } from "./dialer-context";
 import { Ring } from "@/components/ui/progress";
 import type { Lead } from "@/lib/types";
 import { outcomeConfig } from "@/lib/status";
 import type { CallOutcome } from "@/lib/types";
-import { formatAddress, formatCurrency, formatDuration, formatPhone, initials, relativeTime } from "@/lib/utils";
+import {
+  cn,
+  digitsOnly,
+  formatAddress,
+  formatCurrency,
+  formatDuration,
+  formatPhone,
+  initials,
+  relativeTime,
+} from "@/lib/utils";
 
 export function LeadPanel({
   lead,
@@ -43,6 +51,7 @@ export function LeadPanel({
   navDisabled = false,
   onLoadLeads,
   loadingLeads = false,
+  showSolarPayment = true,
 }: {
   lead: Lead | null;
   upNext: Lead[];
@@ -56,6 +65,8 @@ export function LeadPanel({
   /** Pull the shared lead pool into the dialer on demand. */
   onLoadLeads?: () => void;
   loadingLeads?: boolean;
+  /** Show solar-specific fields (per-tenant — off for non-solar orgs). */
+  showSolarPayment?: boolean;
 }) {
   const [browseOpen, setBrowseOpen] = useState(false);
 
@@ -124,7 +135,7 @@ export function LeadPanel({
           </p>
         </div>
       ) : (
-        <LeadDetail lead={lead} upNext={upNext} />
+        <LeadDetail lead={lead} upNext={upNext} showSolarPayment={showSolarPayment} />
       )}
 
       {browseOpen && (
@@ -142,9 +153,15 @@ export function LeadPanel({
   );
 }
 
-function LeadDetail({ lead, upNext }: { lead: Lead; upNext: Lead[] }) {
-  const ctx = useDialerContextOptional();
-  const isSolar = ctx?.config.isSolar !== false;
+function LeadDetail({
+  lead,
+  upNext,
+  showSolarPayment,
+}: {
+  lead: Lead;
+  upNext: Lead[];
+  showSolarPayment: boolean;
+}) {
   const name = `${lead.firstName} ${lead.lastName}`;
   const flags = [
     { on: lead.hasEV, icon: Car, label: "EV" },
@@ -197,7 +214,7 @@ function LeadDetail({ lead, upNext }: { lead: Lead; upNext: Lead[] }) {
               <span>{lead.utilityProvider}</span>
             </div>
           )}
-          {isSolar && lead.solarProvider && (
+          {showSolarPayment && lead.solarProvider && (
             <div className="flex items-center gap-2.5 text-muted-foreground">
               <Sun className="h-4 w-4 shrink-0" />
               <span>{lead.solarProvider}</span>
@@ -205,7 +222,7 @@ function LeadDetail({ lead, upNext }: { lead: Lead; upNext: Lead[] }) {
           )}
         </div>
 
-        <div className={`mt-4 grid gap-2 ${isSolar ? "grid-cols-2" : "grid-cols-1"}`}>
+        <div className={cn("mt-4 grid gap-2", showSolarPayment ? "grid-cols-2" : "grid-cols-1")}>
           <div className="rounded-xl bg-muted px-3 py-2">
             <p className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground">
               Utility bill
@@ -214,7 +231,7 @@ function LeadDetail({ lead, upNext }: { lead: Lead; upNext: Lead[] }) {
               {lead.utilityBill ? formatCurrency(lead.utilityBill) : "—"}
             </p>
           </div>
-          {isSolar && (
+          {showSolarPayment && (
             <div className="rounded-xl bg-muted px-3 py-2">
               <p className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground">
                 Solar pmt
@@ -362,10 +379,16 @@ function LeadBrowser({
   const results = useMemo(() => {
     const needle = q.trim().toLowerCase();
     if (!needle) return queue;
-    return queue.filter((l) =>
-      `${l.firstName} ${l.lastName} ${l.city} ${l.state} ${l.phone} ${l.utilityProvider}`
-        .toLowerCase()
-        .includes(needle),
+    // Phone is stored E.164 ("+14085551234"); typing the formatted number shown
+    // on screen ("(408) 555-1234") won't substring-match that, so also compare
+    // digits-only once the query has enough of them to be a real number fragment.
+    const needleDigits = digitsOnly(q);
+    return queue.filter(
+      (l) =>
+        `${l.firstName} ${l.lastName} ${l.city} ${l.state} ${l.phone} ${l.utilityProvider}`
+          .toLowerCase()
+          .includes(needle) ||
+        (needleDigits.length >= 3 && digitsOnly(l.phone).includes(needleDigits)),
     );
   }, [q, queue]);
 

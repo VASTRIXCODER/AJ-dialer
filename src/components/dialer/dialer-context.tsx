@@ -42,8 +42,6 @@ export interface DialerConfig {
   doubleDialGapSec?: number;
   /** Show the "Solar payment" field in the qualification panel (per-tenant). */
   qualifyShowSolarPayment?: boolean;
-  /** Is this org's vertical solar? Gates solar-only fields and copy. */
-  isSolar?: boolean;
   /** Label for the third home-profile toggle in the qualification panel. */
   qualifyOtherLabel?: string;
   /** Per-org display-label overrides for the lead-group "dropboxes" (display only). */
@@ -189,8 +187,16 @@ export function DialerProvider({
 
       const leads = json.leads;
       setQueue(leads);
+      // total counts EVERY lead in scope, leads.length only the dialable subset
+      // (dialable status + a 10+ digit phone). Silently loading fewer than the
+      // rep's book size — with no explanation — read as "some leads vanished."
+      const skipped = Math.max(0, (json.total ?? 0) - leads.length);
       if (leads.length) {
-        setLoadMsg(`Loaded ${leads.length} lead${leads.length === 1 ? "" : "s"} into the dialer.`);
+        setLoadMsg(
+          skipped > 0
+            ? `Loaded ${leads.length} of ${json.total} leads into the dialer — ${skipped} skipped (no valid phone number, already dispositioned, or on the do-not-call list).`
+            : `Loaded ${leads.length} lead${leads.length === 1 ? "" : "s"} into the dialer.`,
+        );
       } else if ((json.total ?? 0) > 0) {
         setLoadMsg(
           `Found ${json.total} leads, but none are ready to dial yet — they need a New / No-answer / Callback status and a valid phone number.`,
