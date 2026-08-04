@@ -42,6 +42,8 @@ export interface DialerConfig {
   doubleDialGapSec?: number;
   /** Show the "Solar payment" field in the qualification panel (per-tenant). */
   qualifyShowSolarPayment?: boolean;
+  /** Is this org's vertical solar? Gates solar-only fields and copy. */
+  isSolar?: boolean;
   /** Label for the third home-profile toggle in the qualification panel. */
   qualifyOtherLabel?: string;
   /** Per-org display-label overrides for the lead-group "dropboxes" (display only). */

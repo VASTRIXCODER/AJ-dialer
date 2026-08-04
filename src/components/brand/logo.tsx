@@ -34,9 +34,18 @@ export function LogoMark({ className }: { className?: string }) {
 export function Wordmark({
   className,
   collapsed = false,
+  tagline = "Solar Resolution",
 }: {
   className?: string;
   collapsed?: boolean;
+  /**
+   * Line under the wordmark. Defaults to the original solar tagline so the
+   * marketing site and any caller without org context are unchanged; the app
+   * shell passes the tenant's own (see brandTagline in lib/org/vertical.ts),
+   * because "Solar Resolution" is someone else's industry to a tenant that
+   * doesn't sell solar.
+   */
+  tagline?: string;
 }) {
   return (
     <div className={cn("flex items-center gap-2.5", className)}>
@@ -45,7 +54,7 @@ export function Wordmark({
         <div className="flex flex-col leading-none">
           <span className="text-[15px] font-bold tracking-tight">AIATWORK</span>
           <span className="text-[11px] font-medium text-muted-foreground">
-            Solar Resolution
+            {tagline}
           </span>
         </div>
       )}

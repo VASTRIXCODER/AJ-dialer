@@ -102,7 +102,16 @@ function Flag({
  * and notes. POSTs a sparse patch to /api/leads/update — the server enforces
  * that the actor owns this lead or is a supervisor in its org.
  */
-export function EditLeadDialog({ lead, onClose }: { lead: Lead; onClose: () => void }) {
+export function EditLeadDialog({
+  lead,
+  onClose,
+  isSolar = true,
+}: {
+  lead: Lead;
+  onClose: () => void;
+  /** Solar-only fields are hidden for other verticals (lib/org/vertical.ts). */
+  isSolar?: boolean;
+}) {
   const router = useRouter();
   const [f, setF] = useState<FormState>(() => toForm(lead));
   const [busy, setBusy] = useState(false);
@@ -245,13 +254,15 @@ export function EditLeadDialog({ lead, onClose }: { lead: Lead; onClose: () => v
                   onChange={(e) => set("utilityProvider", e.target.value)}
                 />
               </div>
-              <div>
-                <Label>Solar provider</Label>
-                <Input
-                  value={f.solarProvider}
-                  onChange={(e) => set("solarProvider", e.target.value)}
-                />
-              </div>
+              {isSolar && (
+                <div>
+                  <Label>Solar provider</Label>
+                  <Input
+                    value={f.solarProvider}
+                    onChange={(e) => set("solarProvider", e.target.value)}
+                  />
+                </div>
+              )}
               <div>
                 <Label>Utility bill ($/mo)</Label>
                 <Input
@@ -261,15 +272,17 @@ export function EditLeadDialog({ lead, onClose }: { lead: Lead; onClose: () => v
                   onChange={(e) => set("utilityBill", e.target.value)}
                 />
               </div>
-              <div>
-                <Label>Solar payment ($/mo)</Label>
-                <Input
-                  type="number"
-                  inputMode="decimal"
-                  value={f.solarPayment}
-                  onChange={(e) => set("solarPayment", e.target.value)}
-                />
-              </div>
+              {isSolar && (
+                <div>
+                  <Label>Solar payment ($/mo)</Label>
+                  <Input
+                    type="number"
+                    inputMode="decimal"
+                    value={f.solarPayment}
+                    onChange={(e) => set("solarPayment", e.target.value)}
+                  />
+                </div>
+              )}
               <div className="col-span-2">
                 <Label>Status</Label>
                 {statusLocked ? (
@@ -328,7 +341,7 @@ export function EditLeadDialog({ lead, onClose }: { lead: Lead; onClose: () => v
                   onChange={(e) => set("multipleSystems", e.target.checked)}
                   className="h-4 w-4 rounded border-border"
                 />
-                Multiple solar systems on the property
+                {isSolar ? "Multiple solar systems on the property" : "Multiple systems on the property"}
               </label>
             </div>
 

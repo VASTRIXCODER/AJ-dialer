@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
 import { AppShell } from "@/components/layout/app-shell";
+import { isSolarVertical } from "@/lib/org/vertical";
 import { MaintenanceScreen } from "@/components/layout/maintenance-screen";
 import { PaywallScreen } from "@/components/layout/paywall-screen";
 import { isAIConfigured } from "@/lib/ai/claude";
@@ -98,8 +99,14 @@ export default async function AppGroupLayout({
     doubleDial: viewer.org?.settings.dialing.doubleDial ?? false,
     doubleDialGapSec: viewer.org?.settings.dialing.doubleDialGapSec ?? 15,
     // Per-tenant qualification-panel shape (solar field + third toggle label).
-    qualifyShowSolarPayment: viewer.org?.settings.qualify?.showSolarPayment ?? true,
+    // A non-solar vertical drops the solar field regardless of the qualify
+    // setting, so a tenant never has to switch off solar wording in two places.
+    qualifyShowSolarPayment:
+      isSolarVertical(viewer.org?.dialerTemplate) &&
+      (viewer.org?.settings.qualify?.showSolarPayment ?? true),
     qualifyOtherLabel: viewer.org?.settings.qualify?.otherToggleLabel ?? "Battery",
+    // Org vertical — hides solar-only fields/copy for other industries.
+    isSolar: isSolarVertical(viewer.org?.dialerTemplate),
     // Per-org "dropbox" label overrides (display only).
     leadGroupLabels: viewer.org?.settings.leadGroupLabels ?? {},
   };
@@ -113,6 +120,7 @@ export default async function AppGroupLayout({
       features={viewer.org?.settings.features ?? null}
       orgName={viewer.org?.name ?? null}
       productName={viewer.org?.productName || null}
+      dialerTemplate={viewer.org?.dialerTemplate ?? null}
       brandColor={viewer.org?.brandColor || null}
       role={viewer.role}
       superadmin={superadmin}

@@ -3,16 +3,25 @@ import { chatComplete, isAIConfigured } from "@/lib/ai/claude";
 import { getUser } from "@/lib/auth";
 import { getLeadStats } from "@/lib/db/leads";
 import { getReportingData } from "@/lib/db/metrics";
+import { getViewer } from "@/lib/org/membership";
+import { isSolarVertical } from "@/lib/org/vertical";
 
 export const dynamic = "force-dynamic";
 
 type ChatMsg = { role: "user" | "assistant"; content: string };
 
-const SYSTEM = (ctx: string) =>
-  "You are the AI Command Center assistant for AIATWORK, a solar resolution " +
-  "auto-dialer. Solar reps (and an AI voice agent) call homeowners who already " +
-  "have solar but still overpay their utility, qualify them, and book no-cost " +
-  "account reviews. You help the user oversee the floor: brief them on " +
+// The assistant describes the workspace it's answering for. Framing every org
+// as a solar operation put words in the mouth of tenants that sell something
+// else entirely, so the vertical-specific sentence is swapped out per org.
+const SYSTEM = (ctx: string, isSolar: boolean) =>
+  "You are the AI Command Center assistant for AIATWORK, " +
+  (isSolar
+    ? "a solar resolution auto-dialer. Solar reps (and an AI voice agent) call " +
+      "homeowners who already have solar but still overpay their utility, " +
+      "qualify them, and book no-cost account reviews. "
+    : "an outbound sales auto-dialer. Reps (and an AI voice agent) call " +
+      "contacts, qualify them, and book appointments. ") +
+  "You help the user oversee the floor: brief them on " +
   "performance, suggest who to call, interpret reports, and explain how to use " +
   "any part of the app (Power Dialer with AI/manual dialing, Live Monitor, " +
   "Leads, Appointments, Callbacks, Reports, Leaderboard, Admin/User management). " +
@@ -84,13 +93,15 @@ export async function POST(req: Request) {
   const last = history.filter((m) => m.role === "user").at(-1)?.content ?? "";
 
   const ctx = await buildContext();
+  const viewer = await getViewer();
+  const isSolar = isSolarVertical(viewer.org?.dialerTemplate);
 
   if (!isAIConfigured()) {
     return NextResponse.json({ reply: demoReply(ctx, last), source: "demo" });
   }
   try {
     const reply = await chatComplete({
-      system: SYSTEM(JSON.stringify(ctx)),
+      system: SYSTEM(JSON.stringify(ctx), isSolar),
       messages: history,
     });
     return NextResponse.json({ reply: reply || demoReply(ctx, last), source: "claude" });

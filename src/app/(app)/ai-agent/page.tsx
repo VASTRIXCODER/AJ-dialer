@@ -25,14 +25,15 @@ import { Card } from "@/components/ui/card";
 import { isAIConfigured } from "@/lib/ai/claude";
 import { isElevenLabsConfigured } from "@/lib/elevenlabs";
 import { getViewer } from "@/lib/org/membership";
+import { isSolarVertical } from "@/lib/org/vertical";
 import { cn } from "@/lib/utils";
 
 export const metadata = { title: "AI Command Center" };
 export const dynamic = "force-dynamic";
 
-const capabilities = [
+const capabilitiesFor = (isSolar: boolean) => [
   "Places outbound qualification calls",
-  "Asks the solar resolution script",
+  `Asks the ${isSolar ? "solar resolution" : "qualification"} script`,
   "Gathers billing & home information",
   "Identifies utility-bill overpayment",
   "Books account-review appointments",
@@ -63,6 +64,7 @@ const tips = [
 
 export default async function AiAgentPage() {
   const viewer = await getViewer();
+  const isSolar = isSolarVertical(viewer.org?.dialerTemplate);
   const aiLive = isAIConfigured();
   const voiceLive = isElevenLabsConfigured();
   const aiOrgEnabled =
@@ -74,7 +76,7 @@ export default async function AiAgentPage() {
       <PageContainer>
         <PageHeader
           title="AI Command Center"
-          description="Your central AI assistant — it briefs you, oversees the floor, and powers the whole solar-resolution intelligence layer."
+          description={`Your central AI assistant — it briefs you, oversees the floor, and powers the whole ${isSolar ? "solar-resolution " : ""}intelligence layer.`}
         />
         <Card className="flex flex-col items-center gap-6 px-8 py-16 text-center">
           <span className="flex h-20 w-20 items-center justify-center rounded-3xl border-2 border-dashed border-border bg-muted/40">
@@ -110,7 +112,7 @@ export default async function AiAgentPage() {
     <PageContainer>
       <PageHeader
         title="AI Command Center"
-        description="Your central AI assistant — it briefs you, oversees the floor, and powers the whole solar-resolution intelligence layer."
+        description={`Your central AI assistant — it briefs you, oversees the floor, and powers the whole ${isSolar ? "solar-resolution " : ""}intelligence layer.`}
       >
         <Badge tone={aiLive ? "success" : "warning"} dot>
           {aiLive ? "Intelligence live" : "Demo intelligence"}
@@ -175,7 +177,7 @@ export default async function AiAgentPage() {
 
         <SectionCard title="What the agent does" description="On every outbound call">
           <ul className="space-y-3">
-            {capabilities.map((c) => (
+            {capabilitiesFor(isSolar).map((c) => (
               <li key={c} className="flex items-center gap-3 text-sm">
                 <CheckCircle2 className="h-4 w-4 shrink-0 text-success" />
                 <span>{c}</span>

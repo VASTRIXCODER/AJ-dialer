@@ -22,6 +22,7 @@ export function AppShell({
   features = null,
   orgName = null,
   productName = null,
+  dialerTemplate = null,
   brandColor = null,
   role = null,
   superadmin = false,
@@ -35,6 +36,8 @@ export function AppShell({
   features?: OrgFeatures | null;
   orgName?: string | null;
   productName?: string | null;
+  /** Org vertical — hides solar-specific wording for other industries. */
+  dialerTemplate?: string | null;
   brandColor?: string | null;
   role?: string | null;
   superadmin?: boolean;
@@ -42,7 +45,7 @@ export function AppShell({
   dialerConfig: DialerConfig;
 }) {
   const [mobileOpen, setMobileOpen] = useState(false);
-  const sidebarProps = { permissions, features, orgName, productName, brandColor, role, superadmin };
+  const sidebarProps = { permissions, features, orgName, productName, dialerTemplate, brandColor, role, superadmin };
 
   return (
     <DialerProvider config={dialerConfig}>

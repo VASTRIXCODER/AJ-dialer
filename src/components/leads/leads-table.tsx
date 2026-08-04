@@ -52,6 +52,7 @@ export function LeadsTable({
   meId = null,
   members = [],
   labelOverrides,
+  isSolar = true,
 }: {
   leads: Lead[];
   campaigns?: { id: string; name: string }[];
@@ -63,6 +64,8 @@ export function LeadsTable({
   members?: { id: string; name: string }[];
   /** Per-org display-label overrides for the dropbox groups (display only). */
   labelOverrides?: Record<string, string>;
+  /** Solar vertical? Hides solar-only fields in the edit dialog. */
+  isSolar?: boolean;
 }) {
   const router = useRouter();
   const [query, setQuery] = useState("");
@@ -914,7 +917,9 @@ export function LeadsTable({
         Showing {filtered.length} of {leads.length} leads
       </p>
 
-      {editing && <EditLeadDialog lead={editing} onClose={() => setEditing(null)} />}
+      {editing && (
+        <EditLeadDialog lead={editing} onClose={() => setEditing(null)} isSolar={isSolar} />
+      )}
     </div>
   );
 }

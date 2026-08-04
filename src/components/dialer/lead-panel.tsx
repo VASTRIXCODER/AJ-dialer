@@ -24,6 +24,7 @@ import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Portal } from "@/components/ui/portal";
+import { useDialerContextOptional } from "./dialer-context";
 import { Ring } from "@/components/ui/progress";
 import type { Lead } from "@/lib/types";
 import { outcomeConfig } from "@/lib/status";
@@ -142,6 +143,8 @@ export function LeadPanel({
 }
 
 function LeadDetail({ lead, upNext }: { lead: Lead; upNext: Lead[] }) {
+  const ctx = useDialerContextOptional();
+  const isSolar = ctx?.config.isSolar !== false;
   const name = `${lead.firstName} ${lead.lastName}`;
   const flags = [
     { on: lead.hasEV, icon: Car, label: "EV" },
@@ -194,7 +197,7 @@ function LeadDetail({ lead, upNext }: { lead: Lead; upNext: Lead[] }) {
               <span>{lead.utilityProvider}</span>
             </div>
           )}
-          {lead.solarProvider && (
+          {isSolar && lead.solarProvider && (
             <div className="flex items-center gap-2.5 text-muted-foreground">
               <Sun className="h-4 w-4 shrink-0" />
               <span>{lead.solarProvider}</span>
@@ -202,7 +205,7 @@ function LeadDetail({ lead, upNext }: { lead: Lead; upNext: Lead[] }) {
           )}
         </div>
 
-        <div className="mt-4 grid grid-cols-2 gap-2">
+        <div className={`mt-4 grid gap-2 ${isSolar ? "grid-cols-2" : "grid-cols-1"}`}>
           <div className="rounded-xl bg-muted px-3 py-2">
             <p className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground">
               Utility bill
@@ -211,14 +214,16 @@ function LeadDetail({ lead, upNext }: { lead: Lead; upNext: Lead[] }) {
               {lead.utilityBill ? formatCurrency(lead.utilityBill) : "—"}
             </p>
           </div>
-          <div className="rounded-xl bg-muted px-3 py-2">
-            <p className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground">
-              Solar pmt
-            </p>
-            <p className="text-base font-bold tabular">
-              {lead.solarPayment ? formatCurrency(lead.solarPayment) : "—"}
-            </p>
-          </div>
+          {isSolar && (
+            <div className="rounded-xl bg-muted px-3 py-2">
+              <p className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground">
+                Solar pmt
+              </p>
+              <p className="text-base font-bold tabular">
+                {lead.solarPayment ? formatCurrency(lead.solarPayment) : "—"}
+              </p>
+            </div>
+          )}
         </div>
 
         {flags.length > 0 && (

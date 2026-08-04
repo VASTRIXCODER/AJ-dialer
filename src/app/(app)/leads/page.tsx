@@ -9,6 +9,7 @@ import { CalendarCheck, Sparkles, Zap } from "lucide-react";
 import { getLeads } from "@/lib/db/leads";
 import { getCampaigns } from "@/lib/db/pipeline";
 import { getViewer, listMembers } from "@/lib/org/membership";
+import { isSolarVertical } from "@/lib/org/vertical";
 import { formatNumber } from "@/lib/utils";
 
 export const metadata = { title: "Leads" };
@@ -104,6 +105,7 @@ export default async function LeadsPage() {
         meId={viewer.user?.id ?? null}
         members={members}
         labelOverrides={groupLabels}
+        isSolar={isSolarVertical(viewer.org?.dialerTemplate)}
       />
     </PageContainer>
   );

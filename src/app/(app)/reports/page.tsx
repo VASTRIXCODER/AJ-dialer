@@ -33,6 +33,7 @@ import { Badge } from "@/components/ui/badge";
 import { buttonVariants } from "@/components/ui/button";
 import { getReportingData, getTeamLeaderboard } from "@/lib/db/metrics";
 import { getViewer } from "@/lib/org/membership";
+import { isSolarVertical } from "@/lib/org/vertical";
 import { outcomeConfig } from "@/lib/status";
 import { cn, formatCurrency, formatDuration, formatNumber, formatPercent } from "@/lib/utils";
 
@@ -77,6 +78,8 @@ export default async function ReportsPage({
   // Manual-only orgs (e.g. Donny) have no AI calls, so drop the AI-vs-human
   // split and the AI executive report — every call here is a human call.
   const aiDialerEnabled = viewer.org?.settings.features.aiDialer !== false;
+  // Non-solar workspaces don't have a solar payment to average.
+  const isSolar = isSolarVertical(viewer.org?.dialerTemplate);
 
   // Date-range switch — period figures react to it; the 30-day trend and
   // today's hourly chart keep their own fixed windows regardless.
@@ -238,15 +241,17 @@ export default async function ReportsPage({
         </SectionCard>
         <SectionCard title="Utility-bill insights" description="Across qualified homeowners">
           <div className="space-y-4">
-            <div className="grid grid-cols-3 gap-2 text-center">
+            <div className={`grid gap-2 text-center ${isSolar ? "grid-cols-3" : "grid-cols-2"}`}>
               <div className="rounded-xl bg-muted p-3">
                 <p className="text-lg font-bold tabular">{formatCurrency(metrics.avgUtilityBill)}</p>
                 <p className="text-[10px] text-muted-foreground">Avg bill</p>
               </div>
-              <div className="rounded-xl bg-muted p-3">
-                <p className="text-lg font-bold tabular">{formatCurrency(metrics.avgSolarPayment)}</p>
-                <p className="text-[10px] text-muted-foreground">Avg solar</p>
-              </div>
+              {isSolar && (
+                <div className="rounded-xl bg-muted p-3">
+                  <p className="text-lg font-bold tabular">{formatCurrency(metrics.avgSolarPayment)}</p>
+                  <p className="text-[10px] text-muted-foreground">Avg solar</p>
+                </div>
+              )}
               <div className="rounded-xl bg-primary-soft p-3">
                 <p className="text-lg font-bold tabular text-primary">{formatCurrency(metrics.avgTotalEnergyCost)}</p>
                 <p className="text-[10px] text-muted-foreground">Total cost</p>

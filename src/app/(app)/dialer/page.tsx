@@ -5,6 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { getCampaigns } from "@/lib/db/pipeline";
 import { getDialQueue } from "@/lib/leads-source";
 import { getViewer } from "@/lib/org/membership";
+import { isSolarVertical } from "@/lib/org/vertical";
 import { DEFAULT_FEATURES, resolveDialerAccess } from "@/lib/org/settings";
 
 export const metadata = { title: "Power Dialer" };
@@ -39,7 +40,7 @@ export default async function DialerPage({
     <PageContainer>
       <PageHeader
         title="Power Dialer"
-        description="Browser-based dialing with live solar qualification. No desk phone required."
+        description={`Browser-based dialing with live ${isSolarVertical(viewer.org?.dialerTemplate) ? "solar " : ""}qualification. No desk phone required.`}
       >
         {queue.length > 0 ? (
           <Badge tone="accent" className="gap-1.5">
