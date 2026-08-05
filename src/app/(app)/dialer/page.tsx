@@ -27,6 +27,9 @@ export default async function DialerPage({
     viewer.org?.settings.features ?? DEFAULT_FEATURES,
     viewer.permissions.includes("dialer.ai"),
   );
+  // Only solar tenants qualify against a solar loan — everyone else gets the
+  // vertical-neutral line rather than copy about an industry they aren't in.
+  const isSolar = viewer.org?.dialerTemplate === "solar";
   const dialCampaigns = campaigns
     .filter((c) => c.status !== "completed")
     .map((c) => ({ id: c.id, name: c.name }));
@@ -39,7 +42,11 @@ export default async function DialerPage({
     <PageContainer>
       <PageHeader
         title="Power Dialer"
-        description="Browser-based dialing with live solar qualification. No desk phone required."
+        description={
+          isSolar
+            ? "Browser-based dialing with live solar qualification. No desk phone required."
+            : "Browser-based dialing with live qualification. No desk phone required."
+        }
       >
         {queue.length > 0 ? (
           <Badge tone="accent" className="gap-1.5">

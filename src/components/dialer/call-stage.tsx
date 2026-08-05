@@ -98,6 +98,7 @@ export function CallStage({
   onSetActiveAgent,
   callerIdPool = [],
   callerIdRotateEvery = 1,
+  showSolarFields = true,
   onToggleExcludedCallerId,
   onStart,
   onManualDial,
@@ -132,6 +133,8 @@ export function CallStage({
   /** The org's effective caller-ID rotation pool — powers the picker below. */
   callerIdPool?: string[];
   callerIdRotateEvery?: number;
+  /** Collect solar installer / payment on an ad-hoc AI dial (solar orgs only). */
+  showSolarFields?: boolean;
   onToggleExcludedCallerId: (callerId: string) => void;
   onStart: () => void;
   onManualDial: (number: string, name?: string) => void;
@@ -682,6 +685,7 @@ export function CallStage({
       {pendingAiNumber && (
         <KnownInfoDialog
           phone={pendingAiNumber}
+          showSolarFields={showSolarFields}
           onClose={() => setPendingAiNumber(null)}
           onSubmit={(known) => {
             onAiDialNumber(pendingAiNumber, known);

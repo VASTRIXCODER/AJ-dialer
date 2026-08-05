@@ -1,4 +1,5 @@
 import { redirect } from "next/navigation";
+import { DEFAULT_WORDMARK_TAGLINE } from "@/components/brand/logo";
 import { AppShell } from "@/components/layout/app-shell";
 import { MaintenanceScreen } from "@/components/layout/maintenance-screen";
 import { PaywallScreen } from "@/components/layout/paywall-screen";
@@ -116,6 +117,11 @@ export default async function AppGroupLayout({
       brandColor={viewer.org?.brandColor || null}
       role={viewer.role}
       superadmin={superadmin}
+      wordmarkTagline={
+        viewer.org?.dialerTemplate === "solar"
+          ? "Solar Resolution"
+          : DEFAULT_WORDMARK_TAGLINE
+      }
       dialerConfig={dialerConfig}
     >
       {children}

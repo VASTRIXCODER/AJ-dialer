@@ -25,6 +25,7 @@ export function AppShell({
   brandColor = null,
   role = null,
   superadmin = false,
+  wordmarkTagline,
   dialerConfig,
 }: {
   children: React.ReactNode;
@@ -38,11 +39,22 @@ export function AppShell({
   brandColor?: string | null;
   role?: string | null;
   superadmin?: boolean;
+  /** Platform descriptor under the sidebar wordmark — vertical-aware. */
+  wordmarkTagline?: string;
   /** Config for the app-wide dialer engine (persists calls across navigation). */
   dialerConfig: DialerConfig;
 }) {
   const [mobileOpen, setMobileOpen] = useState(false);
-  const sidebarProps = { permissions, features, orgName, productName, brandColor, role, superadmin };
+  const sidebarProps = {
+    permissions,
+    features,
+    orgName,
+    productName,
+    brandColor,
+    role,
+    superadmin,
+    wordmarkTagline,
+  };
 
   return (
     <DialerProvider config={dialerConfig}>

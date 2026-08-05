@@ -3,7 +3,7 @@
 // the dialer its vertical personality: terminology, default brand colors, the AI
 // agent's persona, suggested dispositions, and optional feature toggles.
 
-import type { DispositionTone, OrgFeatures } from "./settings";
+import type { DispositionTone, OrgFeatures, QualifySettings } from "./settings";
 
 export interface TemplateProfile {
   value: string;
@@ -232,6 +232,28 @@ export function templateProfile(value: string | undefined | null): TemplateProfi
   return (
     TEMPLATE_PROFILES.find((t) => t.value === value) ?? TEMPLATE_PROFILES[0]
   );
+}
+
+/**
+ * The parts of the product that only make sense for SOLAR, resolved per
+ * vertical. The platform's defaults were written for the flagship solar tenant,
+ * so a fresh "General" / "Insurance" / "Recruiting" workspace used to inherit a
+ * "Solar payment" field on the qualification panel and a "Bills are fine"
+ * pipeline stage — copy about an industry it has nothing to do with. New orgs
+ * now start with the shape that matches their own vertical.
+ */
+export function verticalDefaults(template: string | undefined | null): {
+  qualify: QualifySettings;
+  features: Partial<OrgFeatures>;
+} {
+  const isSolar = template === "solar";
+  return {
+    qualify: {
+      showSolarPayment: isSolar,
+      otherToggleLabel: isSolar ? "Battery" : "Other",
+    },
+    features: isSolar ? {} : { billsFine: false },
+  };
 }
 
 export function templateLabel(value: string): string {

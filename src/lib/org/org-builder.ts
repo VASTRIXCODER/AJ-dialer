@@ -9,7 +9,7 @@ import {
   type OrgFeatures,
   mergeSettings,
 } from "./settings";
-import { DIALER_TEMPLATES, templateProfile } from "./templates";
+import { DIALER_TEMPLATES, templateProfile, verticalDefaults } from "./templates";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // AI white-label builder. Turns a plain-English business description into a full
@@ -56,6 +56,7 @@ export function heuristicBlueprint(
 ): OrgBlueprint {
   const template = pickTemplate(`${hints.industry ?? ""} ${description}`);
   const p = templateProfile(template);
+  const v = verticalDefaults(template);
   const name = (hints.name || "New Organization").trim();
   const settings = mergeSettings({
     ...DEFAULT_ORG_SETTINGS,
@@ -66,7 +67,8 @@ export function heuristicBlueprint(
       greeting: p.greeting,
     },
     dispositions: p.dispositions,
-    features: { ...DEFAULT_FEATURES, ...(p.features ?? {}) },
+    qualify: v.qualify,
+    features: { ...DEFAULT_FEATURES, ...v.features, ...(p.features ?? {}) },
     leadNoun: p.leadNoun,
     leadNounPlural: p.leadNounPlural,
   });
@@ -224,13 +226,15 @@ export async function generateOrgBlueprint(
           }))
         : p.dispositions;
 
+    const v = verticalDefaults(template);
     const features: OrgFeatures = {
       aiDialer: spec.features?.aiDialer ?? true,
       manualDialer: spec.features?.manualDialer ?? true,
       leads: spec.features?.leads ?? true,
       appointments: spec.features?.appointments ?? true,
       callbacks: spec.features?.callbacks ?? true,
-      billsFine: spec.features?.billsFine ?? true,
+      // "Bills are fine" is a solar objection stage — never on for other verticals.
+      billsFine: (spec.features?.billsFine ?? true) && v.features.billsFine !== false,
       liveMonitor: spec.features?.liveMonitor ?? true,
       leaderboard: spec.features?.leaderboard ?? true,
       campaigns: spec.features?.campaigns ?? true,
@@ -248,6 +252,7 @@ export async function generateOrgBlueprint(
         greeting: spec.greeting || p.greeting,
       },
       dispositions,
+      qualify: v.qualify,
       features,
       leadNoun: spec.leadNoun || p.leadNoun,
       leadNounPlural: spec.leadNounPlural || p.leadNounPlural,

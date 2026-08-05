@@ -17,10 +17,13 @@ export function KnownInfoDialog({
   phone,
   onSubmit,
   onClose,
+  showSolarFields = true,
 }: {
   phone: string;
   onSubmit: (info: KnownInfo) => void;
   onClose: () => void;
+  /** Solar orgs collect the installer + solar payment; other verticals don't. */
+  showSolarFields?: boolean;
 }) {
   const [f, setF] = useState<KnownInfo>({});
   const set = (k: keyof KnownInfo, v: string) =>
@@ -107,18 +110,22 @@ export function KnownInfoDialog({
               <span className="text-xs font-medium text-muted-foreground">Utility provider</span>
               <input className={field} value={f.utilityProvider ?? ""} onChange={(e) => set("utilityProvider", e.target.value)} />
             </label>
-            <label className="space-y-1">
-              <span className="text-xs font-medium text-muted-foreground">Solar provider</span>
-              <input className={field} value={f.solarProvider ?? ""} onChange={(e) => set("solarProvider", e.target.value)} />
-            </label>
+            {showSolarFields && (
+              <label className="space-y-1">
+                <span className="text-xs font-medium text-muted-foreground">Solar provider</span>
+                <input className={field} value={f.solarProvider ?? ""} onChange={(e) => set("solarProvider", e.target.value)} />
+              </label>
+            )}
             <label className="space-y-1">
               <span className="text-xs font-medium text-muted-foreground">Utility bill ($/mo)</span>
               <input className={field} type="number" inputMode="numeric" value={f.utilityBill ?? ""} onChange={(e) => set("utilityBill", e.target.value)} />
             </label>
-            <label className="space-y-1">
-              <span className="text-xs font-medium text-muted-foreground">Solar payment ($/mo)</span>
-              <input className={field} type="number" inputMode="numeric" value={f.solarPayment ?? ""} onChange={(e) => set("solarPayment", e.target.value)} />
-            </label>
+            {showSolarFields && (
+              <label className="space-y-1">
+                <span className="text-xs font-medium text-muted-foreground">Solar payment ($/mo)</span>
+                <input className={field} type="number" inputMode="numeric" value={f.solarPayment ?? ""} onChange={(e) => set("solarPayment", e.target.value)} />
+              </label>
+            )}
             <label className="col-span-2 space-y-1">
               <span className="text-xs font-medium text-muted-foreground">Notes for the agent</span>
               <textarea

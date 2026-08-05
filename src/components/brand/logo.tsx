@@ -31,12 +31,19 @@ export function LogoMark({ className }: { className?: string }) {
   );
 }
 
+/** Neutral platform descriptor — used by every vertical except solar. */
+export const DEFAULT_WORDMARK_TAGLINE = "AI Sales Dialer";
+
 export function Wordmark({
   className,
   collapsed = false,
+  tagline = DEFAULT_WORDMARK_TAGLINE,
 }: {
   className?: string;
   collapsed?: boolean;
+  /** Line under the platform name. Only solar tenants get "Solar Resolution" —
+   *  every other vertical would otherwise be branded for an industry it isn't in. */
+  tagline?: string;
 }) {
   return (
     <div className={cn("flex items-center gap-2.5", className)}>
@@ -45,7 +52,7 @@ export function Wordmark({
         <div className="flex flex-col leading-none">
           <span className="text-[15px] font-bold tracking-tight">AIATWORK</span>
           <span className="text-[11px] font-medium text-muted-foreground">
-            Solar Resolution
+            {tagline}
           </span>
         </div>
       )}

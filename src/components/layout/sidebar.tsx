@@ -24,6 +24,7 @@ export function Sidebar({
   brandColor = null,
   role = null,
   superadmin = false,
+  wordmarkTagline,
   onNavigate,
 }: {
   account?: Account | null;
@@ -34,6 +35,8 @@ export function Sidebar({
   brandColor?: string | null;
   role?: string | null;
   superadmin?: boolean;
+  /** Platform descriptor under the wordmark — vertical-aware (see Wordmark). */
+  wordmarkTagline?: string;
   onNavigate?: () => void;
 }) {
   const pathname = usePathname();
@@ -62,7 +65,7 @@ export function Sidebar({
     <div className="glass flex h-full flex-col gap-6 border-r border-border/60">
       <div className="px-5 pt-5">
         <Link href="/dashboard" onClick={onNavigate} className="inline-flex">
-          <Wordmark />
+          <Wordmark tagline={wordmarkTagline} />
         </Link>
       </div>
 
