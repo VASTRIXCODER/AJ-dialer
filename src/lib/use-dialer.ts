@@ -373,6 +373,21 @@ export function useDialer(
     [],
   );
 
+  /**
+   * Hang up outbound legs we placed but can no longer bridge the rep into.
+   * Fire-and-forget: the rep is already back at idle, and an abandoned call
+   * ringing a real person is worse than a failed cleanup request.
+   */
+  const releaseLegs = useCallback((sids: string[]) => {
+    if (!sids.length) return;
+    fetch("/api/twilio/release", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ sids }),
+      keepalive: true,
+    }).catch(() => {});
+  }, []);
+
   const clearHumanPresence = useCallback(() => {
     const id = humanIdRef.current;
     if (!id) return;
@@ -767,6 +782,34 @@ export function useDialer(
   );
 
   /**
+   * Keep the queue cursor pointing INSIDE the current queue, wrapping back to
+   * the top when it has fallen off the end. Returns the usable cursor.
+   *
+   * The cursor routinely outlives the list it was set against: an AI pass parks
+   * it at exactly `queue.length` when it runs out of leads, `loadLeads()` can
+   * hand back a shorter list than last time, and the group / campaign / "my
+   * leads" filters narrow the queue underneath it. Nothing used to bring it back
+   * in range, and `nextLeads()` slices from it without wrapping — so a stale
+   * cursor made "Start session" find NOTHING to dial and bail out instantly.
+   * That is the "I press start, it never dials, and it drops straight back to
+   * idle" report: the lead panel still showed a lead (it indexes with a modulo
+   * the engine itself never applied), so the queue looked perfectly fine.
+   */
+  const normalizeCursor = useCallback(() => {
+    if (queueIndexRef.current >= queue.length || queueIndexRef.current < 0) {
+      queueIndexRef.current = 0;
+      setState((s) => (s.queueIndex === 0 ? s : { ...s, queueIndex: 0 }));
+    }
+    return queueIndexRef.current;
+  }, [queue.length]);
+
+  // Re-anchor whenever the loaded queue changes size, so the cursor can never be
+  // left stranded past the end of a freshly-loaded or freshly-filtered list.
+  useEffect(() => {
+    normalizeCursor();
+  }, [normalizeCursor]);
+
+  /**
    * The next `count` leads. Does NOT wrap WITHIN a batch.
    *
    * This used to index `queue[(i + n) % queue.length]`, so a 2-lead queue dialed
@@ -777,10 +820,11 @@ export function useDialer(
    */
   const nextLeads = useCallback(
     (count: number) => {
-      const start = queueIndexRef.current;
+      if (!queue.length) return [];
+      const start = normalizeCursor();
       return queue.slice(start, start + count);
     },
-    [queue],
+    [normalizeCursor, queue],
   );
 
   const connectLine = useCallback(
@@ -1200,7 +1244,10 @@ export function useDialer(
   const startAISession = useCallback(() => {
     stopAITimer();
     sessionGenRef.current += 1;
-    aiCursorRef.current = queueIndexRef.current;
+    // Same stale-cursor trap as the manual path: a finished pass parks the
+    // cursor at queue.length, and starting from there gives the pump nothing to
+    // launch — the session would open and report "Campaign complete" on the spot.
+    aiCursorRef.current = normalizeCursor();
     // A fresh session starts with every line free. Carrying stale slots over
     // would make the pump believe the floor was busy and launch nothing.
     inflightRef.current.clear();
@@ -1216,7 +1263,7 @@ export function useDialer(
       error: null,
     }));
     void launchAIBatch();
-  }, [launchAIBatch, purgeRedials, stopAITimer]);
+  }, [launchAIBatch, normalizeCursor, purgeRedials, stopAITimer]);
 
   /** AI-dial an ad-hoc number with whatever the user knows about it. */
   const aiDialNumber = useCallback(
@@ -1309,7 +1356,19 @@ export function useDialer(
       }
 
       const leads = override ?? nextLeads(parallelRef.current);
-      if (!leads.length) return;
+      // Never fail silently here. This used to `return` with no state change and
+      // no message, so pressing "Start session" looked like the dialer had
+      // started and instantly quit — with nothing on screen explaining why.
+      if (!leads.length) {
+        patch({
+          error: queue.length
+            ? "Couldn't line up the next lead to dial. Reload your leads and try again."
+            : "No leads are loaded — press “Load leads” to build a session first.",
+          status: "idle",
+          lines: [],
+        });
+        return;
+      }
 
       const lines: DialLine[] = leads.map((lead) => ({
         id: `line-${lead.id}-${Date.now()}`,
@@ -1366,6 +1425,10 @@ export function useDialer(
         }),
       }).catch(() => {});
 
+      // Tracked outside the try so a failure to join the conference can still
+      // hang up whatever we already put on the wire (see the catch below).
+      let placedSids: string[] = [];
+
       try {
         // Dial the homeowner(s) into the conference room via Twilio REST.
         const res = await fetch("/api/twilio/call", {
@@ -1406,6 +1469,7 @@ export function useDialer(
         const outboundSids = (data.calls ?? [])
           .map((c) => c.sid)
           .filter((s): s is string => Boolean(s));
+        placedSids = outboundSids;
         if (outboundSids.length) {
           patch({ outboundSids });
         }
@@ -1480,11 +1544,32 @@ export function useDialer(
         pollRef.current = setInterval(pollAnswered, 1500);
       } catch {
         clearHumanPresence();
-        patch({ error: "Call failed to start.", status: "idle", lines: [] });
+        // The homeowner leg(s) are already on the wire. If the rep's browser
+        // couldn't join the conference — a blocked microphone is by far the most
+        // common cause — hang them up instead of leaving real phones ringing an
+        // empty room that nobody will ever speak into.
+        releaseLegs(placedSids);
+        patch({
+          error:
+            "Couldn't connect your side of the call. Check that this browser tab is allowed to use your microphone, then try again.",
+          status: "idle",
+          lines: [],
+        });
         resetToIdle();
       }
     },
-    [attachCallHandlers, clearHumanPresence, connectLine, nextLeads, patch, recordDials, resetToIdle, stopPoll],
+    [
+      attachCallHandlers,
+      clearHumanPresence,
+      connectLine,
+      nextLeads,
+      patch,
+      queue.length,
+      recordDials,
+      releaseLegs,
+      resetToIdle,
+      stopPoll,
+    ],
   );
 
   // The Start button + auto-dial route through here, honoring the current mode.
