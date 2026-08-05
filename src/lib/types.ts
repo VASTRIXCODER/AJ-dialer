@@ -14,15 +14,28 @@ export type LeadStatus =
   | "dnc";
 
 /**
- * Fixed lead-intake groups. The 4 geographic ones are the only valid output of
- * the AI geography classifier (src/lib/ai/geo-classify.ts) — "manual" exists
- * only for a human to file a lead into on purpose via explicit upload, and is
- * structurally excluded from that classifier's return type. A lead with no
- * `leadGroup` is "unsorted" (lead_group IS NULL) — not yet classified.
+ * A lead-intake group KEY. Groups are defined per organization now (the
+ * `lead_groups` table — see src/lib/db/lead-groups.ts), so this is an open
+ * string rather than a closed union: an org's buckets are whatever its admins
+ * created. A lead with no `leadGroup` is MISCELLANEOUS (lead_group IS NULL) —
+ * either not sorted yet, or sorted and not confidently placed anywhere.
+ */
+export type LeadGroup = string;
+
+/**
+ * The four buckets of the ORIGINAL fixed geography taxonomy. Still real: they're
+ * seeded into every org (see schema PART 17), they remain the only output of the
+ * deterministic geo classifier used as the AI's offline fallback, and thousands
+ * of existing leads carry these keys. New orgs are free to ignore them.
  */
 export type GeoLeadGroup = "fresno" | "houston" | "dallas" | "california";
-export type LeadGroup = GeoLeadGroup | "manual";
-export const LEAD_GROUPS: LeadGroup[] = ["fresno", "houston", "dallas", "california", "manual"];
+export const GEO_LEAD_GROUPS: GeoLeadGroup[] = ["fresno", "houston", "dallas", "california"];
+
+/** The legacy fixed set, kept for seeding and back-compat with stored values. */
+export const LEAD_GROUPS: LeadGroup[] = [...GEO_LEAD_GROUPS, "manual"];
+
+/** Group key a human files by hand; the AI classifier must never assign it. */
+export const MANUAL_GROUP_KEY = "manual";
 
 export type CallOutcome =
   | "appointment_booked"
@@ -110,8 +123,11 @@ export interface Lead {
   status: LeadStatus;
   campaignId: string;
   assignedRepId?: string;
-  /** Fixed intake group (fresno/houston/dallas/california/manual). Absent = unsorted. */
+  /** Key of an org-defined intake group. Absent = Miscellaneous (unsorted). */
   leadGroup?: LeadGroup;
+  /** Pack this lead was dealt into — a numbered slice of one upload. Absent =
+   *  not packed. Orthogonal to leadGroup: a lead can carry both. */
+  leadPackId?: string;
   /** Monthly solar loan / lease payment in USD */
   solarPayment?: number;
   /** Monthly utility bill in USD */

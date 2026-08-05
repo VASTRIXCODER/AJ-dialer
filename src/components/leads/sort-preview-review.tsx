@@ -3,6 +3,7 @@
 import {
   AlertTriangle,
   CheckCircle2,
+  Inbox,
   Loader2,
   MapPin,
   Sparkles,
@@ -15,29 +16,28 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import type { ParsedLead } from "@/lib/leads/csv";
-import { applyLabelOverride } from "@/lib/leads/group-labels";
-import type { LeadGroup } from "@/lib/types";
 import { formatPhone } from "@/lib/utils";
 import { CampaignCertificationDialog } from "./campaign-certification-dialog";
 
 type PreviewLead = ParsedLead & { tempId: string };
-type BucketKey = LeadGroup | "unsorted";
-const BUCKET_KEYS: BucketKey[] = ["fresno", "houston", "dallas", "california", "manual", "unsorted"];
 
-const SECTION_META: Record<BucketKey, { label: string; tone: "primary" | "neutral" | "warning" }> = {
-  fresno: { label: "Fresno", tone: "primary" },
-  houston: { label: "Houston", tone: "primary" },
-  dallas: { label: "Dallas", tone: "primary" },
-  california: { label: "California", tone: "primary" },
-  manual: { label: "Manual Dialing", tone: "neutral" },
-  unsorted: { label: "Unsorted — needs review", tone: "warning" },
-};
+/** The Miscellaneous bucket's key in this screen. Imports as `leadGroup: null`. */
+export const MISC_KEY = "misc";
 
-export interface GeoPreviewResponse {
+export interface SortPreviewGroup {
+  key: string;
+  label: string;
+  kind: "sorted" | "manual";
+}
+
+export interface SortPreviewResponse {
   source: "claude" | "demo";
   chunkFailures: number;
   totalRows: number;
-  groups: Record<"fresno" | "houston" | "dallas" | "california" | "unsorted", PreviewLead[]>;
+  sortedRows: number;
+  deferredRows: number;
+  groups: SortPreviewGroup[];
+  buckets: Record<string, PreviewLead[]>;
   columnSource: "headers" | "ai";
   aiError: string | null;
 }
@@ -45,65 +45,83 @@ export interface GeoPreviewResponse {
 type BucketState = "idle" | "pending" | "done" | "error";
 
 /**
- * Preview-and-confirm screen for the "dump & auto-sort" upload. Nothing was
- * inserted by the preview call — every lead here is still just in memory. The
- * reviewer can move any lead (including into Manual Dialing, which the AI
- * itself never proposed — see SECTION_META /geo-classify.ts) before confirming.
+ * Preview-and-confirm for an AI sort. Nothing has been inserted yet — every
+ * lead here is still only in memory, so the reviewer can move any of them
+ * (including into a manual-kind group, which the classifier itself never
+ * proposes) before anything is written.
+ *
+ * Buckets are the ORG'S groups plus Miscellaneous, which holds both the leads
+ * the model couldn't place and every row past the sort limit.
  */
-export function GeoPreviewReview({
+export function SortPreviewReview({
   preview,
+  packSize,
+  packBatch,
   onDone,
   onCancel,
-  labelOverrides,
 }: {
-  preview: GeoPreviewResponse;
+  preview: SortPreviewResponse;
+  /** Cut each confirmed bucket into packs of this size. 0 = don't pack. */
+  packSize?: number;
+  packBatch?: string;
   onDone: () => void;
   onCancel: () => void;
-  /** Per-org display-label overrides for the dropbox groups (display only). */
-  labelOverrides?: Record<string, string>;
 }) {
   const router = useRouter();
 
+  const bucketKeys = useMemo(
+    () => [...preview.groups.map((g) => g.key), MISC_KEY],
+    [preview.groups],
+  );
+
+  const labelOf = useMemo(() => {
+    const m = new Map<string, string>(preview.groups.map((g) => [g.key, g.label]));
+    m.set(MISC_KEY, "Miscellaneous");
+    return m;
+  }, [preview.groups]);
+
+  const kindOf = useMemo(() => {
+    const m = new Map<string, "sorted" | "manual">(preview.groups.map((g) => [g.key, g.kind]));
+    return m;
+  }, [preview.groups]);
+
   const byTempId = useMemo(() => {
     const m = new Map<string, PreviewLead>();
-    for (const key of Object.keys(preview.groups) as (keyof typeof preview.groups)[]) {
-      for (const l of preview.groups[key]) m.set(l.tempId, l);
+    for (const list of Object.values(preview.buckets)) {
+      for (const l of list) m.set(l.tempId, l);
     }
     return m;
   }, [preview]);
 
-  const [assignment, setAssignment] = useState<Record<string, BucketKey>>(() => {
-    const init: Record<string, BucketKey> = {};
-    for (const key of Object.keys(preview.groups) as (keyof typeof preview.groups)[]) {
-      for (const l of preview.groups[key]) init[l.tempId] = key;
+  const [assignment, setAssignment] = useState<Record<string, string>>(() => {
+    const init: Record<string, string> = {};
+    for (const [key, list] of Object.entries(preview.buckets)) {
+      for (const l of list) init[l.tempId] = key;
     }
     return init;
   });
   const [bucketState, setBucketState] = useState<Record<string, BucketState>>({});
   const [bucketMsg, setBucketMsg] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
-  // This flow never sets a campaign, so any bucket that trips the gate is
-  // certifying the org-wide "no campaign" bucket — one dialog covers all of
-  // them; onCertified re-runs confirm(), whose own "not already done" filter
-  // naturally retries just the buckets that were waiting on it.
   const [certPrompt, setCertPrompt] = useState<{ campaignId: string | null } | null>(null);
 
   const buckets = useMemo(() => {
-    const out: Record<BucketKey, PreviewLead[]> = {
-      fresno: [], houston: [], dallas: [], california: [], manual: [], unsorted: [],
-    };
+    const out: Record<string, PreviewLead[]> = {};
+    for (const k of bucketKeys) out[k] = [];
     for (const [tempId, key] of Object.entries(assignment)) {
       const lead = byTempId.get(tempId);
-      if (lead) out[key].push(lead);
+      // A lead whose bucket vanished (a group deleted mid-review) falls back to
+      // Miscellaneous rather than disappearing from the screen entirely.
+      if (lead) (out[key] ?? out[MISC_KEY]).push(lead);
     }
     return out;
-  }, [assignment, byTempId]);
+  }, [assignment, byTempId, bucketKeys]);
 
-  function moveLead(tempId: string, key: BucketKey) {
+  function moveLead(tempId: string, key: string) {
     setAssignment((prev) => ({ ...prev, [tempId]: key }));
   }
 
-  async function importBucket(key: BucketKey, list: PreviewLead[]): Promise<boolean> {
+  async function importBucket(key: string, list: PreviewLead[]): Promise<boolean> {
     setBucketState((s) => ({ ...s, [key]: "pending" }));
     try {
       const res = await fetch("/api/leads/import", {
@@ -111,13 +129,14 @@ export function GeoPreviewReview({
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           rows: list.map(({ tempId: _tempId, ...rest }) => rest),
-          leadGroup: key === "unsorted" ? null : key,
+          leadGroup: key === MISC_KEY ? null : key,
+          ...(packSize && packSize > 0
+            ? { packSize, packBatch: `${packBatch ?? "Upload"} · ${labelOf.get(key) ?? key}` }
+            : {}),
         }),
       });
       const json = await res.json().catch(() => ({}));
       if (json.certificationRequired) {
-        // Not a failure — back to idle so confirm()'s retry picks it up once
-        // the dialog's onCertified calls confirm() again.
         setBucketState((s) => ({ ...s, [key]: "idle" }));
         setCertPrompt((prev) => prev ?? { campaignId: json.campaignId ?? null });
         return false;
@@ -128,7 +147,8 @@ export function GeoPreviewReview({
         return false;
       }
       setBucketState((s) => ({ ...s, [key]: "done" }));
-      setBucketMsg((s) => ({ ...s, [key]: `Imported ${json.inserted} leads.` }));
+      const packNote = json.packs > 0 ? ` in ${json.packs} pack${json.packs === 1 ? "" : "s"}` : "";
+      setBucketMsg((s) => ({ ...s, [key]: `Imported ${json.inserted} leads${packNote}.` }));
       return true;
     } catch {
       setBucketState((s) => ({ ...s, [key]: "error" }));
@@ -137,14 +157,11 @@ export function GeoPreviewReview({
     }
   }
 
-  // Only imports buckets NOT already "done" — so clicking Confirm again after a
-  // partial failure (some buckets ok, some errored) never double-inserts the
-  // ones that already succeeded; it only retries the failed/untried ones.
+  // Only imports buckets NOT already "done", so retrying after a partial
+  // failure never double-inserts the ones that already landed.
   async function confirm() {
     setBusy(true);
-    const pending = BUCKET_KEYS.filter(
-      (k) => buckets[k].length > 0 && bucketState[k] !== "done",
-    );
+    const pending = bucketKeys.filter((k) => buckets[k].length > 0 && bucketState[k] !== "done");
     const results = await Promise.all(pending.map((k) => importBucket(k, buckets[k])));
     setBusy(false);
     if (results.every(Boolean)) {
@@ -153,9 +170,9 @@ export function GeoPreviewReview({
     }
   }
 
-  const anyErrors = BUCKET_KEYS.some((k) => bucketState[k] === "error");
-  const allDone = BUCKET_KEYS.every((k) => buckets[k].length === 0 || bucketState[k] === "done");
-  const totalPending = BUCKET_KEYS.reduce((n, k) => n + buckets[k].length, 0);
+  const anyErrors = bucketKeys.some((k) => bucketState[k] === "error");
+  const allDone = bucketKeys.every((k) => buckets[k].length === 0 || bucketState[k] === "done");
+  const totalPending = bucketKeys.reduce((n, k) => n + buckets[k].length, 0);
 
   return (
     <Card className="p-5">
@@ -173,10 +190,17 @@ export function GeoPreviewReview({
         <div>
           <h3 className="flex items-center gap-2 font-semibold tracking-tight">
             <Sparkles className="h-4 w-4 text-accent" />
-            Review AI-sorted leads
+            Review sorted leads
           </h3>
           <p className="mt-0.5 text-sm text-muted-foreground">
-            {preview.totalRows} leads classified — move any lead before confirming.
+            {preview.sortedRows.toLocaleString()} of {preview.totalRows.toLocaleString()} sorted
+            {preview.deferredRows > 0 && (
+              <>
+                {" "}
+                · {preview.deferredRows.toLocaleString()} held in Miscellaneous for later
+              </>
+            )}
+            {packSize && packSize > 0 ? ` · packs of ${packSize}` : ""}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -209,24 +233,27 @@ export function GeoPreviewReview({
       )}
 
       <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-        {BUCKET_KEYS.map((key) => {
-          const list = buckets[key];
-          const meta = SECTION_META[key];
+        {bucketKeys.map((key) => {
+          const list = buckets[key] ?? [];
           const state = bucketState[key];
+          const isMisc = key === MISC_KEY;
+          const isManual = kindOf.get(key) === "manual";
           return (
             <div key={key} className="rounded-xl border border-border/70 p-3">
               <div className="flex items-center justify-between gap-2">
                 <span className="flex items-center gap-1.5 text-sm font-semibold">
-                  {key === "unsorted" ? (
-                    <AlertTriangle className="h-3.5 w-3.5 text-warning" />
-                  ) : key === "manual" ? (
+                  {isMisc ? (
+                    <Inbox className="h-3.5 w-3.5 text-warning" />
+                  ) : isManual ? (
                     <Wrench className="h-3.5 w-3.5 text-muted-foreground" />
                   ) : (
                     <MapPin className="h-3.5 w-3.5 text-primary" />
                   )}
-                  {applyLabelOverride(key, meta.label, labelOverrides)}
+                  {labelOf.get(key) ?? key}
                 </span>
-                <Badge tone={meta.tone}>{list.length}</Badge>
+                <Badge tone={isMisc ? "warning" : isManual ? "neutral" : "primary"}>
+                  {list.length}
+                </Badge>
               </div>
               {state === "done" && (
                 <p className="mt-2 flex items-center gap-1.5 text-xs text-success">
@@ -249,7 +276,8 @@ export function GeoPreviewReview({
                     >
                       <div className="min-w-0">
                         <p className="truncate font-medium">
-                          {[l.firstName, l.lastName].filter(Boolean).join(" ") || formatPhone(l.phone)}
+                          {[l.firstName, l.lastName].filter(Boolean).join(" ") ||
+                            formatPhone(l.phone)}
                         </p>
                         <p className="truncate text-muted-foreground">
                           {[l.city, l.state, l.zip].filter(Boolean).join(", ") || "No location"}
@@ -257,13 +285,13 @@ export function GeoPreviewReview({
                       </div>
                       <select
                         value={key}
-                        onChange={(e) => moveLead(l.tempId, e.target.value as BucketKey)}
+                        onChange={(e) => moveLead(l.tempId, e.target.value)}
                         disabled={busy}
                         className="h-7 shrink-0 rounded-md border border-border bg-background px-1.5 text-[11px]"
                       >
-                        {BUCKET_KEYS.map((k) => (
+                        {bucketKeys.map((k) => (
                           <option key={k} value={k}>
-                            {applyLabelOverride(k, SECTION_META[k].label, labelOverrides)}
+                            {labelOf.get(k) ?? k}
                           </option>
                         ))}
                       </select>
@@ -284,8 +312,8 @@ export function GeoPreviewReview({
       <div className="mt-5 flex items-center justify-between gap-3 border-t border-border pt-4">
         {anyErrors && (
           <p className="text-xs text-danger">
-            Some groups failed to import. Succeeded groups won&apos;t be re-inserted — click below to
-            retry only what failed.
+            Some groups failed to import. Succeeded groups won&apos;t be re-inserted — click below
+            to retry only what failed.
           </p>
         )}
         <div className="ml-auto flex items-center gap-2">

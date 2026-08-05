@@ -8,6 +8,7 @@ import { buttonVariants } from "@/components/ui/button";
 import { CalendarCheck, Sparkles, Zap } from "lucide-react";
 import { getLeads } from "@/lib/db/leads";
 import { getCampaigns } from "@/lib/db/pipeline";
+import { listLeadGroupsWithCounts } from "@/lib/db/lead-groups";
 import { getViewer, listMembers } from "@/lib/org/membership";
 import { isSolarVertical } from "@/lib/org/vertical";
 import { formatNumber } from "@/lib/utils";
@@ -21,6 +22,11 @@ export default async function LeadsPage() {
     getCampaigns(),
     getViewer(),
   ]);
+  // The org's own intake groups (+ how many leads sit in each, and in the
+  // Miscellaneous catch-all) drive both the upload tiles and the group filter.
+  const { groups: leadGroups, miscCount } = await listLeadGroupsWithCounts(
+    viewer.org?.id ?? null,
+  );
   // Lead management (delete / reassign) is for managers+ (leads.import). Pull the
   // org's members so a supervisor can reassign leads between accounts.
   const canManage = viewer.permissions.includes("leads.import");
@@ -68,7 +74,7 @@ export default async function LeadsPage() {
     return (
       <PageContainer>
         {header}
-        <GroupUploadGrid canImport={canManage} labelOverrides={groupLabels} />
+        <GroupUploadGrid canImport={canManage} groups={leadGroups} miscCount={miscCount} />
         <EmptyState
           icon={Users}
           title="No leads yet"
@@ -85,7 +91,7 @@ export default async function LeadsPage() {
   return (
     <PageContainer>
       {header}
-      <GroupUploadGrid canImport={canManage} labelOverrides={groupLabels} />
+      <GroupUploadGrid canImport={canManage} groups={leadGroups} miscCount={miscCount} />
 
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
         <MetricCard label="Total leads" value={formatNumber(leads.length)} icon={Users} accent="primary" />
@@ -105,6 +111,7 @@ export default async function LeadsPage() {
         meId={viewer.user?.id ?? null}
         members={members}
         labelOverrides={groupLabels}
+        orgGroups={leadGroups.map((g) => ({ key: g.key, label: g.label }))}
         // Both signals, one prop: a non-solar vertical drops the solar fields
         // outright, and a solar org can still switch them off per-tenant.
         showSolarPayment={

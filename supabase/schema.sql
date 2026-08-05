@@ -1371,3 +1371,109 @@ create table if not exists public.campaign_certifications (
 create index if not exists campaign_certifications_org_idx
   on public.campaign_certifications (org_id, campaign_id, version);
 alter table public.campaign_certifications enable row level security;
+
+-- ═════════════════════════════════════════════════════════════════════════════
+-- PART 17 — ORG-DEFINED LEAD GROUPS + LEAD PACKS  (idempotent; safe to re-run)
+--
+-- Generalizes PART 14. `lead_group` used to be five hardcoded geographic buckets
+-- (fresno/houston/dallas/california/manual) enforced by a CHECK constraint and
+-- shared by every tenant, with per-org settings able to RENAME them but never
+-- change what they were. A workspace whose book isn't Californian or Texan had
+-- to file everything into someone else's taxonomy.
+--
+-- Two tables now:
+--
+--   lead_groups — the buckets THIS org sorts into, created by its own admins.
+--     `description` is the plain-English rule the AI classifier sorts against
+--     ("Dallas/Fort Worth area codes and cities"), so a group means whatever the
+--     org says it means. `kind` is load-bearing:
+--       'sorted' — the AI may assign leads here.
+--       'manual' — a human files leads here on purpose; the AI NEVER assigns it
+--                  (enforced by omitting it from the classifier's enum, exactly
+--                  as the old geo classifier excluded 'manual').
+--
+--   lead_packs — numbered slices of ONE upload ("Jan list · Pack 7"), so a
+--     10,000-row file can be handed out 100 at a time. Deliberately a SEPARATE
+--     axis from groups: a lead has both, so "the North Texas leads in Pack 7"
+--     is answerable and packs can be dealt to reps without disturbing grouping.
+--
+-- leads.lead_group stays TEXT holding a group key (not a uuid FK) so the 7,614
+-- already-grouped rows keep working untouched and the legacy keys stay valid;
+-- validity is enforced in application code against this org's rows, the same
+-- way the rest of the app scopes by org. The old CHECK is dropped because it
+-- would reject every custom key.
+-- ═════════════════════════════════════════════════════════════════════════════
+
+create table if not exists public.lead_groups (
+  id          uuid primary key default gen_random_uuid(),
+  org_id      uuid not null references public.organizations(id) on delete cascade,
+  key         text not null,
+  label       text not null,
+  description text not null default '',
+  kind        text not null default 'sorted' check (kind in ('sorted','manual')),
+  sort_order  int  not null default 0,
+  created_at  timestamptz not null default now(),
+  unique (org_id, key)
+);
+create index if not exists lead_groups_org_idx on public.lead_groups (org_id, sort_order);
+alter table public.lead_groups enable row level security;
+
+create table if not exists public.lead_packs (
+  id          uuid primary key default gen_random_uuid(),
+  org_id      uuid not null references public.organizations(id) on delete cascade,
+  batch       text not null default '',
+  seq         int  not null default 1,
+  label       text not null,
+  size        int  not null default 0,
+  created_by  uuid,
+  created_at  timestamptz not null default now()
+);
+create index if not exists lead_packs_org_idx on public.lead_packs (org_id, created_at desc);
+alter table public.lead_packs enable row level security;
+
+alter table public.leads
+  add column if not exists lead_pack_id uuid references public.lead_packs(id) on delete set null;
+create index if not exists leads_lead_pack_idx
+  on public.leads (lead_pack_id) where lead_pack_id is not null;
+
+-- The five fixed keys are no longer the only legal values.
+alter table public.leads drop constraint if exists leads_lead_group_check;
+
+-- Seed every existing org with the legacy buckets so nothing an org already
+-- filed becomes an orphan key, and so a workspace that never opens the new
+-- admin screen behaves exactly as it did before.
+insert into public.lead_groups (org_id, key, label, description, kind, sort_order)
+select o.id, g.key, g.label, g.description, g.kind, g.sort_order
+from public.organizations o
+cross join (values
+  ('fresno',     'Fresno',        'Fresno metro: Fresno, Clovis, Sanger, Selma and nearby Central Valley cities; ZIPs 936-937.', 'sorted', 0),
+  ('houston',    'Houston',       'Houston metro: Houston, Sugar Land, Pearland, Katy, Spring, The Woodlands; ZIPs 770-775.',    'sorted', 1),
+  ('dallas',     'Dallas',        'Dallas/Fort Worth metro: Dallas, Plano, Irving, Garland, Richardson; ZIPs 750-753.',          'sorted', 2),
+  ('california', 'California',    'Any other California lead not in the Fresno metro.',                                          'sorted', 3),
+  ('manual',     'Manual Dialing','Leads a human files here on purpose to dial by hand.',                                        'manual', 4)
+) as g(key, label, description, kind, sort_order)
+on conflict (org_id, key) do nothing;
+
+-- RLS. Enabling RLS with NO policies denies everything to the session client,
+-- which would have made every custom group invisible (listLeadGroups would fall
+-- back to the legacy five and an admin's new group would simply never appear).
+-- Members read their org's groups and packs; supervisors write them. Writes also
+-- go through the service-role client after an application permission check, so
+-- these are the second lock, not the only one.
+drop policy if exists "lead_groups read" on public.lead_groups;
+create policy "lead_groups read" on public.lead_groups for select using (
+  app_is_superadmin() or (app_is_active() and app_is_org_member(org_id))
+);
+drop policy if exists "lead_groups write" on public.lead_groups;
+create policy "lead_groups write" on public.lead_groups for all
+  using (app_is_superadmin() or (app_is_active() and app_is_org_supervisor(org_id)))
+  with check (app_is_superadmin() or (app_is_active() and app_is_org_supervisor(org_id)));
+
+drop policy if exists "lead_packs read" on public.lead_packs;
+create policy "lead_packs read" on public.lead_packs for select using (
+  app_is_superadmin() or (app_is_active() and app_is_org_member(org_id))
+);
+drop policy if exists "lead_packs write" on public.lead_packs;
+create policy "lead_packs write" on public.lead_packs for all
+  using (app_is_superadmin() or (app_is_active() and app_is_org_supervisor(org_id)))
+  with check (app_is_superadmin() or (app_is_active() and app_is_org_supervisor(org_id)));

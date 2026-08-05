@@ -83,6 +83,7 @@ export function rowToLead(r: Row): Lead {
     campaignId: (r.campaign_id as string) ?? "",
     assignedRepId: (r.assigned_rep_id as string) ?? undefined,
     leadGroup: (r.lead_group as LeadGroup) ?? undefined,
+    leadPackId: (r.lead_pack_id as string) ?? undefined,
     solarPayment: num(r.solar_payment),
     utilityBill: num(r.utility_bill),
     hasEV: Boolean(r.has_ev),
@@ -1008,9 +1009,11 @@ export interface LeadInput {
   utilityBill?: number;
   solarPayment?: number;
   campaignId?: string;
-  /** Fixed intake group. Explicit `null` stamps "unsorted" (distinct from
+  /** Org group key. Explicit `null` stamps "Miscellaneous" (distinct from
    *  omitting the key, which leaves any existing lead_group untouched). */
   leadGroup?: LeadGroup | null;
+  /** Pack (numbered slice of an upload) this row belongs to. */
+  leadPackId?: string | null;
   notes?: string;
 }
 
@@ -1070,6 +1073,7 @@ export async function insertLeads(
             solar_payment: r.solarPayment ?? null,
             campaign_id: r.campaignId ?? null,
             lead_group: r.leadGroup ?? null,
+            lead_pack_id: r.leadPackId ?? null,
             notes: r.notes || null,
           },
         };

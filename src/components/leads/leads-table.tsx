@@ -21,7 +21,7 @@ import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
-import { LEAD_GROUPS, type Lead, type LeadStatus } from "@/lib/types";
+import type { Lead, LeadStatus } from "@/lib/types";
 import { leadStatusConfig } from "@/lib/status";
 import { applyLabelOverride } from "@/lib/leads/group-labels";
 import { SMART_LISTS, countSmartLists, smartListById } from "@/lib/leads/smart-lists";
@@ -37,7 +37,10 @@ const FILTERS: Array<{ value: LeadStatus | "all"; label: string }> = [
   { value: "appointment", label: "Appointment" },
 ];
 
-const GROUP_LABELS: Record<(typeof LEAD_GROUPS)[number], string> = {
+/** Human labels for the ORIGINAL fixed keys, used only when a lead carries a
+ *  key the org's current group list no longer contains (e.g. a group deleted
+ *  after those leads were filed) — better a readable name than a raw slug. */
+const LEGACY_GROUP_LABELS: Record<string, string> = {
   fresno: "Fresno",
   houston: "Houston",
   dallas: "Dallas",
@@ -52,6 +55,7 @@ export function LeadsTable({
   meId = null,
   members = [],
   labelOverrides,
+  orgGroups = [],
   showSolarPayment = true,
 }: {
   leads: Lead[];
@@ -62,12 +66,45 @@ export function LeadsTable({
   meId?: string | null;
   /** Org members (id = user id) — targets for reassigning leads between accounts. */
   members?: { id: string; name: string }[];
-  /** Per-org display-label overrides for the dropbox groups (display only). */
+  /** Legacy per-org display-label overrides. The group's own label (below) is
+   *  the primary source now; an override still wins for orgs that set one. */
   labelOverrides?: Record<string, string>;
+  /** The org's own intake groups. Empty falls back to whatever the loaded leads
+   *  carry, so the filter is never empty just because the list didn't load. */
+  orgGroups?: { key: string; label: string }[];
   /** Show solar-specific fields (per-tenant — off for non-solar orgs). */
   showSolarPayment?: boolean;
 }) {
   const router = useRouter();
+
+  // Filter options = the org's groups, plus any key the loaded leads still
+  // carry that isn't in that list (a deleted group's leftovers), so a lead is
+  // never unreachable by filtering.
+  const groupOptions = useMemo(() => {
+    const seen = new Map<string, string>();
+    for (const g of orgGroups) {
+      seen.set(g.key, applyLabelOverride(g.key, g.label, labelOverrides));
+    }
+    for (const l of leads) {
+      if (l.leadGroup && !seen.has(l.leadGroup)) {
+        seen.set(
+          l.leadGroup,
+          applyLabelOverride(
+            l.leadGroup,
+            LEGACY_GROUP_LABELS[l.leadGroup] ?? l.leadGroup,
+            labelOverrides,
+          ),
+        );
+      }
+    }
+    return [...seen].map(([key, label]) => ({ key, label }));
+  }, [orgGroups, leads, labelOverrides]);
+
+  const groupLabelOf = useCallback(
+    (key: string) => groupOptions.find((g) => g.key === key)?.label ?? key,
+    [groupOptions],
+  );
+
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<LeadStatus | "all">("all");
   const [smartList, setSmartList] = useState<string | null>(null);
@@ -521,10 +558,10 @@ export function LeadsTable({
               className="h-9 rounded-lg border border-border bg-background/60 px-2.5 text-sm font-medium focus-visible:border-primary/50 focus-visible:outline-none"
             >
               <option value="all">All groups</option>
-              <option value="unsorted">Unsorted</option>
-              {LEAD_GROUPS.map((g) => (
-                <option key={g} value={g}>
-                  {applyLabelOverride(g, GROUP_LABELS[g], labelOverrides)}
+              <option value="unsorted">Miscellaneous</option>
+              {groupOptions.map((g) => (
+                <option key={g.key} value={g.key}>
+                  {g.label}
                 </option>
               ))}
             </select>
@@ -837,7 +874,7 @@ export function LeadsTable({
                             distinct tones so they're never visually conflated. */}
                         {l.leadGroup && (
                           <Badge tone={l.leadGroup === "manual" ? "neutral" : "primary"}>
-                            {applyLabelOverride(l.leadGroup, GROUP_LABELS[l.leadGroup], labelOverrides)}
+                            {groupLabelOf(l.leadGroup)}
                           </Badge>
                         )}
                         {!l.campaignId && !l.leadGroup && (

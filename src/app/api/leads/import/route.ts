@@ -3,7 +3,9 @@ import { insertLeads, type LeadInput } from "@/lib/db/leads";
 import { hasCurrentCertification, normalizeCampaignId } from "@/lib/legal/campaign-cert";
 import type { ParsedLead } from "@/lib/leads/csv";
 import { parseCsvToLeads } from "@/lib/leads/parse-request";
-import { LEAD_GROUPS, type LeadGroup } from "@/lib/types";
+import { isValidGroupKey } from "@/lib/db/lead-groups";
+import { createPacks, planPacks, pruneEmptyPacks, setPackSizes } from "@/lib/db/lead-packs";
+import type { LeadGroup } from "@/lib/types";
 import { getViewer } from "@/lib/org/membership";
 
 export const dynamic = "force-dynamic";
@@ -33,14 +35,23 @@ export async function POST(req: Request) {
     rows?: LeadInput[];
     campaignId?: string | null;
     leadGroup?: LeadGroup | null;
+    /** Cut this import into numbered packs of roughly this many leads. */
+    packSize?: number | null;
+    /** Label the packs carry — normally the source file name. */
+    packBatch?: string | null;
   };
 
   const hasGroup = Object.prototype.hasOwnProperty.call(body, "leadGroup");
-  if (hasGroup && body.leadGroup !== null && !LEAD_GROUPS.includes(body.leadGroup as LeadGroup)) {
-    return NextResponse.json(
-      { inserted: 0, error: `Invalid leadGroup. Must be one of: ${LEAD_GROUPS.join(", ")}.` },
-      { status: 400 },
-    );
+  // Group keys are per-org now, so validity is "does THIS org have it" rather
+  // than membership of a global list.
+  if (hasGroup && body.leadGroup !== null) {
+    const ok = await isValidGroupKey(viewer.org?.id ?? null, body.leadGroup);
+    if (!ok) {
+      return NextResponse.json(
+        { inserted: 0, error: "That lead group doesn't exist in this workspace." },
+        { status: 400 },
+      );
+    }
   }
 
   // Compliance gate: a list can't be dialed until someone has certified this
@@ -96,15 +107,59 @@ export async function POST(req: Request) {
   // group (if any). `hasGroup` distinguishes "leadGroup: null" (explicit
   // "unsorted") from the key being omitted entirely (legacy callers that never
   // mention groups, whose rows keep whatever lead_group they'd otherwise get).
-  const rows: LeadInput[] = leads.slice(0, 5000).map((r) => ({
+  const capped = leads.slice(0, 5000);
+
+  // ── Packs ────────────────────────────────────────────────────────────────
+  // Cut the batch into numbered slices so a big list can be dealt out a pack
+  // at a time. The pack rows are created up front (we need their ids to stamp
+  // each lead), then sized and pruned after the insert — dedupe and invalid
+  // rows mean the final counts aren't knowable until the write lands.
+  const packSize = Number(body.packSize) || 0;
+  const wantsPacks = packSize > 0 && Boolean(viewer.org?.id);
+  let packIds: string[] = [];
+  let assignedPackOf: (index: number) => string | null = () => null;
+
+  if (wantsPacks && viewer.org?.id) {
+    const { packCount, effectiveSize } = planPacks(capped.length, packSize);
+    const packs = await createPacks(viewer.org.id, {
+      batch: (body.packBatch || "Upload").toString(),
+      packCount,
+      createdBy: viewer.user?.id ?? null,
+    });
+    if (packs.length) {
+      packIds = packs.map((p) => p.id);
+      assignedPackOf = (i) => packs[Math.min(packs.length - 1, Math.floor(i / effectiveSize))].id;
+    }
+  }
+
+  const rows: LeadInput[] = capped.map((r, i) => ({
     ...r,
     ...(body.campaignId ? { campaignId: body.campaignId } : {}),
     ...(hasGroup ? { leadGroup: body.leadGroup } : {}),
+    ...(packIds.length ? { leadPackId: assignedPackOf(i) } : {}),
   }));
 
   const result = await insertLeads(rows);
+
+  if (packIds.length && viewer.org?.id) {
+    // Count what actually landed per pack rather than what we intended, then
+    // drop any pack that ended up empty (a fully-duplicate tail slice).
+    const counts = new Map<string, number>();
+    if (!result.error) {
+      rows.forEach((r) => {
+        const id = r.leadPackId;
+        if (id) counts.set(id, (counts.get(id) ?? 0) + 1);
+      });
+    }
+    await setPackSizes(
+      viewer.org.id,
+      packIds.map((id) => ({ id, size: counts.get(id) ?? 0 })),
+    );
+    await pruneEmptyPacks(viewer.org.id, packIds);
+  }
+
   return NextResponse.json(
-    { ...result, source, aiError },
+    { ...result, source, aiError, packs: packIds.length },
     { status: result.error ? 400 : 200 },
   );
 }

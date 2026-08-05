@@ -5,7 +5,7 @@ import type { GeoLeadGroup } from "../types";
 //
 // Deterministic city/zip → region matching. This is the single source of truth
 // for BOTH the non-AI fallback (src/lib/ai/simulate.ts) and the anchor data
-// embedded in the AI classification prompt (src/lib/ai/geo-classify.ts), so the
+// embedded in the AI classification prompt (src/lib/ai/classify-leads.ts), so the
 // model's fuzzy judgment and the deterministic fallback never drift into two
 // different taxonomies.
 //

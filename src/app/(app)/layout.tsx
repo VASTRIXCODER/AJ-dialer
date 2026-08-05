@@ -5,6 +5,7 @@ import { MaintenanceScreen } from "@/components/layout/maintenance-screen";
 import { PaywallScreen } from "@/components/layout/paywall-screen";
 import { isAIConfigured } from "@/lib/ai/claude";
 import { getAppSettings, isAccountDisabled } from "@/lib/db/app-control";
+import { listLeadGroups } from "@/lib/db/lead-groups";
 import { getPlatformPool } from "@/lib/dialer/rotation-server";
 import { agentLabels, isElevenLabsConfigured, isSecondAgentConfigured } from "@/lib/elevenlabs";
 import { getViewer } from "@/lib/org/membership";
@@ -81,6 +82,12 @@ export default async function AppGroupLayout({
   const { pool: callerIdPool, rotateEvery: callerIdRotateEvery } = getPlatformPool(
     viewer.org?.settings ?? null,
   );
+  // The org's intake groups drive the dialer's group filter. Labels only — the
+  // dialer never needs the AI rule text.
+  const orgLeadGroups = (await listLeadGroups(viewer.org?.id ?? null)).map((g) => ({
+    key: g.key,
+    label: g.label,
+  }));
   const dialerConfig = {
     userId: viewer.user?.id,
     voiceConfigured: isVoiceConfigured(),
@@ -112,6 +119,7 @@ export default async function AppGroupLayout({
     qualifyOtherLabel: viewer.org?.settings.qualify?.otherToggleLabel ?? "Battery",
     // Per-org "dropbox" label overrides (display only).
     leadGroupLabels: viewer.org?.settings.leadGroupLabels ?? {},
+    leadGroups: orgLeadGroups,
   };
 
   return (

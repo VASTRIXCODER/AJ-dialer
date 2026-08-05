@@ -6,7 +6,7 @@ import { isConfident, parseSheet, rowsToLeads, type ParsedLead } from "./csv";
 // ─────────────────────────────────────────────────────────────────────────────
 // Shared CSV → ParsedLead[] parsing chain, extracted out of
 // /api/leads/import/route.ts so the geography auto-sort preview route
-// (/api/leads/geo-preview) can run the exact same column-mapping logic without
+// (/api/leads/sort-preview) can run the exact same column-mapping logic without
 // duplicating it. Tries the fast deterministic header mapper first; falls back
 // to Claude to infer the column layout when that can't confidently read the
 // file (no header row, broker exports, exotic layouts).

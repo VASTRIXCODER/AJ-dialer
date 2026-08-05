@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Select } from "@/components/ui/input";
 import { Portal } from "@/components/ui/portal";
 import { applyLabelOverride } from "@/lib/leads/group-labels";
-import { LEAD_GROUPS, type Lead, type LeadGroup } from "@/lib/types";
+import type { Lead } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import type { GroupFilter } from "./dialer-context";
 
@@ -16,18 +16,24 @@ import type { GroupFilter } from "./dialer-context";
 // The picker that appears right after "Load leads" fetches the queue. Before
 // this, the only way to narrow WHICH leads a session dialed was a small inline
 // campaign dropdown — there was no way at all to dial just one lead "dropbox"
-// (the Fresno / Houston / Dallas / California / Manual intake groups from the
-// CSV import flow). This surfaces both choices, with live counts, the moment
-// leads land in the dialer, and can be reopened any time to change them
-// without re-fetching.
+// (the org's intake groups from the CSV import flow). This surfaces both
+// choices, with live counts, the moment leads land in the dialer, and can be
+// reopened any time to change them without re-fetching.
+//
+// The group list is per-org now, so options are built from the org's own groups
+// (threaded through DialerConfig) unioned with any key the loaded leads still
+// carry — a lead whose group was deleted stays reachable rather than becoming
+// undialable by filter.
 // ─────────────────────────────────────────────────────────────────────────────
 
-const GROUP_META: Record<LeadGroup, { label: string; icon: typeof MapPin }> = {
-  fresno: { label: "Fresno", icon: MapPin },
-  houston: { label: "Houston", icon: MapPin },
-  dallas: { label: "Dallas", icon: MapPin },
-  california: { label: "California", icon: MapPin },
-  manual: { label: "Manual Dialing", icon: PenLine },
+/** Readable names for the ORIGINAL fixed keys, for leads still carrying one
+ *  whose group row has since been removed. */
+const LEGACY_GROUP_LABELS: Record<string, string> = {
+  fresno: "Fresno",
+  houston: "Houston",
+  dallas: "Dallas",
+  california: "California",
+  manual: "Manual Dialing",
 };
 
 function matchesGroup(l: Lead, g: GroupFilter): boolean {
@@ -39,10 +45,12 @@ function matchesGroup(l: Lead, g: GroupFilter): boolean {
 export function groupLabel(
   g: GroupFilter,
   overrides?: Record<string, string> | null,
+  groups?: { key: string; label: string }[] | null,
 ): string {
   if (g === "all") return "All groups";
-  if (g === "unsorted") return "Unsorted";
-  return applyLabelOverride(g, GROUP_META[g].label, overrides);
+  if (g === "unsorted") return "Miscellaneous";
+  const own = groups?.find((x) => x.key === g)?.label;
+  return applyLabelOverride(g, own ?? LEGACY_GROUP_LABELS[g] ?? g, overrides);
 }
 
 export function LoadLeadsDialog({
@@ -54,6 +62,7 @@ export function LoadLeadsDialog({
   onGroupFilterChange,
   onClose,
   leadGroupLabels,
+  leadGroups,
 }: {
   /** The full, just-loaded dial queue (before any filter is applied). */
   leads: Lead[];
@@ -63,14 +72,16 @@ export function LoadLeadsDialog({
   groupFilter: GroupFilter;
   onGroupFilterChange: (g: GroupFilter) => void;
   onClose: () => void;
-  /** Per-org display-label overrides for the dropbox groups (display only). */
+  /** Legacy per-org display-label overrides (still honored on top of labels). */
   leadGroupLabels?: Record<string, string>;
+  /** The org's own intake groups, in display order. */
+  leadGroups?: { key: string; label: string }[];
 }) {
   const reduce = useReducedMotion();
 
   const groupCounts = useMemo(() => {
     const counts: Record<string, number> = { all: leads.length, unsorted: 0 };
-    for (const g of LEAD_GROUPS) counts[g] = 0;
+    for (const g of leadGroups ?? []) counts[g.key] = 0;
     for (const l of leads) {
       if (l.leadGroup) counts[l.leadGroup] = (counts[l.leadGroup] ?? 0) + 1;
       else counts.unsorted += 1;
@@ -90,14 +101,28 @@ export function LoadLeadsDialog({
     [leads, groupFilter, campaignFilter],
   );
 
+  // Org groups first (in their configured order), then any orphan key the
+  // loaded leads still carry, then Miscellaneous.
+  const groupKeys = useMemo(() => {
+    const keys = (leadGroups ?? []).map((g) => g.key);
+    const seen = new Set(keys);
+    for (const l of leads) {
+      if (l.leadGroup && !seen.has(l.leadGroup)) {
+        seen.add(l.leadGroup);
+        keys.push(l.leadGroup);
+      }
+    }
+    return keys;
+  }, [leadGroups, leads]);
+
   const groupOptions: { value: GroupFilter; label: string; icon: typeof MapPin }[] = [
     { value: "all", label: "All groups", icon: Layers },
-    ...LEAD_GROUPS.map((g) => ({
+    ...groupKeys.map((g) => ({
       value: g as GroupFilter,
-      icon: GROUP_META[g].icon,
-      label: applyLabelOverride(g, GROUP_META[g].label, leadGroupLabels),
+      icon: g === "manual" ? PenLine : MapPin,
+      label: groupLabel(g, leadGroupLabels, leadGroups),
     })),
-    { value: "unsorted", label: "Unsorted", icon: CircleHelp },
+    { value: "unsorted", label: "Miscellaneous", icon: CircleHelp },
   ];
 
   return (

@@ -5,33 +5,55 @@ import {
   CheckCircle2,
   ChevronDown,
   ChevronUp,
+  Inbox,
   Loader2,
+  Settings2,
   Sparkles,
   UploadCloud,
+  Wrench,
 } from "lucide-react";
 import { useRef, useState } from "react";
 import { Card } from "@/components/ui/card";
-import type { LeadGroup } from "@/lib/types";
-import { applyLabelOverride } from "@/lib/leads/group-labels";
+import type { LeadGroupWithCount } from "@/lib/db/lead-groups";
 import { cn } from "@/lib/utils";
 import { CampaignCertificationDialog } from "./campaign-certification-dialog";
-import { GeoPreviewReview, type GeoPreviewResponse } from "./geo-preview-review";
+import { LeadGroupManager } from "./lead-group-manager";
+import { SortPreviewReview, type SortPreviewResponse } from "./sort-preview-review";
 import { useCsvUpload } from "./use-csv-upload";
 
-const TILES: { group: LeadGroup; label: string; hint: string }[] = [
-  { group: "fresno", label: "Fresno", hint: "Fresno metro leads" },
-  { group: "houston", label: "Houston", hint: "Houston metro leads" },
-  { group: "dallas", label: "Dallas", hint: "Dallas metro leads" },
-  { group: "california", label: "California", hint: "Other California leads" },
-  { group: "manual", label: "Manual Dialing", hint: "Leads a human will dial by hand" },
-];
+/** Pack-size presets offered under the AI tile. 0 = don't split into packs. */
+const PACK_PRESETS = [0, 50, 100, 250, 500];
+/** How many rows to hand the classifier. 0 = sort the whole file. */
+const SORT_PRESETS = [500, 1000, 2000, 5000, 0];
 
-function UploadTile({ group, label, hint }: { group: LeadGroup; label: string; hint: string }) {
+function UploadTile({
+  groupKey,
+  label,
+  hint,
+  manual,
+  packSize,
+  packBatchFor,
+}: {
+  groupKey: string | null;
+  label: string;
+  hint: string;
+  manual?: boolean;
+  packSize: number;
+  packBatchFor: (file: string) => string;
+}) {
+  const [batch, setBatch] = useState("Upload");
   const { status, handleFile, certPrompt, certifyAndRetry, cancelCert } = useCsvUpload({
-    leadGroup: group,
+    leadGroup: groupKey,
+    packSize,
+    packBatch: batch,
   });
   const inputRef = useRef<HTMLInputElement>(null);
   const [dragOver, setDragOver] = useState(false);
+
+  function onFile(f: File) {
+    setBatch(packBatchFor(f.name));
+    handleFile(f);
+  }
 
   return (
     <div>
@@ -49,7 +71,7 @@ function UploadTile({ group, label, hint }: { group: LeadGroup; label: string; h
         className="hidden"
         onChange={(e) => {
           const f = e.target.files?.[0];
-          if (f) handleFile(f);
+          if (f) onFile(f);
           e.target.value = "";
         }}
       />
@@ -66,7 +88,7 @@ function UploadTile({ group, label, hint }: { group: LeadGroup; label: string; h
           e.preventDefault();
           setDragOver(false);
           const f = e.dataTransfer.files?.[0];
-          if (f) handleFile(f);
+          if (f) onFile(f);
         }}
         className={cn(
           "flex w-full flex-col items-center justify-center gap-1 rounded-2xl border-2 border-dashed p-5 text-center transition-colors disabled:opacity-60",
@@ -75,15 +97,24 @@ function UploadTile({ group, label, hint }: { group: LeadGroup; label: string; h
             : "border-border bg-muted/30 hover:border-primary/40 hover:bg-primary-soft/30",
         )}
       >
-        <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-solar text-white shadow-glow">
+        <div
+          className={cn(
+            "flex h-10 w-10 items-center justify-center rounded-xl text-white shadow-glow",
+            groupKey === null ? "bg-warning" : manual ? "bg-muted-foreground" : "bg-solar",
+          )}
+        >
           {status.type === "working" ? (
             <Loader2 className="h-5 w-5 animate-spin" />
+          ) : groupKey === null ? (
+            <Inbox className="h-5 w-5" />
+          ) : manual ? (
+            <Wrench className="h-5 w-5" />
           ) : (
             <UploadCloud className="h-5 w-5" />
           )}
         </div>
         <p className="mt-1 text-sm font-semibold">{label}</p>
-        <p className="text-xs text-muted-foreground">{hint}</p>
+        <p className="line-clamp-2 text-xs text-muted-foreground">{hint}</p>
       </button>
       {status.message && (
         <p
@@ -109,12 +140,18 @@ function UploadTile({ group, label, hint }: { group: LeadGroup; label: string; h
 }
 
 /**
- * The 6th tile: dump one CSV and let Claude classify each lead's geography.
- * Nothing is inserted here — a successful classification hands the proposed
- * grouping to the parent, which swaps in the preview/confirm review screen.
- * No lead ever lands in "Manual Dialing" through this path (see geo-classify.ts).
+ * Dump one CSV and let Claude sort it into the org's own groups. Nothing is
+ * inserted here — a successful sort hands the proposal to the review screen.
+ * `sortLimit` bounds how many rows the model actually sees; the rest come back
+ * in Miscellaneous and can be sorted later from the Leads screen.
  */
-function AutoSortTile({ onPreview }: { onPreview: (p: GeoPreviewResponse) => void }) {
+function AutoSortTile({
+  sortLimit,
+  onPreview,
+}: {
+  sortLimit: number;
+  onPreview: (p: SortPreviewResponse, fileName: string) => void;
+}) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [dragOver, setDragOver] = useState(false);
   const [status, setStatus] = useState<{ type: "idle" | "working" | "error"; message?: string }>({
@@ -129,11 +166,11 @@ function AutoSortTile({ onPreview }: { onPreview: (p: GeoPreviewResponse) => voi
         setStatus({ type: "error", message: "That file looks empty." });
         return;
       }
-      setStatus({ type: "working", message: "Sorting by geography…" });
-      const res = await fetch("/api/leads/geo-preview", {
+      setStatus({ type: "working", message: "Sorting into your groups…" });
+      const res = await fetch("/api/leads/sort-preview", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ csv: text }),
+        body: JSON.stringify({ csv: text, sortLimit }),
       });
       const json = await res.json().catch(() => ({}));
       if (!res.ok || json.error) {
@@ -141,7 +178,7 @@ function AutoSortTile({ onPreview }: { onPreview: (p: GeoPreviewResponse) => voi
         return;
       }
       setStatus({ type: "idle" });
-      onPreview(json as GeoPreviewResponse);
+      onPreview(json as SortPreviewResponse, file.name.replace(/\.csv$/i, ""));
     } catch {
       setStatus({ type: "error", message: "Couldn't read that file." });
     }
@@ -189,8 +226,10 @@ function AutoSortTile({ onPreview }: { onPreview: (p: GeoPreviewResponse) => voi
             <Sparkles className="h-5 w-5" />
           )}
         </div>
-        <p className="mt-1 text-sm font-semibold">Auto-sort with AI</p>
-        <p className="text-xs text-muted-foreground">Dump everything — Claude sorts it</p>
+        <p className="mt-1 text-sm font-semibold">Sort with AI</p>
+        <p className="text-xs text-muted-foreground">
+          {sortLimit > 0 ? `Sorts the first ${sortLimit.toLocaleString()}` : "Sorts everything"}
+        </p>
       </button>
       {status.message && (
         <p
@@ -207,34 +246,80 @@ function AutoSortTile({ onPreview }: { onPreview: (p: GeoPreviewResponse) => voi
   );
 }
 
+function OptionRow({
+  title,
+  hint,
+  options,
+  value,
+  onChange,
+  format,
+}: {
+  title: string;
+  hint: string;
+  options: number[];
+  value: number;
+  onChange: (n: number) => void;
+  format: (n: number) => string;
+}) {
+  return (
+    <div>
+      <p className="text-xs font-bold uppercase tracking-wide text-muted-foreground">{title}</p>
+      <p className="mb-2 text-xs text-muted-foreground">{hint}</p>
+      <div className="flex flex-wrap gap-1.5">
+        {options.map((n) => (
+          <button
+            key={n}
+            type="button"
+            onClick={() => onChange(n)}
+            className={cn(
+              "rounded-lg px-2.5 py-1 text-xs font-semibold transition-colors",
+              value === n
+                ? "bg-primary text-white"
+                : "bg-muted text-muted-foreground hover:text-foreground",
+            )}
+          >
+            {format(n)}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 /**
- * Specialized lead intake: one dropzone per fixed group (Fresno / Houston /
- * Dallas / California / Manual Dialing), each stamping every imported row with
- * that group — no AI involved, the group is explicit by construction — plus a
- * 6th "Auto-sort with AI" dropzone that hands off to the preview/confirm review
- * screen instead of importing immediately. Replaces the single "Import CSV"
- * button that used to sit in the Leads page header.
+ * Lead intake. One dropzone per group the ORG defined (each stamping its rows
+ * with that group — no AI involved, the group is explicit by construction), a
+ * Miscellaneous dropzone for anything that doesn't belong to one yet, and an
+ * "Sort with AI" dropzone that hands off to the review screen.
+ *
+ * The two controls above the grid are what make a 10,000-row file manageable:
+ * how many rows to spend AI on, and how big a pack to cut the import into.
  */
 export function GroupUploadGrid({
   canImport,
-  labelOverrides,
+  groups,
+  miscCount,
 }: {
   canImport: boolean;
-  /** Per-org display-label overrides for the dropbox groups (display only). */
-  labelOverrides?: Record<string, string>;
+  groups: LeadGroupWithCount[];
+  miscCount: number;
 }) {
   const [open, setOpen] = useState(false);
-  const [preview, setPreview] = useState<GeoPreviewResponse | null>(null);
+  const [managing, setManaging] = useState(false);
+  const [preview, setPreview] = useState<{ data: SortPreviewResponse; file: string } | null>(null);
+  const [sortLimit, setSortLimit] = useState(2000);
+  const [packSize, setPackSize] = useState(0);
 
   if (!canImport) return null;
 
   if (preview) {
     return (
-      <GeoPreviewReview
-        preview={preview}
+      <SortPreviewReview
+        preview={preview.data}
+        packSize={packSize}
+        packBatch={preview.file}
         onDone={() => setPreview(null)}
         onCancel={() => setPreview(null)}
-        labelOverrides={labelOverrides}
       />
     );
   }
@@ -258,16 +343,66 @@ export function GroupUploadGrid({
           <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" />
         )}
       </button>
+
       {open && (
-        <div className="grid grid-cols-2 gap-3 border-t border-border p-5 sm:grid-cols-3 lg:grid-cols-6">
-          {TILES.map((t) => (
-            <UploadTile
-              key={t.group}
-              {...t}
-              label={applyLabelOverride(t.group, t.label, labelOverrides)}
+        <div className="border-t border-border">
+          <div className="flex flex-wrap items-start justify-between gap-6 border-b border-border bg-surface/40 p-5">
+            <OptionRow
+              title="How many to sort with AI"
+              hint="The rest import as Miscellaneous — sort them later."
+              options={SORT_PRESETS}
+              value={sortLimit}
+              onChange={setSortLimit}
+              format={(n) => (n === 0 ? "All" : n.toLocaleString())}
             />
-          ))}
-          <AutoSortTile onPreview={setPreview} />
+            <OptionRow
+              title="Split into packs of"
+              hint="Deal a big list out a pack at a time."
+              options={PACK_PRESETS}
+              value={packSize}
+              onChange={setPackSize}
+              format={(n) => (n === 0 ? "No packs" : String(n))}
+            />
+            <button
+              type="button"
+              onClick={() => setManaging((m) => !m)}
+              className="flex h-9 items-center gap-1.5 self-end rounded-xl border border-border bg-background/60 px-3 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted"
+            >
+              <Settings2 className="h-4 w-4" />
+              {managing ? "Done editing groups" : "Edit groups"}
+            </button>
+          </div>
+
+          {managing ? (
+            <div className="p-5">
+              <LeadGroupManager initialGroups={groups} initialMiscCount={miscCount} />
+            </div>
+          ) : (
+            <div className="grid grid-cols-2 gap-3 p-5 sm:grid-cols-3 lg:grid-cols-6">
+              {groups.map((g) => (
+                <UploadTile
+                  key={g.key}
+                  groupKey={g.key}
+                  label={g.label}
+                  hint={g.description || `${g.leadCount.toLocaleString()} leads`}
+                  manual={g.kind === "manual"}
+                  packSize={packSize}
+                  packBatchFor={(f) => f.replace(/\.csv$/i, "")}
+                />
+              ))}
+              <UploadTile
+                groupKey={null}
+                label="Miscellaneous"
+                hint="Unsorted — file them later"
+                packSize={packSize}
+                packBatchFor={(f) => f.replace(/\.csv$/i, "")}
+              />
+              <AutoSortTile
+                sortLimit={sortLimit}
+                onPreview={(data, file) => setPreview({ data, file })}
+              />
+            </div>
+          )}
         </div>
       )}
     </Card>
