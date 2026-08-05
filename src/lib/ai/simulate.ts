@@ -43,6 +43,12 @@ export function simulateBriefing(lead: Lead): LeadBriefing {
   const seed = hash(lead.id);
   const bill = lead.utilityBill ?? 0;
   const solar = lead.solarPayment ?? 0;
+  // This deterministic stand-in only runs when Claude isn't configured, and it
+  // has no org context — but it doesn't need one: a lead carrying no solar
+  // provider and no solar payment isn't a solar lead, so the solar framing is
+  // swapped for neutral copy rather than telling a non-solar tenant's rep to
+  // open with "helping homeowners with solar".
+  const hasSolar = Boolean(lead.solarProvider || lead.solarPayment);
   const total = bill + solar;
   const base = lead.aiScore ?? clamp(40 + (total / 5) + (seed % 25));
 
@@ -68,15 +74,17 @@ export function simulateBriefing(lead: Lead): LeadBriefing {
     "Appreciates a relaxed, conversational pace",
   ];
   const objectionBank = [
-    "“I’m already locked into my solar contract.”",
+    hasSolar ? "“I’m already locked into my solar contract.”" : "“I’m already under contract.”",
     "“Now isn’t a good time to talk.”",
     "“I don’t think I’m overpaying.”",
     "“I need to check with my spouse.”",
-    "“I’ve been burned by solar sales before.”",
+    hasSolar ? "“I’ve been burned by solar sales before.”" : "“I’ve been burned by cold calls before.”",
     "“Just send me something by email.”",
   ];
   const painBank = [
-    `Utility bill still ~$${bill || 210}/mo despite going solar`,
+    hasSolar
+      ? `Utility bill still ~$${bill || 210}/mo despite going solar`
+      : `Utility bill still ~$${bill || 210}/mo`,
     "True-up surprise at the end of the year",
     "Paying two energy bills at once",
     "Usage climbing faster than expected",
@@ -88,8 +96,9 @@ export function simulateBriefing(lead: Lead): LeadBriefing {
 
   return {
     summary:
-      `${lead.firstName} ${lead.lastName} in ${lead.city}, ${lead.state} is on ${lead.solarProvider || "a solar plan"} ` +
-      `yet still pays ${lead.utilityProvider || "the utility"} about $${bill || 200}/mo` +
+      `${lead.firstName} ${lead.lastName} in ${lead.city}, ${lead.state} ` +
+      `${hasSolar ? `is on ${lead.solarProvider || "a solar plan"} yet still pays` : "pays"} ` +
+      `${lead.utilityProvider || "the utility"} about $${bill || 200}/mo` +
       `${solar ? ` on top of a $${solar}/mo solar payment` : ""}.${flagText} ` +
       `Combined energy spend of ~$${total || 200}/mo is a strong overpayment signal worth a no-cost account review.`,
     priorityScore: clamp(base + (total > 350 ? 10 : 0)),
@@ -107,10 +116,10 @@ export function simulateBriefing(lead: Lead): LeadBriefing {
     ),
     openingLine:
       `Hi ${firstName(lead)}, this is a quick courtesy call about your ${lead.utilityProvider || "utility"} ` +
-      `account — we’re helping homeowners with solar make sure they’re not overpaying. Do you have 30 seconds?`,
+      `account — we’re helping ${hasSolar ? "homeowners with solar" : "people"} make sure they’re not overpaying. Do you have 30 seconds?`,
     strategy:
-      "Lead with curiosity, not a pitch. Confirm the current utility bill and solar payment, " +
-      "anchor on the combined monthly number, then frame the account review as protective, not salesy.",
+      `Lead with curiosity, not a pitch. Confirm the current utility bill${hasSolar ? " and solar payment" : ""}, ` +
+      "anchor on the monthly number, then frame the account review as protective, not salesy.",
     closingStrategy:
       "Offer two concrete review windows and book the calendar before ending the call. " +
       "Reassure that the review is free and no decision is required on the call.",

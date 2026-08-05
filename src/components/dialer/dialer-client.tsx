@@ -421,7 +421,6 @@ export function DialerClient({
             onSetActiveAgent={dialer.setActiveAgent}
             callerIdPool={config.callerIdPool ?? []}
             callerIdRotateEvery={config.callerIdRotateEvery ?? 1}
-            showSolarFields={config.qualifyShowSolarPayment !== false}
             onToggleExcludedCallerId={dialer.toggleExcludedCallerId}
             onStart={() => dialer.startCall()}
             onManualDial={dialer.dialNumber}

@@ -9,6 +9,7 @@ import { CalendarCheck, Sparkles, Zap } from "lucide-react";
 import { getLeads } from "@/lib/db/leads";
 import { getCampaigns } from "@/lib/db/pipeline";
 import { getViewer, listMembers } from "@/lib/org/membership";
+import { isSolarVertical } from "@/lib/org/vertical";
 import { formatNumber } from "@/lib/utils";
 
 export const metadata = { title: "Leads" };
@@ -104,7 +105,12 @@ export default async function LeadsPage() {
         meId={viewer.user?.id ?? null}
         members={members}
         labelOverrides={groupLabels}
-        showSolarPayment={viewer.org?.settings.qualify?.showSolarPayment ?? true}
+        // Both signals, one prop: a non-solar vertical drops the solar fields
+        // outright, and a solar org can still switch them off per-tenant.
+        showSolarPayment={
+          isSolarVertical(viewer.org?.dialerTemplate) &&
+          (viewer.org?.settings.qualify?.showSolarPayment ?? true)
+        }
       />
     </PageContainer>
   );

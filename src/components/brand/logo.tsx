@@ -31,18 +31,20 @@ export function LogoMark({ className }: { className?: string }) {
   );
 }
 
-/** Neutral platform descriptor — used by every vertical except solar. */
-export const DEFAULT_WORDMARK_TAGLINE = "AI Sales Dialer";
-
 export function Wordmark({
   className,
   collapsed = false,
-  tagline = DEFAULT_WORDMARK_TAGLINE,
+  tagline = "Solar Resolution",
 }: {
   className?: string;
   collapsed?: boolean;
-  /** Line under the platform name. Only solar tenants get "Solar Resolution" —
-   *  every other vertical would otherwise be branded for an industry it isn't in. */
+  /**
+   * Line under the wordmark. Defaults to the original solar tagline so the
+   * marketing site and any caller without org context are unchanged; the app
+   * shell passes the tenant's own (see brandTagline in lib/org/vertical.ts),
+   * because "Solar Resolution" is someone else's industry to a tenant that
+   * doesn't sell solar.
+   */
   tagline?: string;
 }) {
   return (

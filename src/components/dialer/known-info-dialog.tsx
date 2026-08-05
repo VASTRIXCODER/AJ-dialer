@@ -5,6 +5,7 @@ import { Bot, X } from "lucide-react";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Portal } from "@/components/ui/portal";
+import { useDialerContextOptional } from "./dialer-context";
 import type { KnownInfo } from "@/lib/use-dialer";
 import { formatPhone } from "@/lib/utils";
 
@@ -17,14 +18,16 @@ export function KnownInfoDialog({
   phone,
   onSubmit,
   onClose,
-  showSolarFields = true,
 }: {
   phone: string;
   onSubmit: (info: KnownInfo) => void;
   onClose: () => void;
-  /** Solar orgs collect the installer + solar payment; other verticals don't. */
-  showSolarFields?: boolean;
 }) {
+  // Solar-only fields disappear for non-solar tenants. qualifyShowSolarPayment
+  // already carries both signals (the org's vertical AND its qualify setting) —
+  // see the dialerConfig assembled in app/(app)/layout.tsx.
+  const ctx = useDialerContextOptional();
+  const isSolar = ctx?.config.qualifyShowSolarPayment !== false;
   const [f, setF] = useState<KnownInfo>({});
   const set = (k: keyof KnownInfo, v: string) =>
     setF((prev) => ({
@@ -110,7 +113,7 @@ export function KnownInfoDialog({
               <span className="text-xs font-medium text-muted-foreground">Utility provider</span>
               <input className={field} value={f.utilityProvider ?? ""} onChange={(e) => set("utilityProvider", e.target.value)} />
             </label>
-            {showSolarFields && (
+            {isSolar && (
               <label className="space-y-1">
                 <span className="text-xs font-medium text-muted-foreground">Solar provider</span>
                 <input className={field} value={f.solarProvider ?? ""} onChange={(e) => set("solarProvider", e.target.value)} />
@@ -120,7 +123,7 @@ export function KnownInfoDialog({
               <span className="text-xs font-medium text-muted-foreground">Utility bill ($/mo)</span>
               <input className={field} type="number" inputMode="numeric" value={f.utilityBill ?? ""} onChange={(e) => set("utilityBill", e.target.value)} />
             </label>
-            {showSolarFields && (
+            {isSolar && (
               <label className="space-y-1">
                 <span className="text-xs font-medium text-muted-foreground">Solar payment ($/mo)</span>
                 <input className={field} type="number" inputMode="numeric" value={f.solarPayment ?? ""} onChange={(e) => set("solarPayment", e.target.value)} />

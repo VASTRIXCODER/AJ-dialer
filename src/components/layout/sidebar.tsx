@@ -8,6 +8,7 @@ import { useId } from "react";
 import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Wordmark } from "@/components/brand/logo";
+import { brandTagline } from "@/lib/org/vertical";
 import type { OrgFeatures } from "@/lib/org/settings";
 import { ROLE_LABEL, type OrgRole, isOrgRole } from "@/lib/permissions";
 import { cn } from "@/lib/utils";
@@ -21,10 +22,10 @@ export function Sidebar({
   features = null,
   orgName = null,
   productName = null,
+  dialerTemplate = null,
   brandColor = null,
   role = null,
   superadmin = false,
-  wordmarkTagline,
   onNavigate,
 }: {
   account?: Account | null;
@@ -32,11 +33,11 @@ export function Sidebar({
   features?: OrgFeatures | null;
   orgName?: string | null;
   productName?: string | null;
+  /** Org vertical — decides whether solar-specific wording appears. */
+  dialerTemplate?: string | null;
   brandColor?: string | null;
   role?: string | null;
   superadmin?: boolean;
-  /** Platform descriptor under the wordmark — vertical-aware (see Wordmark). */
-  wordmarkTagline?: string;
   onNavigate?: () => void;
 }) {
   const pathname = usePathname();
@@ -65,7 +66,7 @@ export function Sidebar({
     <div className="glass flex h-full flex-col gap-6 border-r border-border/60">
       <div className="px-5 pt-5">
         <Link href="/dashboard" onClick={onNavigate} className="inline-flex">
-          <Wordmark tagline={wordmarkTagline} />
+          <Wordmark tagline={brandTagline(dialerTemplate, productName)} />
         </Link>
       </div>
 

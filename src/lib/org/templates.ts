@@ -4,6 +4,7 @@
 // agent's persona, suggested dispositions, and optional feature toggles.
 
 import type { DispositionTone, OrgFeatures, QualifySettings } from "./settings";
+import { isSolarVertical } from "./vertical";
 
 export interface TemplateProfile {
   value: string;
@@ -235,18 +236,21 @@ export function templateProfile(value: string | undefined | null): TemplateProfi
 }
 
 /**
- * The parts of the product that only make sense for SOLAR, resolved per
- * vertical. The platform's defaults were written for the flagship solar tenant,
- * so a fresh "General" / "Insurance" / "Recruiting" workspace used to inherit a
- * "Solar payment" field on the qualification panel and a "Bills are fine"
- * pipeline stage — copy about an industry it has nothing to do with. New orgs
- * now start with the shape that matches their own vertical.
+ * The stored settings that only make sense for SOLAR, resolved per vertical.
+ *
+ * `isSolarVertical` already hides solar wording at render time, but the stored
+ * settings were still seeded from the flagship solar tenant's shape: a fresh
+ * "General" / "Insurance" / "Recruiting" workspace started with the solar
+ * payment field switched on and the "Bills are fine" pipeline stage in its nav
+ * — a stage that only means anything when you're selling against a solar loan.
+ * New orgs now persist the shape their own vertical actually wants, so an admin
+ * never has to go turn solar off by hand.
  */
 export function verticalDefaults(template: string | undefined | null): {
   qualify: QualifySettings;
   features: Partial<OrgFeatures>;
 } {
-  const isSolar = template === "solar";
+  const isSolar = isSolarVertical(template);
   return {
     qualify: {
       showSolarPayment: isSolar,
