@@ -163,7 +163,14 @@ export function CallStage({
   const name = focusLead ? `${focusLead.firstName} ${focusLead.lastName}` : "No lead";
   // Show the AI/Manual selector whenever AI is configured, or either mode is
   // locked (so the lock — premium plan or rep role — is visible, not hidden).
-  const showModeBar = aiConfigured || !aiEnabled || !manualEnabled;
+  //
+  // EXCEPT when the whole workspace has AI switched off ("premium") and manual
+  // dialing works: there's no choice to present and no action the rep could
+  // take, so a disabled chip advertising AI is just an ad for something this
+  // org doesn't have. A "role" lock still shows — that one IS actionable
+  // ("ask your manager"), and so does a manual lock on an AI-only plan.
+  const aiOffForWorkspace = aiLockReason === "premium" && manualEnabled;
+  const showModeBar = !aiOffForWorkspace && (aiConfigured || !aiEnabled || !manualEnabled);
   const aiLockText =
     aiLockReason === "role"
       ? "The AI dialer is available to admins and managers."
@@ -391,31 +398,35 @@ export function CallStage({
 
               {hasQueue && (
                 <>
-                  <div className="w-full">
-                    <p className="mb-2 text-center text-xs font-bold uppercase tracking-wide text-muted-foreground">
-                      {ai ? "Calls at once" : "Parallel lines"}
-                      <span className="ml-1.5 font-medium normal-case tracking-normal opacity-60">
-                        max {state.maxParallel}
-                      </span>
-                    </p>
-                    <div className="grid grid-cols-5 gap-2">
-                      {parallelChoices(state.maxParallel).map((n) => (
-                        <button
-                          key={n}
-                          type="button"
-                          onClick={() => onSetParallel(n)}
-                          className={cn(
-                            "rounded-xl border py-2.5 text-sm font-bold transition-all active:scale-95",
-                            state.parallelCount === n
-                              ? "border-primary/60 bg-primary-soft text-primary shadow-[0_0_20px_-6px_hsl(var(--glow)/0.7)]"
-                              : "border-border/70 bg-surface/50 text-muted-foreground backdrop-blur hover:bg-muted",
-                          )}
-                        >
-                          {n}X
-                        </button>
-                      ))}
+                  {/* A ceiling of one line is not a choice — the org has turned
+                      parallel dialing off, so don't render a lone "1X" chip. */}
+                  {state.maxParallel > 1 && (
+                    <div className="w-full">
+                      <p className="mb-2 text-center text-xs font-bold uppercase tracking-wide text-muted-foreground">
+                        {ai ? "Calls at once" : "Parallel lines"}
+                        <span className="ml-1.5 font-medium normal-case tracking-normal opacity-60">
+                          max {state.maxParallel}
+                        </span>
+                      </p>
+                      <div className="grid grid-cols-5 gap-2">
+                        {parallelChoices(state.maxParallel).map((n) => (
+                          <button
+                            key={n}
+                            type="button"
+                            onClick={() => onSetParallel(n)}
+                            className={cn(
+                              "rounded-xl border py-2.5 text-sm font-bold transition-all active:scale-95",
+                              state.parallelCount === n
+                                ? "border-primary/60 bg-primary-soft text-primary shadow-[0_0_20px_-6px_hsl(var(--glow)/0.7)]"
+                                : "border-border/70 bg-surface/50 text-muted-foreground backdrop-blur hover:bg-muted",
+                            )}
+                          >
+                            {n}X
+                          </button>
+                        ))}
+                      </div>
                     </div>
-                  </div>
+                  )}
 
                   <label className="flex w-full cursor-pointer items-center justify-between rounded-xl border border-border/70 bg-surface/50 px-4 py-3 backdrop-blur">
                     <span className="flex items-center gap-2 text-sm font-medium">

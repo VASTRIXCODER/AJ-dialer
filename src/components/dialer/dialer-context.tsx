@@ -3,7 +3,7 @@
 import { createContext, useContext, useEffect, useRef, useState } from "react";
 import type { AiLockReason } from "@/lib/org/settings";
 import type { Lead, LeadGroup } from "@/lib/types";
-import { useDialer } from "@/lib/use-dialer";
+import { MAX_PARALLEL_HUMAN, useDialer } from "@/lib/use-dialer";
 
 /** "all" = no filter, "unsorted" = leadGroup is null, else an exact LeadGroup. */
 export type GroupFilter = "all" | "unsorted" | LeadGroup;
@@ -33,6 +33,9 @@ export interface DialerConfig {
   dialScope: "org" | "own";
   /** The org's AI concurrency allowance (their voice plan's live-call limit). */
   maxAiConcurrency?: number;
+  /** The org's ceiling on simultaneous human lines (Admin → Dialing → Max lines).
+   *  1 means no parallel dialing at all for this workspace. */
+  maxHumanLines?: number;
   /** The effective caller-ID rotation pool — powers the dialer's caller-ID picker. */
   callerIdPool?: string[];
   /** Rotation cadence for the pool above (calls per number before advancing). */
@@ -158,6 +161,7 @@ export function DialerProvider({
     config.maxAiConcurrency ?? 10,
     config.doubleDial ?? false,
     config.doubleDialGapSec ?? 15,
+    config.maxHumanLines ?? MAX_PARALLEL_HUMAN,
   );
   const { state } = dialer;
 

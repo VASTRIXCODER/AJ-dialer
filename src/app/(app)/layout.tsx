@@ -11,6 +11,7 @@ import { getViewer } from "@/lib/org/membership";
 import { DEFAULT_FEATURES, resolveDialerAccess } from "@/lib/org/settings";
 import { isSuperadmin } from "@/lib/superadmin";
 import { isVoiceConfigured } from "@/lib/twilio";
+import { MAX_PARALLEL_HUMAN } from "@/lib/use-dialer";
 import { initials } from "@/lib/utils";
 
 export default async function AppGroupLayout({
@@ -93,6 +94,10 @@ export default async function AppGroupLayout({
     dialScope,
     // The org's voice-plan concurrency allowance — the dialer holds itself to it.
     maxAiConcurrency: viewer.org?.settings.ai.maxConcurrentCalls ?? 10,
+    // Admin → Dialing → "Max lines". This was editable but never read, so every
+    // workspace got the platform maximum of 3 whatever it had been set to; a
+    // team that wants single-line dialing sets it to 1 and 2X/3X disappears.
+    maxHumanLines: viewer.org?.settings.dialing.maxLines ?? MAX_PARALLEL_HUMAN,
     callerIdPool,
     callerIdRotateEvery,
     // Double-dial (double-tap): AI bot re-rings a no-answer once after a short gap.

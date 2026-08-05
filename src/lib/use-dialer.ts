@@ -241,7 +241,20 @@ export function useDialer(
    *  moving on. Two quick missed calls read as important and lift pickup. */
   doubleDial = false,
   doubleDialGapSec = 15,
+  /**
+   * The org's own ceiling on simultaneous HUMAN lines (Admin → Dialing → "Max
+   * lines"). Setting it to 1 turns off parallel dialing for the workspace: a
+   * team that only ever wants one homeowner on the line at a time no longer
+   * gets 2X/3X offered. Clamped to the platform maximum — an org can dial fewer
+   * lines than MAX_PARALLEL_HUMAN, never more, because a rep still can't hold
+   * more than a few answered calls without abandoning someone.
+   */
+  maxHumanLines = MAX_PARALLEL_HUMAN,
 ) {
+  const humanCeiling = Math.max(
+    1,
+    Math.min(MAX_PARALLEL_HUMAN, Math.floor(maxHumanLines) || MAX_PARALLEL_HUMAN),
+  );
   const [state, setState] = useState<DialerState>({
     status: "idle",
     lines: [],
@@ -252,7 +265,7 @@ export function useDialer(
     recording: true,
     autoDial: false,
     parallelCount: 1,
-    maxParallel: aiConfigured ? maxAiConcurrency : MAX_PARALLEL_HUMAN,
+    maxParallel: aiConfigured ? maxAiConcurrency : humanCeiling,
     lastOutcome: null,
     mode: "connecting",
     reconnecting: false,
@@ -311,6 +324,22 @@ export function useDialer(
   useEffect(() => {
     maxAiRef.current = maxAiConcurrency;
   }, [maxAiConcurrency]);
+  // The org's human-line ceiling, mirrored so mode switches and clamps read the
+  // current value without re-creating the callbacks that use it.
+  const humanCeilingRef = useRef(humanCeiling);
+  useEffect(() => {
+    humanCeilingRef.current = humanCeiling;
+    // A ceiling that just dropped (an admin lowered "Max lines") must pull an
+    // already-selected count down with it, or the rep keeps dialing 3X on a
+    // workspace that has since been set to 1.
+    setState((s) => {
+      if (s.aiMode) return s;
+      const clamped = Math.min(s.parallelCount, humanCeiling);
+      if (s.parallelCount === clamped && s.maxParallel === humanCeiling) return s;
+      parallelRef.current = clamped;
+      return { ...s, parallelCount: clamped, maxParallel: humanCeiling };
+    });
+  }, [humanCeiling]);
   // ── AI double-dial (double-tap) ────────────────────────────────────────────
   const doubleDialRef = useRef(doubleDial);
   const doubleDialGapMsRef = useRef(Math.max(5, doubleDialGapSec) * 1000);
@@ -1760,7 +1789,7 @@ export function useDialer(
     () =>
       aiModeRef.current
         ? Math.max(1, Math.min(MAX_PARALLEL_AI, maxAiRef.current))
-        : MAX_PARALLEL_HUMAN,
+        : humanCeilingRef.current,
     [],
   );
 
@@ -1792,7 +1821,7 @@ export function useDialer(
       // homeowners would answer to nobody.
       const ceiling = next
         ? Math.max(1, Math.min(MAX_PARALLEL_AI, maxAiRef.current))
-        : MAX_PARALLEL_HUMAN;
+        : humanCeilingRef.current;
       parallelRef.current = Math.min(parallelRef.current, ceiling);
 
       patch({
