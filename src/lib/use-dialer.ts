@@ -406,16 +406,59 @@ export function useDialer(
    * Hang up outbound legs we placed but can no longer bridge the rep into.
    * Fire-and-forget: the rep is already back at idle, and an abandoned call
    * ringing a real person is worse than a failed cleanup request.
+   *
+   * Takes the numbers we dialed as well as the SIDs, because the failure this
+   * exists for includes "the response carrying the SIDs never arrived" — and in
+   * that case the numbers are the only handle we have on calls that are, right
+   * now, ringing somebody's house.
    */
-  const releaseLegs = useCallback((sids: string[]) => {
-    if (!sids.length) return;
-    fetch("/api/twilio/release", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ sids }),
-      keepalive: true,
-    }).catch(() => {});
-  }, []);
+  const releaseLegs = useCallback(
+    (sids: string[], dialed: { leadId: string; phone: string }[] = []) => {
+      if (!sids.length && !dialed.length) return;
+      fetch("/api/twilio/release", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ sids, leads: dialed }),
+        keepalive: true,
+      }).catch(() => {});
+    },
+    [],
+  );
+
+  /**
+   * Ask Twilio which of the numbers we just dialed are actually in flight.
+   *
+   * The counterpart to releaseLegs: same problem (we lost the SIDs), opposite
+   * resolution (finish the call rather than abandon it). Returns an empty list
+   * on any failure, so the caller falls through to its normal "nothing was
+   * dialed" handling and never invents a call that doesn't exist.
+   */
+  const recoverPlacedLegs = useCallback(
+    async (
+      dialed: { leadId: string; phone: string }[],
+    ): Promise<{ leadId: string; sid: string }[]> => {
+      if (!dialed.length) return [];
+      try {
+        const res = await fetch("/api/twilio/legs", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ leads: dialed }),
+        });
+        if (!res.ok) return [];
+        const json = (await res.json().catch(() => ({}))) as {
+          calls?: { leadId?: string; sid?: string }[];
+        };
+        return (json.calls ?? [])
+          .filter((c): c is { leadId: string; sid: string } =>
+            Boolean(c?.sid && c?.leadId),
+          )
+          .map((c) => ({ leadId: c.leadId, sid: c.sid }));
+      } catch {
+        return [];
+      }
+    },
+    [],
+  );
 
   const clearHumanPresence = useCallback(() => {
     const id = humanIdRef.current;
@@ -1367,7 +1410,12 @@ export function useDialer(
   // the conference muted — no media relay required.
   const startHumanCall = useCallback(
     async (override?: Lead[]) => {
-      if (modeRef.current !== "live" || !deviceRef.current) {
+      // Pin the Device now. The dial does real network work before it needs to
+      // join the conference, and setupDevice() (health check, token refresh,
+      // tab resume) can null deviceRef out underneath us in that window — which
+      // used to blow up on `deviceRef.current.connect(...)` several awaits later.
+      const device = deviceRef.current;
+      if (modeRef.current !== "live" || !device) {
         patch({
           error: "Twilio isn't connected. Add your credentials to place calls.",
           status: "idle",
@@ -1457,6 +1505,12 @@ export function useDialer(
       // Tracked outside the try so a failure to join the conference can still
       // hang up whatever we already put on the wire (see the catch below).
       let placedSids: string[] = [];
+      // What we asked Twilio to dial. This is the ONLY handle on those calls
+      // that can't be lost in transit, so every cleanup path falls back to it.
+      const dialed = leads.map((l) => ({ leadId: l.id, phone: l.phone }));
+      // Flips once the dial request has come back, so the catch below can tell
+      // "we never got as far as Twilio" from "Twilio is dialing, our side broke".
+      let dialResponded = false;
 
       try {
         // Dial the homeowner(s) into the conference room via Twilio REST.
@@ -1466,61 +1520,74 @@ export function useDialer(
           body: JSON.stringify({
             room,
             agentIdentity: identityRef.current,
-            leads: leads.map((l) => ({ leadId: l.id, phone: l.phone })),
+            leads: dialed,
             excludedCallerIds: excludedCallerIdsRef.current.length
               ? excludedCallerIdsRef.current
               : undefined,
           }),
         });
-        if (!res.ok) {
-          clearHumanPresence();
-          const j = (await res.json().catch(() => ({}))) as { error?: string };
-          patch({
-            error: j.error ?? "Unable to start the call.",
-            status: "idle",
-            lines: [],
-          });
-          return;
-        }
-        const data = (await res.json().catch(() => ({}))) as {
+        dialResponded = true;
+
+        // Read the body ONCE, and never let a failure to read it decide whether
+        // a call happened. /api/twilio/call puts real phones on the wire and
+        // then reports the leg SIDs; those two facts travel separately, and the
+        // report has to survive a trip back through the CDN that the ringing
+        // phone does not. Conflating "I couldn't read the answer" with "nothing
+        // was dialed" is what dropped the rep back to idle — with an error
+        // blaming their Twilio credentials — while a homeowner's phone rang an
+        // empty conference that nobody would ever join, and nothing hung it up.
+        const raw = await res.text().catch(() => "");
+        let data: {
           calls?: { leadId: string; sid: string | null; error?: string | null }[];
           errors?: (string | null)[];
+          error?: string;
           callerIdInfo?: { callerId: string; pool: string[]; poolIndex: number; rotateEvery: number } | null;
-        };
-        const placed = (data.calls ?? []).map((c) => ({
-          leadId: c.leadId,
-          sid: c.sid,
-        }));
-        // Store caller ID info for the rotation indicator and hold/unhold.
-        if (data.callerIdInfo) {
-          patch({ callerIdInfo: data.callerIdInfo });
+        } = {};
+        try {
+          data = raw ? JSON.parse(raw) : {};
+        } catch {
+          /* unreadable — the recovery below decides what actually happened */
         }
-        const outboundSids = (data.calls ?? [])
-          .map((c) => c.sid)
-          .filter((s): s is string => Boolean(s));
-        placedSids = outboundSids;
-        if (outboundSids.length) {
-          patch({ outboundSids });
+
+        let placed = (data.calls ?? [])
+          .filter((c): c is { leadId: string; sid: string } => Boolean(c?.sid))
+          .map((c) => ({ leadId: c.leadId, sid: c.sid }));
+
+        // Nothing came back with a SID. Before calling that a failed dial, ask
+        // Twilio — it is the one party that can't be confused on this point.
+        if (!placed.length) {
+          placed = await recoverPlacedLegs(dialed);
         }
-        if (!placed.some((p) => p.sid)) {
+
+        if (!placed.length) {
           clearHumanPresence();
           // Surface the real Twilio rejection (e.g. unverified number on trial
           // account, invalid caller ID, geographic restriction, etc.) so the
           // team knows exactly what to fix rather than getting a generic message.
           const twilioMsg = (data.errors ?? []).filter(Boolean)[0];
-          const errorMsg = twilioMsg
-            ? `Call failed: ${twilioMsg}`
-            : "Couldn't place the call. Check your Twilio number and credentials.";
           patch({
-            error: errorMsg,
+            error: data.error
+              ? data.error
+              : twilioMsg
+                ? `Call failed: ${twilioMsg}`
+                : res.ok
+                  ? "Couldn't place the call. Check your Twilio number and credentials."
+                  : `The dialer service returned ${res.status}. Try again in a moment.`,
             status: "idle",
             lines: [],
           });
           return;
         }
 
+        // Store caller ID info for the rotation indicator and hold/unhold.
+        if (data.callerIdInfo) {
+          patch({ callerIdInfo: data.callerIdInfo });
+        }
+        placedSids = placed.map((p) => p.sid);
+        patch({ outboundSids: placedSids });
+
         // Join the rep's browser into the same room (and record the conference).
-        const call = await deviceRef.current.connect({
+        const call = await device.connect({
           params: { Conference: room, record: "true", MonitorId: humanId },
         });
 
@@ -1573,14 +1640,18 @@ export function useDialer(
         pollRef.current = setInterval(pollAnswered, 1500);
       } catch {
         clearHumanPresence();
-        // The homeowner leg(s) are already on the wire. If the rep's browser
-        // couldn't join the conference — a blocked microphone is by far the most
-        // common cause — hang them up instead of leaving real phones ringing an
-        // empty room that nobody will ever speak into.
-        releaseLegs(placedSids);
+        // The homeowner leg(s) may already be on the wire — including when the
+        // dial request itself failed, because it can fail AFTER Twilio accepted
+        // the calls. Always release by number as well as by SID: `placedSids` is
+        // empty in exactly the case where legs are most likely to be orphaned.
+        releaseLegs(placedSids, dialed);
         patch({
-          error:
-            "Couldn't connect your side of the call. Check that this browser tab is allowed to use your microphone, then try again.",
+          // Two very different failures used to share one message, and it named
+          // the microphone for both — sending a rep whose network dropped off to
+          // debug browser permissions. Say which one actually happened.
+          error: dialResponded
+            ? "Couldn't connect your side of the call. Check that this browser tab is allowed to use your microphone, then try again."
+            : "Lost the connection while starting the call. Any lines that were ringing have been hung up — try again.",
           status: "idle",
           lines: [],
         });
@@ -1595,6 +1666,7 @@ export function useDialer(
       patch,
       queue.length,
       recordDials,
+      recoverPlacedLegs,
       releaseLegs,
       resetToIdle,
       stopPoll,
