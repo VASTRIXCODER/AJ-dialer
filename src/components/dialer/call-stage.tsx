@@ -158,7 +158,12 @@ export function CallStage({
   // locked we still surface the option, just disabled with a reason.
   const aiUsable = aiConfigured && aiEnabled;
   const ai = state.aiMode && aiUsable;
-  const canCall = state.mode === "live";
+  // A registered Twilio Device is NOT the same as a usable one. Registration
+  // needs no microphone, so a rep whose mic is blocked saw "Twilio Live", a live
+  // Start button, and a homeowner rung into silence on every press. Manual
+  // dialing needs both.
+  const micBlocked = !ai && state.micBlocked;
+  const canCall = state.mode === "live" && !micBlocked;
   const canStart = ai ? hasQueue : canCall && Boolean(focusLead);
   const name = focusLead ? `${focusLead.firstName} ${focusLead.lastName}` : "No lead";
   // Show the AI/Manual selector whenever AI is configured, or either mode is
@@ -178,11 +183,13 @@ export function CallStage({
 
   const modeBadge = ai
     ? { label: "AI agent ready", cls: "bg-accent-soft text-accent" }
-    : state.mode === "live"
-      ? { label: "Twilio Live", cls: "bg-success/10 text-success" }
-      : state.mode === "offline"
-        ? { label: "Twilio offline", cls: "bg-danger/10 text-danger" }
-        : { label: "Connecting…", cls: "bg-muted text-muted-foreground" };
+    : micBlocked
+      ? { label: "Mic blocked", cls: "bg-danger/10 text-danger" }
+      : state.mode === "live"
+        ? { label: "Twilio Live", cls: "bg-success/10 text-success" }
+        : state.mode === "offline"
+          ? { label: "Twilio offline", cls: "bg-danger/10 text-danger" }
+          : { label: "Connecting…", cls: "bg-muted text-muted-foreground" };
 
   return (
     <div className="flex h-full flex-col">
@@ -226,8 +233,9 @@ export function CallStage({
         <div className="flex items-center gap-2">
           {/* When the device drops (token lapse, network blip, Safari quirk) the
               rep gets a one-tap recovery instead of having to reload — reloading
-              didn't reliably fix it. */}
-          {state.mode === "offline" && (
+              didn't reliably fix it. A blocked mic gets the same tap: onReconnect
+              re-runs setupDevice, which re-requests microphone permission. */}
+          {(state.mode === "offline" || micBlocked) && (
             <button
               type="button"
               onClick={onReconnect}
@@ -454,6 +462,24 @@ export function CallStage({
                       each pass so anyone just dispositioned isn&apos;t called again.
                       {ai && " Keep this tab open; for calling with the tab closed, use Admin → Automated calling."}
                     </p>
+                  )}
+
+                  {/* Say WHY Start is unavailable. A dead button with no
+                      explanation is what "I click it and nothing happens" looks
+                      like from the rep's chair. */}
+                  {micBlocked && (
+                    <div className="w-full rounded-xl border border-danger/30 bg-danger/5 p-3">
+                      <p className="flex items-center gap-1.5 text-sm font-semibold text-danger">
+                        <MicOff className="h-4 w-4 shrink-0" />
+                        Microphone blocked
+                      </p>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        Twilio is connected, but this tab can&apos;t use your microphone — so a
+                        call would ring the homeowner with no one on the line. Allow microphone
+                        access for this site in your browser, then press{" "}
+                        <b className="text-foreground">Reconnect</b> above.
+                      </p>
+                    </div>
                   )}
 
                   <Button

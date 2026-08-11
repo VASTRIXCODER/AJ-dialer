@@ -208,3 +208,49 @@ export function verifyMonitorToken(room: string, token: string): boolean {
     return false;
   }
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Voice SDK identity continuity.
+//
+// A Voice access token is short-lived, but the IDENTITY it carries must not
+// change across renewals: Twilio's Device.updateToken() renews the token for the
+// registered client, so a token minted for a different identity re-registers the
+// browser as somebody else. Renewal therefore has to be able to say "keep the
+// identity I already have" — and that claim has to be one the client can't
+// forge, or one rep could register a second Device under another rep's identity
+// (two Devices sharing an identity is precisely the collision that lets one
+// rep's signalling disrupt another's live call).
+//
+// So the token route signs each identity it mints and the client hands the
+// signature back on renewal. Same HMAC-on-the-auth-token scheme as above.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Sign an `${exp}.${sig}` proof that WE issued `identity`. */
+export function signIdentity(identity: string, ttlSec = 86_400): string {
+  const secret = twilioConfig.authToken;
+  if (!secret) return "";
+  const exp = Math.floor(Date.now() / 1000) + ttlSec;
+  const sig = crypto
+    .createHmac("sha256", secret)
+    .update(`id.${identity}.${exp}`)
+    .digest("hex");
+  return `${exp}.${sig}`;
+}
+
+/** True when `proof` is an unexpired signature this server issued for `identity`. */
+export function verifyIdentity(identity: string, proof: string): boolean {
+  const secret = twilioConfig.authToken;
+  if (!secret || !identity) return false;
+  const [exp, sig] = (proof || "").split(".");
+  if (!exp || !sig) return false;
+  if (Number(exp) * 1000 < Date.now()) return false;
+  const expected = crypto
+    .createHmac("sha256", secret)
+    .update(`id.${identity}.${exp}`)
+    .digest("hex");
+  try {
+    return crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expected));
+  } catch {
+    return false;
+  }
+}
