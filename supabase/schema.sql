@@ -1559,3 +1559,30 @@ drop policy if exists "dnc read" on public.dnc_numbers;
 create policy "dnc read" on public.dnc_numbers for select using (
   public.app_is_superadmin() or (public.app_is_active() and public.app_is_org_member(org_id))
 );
+
+-- ═════════════════════════════════════════════════════════════════════════════
+-- PART: ATOMIC NOTIFICATION CLAIM (P3). Kept in sync with supabase/outbox-claim.sql.
+-- Claims a batch of due notifications under FOR UPDATE SKIP LOCKED so the two
+-- per-minute crons can't send the same appointment email twice; reclaims rows
+-- stuck in 'sending' >5min (a crashed drain). Service-role only.
+-- ═════════════════════════════════════════════════════════════════════════════
+create or replace function public.app_claim_notifications(p_limit int)
+returns setof public.notification_outbox
+language sql volatile security definer set search_path = public as $$
+  update public.notification_outbox o
+  set status = 'sending', updated_at = now()
+  from (
+    select id
+    from public.notification_outbox
+    where (status = 'pending' and next_attempt_at <= now())
+       or (status = 'sending' and updated_at < now() - interval '5 minutes')
+    order by next_attempt_at asc
+    limit greatest(p_limit, 0)
+    for update skip locked
+  ) picked
+  where o.id = picked.id
+  returning o.*;
+$$;
+
+revoke all on function public.app_claim_notifications(int) from public, anon, authenticated;
+grant execute on function public.app_claim_notifications(int) to service_role;

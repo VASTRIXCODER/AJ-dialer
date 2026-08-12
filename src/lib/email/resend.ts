@@ -35,6 +35,12 @@ export interface SendEmailInput {
   replyTo?: string;
   /** Overrides the display name on the From line; the address always comes from env. */
   fromName?: string;
+  /**
+   * Stable key (e.g. the outbox row id) so Resend dedupes a resend of the same
+   * message — belt-and-suspenders with the atomic claim, covering the window
+   * where a send succeeded but we crashed before recording it.
+   */
+  idempotencyKey?: string;
 }
 
 export interface SendEmailResult {
@@ -70,9 +76,13 @@ export async function sendEmail(input: SendEmailInput): Promise<SendEmailResult>
   try {
     const res = await fetch(API, {
       method: "POST",
+      // Cap the request so a hung Resend call can't consume the whole drain
+      // budget (which would starve every other queued notification this tick).
+      signal: AbortSignal.timeout(8_000),
       headers: {
         authorization: `Bearer ${API_KEY()}`,
         "content-type": "application/json",
+        ...(input.idempotencyKey ? { "Idempotency-Key": input.idempotencyKey } : {}),
       },
       body: JSON.stringify({
         from: withFromName(FROM(), input.fromName),
