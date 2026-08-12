@@ -1475,11 +1475,17 @@ export function useDialer(
   const launchAIBatch = useCallback(async () => {
     await reapInflight();
     const gen = sessionGenRef.current;
+    // Only re-arm the pump while auto-dial is still on AND this is still the
+    // current session. stopAICampaign/endAISession clear autoDialRef (and end
+    // bumps the generation), so a batch already in flight when Stop was pressed
+    // re-checks this after its awaits and can no longer schedule the next tick —
+    // which is what used to keep dialing homeowners after the operator stopped.
+    const keepPumping = () => autoDialRef.current && sessionGenRef.current === gen;
     const slots = Math.max(0, parallelRef.current - inflightRef.current.size);
 
     // Every line is busy (or held for a pending re-ring) — come back when one frees.
     if (slots === 0) {
-      if (autoDialRef.current) {
+      if (keepPumping()) {
         aiTimerRef.current = setTimeout(() => void launchAIBatch(), AI_PUMP_MS);
       }
       return;
@@ -1491,7 +1497,7 @@ export function useDialer(
       // Out of NEW leads — but don't declare "done" while calls are live OR a
       // double-tap is still owed.
       if (inflightRef.current.size > 0 || redialsRef.current.size > 0) {
-        if (autoDialRef.current) {
+        if (keepPumping()) {
           aiTimerRef.current = setTimeout(() => void launchAIBatch(), AI_PUMP_MS);
         }
         return;
@@ -1511,7 +1517,7 @@ export function useDialer(
 
     // Keep pumping while auto-dial is on. The next tick re-checks free lines, so
     // this can't run away: if all N are still busy it launches nothing.
-    if (autoDialRef.current && aiCursorRef.current < queue.length) {
+    if (keepPumping() && aiCursorRef.current < queue.length) {
       aiTimerRef.current = setTimeout(() => void launchAIBatch(), AI_PUMP_MS);
     } else if (aiCursorRef.current >= queue.length) {
       // End of this pass. Wait for calls on the wire AND any owed re-rings before
@@ -1519,7 +1525,7 @@ export function useDialer(
       // next lap stacks on top of live calls.
       if (
         (inflightRef.current.size > 0 || redialsRef.current.size > 0) &&
-        autoDialRef.current
+        keepPumping()
       ) {
         aiTimerRef.current = setTimeout(() => void launchAIBatch(), AI_PUMP_MS);
         return;
@@ -2075,15 +2081,23 @@ export function useDialer(
   ]);
 
   const launchNextAI = useCallback(() => {
+    // Clear any pending tick first (mirrors startAISession) so a manual "launch
+    // next" while a timer is already armed can't start a second pump lineage.
+    stopAITimer();
     void launchAIBatch();
-  }, [launchAIBatch]);
+  }, [launchAIBatch, stopAITimer]);
 
   const stopAICampaign = useCallback(() => {
+    // Clearing autoDialRef is what actually stops the pump: a launchAIBatch tick
+    // already in flight re-reads it after its awaits, so without this it would
+    // arm the next tick and keep dialing after Stop was pressed.
+    autoDialRef.current = false;
     stopAITimer();
     patch({ aiCampaign: "idle" });
   }, [patch, stopAITimer]);
 
   const endAISession = useCallback(() => {
+    autoDialRef.current = false;
     stopAITimer();
     sessionGenRef.current += 1;
     purgeRedials();
