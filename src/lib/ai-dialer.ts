@@ -1,6 +1,7 @@
 import "server-only";
 
 import { resolveAgentConfig } from "./ai/agent-prompt";
+import { finalizeAIConversation } from "./ai-call-finalize";
 import { armProbe, breakerStatus, recordProviderFailure } from "./ai-call-breaker";
 import { registerAICall } from "./ai-call-store";
 import { isQuotaMessage } from "./call-disposition";
@@ -96,15 +97,27 @@ async function bridgeIntoConference(opts: {
   const moveTwiml = xml(
     `<Dial><Conference startConferenceOnEnter="true" endConferenceOnExit="false" beep="false">${escapeXml(opts.room)}</Conference></Dial>`,
   );
-  for (let i = 0; i < 5; i++) {
-    try {
-      await client.calls(opts.agentCallSid).update({ twiml: moveTwiml });
-      break;
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : "";
-      if (i === 4 || !/21220|not.?in.?progress/i.test(msg)) throw e;
-      await sleep(700);
+  try {
+    for (let i = 0; i < 5; i++) {
+      try {
+        await client.calls(opts.agentCallSid).update({ twiml: moveTwiml });
+        break;
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : "";
+        if (i === 4 || !/21220|not.?in.?progress/i.test(msg)) throw e;
+        await sleep(700);
+      }
     }
+  } catch (e) {
+    // The agent leg never made it into the conference. The homeowner's leg is
+    // already ringing/answered into an empty room — hang it up so a real person
+    // isn't left listening to silence while it (and the agent) burn on the clock.
+    try {
+      await client.calls(customer.sid).update({ status: "completed" });
+    } catch {
+      /* already gone */
+    }
+    throw e;
   }
   return customer.sid;
 }
@@ -253,6 +266,7 @@ export async function placeAiCallForLead(opts: {
 
     let room: string | undefined;
     let customerCallSid: string | undefined;
+    let bridgeFailed = false;
     if (bridge && result.callSid) {
       try {
         room = aiConferenceRoom(result.conversationId);
@@ -267,7 +281,18 @@ export async function placeAiCallForLead(opts: {
         });
         customerCallSid = sid ?? undefined;
       } catch {
-        room = undefined; // bridge failed — call still connects, just no live-listen
+        // Bridge join failed. bridgeIntoConference already hung up the homeowner
+        // leg it created; hang up the AGENT leg too so it doesn't sit on the
+        // bridge <Pause> monologuing on credits, and disposition the call as a
+        // system failure below (so the lead stays un-burned, not a fake no-answer).
+        room = undefined;
+        bridgeFailed = true;
+        try {
+          const client = await getRestClient();
+          await client?.calls(result.callSid).update({ status: "completed" });
+        } catch {
+          /* best-effort — the reconciler is the backstop */
+        }
       }
     }
 
@@ -306,6 +331,22 @@ export async function placeAiCallForLead(opts: {
       // so use the real org owner id here (may be null → row still records).
       ownerId: org?.ownerId ?? null,
     });
+
+    if (bridgeFailed) {
+      // Disposition it as a system failure (outcome null → the lead is NOT
+      // re-filed and the call is excluded from every rate denominator). Seeded
+      // first so the row exists and this finalize can attribute it.
+      await finalizeAIConversation({
+        conversationId: result.conversationId,
+        turns: [],
+        failureKind: "bridge_join_failed",
+      }).catch(() => {});
+      return {
+        conversationId: result.conversationId,
+        callSid: result.callSid,
+        error: "The AI call couldn't be bridged into the conference.",
+      };
+    }
 
     return {
       conversationId: result.conversationId,
