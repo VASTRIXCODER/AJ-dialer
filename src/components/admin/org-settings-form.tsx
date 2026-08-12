@@ -109,6 +109,9 @@ export function OrgSettingsForm({
     leadNoun: org.settings.leadNoun,
     leadNounPlural: org.settings.leadNounPlural,
   });
+  const [costRates, setCostRates] = useState<OrgSettings["costRates"]>(
+    org.settings.costRates,
+  );
 
   async function save(patch: OrgUpdate, key: string) {
     setBusy(key);
@@ -975,6 +978,50 @@ export function OrgSettingsForm({
                 "features",
               )
             }
+          />
+        </div>
+      </SectionCard>
+
+      {/* Cost rates — drives the Reports "Cost & usage" estimates */}
+      <SectionCard
+        title="Cost rates"
+        description="What a minute of talk time costs you — powers the estimated spend on Reports."
+      >
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <Field label="AI calls ($ per minute)">
+            <Input
+              type="number"
+              step="0.001"
+              min="0"
+              value={costRates.aiPerMinute}
+              onChange={(e) =>
+                setCostRates({ ...costRates, aiPerMinute: Number(e.target.value) || 0 })
+              }
+            />
+          </Field>
+          <Field label="Human calls ($ per minute)">
+            <Input
+              type="number"
+              step="0.001"
+              min="0"
+              value={costRates.manualPerMinute}
+              onChange={(e) =>
+                setCostRates({
+                  ...costRates,
+                  manualPerMinute: Number(e.target.value) || 0,
+                })
+              }
+            />
+          </Field>
+        </div>
+        <p className="mt-2 text-xs text-muted-foreground">
+          Estimates only — set these to your carrier and AI plan pricing. AI calls
+          typically carry the conversational-AI fee plus the phone leg.
+        </p>
+        <div className="mt-4 flex justify-end">
+          <SaveBtn
+            k="costRates"
+            onClick={() => save({ settings: { costRates } }, "costRates")}
           />
         </div>
       </SectionCard>

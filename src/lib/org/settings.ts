@@ -183,6 +183,8 @@ export interface OrgSettings {
   notifications: NotificationSettings;
   features: OrgFeatures;
   billing: OrgBilling;
+  /** Per-minute call cost estimates — drives the Reports "Cost & usage" panel. */
+  costRates: CostRates;
   /** Domain noun the dialer uses for a contact, e.g. "homeowner". */
   leadNoun: string;
   leadNounPlural: string;
@@ -229,6 +231,22 @@ export const DEFAULT_BILLING: OrgBilling = {
   currency: "USD",
   interval: "month",
   note: "",
+};
+
+/**
+ * What a minute of talk time costs this org, in USD — ESTIMATES, editable in
+ * Admin → Organization settings. Defaults approximate common list pricing:
+ * AI calls carry the conversational-AI per-minute fee plus the carrier leg;
+ * human calls are just the carrier leg.
+ */
+export interface CostRates {
+  aiPerMinute: number;
+  manualPerMinute: number;
+}
+
+export const DEFAULT_COST_RATES: CostRates = {
+  aiPerMinute: 0.1,
+  manualPerMinute: 0.015,
 };
 
 export const DEFAULT_ORG_SETTINGS: OrgSettings = {
@@ -296,6 +314,7 @@ export const DEFAULT_ORG_SETTINGS: OrgSettings = {
   notifications: { ...DEFAULT_NOTIFICATIONS },
   features: { ...DEFAULT_FEATURES },
   billing: { ...DEFAULT_BILLING },
+  costRates: { ...DEFAULT_COST_RATES },
   leadNoun: "lead",
   leadNounPlural: "leads",
   leadGroupLabels: {},
@@ -367,6 +386,7 @@ export function mergeSettings(raw: unknown): OrgSettings {
     },
     features: { ...DEFAULT_FEATURES, ...(s.features ?? {}) },
     billing: { ...DEFAULT_BILLING, ...(s.billing ?? {}) },
+    costRates: { ...DEFAULT_COST_RATES, ...(s.costRates ?? {}) },
     leadNoun: s.leadNoun ?? DEFAULT_ORG_SETTINGS.leadNoun,
     leadNounPlural: s.leadNounPlural ?? DEFAULT_ORG_SETTINGS.leadNounPlural,
     leadGroupLabels:
