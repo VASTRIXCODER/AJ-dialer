@@ -1,12 +1,11 @@
 "use client";
 
-import { motion, useReducedMotion } from "framer-motion";
 import { Check, CircleHelp, Layers, MapPin, Megaphone, PenLine, Users, X } from "lucide-react";
 import { useMemo } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Select } from "@/components/ui/input";
-import { Portal } from "@/components/ui/portal";
+import { Modal } from "@/components/ui/modal";
 import { applyLabelOverride } from "@/lib/leads/group-labels";
 import type { Lead } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -77,8 +76,6 @@ export function LoadLeadsDialog({
   /** The org's own intake groups, in display order. */
   leadGroups?: { key: string; label: string }[];
 }) {
-  const reduce = useReducedMotion();
-
   const groupCounts = useMemo(() => {
     const counts: Record<string, number> = { all: leads.length, unsorted: 0 };
     for (const g of leadGroups ?? []) counts[g.key] = 0;
@@ -126,114 +123,99 @@ export function LoadLeadsDialog({
   ];
 
   return (
-    <Portal>
-      <div className="fixed inset-0 z-[100] flex items-end justify-center sm:items-center sm:p-4">
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          className="absolute inset-0 bg-background/70 backdrop-blur-xl"
+    <Modal onClose={onClose} label="Choose leads to dial">
+      <div className="flex items-start gap-3 border-b border-border/60 p-5">
+        <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-primary-soft text-primary">
+          <Users className="h-5 w-5" />
+        </span>
+        <div className="min-w-0 flex-1">
+          <h2 className="text-lg font-semibold">Choose leads to dial</h2>
+          <p className="text-sm text-muted-foreground">
+            {leads.length} lead{leads.length === 1 ? "" : "s"} loaded — narrow it to a
+            specific dropbox or campaign.
+          </p>
+        </div>
+        <button
+          type="button"
           onClick={onClose}
-        />
-        <motion.div
-          initial={reduce ? { opacity: 0 } : { opacity: 0, y: 24, scale: 0.98 }}
-          animate={{ opacity: 1, y: 0, scale: 1 }}
-          transition={{ type: "spring", stiffness: 320, damping: 30 }}
-          className="glass relative max-h-[92vh] w-full max-w-lg overflow-y-auto rounded-t-2xl border border-border/60 shadow-lift sm:rounded-2xl"
+          aria-label="Close"
+          className="flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
         >
-          <div className="flex items-start gap-3 border-b border-border/60 p-5">
-            <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-primary-soft text-primary">
-              <Users className="h-5 w-5" />
-            </span>
-            <div className="min-w-0 flex-1">
-              <h2 className="text-lg font-semibold">Choose leads to dial</h2>
-              <p className="text-sm text-muted-foreground">
-                {leads.length} lead{leads.length === 1 ? "" : "s"} loaded — narrow it to a
-                specific dropbox or campaign.
-              </p>
-            </div>
-            <button
-              type="button"
-              onClick={onClose}
-              aria-label="Close"
-              className="flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-            >
-              <X className="h-4 w-4" />
-            </button>
-          </div>
-
-          <div className="space-y-5 p-5">
-            {hasGroups && (
-              <div>
-                <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                  Lead group
-                </p>
-                <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-                  {groupOptions.map((opt) => {
-                    const selected = groupFilter === opt.value;
-                    const count = groupCounts[opt.value] ?? 0;
-                    const Icon = opt.icon;
-                    return (
-                      <button
-                        key={opt.value}
-                        type="button"
-                        onClick={() => onGroupFilterChange(opt.value)}
-                        disabled={count === 0 && opt.value !== "all"}
-                        className={cn(
-                          "flex items-center gap-2 rounded-xl border px-3 py-2.5 text-left text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-40",
-                          selected
-                            ? "border-primary bg-primary/10 text-primary"
-                            : "border-border bg-surface text-muted-foreground hover:border-primary/50 hover:text-foreground",
-                        )}
-                      >
-                        <Icon className="h-4 w-4 shrink-0" />
-                        <span className="min-w-0 flex-1 truncate">{opt.label}</span>
-                        {selected ? (
-                          <Check className="h-3.5 w-3.5 shrink-0" />
-                        ) : (
-                          <Badge tone="neutral" className="shrink-0">
-                            {count}
-                          </Badge>
-                        )}
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-
-            {campaigns.length > 0 && (
-              <div>
-                <p className="mb-2 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                  <Megaphone className="h-3.5 w-3.5" /> Campaign
-                </p>
-                <Select
-                  value={campaignFilter}
-                  onChange={(e) => onCampaignFilterChange(e.target.value)}
-                  aria-label="Filter by campaign"
-                >
-                  <option value="">All campaigns</option>
-                  {campaigns.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.name}
-                    </option>
-                  ))}
-                </Select>
-              </div>
-            )}
-          </div>
-
-          <div className="flex items-center justify-between gap-3 border-t border-border/60 p-4">
-            <span className="text-sm text-muted-foreground">
-              <b className="text-foreground tabular">{matchCount}</b> lead
-              {matchCount === 1 ? "" : "s"} ready to dial
-            </span>
-            <Button size="sm" onClick={onClose} className="gap-1.5">
-              <Check className="h-3.5 w-3.5" />
-              Start dialing
-            </Button>
-          </div>
-        </motion.div>
+          <X className="h-4 w-4" />
+        </button>
       </div>
-    </Portal>
+
+      <div className="space-y-5 overflow-y-auto p-5">
+        {hasGroups && (
+          <div>
+            <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+              Lead group
+            </p>
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+              {groupOptions.map((opt) => {
+                const selected = groupFilter === opt.value;
+                const count = groupCounts[opt.value] ?? 0;
+                const Icon = opt.icon;
+                return (
+                  <button
+                    key={opt.value}
+                    type="button"
+                    onClick={() => onGroupFilterChange(opt.value)}
+                    disabled={count === 0 && opt.value !== "all"}
+                    className={cn(
+                      "flex items-center gap-2 rounded-xl border px-3 py-2.5 text-left text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-40",
+                      selected
+                        ? "border-primary bg-primary/10 text-primary"
+                        : "border-border bg-surface text-muted-foreground hover:border-primary/50 hover:text-foreground",
+                    )}
+                  >
+                    <Icon className="h-4 w-4 shrink-0" />
+                    <span className="min-w-0 flex-1 truncate">{opt.label}</span>
+                    {selected ? (
+                      <Check className="h-3.5 w-3.5 shrink-0" />
+                    ) : (
+                      <Badge tone="neutral" className="shrink-0">
+                        {count}
+                      </Badge>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {campaigns.length > 0 && (
+          <div>
+            <p className="mb-2 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+              <Megaphone className="h-3.5 w-3.5" /> Campaign
+            </p>
+            <Select
+              value={campaignFilter}
+              onChange={(e) => onCampaignFilterChange(e.target.value)}
+              aria-label="Filter by campaign"
+            >
+              <option value="">All campaigns</option>
+              {campaigns.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
+            </Select>
+          </div>
+        )}
+      </div>
+
+      <div className="flex items-center justify-between gap-3 border-t border-border/60 p-4">
+        <span className="text-sm text-muted-foreground">
+          <b className="text-foreground tabular">{matchCount}</b> lead
+          {matchCount === 1 ? "" : "s"} ready to dial
+        </span>
+        <Button size="sm" onClick={onClose} className="gap-1.5">
+          <Check className="h-3.5 w-3.5" />
+          Start dialing
+        </Button>
+      </div>
+    </Modal>
   );
 }

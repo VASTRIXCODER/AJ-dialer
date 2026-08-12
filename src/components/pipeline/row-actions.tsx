@@ -4,6 +4,7 @@ import { Loader2, MoreVertical, RefreshCw, X } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { OutcomeGrid } from "@/components/dialer/outcome-grid";
+import { Modal } from "@/components/ui/modal";
 import { Portal } from "@/components/ui/portal";
 import type { CallOutcome } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -162,40 +163,37 @@ export function RowActions({
       )}
 
       {redispo && (
-        <Portal>
-          <div className="fixed inset-0 z-[100] flex items-end justify-center sm:items-center sm:p-4">
-            <div
-              className="absolute inset-0 bg-background/70 backdrop-blur-xl"
-              onClick={() => setRedispo(false)}
-            />
-            <div className="glass relative w-full max-w-md rounded-t-2xl border border-border/60 p-5 shadow-lift sm:rounded-2xl">
-              <div className="mb-4 flex items-start justify-between">
-                <div>
-                  <p className="text-base font-semibold">Change disposition</p>
-                  <p className="mt-0.5 text-sm text-muted-foreground">
-                    Override the AI&apos;s outcome — this re-files the lead and updates reports.
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setRedispo(false)}
-                  aria-label="Close"
-                  className="flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground"
-                >
-                  <X className="h-4 w-4" />
-                </button>
-              </div>
-              {busy ? (
-                <div className="flex justify-center py-10">
-                  <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
-                </div>
-              ) : (
-                <OutcomeGrid onSelect={(outcome: CallOutcome) => post({ action: "disposition", leadId, outcome })} />
-              )}
-              {err && <p className="mt-3 text-sm font-medium text-danger">{err}</p>}
+        <Modal
+          onClose={() => setRedispo(false)}
+          label="Change disposition"
+          maxWidth="max-w-md"
+          panelClassName="p-5"
+        >
+          <div className="mb-4 flex items-start justify-between">
+            <div>
+              <p className="text-base font-semibold">Change disposition</p>
+              <p className="mt-0.5 text-sm text-muted-foreground">
+                Override the AI&apos;s outcome — this re-files the lead and updates reports.
+              </p>
             </div>
+            <button
+              type="button"
+              onClick={() => setRedispo(false)}
+              aria-label="Close"
+              className="flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground"
+            >
+              <X className="h-4 w-4" />
+            </button>
           </div>
-        </Portal>
+          {busy ? (
+            <div className="flex justify-center py-10">
+              <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+            </div>
+          ) : (
+            <OutcomeGrid onSelect={(outcome: CallOutcome) => post({ action: "disposition", leadId, outcome })} />
+          )}
+          {err && <p className="mt-3 text-sm font-medium text-danger">{err}</p>}
+        </Modal>
       )}
     </>
   );

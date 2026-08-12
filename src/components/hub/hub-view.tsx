@@ -19,7 +19,7 @@ import { useState } from "react";
 import { LogoMark } from "@/components/brand/logo";
 import { Button } from "@/components/ui/button";
 import { Input, Label, Select, Textarea } from "@/components/ui/input";
-import { Portal } from "@/components/ui/portal";
+import { Modal } from "@/components/ui/modal";
 import type { OrgBlueprint, OrgFeatures } from "@/lib/org/settings";
 import { DIALER_TEMPLATES, templateLabel } from "@/lib/org/templates";
 import { ROLE_LABEL, type OrgRole } from "@/lib/permissions";
@@ -392,112 +392,107 @@ function AIBuilder({
   }
 
   return (
-    <Portal>
-      <div className="fixed inset-0 z-[100] flex items-end justify-center sm:items-center sm:p-4">
-        <div className="absolute inset-0 bg-background/70 backdrop-blur-xl" onClick={onClose} />
-        <div className="glass relative flex max-h-[92vh] w-full max-w-2xl flex-col overflow-hidden rounded-t-2xl border border-border/60 shadow-lift sm:rounded-2xl">
-          <div className="flex items-center justify-between border-b border-border/60 p-5">
-            <div className="flex items-center gap-3">
-              <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-solar text-white shadow-glow">
-                <Wand2 className="h-5 w-5" />
-              </span>
-              <div>
-                <p className="text-base font-semibold leading-tight">AI organization builder</p>
-                <p className="text-xs text-muted-foreground">
-                  {aiConfigured
-                    ? "Claude designs your white-labeled dialer."
-                    : "Smart defaults design your dialer (add a Claude key for bespoke results)."}
-                </p>
-              </div>
-            </div>
-            <button
-              type="button"
-              onClick={onClose}
-              aria-label="Close"
-              className="flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground"
-            >
-              <X className="h-4 w-4" />
-            </button>
-          </div>
-
-          <div className="flex-1 space-y-4 overflow-y-auto p-5">
-            {step === "describe" ? (
-              <>
-                <div>
-                  <Label>Describe your business</Label>
-                  <Textarea
-                    value={description}
-                    onChange={(e) => setDescription(e.target.value)}
-                    placeholder="e.g. We're a residential roofing company in Texas. We call homeowners after storms to book free inspections and warranty claims."
-                    className="min-h-[120px]"
-                  />
-                </div>
-                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                  <div>
-                    <Label>Organization name</Label>
-                    <Input
-                      value={name}
-                      onChange={(e) => setName(e.target.value)}
-                      placeholder="e.g. Apex Roofing"
-                    />
-                  </div>
-                  <div>
-                    <Label>Industry (optional)</Label>
-                    <Input
-                      value={industry}
-                      onChange={(e) => setIndustry(e.target.value)}
-                      placeholder="Roofing / Home services"
-                    />
-                  </div>
-                </div>
-              </>
-            ) : bp ? (
-              <BlueprintPreview bp={bp} source={source} onChange={setBp} />
-            ) : null}
-
-            {err && (
-              <p className="flex items-center gap-1.5 text-sm font-medium text-danger">
-                <AlertTriangle className="h-4 w-4" />
-                {err}
-              </p>
-            )}
-          </div>
-
-          <div className="flex gap-2 border-t border-border/60 p-5">
-            {step === "describe" ? (
-              <>
-                <Button variant="ghost" className="flex-1" type="button" onClick={onClose}>
-                  Cancel
-                </Button>
-                <Button
-                  className="flex-1 gap-2"
-                  disabled={busy || (!description.trim() && !name.trim())}
-                  onClick={generate}
-                >
-                  {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
-                  Design it
-                </Button>
-              </>
-            ) : (
-              <>
-                <Button
-                  variant="ghost"
-                  className="flex-1"
-                  type="button"
-                  onClick={() => setStep("describe")}
-                >
-                  Back
-                </Button>
-                <Button className="flex-1 gap-2" disabled={busy} onClick={create}>
-                  {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Building2 className="h-4 w-4" />}
-                  Create organization
-                </Button>
-              </>
-            )}
+    <Modal onClose={onClose} label="AI organization builder" maxWidth="max-w-2xl">
+      <div className="flex items-center justify-between border-b border-border/60 p-5">
+        <div className="flex items-center gap-3">
+          <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-solar text-white shadow-glow">
+            <Wand2 className="h-5 w-5" />
+          </span>
+          <div>
+            <p className="text-base font-semibold leading-tight">AI organization builder</p>
+            <p className="text-xs text-muted-foreground">
+              {aiConfigured
+                ? "Claude designs your white-labeled dialer."
+                : "Smart defaults design your dialer (add a Claude key for bespoke results)."}
+            </p>
           </div>
         </div>
+        <button
+          type="button"
+          onClick={onClose}
+          aria-label="Close"
+          className="flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground"
+        >
+          <X className="h-4 w-4" />
+        </button>
       </div>
-    </Portal>
+
+      <div className="flex-1 space-y-4 overflow-y-auto p-5">
+        {step === "describe" ? (
+          <>
+            <div>
+              <Label>Describe your business</Label>
+              <Textarea
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                placeholder="e.g. We're a residential roofing company in Texas. We call homeowners after storms to book free inspections and warranty claims."
+                className="min-h-[120px]"
+              />
+            </div>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <div>
+                <Label>Organization name</Label>
+                <Input
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  placeholder="e.g. Apex Roofing"
+                />
+              </div>
+              <div>
+                <Label>Industry (optional)</Label>
+                <Input
+                  value={industry}
+                  onChange={(e) => setIndustry(e.target.value)}
+                  placeholder="Roofing / Home services"
+                />
+              </div>
+            </div>
+          </>
+        ) : bp ? (
+          <BlueprintPreview bp={bp} source={source} onChange={setBp} />
+        ) : null}
+
+        {err && (
+          <p className="flex items-center gap-1.5 text-sm font-medium text-danger">
+            <AlertTriangle className="h-4 w-4" />
+            {err}
+          </p>
+        )}
+      </div>
+
+      <div className="flex gap-2 border-t border-border/60 p-5">
+        {step === "describe" ? (
+          <>
+            <Button variant="ghost" className="flex-1" type="button" onClick={onClose}>
+              Cancel
+            </Button>
+            <Button
+              className="flex-1 gap-2"
+              disabled={busy || (!description.trim() && !name.trim())}
+              onClick={generate}
+            >
+              {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+              Design it
+            </Button>
+          </>
+        ) : (
+          <>
+            <Button
+              variant="ghost"
+              className="flex-1"
+              type="button"
+              onClick={() => setStep("describe")}
+            >
+              Back
+            </Button>
+            <Button className="flex-1 gap-2" disabled={busy} onClick={create}>
+              {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Building2 className="h-4 w-4" />}
+              Create organization
+            </Button>
+          </>
+        )}
+      </div>
+    </Modal>
   );
 }
 

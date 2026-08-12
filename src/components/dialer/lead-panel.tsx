@@ -1,6 +1,5 @@
 "use client";
 
-import { motion } from "framer-motion";
 import {
   BatteryCharging,
   Bot,
@@ -23,7 +22,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Portal } from "@/components/ui/portal";
+import { Modal } from "@/components/ui/modal";
 import { Ring } from "@/components/ui/progress";
 import type { Lead } from "@/lib/types";
 import { outcomeConfig } from "@/lib/status";
@@ -418,97 +417,81 @@ function LeadBrowser({
   }, [results]);
 
   return (
-    <Portal>
-    <motion.div
-      className="fixed inset-0 z-[100] flex items-end justify-center sm:items-center sm:p-4"
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      exit={{ opacity: 0 }}
+    <Modal
+      onClose={onClose}
+      label="Search leads"
+      maxWidth="max-w-md"
+      panelClassName="max-h-[80vh] sm:max-h-[70vh]"
     >
-      <motion.div
-        className="absolute inset-0 bg-background/70 backdrop-blur-xl"
-        onClick={onClose}
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-      />
-      <motion.div
-        initial={{ opacity: 0, y: 20, scale: 0.98 }}
-        animate={{ opacity: 1, y: 0, scale: 1 }}
-        exit={{ opacity: 0, y: 16, scale: 0.98 }}
-        transition={{ type: "spring", stiffness: 320, damping: 30 }}
-        className="glass relative flex max-h-[80vh] w-full max-w-md flex-col overflow-hidden rounded-t-2xl border border-border/60 shadow-lift sm:max-h-[70vh] sm:rounded-2xl"
-      >
-        <div className="flex items-center gap-2 border-b border-border/60 px-4">
-          <Search className="h-4 w-4 shrink-0 text-muted-foreground" />
-          <input
-            autoFocus
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
-            placeholder="Search leads by name, city, phone…"
-            className="h-12 w-full bg-transparent text-sm outline-none placeholder:text-muted-foreground/70"
-          />
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="Close"
-            className="flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground hover:bg-muted"
-          >
-            <X className="h-4 w-4" />
-          </button>
-        </div>
-        <div className="overflow-y-auto p-2">
-          {households.length === 0 ? (
-            <p className="px-3 py-8 text-center text-sm text-muted-foreground">
-              No leads match “{q.trim()}”.
-            </p>
-          ) : (
-            households.slice(0, 200).map((group) => {
-              // Prefer the entry the dialer is already on, so picking the
-              // household keeps the rep on the number they're working.
-              const l = group.find((g) => g.id === currentId) ?? group[0];
-              const extra = group.length - 1;
-              return (
-                <button
-                  key={l.id}
-                  type="button"
-                  onClick={() => onPick(l.id)}
-                  className={`flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left transition-colors hover:bg-muted/60 ${
-                    group.some((g) => g.id === currentId) ? "bg-primary-soft" : ""
-                  }`}
-                >
-                  <Avatar
-                    initials={initials(`${l.firstName} ${l.lastName}`)}
-                    tone="chart-2"
-                    size="sm"
-                  />
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-semibold">
-                      {l.firstName} {l.lastName}
-                    </p>
-                    <p className="truncate text-xs text-muted-foreground tabular">
-                      {formatPhone(l.phone)} · {[l.city, l.state].filter(Boolean).join(", ")}
-                    </p>
-                  </div>
-                  {extra > 0 && (
-                    <span
-                      className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-[10px] font-bold text-muted-foreground"
-                      title={`${group.length} numbers on file for this household`}
-                    >
-                      +{extra} number{extra === 1 ? "" : "s"}
-                    </span>
-                  )}
-                  {l.aiScore != null && (
-                    <span className="shrink-0 text-xs font-bold text-muted-foreground tabular">
-                      {l.aiScore}
-                    </span>
-                  )}
-                </button>
-              );
-            })
-          )}
-        </div>
-      </motion.div>
-    </motion.div>
-    </Portal>
+      <div className="flex items-center gap-2 border-b border-border/60 px-4">
+        <Search className="h-4 w-4 shrink-0 text-muted-foreground" />
+        <input
+          autoFocus
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          placeholder="Search leads by name, city, phone…"
+          className="h-12 w-full bg-transparent text-sm outline-none placeholder:text-muted-foreground/70"
+        />
+        <button
+          type="button"
+          onClick={onClose}
+          aria-label="Close"
+          className="flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground hover:bg-muted"
+        >
+          <X className="h-4 w-4" />
+        </button>
+      </div>
+      <div className="overflow-y-auto p-2">
+        {households.length === 0 ? (
+          <p className="px-3 py-8 text-center text-sm text-muted-foreground">
+            No leads match “{q.trim()}”.
+          </p>
+        ) : (
+          households.slice(0, 200).map((group) => {
+            // Prefer the entry the dialer is already on, so picking the
+            // household keeps the rep on the number they're working.
+            const l = group.find((g) => g.id === currentId) ?? group[0];
+            const extra = group.length - 1;
+            return (
+              <button
+                key={l.id}
+                type="button"
+                onClick={() => onPick(l.id)}
+                className={`flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left transition-colors hover:bg-muted/60 ${
+                  group.some((g) => g.id === currentId) ? "bg-primary-soft" : ""
+                }`}
+              >
+                <Avatar
+                  initials={initials(`${l.firstName} ${l.lastName}`)}
+                  tone="chart-2"
+                  size="sm"
+                />
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-semibold">
+                    {l.firstName} {l.lastName}
+                  </p>
+                  <p className="truncate text-xs text-muted-foreground tabular">
+                    {formatPhone(l.phone)} · {[l.city, l.state].filter(Boolean).join(", ")}
+                  </p>
+                </div>
+                {extra > 0 && (
+                  <span
+                    className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-[10px] font-bold text-muted-foreground"
+                    title={`${group.length} numbers on file for this household`}
+                  >
+                    +{extra} number{extra === 1 ? "" : "s"}
+                  </span>
+                )}
+                {l.aiScore != null && (
+                  <span className="shrink-0 text-xs font-bold text-muted-foreground tabular">
+                    {l.aiScore}
+                  </span>
+                )}
+              </button>
+            );
+          })
+        )}
+      </div>
+    </Modal>
   );
 }

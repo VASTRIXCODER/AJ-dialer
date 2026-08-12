@@ -29,6 +29,7 @@ import { OutcomeGrid } from "@/components/dialer/outcome-grid";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Select } from "@/components/ui/input";
+import { Modal } from "@/components/ui/modal";
 import { Portal } from "@/components/ui/portal";
 import { bucketOf, matchesFilters, organizeAppointments } from "@/lib/appointments-organize";
 import {
@@ -480,7 +481,6 @@ export function AppointmentsWorkspace({
             access={access}
             reps={repOptions}
             busy={busyId != null && (busyId === active?.id || busyId === active?.leadId)}
-            reduce={!!reduce}
             onClose={() => {
               setActive(null);
               setDraft(null);
@@ -851,29 +851,27 @@ function BulkBar({
         </div>
 
         {routing && (
-          <Portal>
-            <div className="fixed inset-0 z-[101] flex items-end justify-center sm:items-center sm:p-4">
-              <div
-                className="absolute inset-0 bg-background/70 backdrop-blur-xl"
-                onClick={() => setRouting(false)}
-              />
-              <div className="glass relative w-full max-w-md rounded-t-2xl border border-border/60 p-5 shadow-lift sm:rounded-2xl">
-                <div className="mb-4">
-                  <p className="text-base font-semibold">Route {count} back</p>
-                  <p className="mt-0.5 text-sm text-muted-foreground">
-                    Re-file every selected lead under one disposition. This overrides the AI and
-                    updates reports.
-                  </p>
-                </div>
-                <OutcomeGrid
-                  onSelect={(o) => {
-                    setRouting(false);
-                    onRoute(o);
-                  }}
-                />
-              </div>
+          <Modal
+            onClose={() => setRouting(false)}
+            label={`Route ${count} back`}
+            maxWidth="max-w-md"
+            panelClassName="p-5"
+            zIndex={101}
+          >
+            <div className="mb-4">
+              <p className="text-base font-semibold">Route {count} back</p>
+              <p className="mt-0.5 text-sm text-muted-foreground">
+                Re-file every selected lead under one disposition. This overrides the AI and
+                updates reports.
+              </p>
             </div>
-          </Portal>
+            <OutcomeGrid
+              onSelect={(o) => {
+                setRouting(false);
+                onRoute(o);
+              }}
+            />
+          </Modal>
         )}
       </motion.div>
     </Portal>
