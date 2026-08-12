@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { dncKey, getDncDigits } from "@/lib/db/dnc";
 import { insertLeads, type LeadInput } from "@/lib/db/leads";
 import { hasCurrentCertification, normalizeCampaignId } from "@/lib/legal/campaign-cert";
 import type { ParsedLead } from "@/lib/leads/csv";
@@ -136,7 +137,17 @@ export async function POST(req: Request) {
   // group (if any). `hasGroup` distinguishes "leadGroup: null" (explicit
   // "unsorted") from the key being omitted entirely (legacy callers that never
   // mention groups, whose rows keep whatever lead_group they'd otherwise get).
-  const capped = leads.slice(0, 5000);
+  // Scrub the org's Do-Not-Call list: a re-import must never resurrect a number a
+  // homeowner asked us to stop calling (import dedup only compares against
+  // existing lead ROWS, which may have been deleted).
+  const dncSet = await getDncDigits(viewer.org?.id ?? null);
+  const scrubbed = dncSet.size
+    ? leads.filter(
+        (r) => !dncSet.has(dncKey(String((r as { phone?: string }).phone ?? ""))),
+      )
+    : leads;
+  const dncSkipped = leads.length - scrubbed.length;
+  const capped = scrubbed.slice(0, 5000);
 
   // ── Packs ────────────────────────────────────────────────────────────────
   // Cut the batch into numbered slices so a big list can be dealt out a pack
@@ -188,7 +199,7 @@ export async function POST(req: Request) {
   }
 
   return NextResponse.json(
-    { ...result, source, aiError, packs: packIds.length },
+    { ...result, source, aiError, packs: packIds.length, dncSkipped },
     { status: result.error ? 400 : 200 },
   );
 }

@@ -6,6 +6,7 @@ import { isSupabaseConfigured } from "../supabase/config";
 import { createClient } from "../supabase/server";
 import type { Lead, LeadGroup, LeadStatus } from "../types";
 import { normalizePhone } from "../utils";
+import { getDncDigits, scrubDnc } from "./dnc";
 import { canActOn, getScope } from "./scope";
 
 // Account-scoped lead access. When Supabase is configured and the user is signed
@@ -753,6 +754,9 @@ export async function getDialQueue(): Promise<Lead[]> {
     const orgId = prof?.org_id ? String(prof.org_id) : null;
     const supervisor =
       Boolean(orgId) && isSupervisorRole(prof?.role) && isAdminConfigured();
+    // Suppression set for this org — scrubbed from the queue so a DNC number never
+    // appears in the manual dialer (matching the auto-dialer + placement scrubs).
+    const dnc = await getDncDigits(orgId);
 
     // PAGED. An un-ranged select stops at PostgREST's 1,000-row default without
     // any error, so this account's dial queue silently held 1,000 of its 15,136
@@ -772,7 +776,7 @@ export async function getDialQueue(): Promise<Lead[]> {
           .order("created_at", { ascending: true })
           .order("id", { ascending: true }),
       );
-      return dialable(rows.map((r) => rowToLead(r as Row)));
+      return scrubDnc(dialable(rows.map((r) => rowToLead(r as Row))), dnc);
     }
 
     // A rep's queue = leads they UPLOADED (owner_id) OR were ASSIGNED
@@ -789,7 +793,7 @@ export async function getDialQueue(): Promise<Lead[]> {
       if (orgId) q = q.eq("org_id", orgId);
       return q.order("created_at", { ascending: true }).order("id", { ascending: true });
     });
-    return dialable(rows.map((r) => rowToLead(r as Row)));
+    return scrubDnc(dialable(rows.map((r) => rowToLead(r as Row))), dnc);
   } catch {
     return [];
   }
@@ -928,11 +932,16 @@ export async function getAutoDialLeadsForOrg(
       // Never dialed, or last dialed before the cooldown cutoff.
       .or(`last_contacted_at.is.null,last_contacted_at.lt.${cutoff}`)
       .order("last_contacted_at", { ascending: true, nullsFirst: true })
-      .limit(Math.max(1, opts.limit));
+      // Over-fetch a buffer so DNC scrubbing can't starve the batch below `limit`.
+      .limit(Math.max(1, opts.limit) + 25);
     if (error) return [];
-    return (data ?? [])
+    const eligible = (data ?? [])
       .map((r) => rowToLead(r as Row))
       .filter((l) => l.phone.replace(/\D/g, "").length >= 10);
+    // Never auto-dial a suppressed number (added via a do_not_call disposition,
+    // an SMS STOP, or a DNC import) even if its lead row is still a dialable status.
+    const dnc = await getDncDigits(orgId);
+    return scrubDnc(eligible, dnc).slice(0, Math.max(1, opts.limit));
   } catch {
     return [];
   }

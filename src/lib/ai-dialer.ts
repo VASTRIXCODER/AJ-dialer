@@ -4,6 +4,7 @@ import { resolveAgentConfig } from "./ai/agent-prompt";
 import { armProbe, breakerStatus, recordProviderFailure } from "./ai-call-breaker";
 import { registerAICall } from "./ai-call-store";
 import { isQuotaMessage } from "./call-disposition";
+import { isOnDnc } from "./db/dnc";
 import { seedAIConversation } from "./db/records";
 import { nextCallerIdWithInfo } from "./dialer/rotation-server";
 import {
@@ -154,6 +155,14 @@ export async function placeAiCallForLead(opts: {
   if (toNumber.replace(/\D/g, "").length < 10) {
     return { conversationId: null, callSid: null, error: "Invalid phone number" };
   }
+
+  // DNC scrub: never place an AI call to a suppressed number. The cron path also
+  // scrubs its lead list up front, but this backstops interactive AI calls and
+  // any number suppressed (via import / SMS STOP) after the queue was built.
+  if (org?.id && (await isOnDnc(org.id, toNumber))) {
+    return { conversationId: null, callSid: null, error: "On the Do Not Call list" };
+  }
+
   const leadName = `${lead.firstName} ${lead.lastName}`.trim() || formatPhone(toNumber);
 
   // ── GUARDRAIL 1: the circuit breaker ───────────────────────────────────────

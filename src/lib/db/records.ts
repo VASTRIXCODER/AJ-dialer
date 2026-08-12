@@ -11,6 +11,7 @@ import {
   isTerminalLiveState,
   LIVE_STATES,
 } from "../types";
+import { addToDnc } from "./dnc";
 
 const UUID =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -124,6 +125,31 @@ async function routeDisposition(
       reason: input.summary || "Callback requested",
       status: "due",
     });
+  } else if (outcome === "do_not_call") {
+    // Suppress the NUMBER, not just this lead row: setting the row's status to
+    // do_not_call only stops THIS row, so the same homeowner on a re-import or a
+    // second campaign's row was fully dialable. Write the number to the org's
+    // suppression list so every dial path scrubs it forever, even if this lead
+    // row is later deleted. Resolve the org from the lead (the passed client is
+    // RLS-scoped for a rep, admin for the AI path — both can read the row's org).
+    let dncOrg: string | null = null;
+    if (leadId) {
+      const { data } = await client
+        .from("leads")
+        .select("org_id")
+        .eq("id", leadId)
+        .maybeSingle();
+      dncOrg = data?.org_id ? String(data.org_id) : null;
+    }
+    if (dncOrg && input.phone) {
+      await addToDnc({
+        orgId: dncOrg,
+        phone: input.phone,
+        reason: input.summary || "Marked do not call on a call",
+        source: input.source === "ai" ? "ai_disposition" : "rep_disposition",
+        createdBy: ownerId,
+      });
+    }
   }
 }
 

@@ -1535,3 +1535,27 @@ create policy "leads update" on public.leads for update
   with check (public.app_is_superadmin() or (public.app_is_active() and (
     (owner_id = auth.uid() and (org_id is null or org_id = public.app_active_org()))
     or (org_id is not null and org_id = public.app_active_org() and public.app_is_org_member(org_id)))));
+
+-- ═════════════════════════════════════════════════════════════════════════════
+-- PART: DO-NOT-CALL / SUPPRESSION (P1). Kept in sync with supabase/dnc.sql.
+-- Phone-number-level suppression per org, written on every do_not_call
+-- disposition (and inbound SMS STOP) and scrubbed at every dial path + on import.
+-- ═════════════════════════════════════════════════════════════════════════════
+create table if not exists public.dnc_numbers (
+  id uuid primary key default gen_random_uuid(),
+  org_id uuid not null references public.organizations (id) on delete cascade,
+  phone_digits text not null,
+  reason text,
+  source text,
+  created_by uuid,
+  created_at timestamptz not null default now(),
+  unique (org_id, phone_digits)
+);
+create index if not exists dnc_numbers_org_phone_idx
+  on public.dnc_numbers (org_id, phone_digits);
+
+alter table public.dnc_numbers enable row level security;
+drop policy if exists "dnc read" on public.dnc_numbers;
+create policy "dnc read" on public.dnc_numbers for select using (
+  public.app_is_superadmin() or (public.app_is_active() and public.app_is_org_member(org_id))
+);

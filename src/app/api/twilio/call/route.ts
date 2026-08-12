@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { registerRoom } from "@/lib/call-registry";
+import { dncKey, getDncDigits } from "@/lib/db/dnc";
 import { type CallerIdInfo, nextCallerIdWithInfo } from "@/lib/dialer/rotation-server";
 import { getViewer } from "@/lib/org/membership";
 import {
@@ -58,12 +59,23 @@ export async function POST(req: Request) {
   const rawLeads = body.leads ?? [];
   // Normalize every number; toE164 returns "" for anything not dialable, so the
   // filter drops placeholder/garbled phones before we ever hit Twilio.
-  const leads = rawLeads
+  const withNumbers = rawLeads
     .map((l) => ({ leadId: l.leadId, to: toE164(l.phone) }))
     .filter((l) => l.to && l.leadId);
 
+  // Scrub the org's Do-Not-Call list before dialing anything.
+  const dncSet = viewer.org?.id ? await getDncDigits(viewer.org.id) : new Set<string>();
+  const leads = withNumbers.filter((l) => !dncSet.has(dncKey(l.to)));
+
   if (!room) {
     return NextResponse.json({ error: "A conference room is required" }, { status: 400 });
+  }
+  // Everything got scrubbed as Do-Not-Call — say so rather than "no valid number".
+  if (withNumbers.length && !leads.length) {
+    return NextResponse.json(
+      { error: "These numbers are on the Do Not Call list and can’t be dialed." },
+      { status: 400 },
+    );
   }
   if (!leads.length) {
     // Distinguish "you sent nothing" from "every number was invalid" so the rep
