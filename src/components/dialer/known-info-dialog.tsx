@@ -1,10 +1,9 @@
 "use client";
 
-import { motion } from "framer-motion";
 import { Bot, X } from "lucide-react";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
-import { Portal } from "@/components/ui/portal";
+import { Modal } from "@/components/ui/modal";
 import { useDialerContextOptional } from "./dialer-context";
 import type { KnownInfo } from "@/lib/use-dialer";
 import { formatPhone } from "@/lib/utils";
@@ -44,27 +43,8 @@ export function KnownInfoDialog({
     "h-10 w-full rounded-lg border border-border bg-background/50 px-3 text-sm focus-visible:border-primary/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/15";
 
   return (
-    <Portal>
-      <motion.div
-        className="fixed inset-0 z-[100] flex items-end justify-center sm:items-center sm:p-4"
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        exit={{ opacity: 0 }}
-      >
-        <motion.div
-          className="absolute inset-0 bg-background/70 backdrop-blur-xl"
-          onClick={onClose}
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-        />
-        <motion.div
-          initial={{ opacity: 0, y: 20, scale: 0.98 }}
-          animate={{ opacity: 1, y: 0, scale: 1 }}
-          exit={{ opacity: 0, y: 16, scale: 0.98 }}
-          transition={{ type: "spring", stiffness: 320, damping: 30 }}
-          className="glass relative flex max-h-[92vh] w-full max-w-lg flex-col overflow-hidden rounded-t-2xl border border-border/60 shadow-lift sm:max-h-[88vh] sm:rounded-2xl"
-        >
-          <div className="flex items-start justify-between gap-3 border-b border-border/60 p-5">
+    <Modal onClose={onClose} label={`AI call · ${formatPhone(phone)}`}>
+      <div className="flex items-start justify-between gap-3 border-b border-border/60 p-5">
             <div className="flex items-center gap-3">
               <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-solar text-white shadow-glow">
                 <Bot className="h-5 w-5" />
@@ -148,8 +128,6 @@ export function KnownInfoDialog({
               Start AI call
             </Button>
           </div>
-        </motion.div>
-      </motion.div>
-    </Portal>
+    </Modal>
   );
 }
