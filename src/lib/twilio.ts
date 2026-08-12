@@ -241,6 +241,20 @@ export async function setNumberVoiceWebhook(phoneNumber: string, voiceUrl: strin
   await client.incomingPhoneNumbers(match.sid).update({ voiceUrl, voiceMethod: "POST" });
 }
 
+/**
+ * Point a Twilio number's inbound Messaging webhook at the app, so an inbound SMS
+ * (a STOP opt-out) is delivered to /api/twilio/sms instead of 404ing at whatever
+ * stale URL the number was left on (see error.txt / docs/CALLER_ID_DELIVERABILITY).
+ */
+export async function setNumberSmsWebhook(phoneNumber: string, smsUrl: string): Promise<void> {
+  const client = await getRestClient();
+  if (!client) throw new Error("Twilio REST client not configured");
+  const matches = await client.incomingPhoneNumbers.list({ phoneNumber, limit: 1 });
+  const match = matches[0];
+  if (!match) throw new Error(`Twilio number ${phoneNumber} not found on this account`);
+  await client.incomingPhoneNumbers(match.sid).update({ smsUrl, smsMethod: "POST" });
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Supervisor live-listen authorization.
 //

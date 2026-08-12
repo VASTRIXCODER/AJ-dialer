@@ -1,7 +1,13 @@
 import { NextResponse } from "next/server";
 import { isAIBridgeConfigured, importTwilioPhoneNumber } from "@/lib/elevenlabs";
 import { isSuperadmin } from "@/lib/superadmin";
-import { getRestClient, setNumberVoiceWebhook, twilioConfig } from "@/lib/twilio";
+import {
+  getPublicBaseUrl,
+  getRestClient,
+  setNumberSmsWebhook,
+  setNumberVoiceWebhook,
+  twilioConfig,
+} from "@/lib/twilio";
 
 export const dynamic = "force-dynamic";
 
@@ -9,6 +15,8 @@ interface NumberResult {
   number: string;
   webhook: "ok" | "error" | "skipped";
   webhookError?: string;
+  sms: "ok" | "error" | "skipped";
+  smsError?: string;
   elevenlabs: "ok" | "error" | "skipped";
   elevenlabsError?: string;
 }
@@ -33,12 +41,22 @@ export async function POST(req: Request) {
   if (!client)
     return NextResponse.json({ ok: false, error: "Twilio REST client not configured" }, { status: 400 });
 
-  const voiceUrl = `${twilioConfig.appUrl.replace(/\/+$/, "")}/api/twilio/voice`;
+  // Use the same single-hop origin the dialer's callbacks use, NOT the
+  // NEXT_PUBLIC_APP_URL that a stale Vercel alias silently broke callbacks with
+  // (see getPublicBaseUrl). Fall back to appUrl only if no request origin exists.
+  const base = (getPublicBaseUrl(req) ?? twilioConfig.appUrl).replace(/\/+$/, "");
+  const voiceUrl = `${base}/api/twilio/voice`;
+  const smsUrl = `${base}/api/twilio/sms`;
   const bridgeActive = isAIBridgeConfigured();
 
   const results: NumberResult[] = [];
   for (const number of numbers) {
-    const result: NumberResult = { number, webhook: "skipped", elevenlabs: "skipped" };
+    const result: NumberResult = {
+      number,
+      webhook: "skipped",
+      sms: "skipped",
+      elevenlabs: "skipped",
+    };
 
     try {
       await setNumberVoiceWebhook(number, voiceUrl);
@@ -46,6 +64,16 @@ export async function POST(req: Request) {
     } catch (err) {
       result.webhook = "error";
       result.webhookError = err instanceof Error ? err.message : String(err);
+    }
+
+    // Point Messaging at our STOP handler so opt-outs are honored (and stop
+    // 404ing at a stale URL, the error.txt symptom).
+    try {
+      await setNumberSmsWebhook(number, smsUrl);
+      result.sms = "ok";
+    } catch (err) {
+      result.sms = "error";
+      result.smsError = err instanceof Error ? err.message : String(err);
     }
 
     if (!bridgeActive) {

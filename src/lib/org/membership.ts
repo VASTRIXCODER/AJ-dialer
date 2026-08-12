@@ -987,6 +987,31 @@ async function otherOrgsCallerIds(excludeOrgId: string): Promise<Set<string>> {
   }
 }
 
+/**
+ * Which org owns a given outbound number (its caller ID / rotation pool). Used to
+ * route an inbound SMS (e.g. a STOP) to the right org's suppression list. Returns
+ * null when no org claims the number (a shared platform number, or unconfigured).
+ */
+export async function orgIdForCallerId(number: string): Promise<string | null> {
+  if (!isAdminConfigured()) return null;
+  const target = normalizePhone(number);
+  if (!target) return null;
+  try {
+    const admin = createAdminClient();
+    const { data } = await admin.from("organizations").select("id, settings");
+    for (const row of (data ?? []) as Row[]) {
+      const s = mergeSettings((row as Row).settings);
+      const pool = [s.dialing.callerId, ...(s.dialing.callerIds ?? [])];
+      if (pool.some((n) => normalizePhone(String(n ?? "")) === target)) {
+        return String((row as Row).id);
+      }
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 export async function updateOrganizationSettings(patch: OrgUpdate): Promise<Result> {
   const auth = await authorize("org.edit");
   if (!auth.ok) return { ok: false, error: auth.error };
