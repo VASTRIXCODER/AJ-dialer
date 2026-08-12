@@ -98,7 +98,7 @@ export function DialerFloor() {
         <div className="max-h-64 divide-y divide-border/60 overflow-y-auto border-t border-border/60">
           {data.dialers.map((d) => (
             <div key={d.id} className="flex items-center gap-3 px-4 py-2">
-              <Avatar initials={initials(d.name) || "—"} color="#3B82F6" size="sm" />
+              <Avatar initials={initials(d.name) || "—"} seed={d.id} size="sm" />
               <div className="min-w-0 flex-1">
                 <p className="truncate text-sm font-medium">
                   {d.name}

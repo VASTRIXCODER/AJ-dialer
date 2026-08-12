@@ -166,7 +166,7 @@ export function RepPerformance({ reps }: { reps: LeaderboardEntry[] }) {
               <td className="px-4 py-2.5 text-muted-foreground tabular">{i + 1}</td>
               <td className="px-4 py-2.5">
                 <div className="flex items-center gap-2.5">
-                  <Avatar initials={r.initials} color={r.avatarColor} size="sm" />
+                  <Avatar initials={r.initials} color={r.avatarColor || undefined} seed={r.id} size="sm" />
                   <div className="min-w-0">
                     <p className="truncate font-semibold">{r.name}</p>
                     <Badge tone={ROLE_TONE[r.role] ?? "neutral"} className="capitalize">

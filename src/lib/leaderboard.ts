@@ -111,7 +111,8 @@ export function composeLeaderboard(
       id,
       name,
       initials: initials(name) || "—",
-      avatarColor: String(prof?.avatar_color || "#3B82F6"),
+      // Empty when unset — Avatar's seed prop then hash-picks a chart tone.
+      avatarColor: String(prof?.avatar_color || ""),
       role: String(m.role || "rep"),
       team: String(prof?.team || ""),
       daily: statOf(b.daily),

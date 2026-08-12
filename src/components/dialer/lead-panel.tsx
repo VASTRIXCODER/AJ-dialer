@@ -173,7 +173,7 @@ function LeadDetail({
     <>
       <div className="border-b border-border p-5">
         <div className="flex items-start gap-3">
-          <Avatar initials={initials(name)} color={lead.assignedRepId ? "#3B82F6" : "#0EA5E9"} size="lg" />
+          <Avatar initials={initials(name)} tone={lead.assignedRepId ? "chart-1" : "chart-2"} size="lg" />
           <div className="min-w-0 flex-1">
             <h3 className="truncate text-lg font-bold leading-tight">{name}</h3>
             <p className="truncate text-sm text-muted-foreground tabular">
@@ -275,7 +275,7 @@ function LeadDetail({
             <li key={l.id} className="flex items-center gap-2.5">
               <Avatar
                 initials={initials(`${l.firstName} ${l.lastName}`)}
-                color="#94a3b8"
+                tone="muted"
                 size="xs"
               />
               <div className="min-w-0 flex-1">
@@ -478,7 +478,7 @@ function LeadBrowser({
                 >
                   <Avatar
                     initials={initials(`${l.firstName} ${l.lastName}`)}
-                    color="#0EA5E9"
+                    tone="chart-2"
                     size="sm"
                   />
                   <div className="min-w-0 flex-1">

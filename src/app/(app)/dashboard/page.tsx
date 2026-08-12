@@ -312,7 +312,7 @@ export default async function DashboardPage() {
                   >
                     {i + 1}
                   </span>
-                  <Avatar initials={rep.initials} color={rep.avatarColor} size="sm" />
+                  <Avatar initials={rep.initials} color={rep.avatarColor || undefined} seed={rep.id} size="sm" />
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-sm font-semibold">
                       {rep.name}

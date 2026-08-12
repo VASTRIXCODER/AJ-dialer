@@ -99,7 +99,7 @@ export function ManualCallDetail({
           <div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-b border-border/60 bg-muted/40 px-5 py-2.5 text-xs text-muted-foreground">
             {call.repName && (
               <span className="flex items-center gap-1.5">
-                <Avatar initials={initials(call.repName)} color="#0EA5E9" size="xs" />
+                <Avatar initials={initials(call.repName)} seed={call.repName} size="xs" />
                 <span className="font-medium text-foreground">{call.repName}</span>
               </span>
             )}

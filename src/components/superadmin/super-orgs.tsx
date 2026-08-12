@@ -322,7 +322,7 @@ function OrgDrawer({ orgId, onChanged }: { orgId: string; onChanged: () => void 
                 key={m.id}
                 className="flex flex-wrap items-center gap-2 rounded-lg border border-warning/30 bg-warning/5 p-2"
               >
-                <Avatar initials={initials(m.name || m.email)} color="#f59e0b" size="xs" />
+                <Avatar initials={initials(m.name || m.email)} tone="warning" size="xs" />
                 <span className="min-w-0 flex-1 truncate text-sm">{m.email}</span>
                 <Badge tone="warning">pending</Badge>
                 <Button
@@ -350,7 +350,7 @@ function OrgDrawer({ orgId, onChanged }: { orgId: string; onChanged: () => void 
         <div className="space-y-1.5">
           {active.map((m) => (
             <div key={m.id} className="flex flex-wrap items-center gap-2 rounded-lg border border-border p-2">
-              <Avatar initials={initials(m.name || m.email)} color="#ef4444" size="xs" />
+              <Avatar initials={initials(m.name || m.email)} tone="danger" size="xs" />
               <span className="min-w-0 flex-1 truncate text-sm">{m.name || m.email}</span>
               <select
                 value={m.role}

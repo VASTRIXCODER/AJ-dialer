@@ -623,7 +623,7 @@ export function CallStage({
                 <span className="absolute inset-0 animate-pulse-ring rounded-full" />
                 <Avatar
                   initials={initials(name)}
-                  color="#10B981"
+                  tone="success"
                   size="lg"
                   className="relative h-24 w-24 text-3xl ring-4 ring-success/30"
                 />

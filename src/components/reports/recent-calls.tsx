@@ -68,7 +68,7 @@ export function RecentCalls({ calls }: { calls: RecentCall[] }) {
                       </Badge>
                       {rec.repName && (
                         <span className="flex items-center gap-1.5">
-                          <Avatar initials={initials(rec.repName)} color="#0EA5E9" size="xs" />
+                          <Avatar initials={initials(rec.repName)} seed={rec.repName} size="xs" />
                           <span className="truncate text-xs font-medium text-muted-foreground">
                             {rec.repName}
                           </span>

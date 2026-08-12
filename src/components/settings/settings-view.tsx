@@ -157,7 +157,7 @@ export function SettingsView({
         <div className="flex flex-col items-center text-center">
           <Avatar
             initials={displayInitials}
-            color="#3B82F6"
+            tone="primary"
             size="lg"
             className="h-20 w-20 text-2xl"
           />

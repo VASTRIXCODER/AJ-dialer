@@ -339,7 +339,7 @@ function MembersTab({
                   key={m.id}
                   className="flex flex-wrap items-center gap-3 rounded-xl border border-warning/30 bg-warning/5 p-3"
                 >
-                  <Avatar initials={initials(m.name || m.email)} color="#f59e0b" size="sm" />
+                  <Avatar initials={initials(m.name || m.email)} tone="warning" size="sm" />
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-sm font-semibold">{m.name || m.email}</p>
                     <p className="truncate text-xs text-muted-foreground">
@@ -473,7 +473,7 @@ function MemberRow({
   return (
     <div className="rounded-xl border border-border">
       <div className="flex flex-wrap items-center gap-3 p-3">
-        <Avatar initials={initials(m.name || m.email)} color="#0EA5E9" size="sm" />
+        <Avatar initials={initials(m.name || m.email)} seed={m.id} size="sm" />
         <div className="min-w-0 flex-1">
           <p className="truncate text-sm font-semibold">{m.name || m.email}</p>
           <p className="truncate text-xs text-muted-foreground">{m.email}</p>

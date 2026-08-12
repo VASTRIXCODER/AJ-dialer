@@ -111,7 +111,7 @@ export default async function CallbacksPage() {
                 {items.map((cb) => (
                   <div key={cb.id} className="p-4">
                     <div className="flex items-center gap-2.5">
-                      <Avatar initials={initials(cb.leadName)} color="#3B82F6" size="sm" />
+                      <Avatar initials={initials(cb.leadName)} tone="chart-1" size="sm" />
                       <div className="min-w-0 flex-1">
                         <p className="truncate text-sm font-semibold">{cb.leadName}</p>
                         <p className="truncate text-xs text-muted-foreground tabular">

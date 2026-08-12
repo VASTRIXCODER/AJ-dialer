@@ -206,7 +206,7 @@ export function Sidebar({
         >
           <Avatar
             initials={account?.initials ?? "·"}
-            color="#3B82F6"
+            tone="primary"
             size="sm"
             ring
           />

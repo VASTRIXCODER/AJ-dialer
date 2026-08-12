@@ -2,11 +2,11 @@
 
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import { Check, PhoneOff, X } from "lucide-react";
-import { Avatar } from "@/components/ui/avatar";
+import { Avatar, type AvatarTone } from "@/components/ui/avatar";
 import type { DialLine } from "@/lib/use-dialer";
 import { cn, formatPhone, initials } from "@/lib/utils";
 
-const colors = ["#3B82F6", "#0EA5E9", "#8B5CF6"];
+const tones: AvatarTone[] = ["chart-1", "chart-2", "chart-3"];
 
 export function ParallelLines({ lines }: { lines: DialLine[] }) {
   // MotionConfig reducedMotion="user" nulls transform animations but leaves
@@ -41,7 +41,7 @@ export function ParallelLines({ lines }: { lines: DialLine[] }) {
               <span className="relative">
                 <Avatar
                   initials={initials(name)}
-                  color={colors[i % colors.length]}
+                  tone={tones[i % tones.length]}
                   size="md"
                 />
                 {line.status === "ringing" && (

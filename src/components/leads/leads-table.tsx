@@ -834,7 +834,7 @@ export function LeadsTable({
                     )}
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-2.5">
-                        <Avatar initials={initials(name)} color="#3B82F6" size="sm" />
+                        <Avatar initials={initials(name)} tone="chart-1" size="sm" />
                         <div className="min-w-0">
                           <p className="font-semibold">{name || "—"}</p>
                           <p className="text-xs text-muted-foreground tabular">

@@ -214,7 +214,8 @@ export function LeaderboardView({
                   )}
                   <Avatar
                     initials={rep.initials}
-                    color={rep.avatarColor}
+                    color={rep.avatarColor || undefined}
+                    seed={rep.id}
                     size={isFirst ? "lg" : "md"}
                     className={cn(isFirst && "h-16 w-16 text-xl", "ring-4 ring-card")}
                   />
@@ -289,7 +290,7 @@ export function LeaderboardView({
                     <span className="text-sm font-bold text-muted-foreground tabular">{i + 1}</span>
                   )}
                 </span>
-                <Avatar initials={rep.initials} color={rep.avatarColor} size="sm" />
+                <Avatar initials={rep.initials} color={rep.avatarColor || undefined} seed={rep.id} size="sm" />
                 <div className="min-w-0 flex-1">
                   <p className="flex items-center gap-1.5 truncate font-semibold">
                     {rep.name}

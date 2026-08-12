@@ -87,7 +87,7 @@ export default async function BillsFinePage() {
         <div className="divide-y divide-border">
           {leads.map((lead) => (
             <div key={lead.id} className="flex items-center gap-3 px-5 py-4">
-              <Avatar initials={initials(lead.leadName)} color="#F59E0B" size="sm" />
+              <Avatar initials={initials(lead.leadName)} tone="warning" size="sm" />
               <div className="min-w-0 flex-1">
                 <p className="truncate text-sm font-semibold">{lead.leadName}</p>
                 <p className="truncate text-xs text-muted-foreground tabular">
