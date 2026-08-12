@@ -1,6 +1,11 @@
 import "server-only";
 
 import { leads as fallbackLeads, getLeadById as fallbackById } from "../data";
+import {
+  hasStructuredPredicates,
+  leadMatchesParsedQuery,
+  parseLeadQuery,
+} from "../leads/search-heuristics";
 import { SMART_LISTS, countSmartLists, smartListById } from "../leads/smart-lists";
 import { createAdminClient, isAdminConfigured } from "../supabase/admin";
 import { isSupabaseConfigured } from "../supabase/config";
@@ -213,6 +218,144 @@ export async function getLeads(): Promise<Lead[]> {
             ? -1
             : 1,
       );
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * PostgREST `.or()` filter strings are parsed on delimiters, and ilike values
+ * carry LIKE wildcards — strip everything that could break out of (or wildcard
+ * inside) `col.ilike.%token%` before interpolating a user-typed word.
+ */
+const sanitizeFilterToken = (t: string) => t.replace(/[,()%_\\]/g, "");
+
+/** Text columns the lexical stage matches lead-search tokens against. */
+const SEARCH_TEXT_COLUMNS = [
+  "first_name",
+  "last_name",
+  "city",
+  "state",
+  "utility_provider",
+  "solar_provider",
+  "notes",
+] as const;
+
+/**
+ * STAGE 1 of the AI lead search: retrieve a bounded candidate set for a
+ * natural-language query, so getSemanticSearch (stage 2) reranks ~80 relevant
+ * rows instead of the first 80 of the whole book in upload order.
+ *
+ * Scope is EXACTLY getLeads': rep → own uploads + assigned, pinned to their
+ * current org; supervisor → the org pool plus their own pre-org rows
+ * (org_id null). The query parse (src/lib/leads/search-heuristics.ts) drives up
+ * to two cheap queries — structured predicates (bill bounds, EV/pool/battery,
+ * status, never-called) and a lexical ilike OR over the text columns — whose
+ * results are UNIONED, never AND-required: a purely structured query
+ * ("homeowners overpaying with an EV") has almost no lexical surface, and a
+ * purely lexical one ("smiths in fresno") has no structure. A query that parses
+ * to neither returns the first `limit` leads in upload order, preserving the
+ * old first-N behavior. Demo and no-service-key deployments filter in JS with
+ * the same parse, so every mode agrees on what a query means.
+ */
+export async function searchLeadCandidates(query: string, limit = 80): Promise<Lead[]> {
+  const parsed = parseLeadQuery(query);
+  const jsFilter = (all: Lead[]) =>
+    all.filter((l) => leadMatchesParsedQuery(l, parsed)).slice(0, limit);
+
+  // Demo mode: the bundled sample book, same heuristics.
+  if (!isSupabaseConfigured()) return jsFilter(fallbackLeads);
+  // Degraded self-host mode (no service key): getLeads() already falls back to
+  // the rep-scoped RLS read for everyone, so filter that in JS — correct, just
+  // not cheap. Never crash without full credentials is documented policy.
+  if (!isAdminConfigured()) return jsFilter(await getLeads());
+
+  try {
+    const supabase = await createClient();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) return [];
+    const { data: prof } = await supabase
+      .from("profiles")
+      .select("org_id, role")
+      .eq("id", user.id)
+      .maybeSingle();
+    const orgId = prof?.org_id ? String(prof.org_id) : null;
+    const supervisor = Boolean(orgId) && isSupervisorRole(prof?.role);
+
+    // Fresh builder per query (PostgREST builders aren't reusable). Both
+    // branches mirror getLeads: multiple PostgREST filters AND together, so the
+    // scope .or() below combines with the per-stage predicates correctly.
+    const baseScope = () => {
+      if (supervisor) {
+        // Org pool + the supervisor's own pre-org rows (org_id null) — those
+        // must stay searchable, matching what the Leads tab shows them.
+        return createAdminClient()
+          .from("leads")
+          .select("*")
+          .or(`org_id.eq.${orgId},and(owner_id.eq.${user.id},org_id.is.null)`);
+      }
+      let q = supabase
+        .from("leads")
+        .select("*")
+        .or(`owner_id.eq.${user.id},assigned_rep_id.eq.${user.id}`);
+      if (orgId) q = q.eq("org_id", orgId);
+      return q;
+    };
+    // Upload order within each stage — same ordering contract as getLeads.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const finish = (q: any) =>
+      q
+        .order("created_at", { ascending: true })
+        .order("id", { ascending: true })
+        .limit(limit);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const run = async (q: any): Promise<Row[]> => {
+      const { data, error } = await q;
+      return error ? [] : ((data ?? []) as Row[]);
+    };
+
+    const stages: Promise<Row[]>[] = [];
+
+    if (hasStructuredPredicates(parsed)) {
+      let q = baseScope();
+      if (parsed.wantsEV) q = q.eq("has_ev", true);
+      if (parsed.wantsPool) q = q.eq("has_pool", true);
+      if (parsed.wantsBattery) q = q.eq("has_battery", true);
+      if (parsed.minBill !== null) q = q.gte("utility_bill", parsed.minBill);
+      if (parsed.maxBill !== null) q = q.lte("utility_bill", parsed.maxBill);
+      if (parsed.statuses.length) q = q.in("status", parsed.statuses);
+      if (parsed.neverCalled) q = q.is("last_contacted_at", null);
+      stages.push(run(finish(q)));
+    }
+
+    // Cap the token count so the request URL stays small; tokens are already
+    // plain [a-z0-9] words, sanitized again here as defense in depth.
+    const tokens = parsed.tokens
+      .map(sanitizeFilterToken)
+      .filter((t) => t.length >= 3)
+      .slice(0, 8);
+    if (tokens.length) {
+      const ors = tokens
+        .flatMap((t) => SEARCH_TEXT_COLUMNS.map((col) => `${col}.ilike.%${t}%`))
+        .join(",");
+      stages.push(run(finish(baseScope().or(ors))));
+    }
+
+    // Nothing parseable at all → first `limit` leads in upload order.
+    if (!stages.length) stages.push(run(finish(baseScope())));
+
+    const results = await Promise.all(stages);
+    const byId = new Map<string, Row>();
+    for (const rows of results) {
+      for (const r of rows) {
+        if (byId.size >= limit) break;
+        const id = String(r.id);
+        if (!byId.has(id)) byId.set(id, r);
+      }
+    }
+    return [...byId.values()].map(rowToLead);
   } catch {
     return [];
   }

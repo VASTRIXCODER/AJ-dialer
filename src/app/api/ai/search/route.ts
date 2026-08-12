@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getSemanticSearch } from "@/lib/ai/services";
-import { getLeads } from "@/lib/db/leads";
+import { searchLeadCandidates } from "@/lib/db/leads";
 import { getViewer } from "@/lib/org/membership";
 import { clientIp, rateLimit } from "@/lib/rate-limit";
 
@@ -25,8 +25,13 @@ export async function POST(req: Request) {
       { status: 429, headers: { "Retry-After": String(rl.retryAfter) } },
     );
   }
-  const leads = await getLeads();
-  // No accessible leads → nothing to search; skip the model call entirely.
+  // STAGE 1 — retrieve a bounded candidate set in SQL (or the JS twin in demo/
+  // degraded mode) instead of pulling the viewer's entire book and slicing the
+  // first 80: the whole book is now searchable, and each keystroke batch costs
+  // two indexed queries rather than a full-table page-through.
+  const leads = await searchLeadCandidates(query);
+  // No candidates → nothing to rerank; skip the model call entirely and return
+  // the palette's empty shape ("demo" is its well-defined no-model source).
   if (!leads.length) {
     return NextResponse.json({ source: "demo", interpretation: "", matches: [] });
   }

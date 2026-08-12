@@ -247,12 +247,14 @@ export function getCallSummary(
   );
 }
 
-// ── Natural-language lead search ─────────────────────────────────────────────
+// ── Natural-language lead search (stage 2: rerank retrieved candidates) ─────
 export function getSemanticSearch(
   query: string,
   leads: Lead[],
   isSolar = true,
 ): Promise<AIResult<SemanticSearch>> {
+  // Callers pass a pre-retrieved candidate set (searchLeadCandidates caps at
+  // 80); the slice stays as a safety ceiling on prompt size, not as the search.
   const compact = leads.slice(0, 80).map((l) => ({
     id: l.id,
     name: `${l.firstName} ${l.lastName}`,
@@ -271,10 +273,11 @@ export function getSemanticSearch(
       generateJSON<SemanticSearch>({
         system: systemPrompt(isSolar),
         prompt:
-          "Interpret the user's natural-language query and return the matching homeowners " +
-          "from the provided list, best first (max 8). For each match give a short reason. " +
-          "Only return ids that exist in the list.\n\n" +
-          `Query: ${JSON.stringify(query)}\n\nLeads: ${JSON.stringify(compact)}`,
+          "You are RERANKING candidates already retrieved for the user's query — the list " +
+          "below is the candidate set, not the whole book. Interpret the query and return " +
+          "the homeowners that truly match it, best first (max 8). For each match give a " +
+          "short reason. Only return ids that exist in the candidate list.\n\n" +
+          `Query: ${JSON.stringify(query)}\n\nCandidates: ${JSON.stringify(compact)}`,
         schemaName: "semantic_search",
         effort: "low",
         maxTokens: 1024,
