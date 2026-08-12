@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { finalizeAIConversation, type Turn } from "@/lib/ai-call-finalize";
-import { verifyWebhookSignature } from "@/lib/elevenlabs";
+import { elevenLabsConfig, verifyWebhookSignature } from "@/lib/elevenlabs";
 
 export const dynamic = "force-dynamic";
 
@@ -16,6 +16,17 @@ export async function POST(req: Request) {
   const signature = req.headers.get("elevenlabs-signature");
 
   if (!verifyWebhookSignature(raw, signature)) {
+    // Distinguish "you didn't sign it" from "you never set the secret", because
+    // the fix is different and the latter is a deployment misconfiguration that
+    // now (correctly) fails closed instead of silently accepting everything.
+    if (!elevenLabsConfig.webhookSecret) {
+      console.error(
+        "[elevenlabs.webhook] Rejected: ELEVENLABS_WEBHOOK_SECRET is not set, so " +
+          "webhooks can't be verified. Set it (recommended) or set " +
+          "ELEVENLABS_ALLOW_UNSIGNED_WEBHOOK=true to accept unsigned webhooks. " +
+          "The reconcile cron still finalizes calls in the meantime.",
+      );
+    }
     return NextResponse.json({ error: "Invalid signature" }, { status: 401 });
   }
 

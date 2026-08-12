@@ -819,11 +819,21 @@ export async function getConversationAudio(id: string): Promise<Response> {
  * HMAC is SHA-256 of `${t}.${rawBody}` keyed by the webhook secret.
  * When no secret is configured we accept (dev) but log nothing sensitive.
  */
+/** Max age (seconds) of a webhook timestamp before it's treated as a replay. */
+const WEBHOOK_MAX_AGE_SEC = 30 * 60; // ElevenLabs' own recommended tolerance.
+
 export function verifyWebhookSignature(
   rawBody: string,
   signatureHeader: string | null,
 ): boolean {
-  if (!elevenLabsConfig.webhookSecret) return true;
+  // Fail CLOSED when no secret is configured. This used to `return true`, so a
+  // deployment that never set ELEVENLABS_WEBHOOK_SECRET accepted ANY payload — a
+  // forger who knew a live conversation_id could rewrite its outcome/appointment.
+  // A deployment that intentionally runs unsigned can opt back in with the env
+  // valve; the reconcile cron still finalizes calls the webhook now rejects.
+  if (!elevenLabsConfig.webhookSecret) {
+    return process.env.ELEVENLABS_ALLOW_UNSIGNED_WEBHOOK === "true";
+  }
   if (!signatureHeader) return false;
 
   const parts: Record<string, string> = {};
@@ -836,6 +846,13 @@ export function verifyWebhookSignature(
   const t = parts.t;
   const v0 = parts.v0;
   if (!t || !v0) return false;
+
+  // Reject stale timestamps so a captured, validly-signed body can't be replayed
+  // indefinitely. Generous window (30 min) so normal delivery + quick retries
+  // pass; genuinely late retries are backstopped by the reconcile cron.
+  const tsSec = Number(t);
+  if (!Number.isFinite(tsSec)) return false;
+  if (Math.abs(Date.now() / 1000 - tsSec) > WEBHOOK_MAX_AGE_SEC) return false;
 
   const expected = crypto
     .createHmac("sha256", elevenLabsConfig.webhookSecret)
