@@ -161,6 +161,15 @@ export async function resolveAgentContext(opts: {
   conversationId?: string;
   callSid?: string;
   agentKey?: AgentKey;
+  /**
+   * Whether to allow the last-resort phone-number match (resolveByPhoneScoped)
+   * when there's no call registration. This path can return a lead's PII for any
+   * phone number, so the personalization webhook only enables it for signature-
+   * verified requests — otherwise an unauthenticated caller could turn this into
+   * a phone→PII oracle. Registration-based resolution (conversationId/callSid) is
+   * always allowed. Defaults to true for internal callers.
+   */
+  allowPhoneFallback?: boolean;
 }): Promise<AgentContext> {
   const { calledNumber, conversationId, callSid } = opts;
   const agentKey: AgentKey = opts.agentKey ?? "primary";
@@ -194,8 +203,12 @@ export async function resolveAgentContext(opts: {
 
     let resolved: { lead: Lead; orgLike: AgentOrgLike | null } | null = null;
     if (resolvedLeadId) resolved = await loadLeadAndOrgById(admin, resolvedLeadId);
-    // Last resort — a call we somehow have no registration for at all.
-    if (!resolved) resolved = await resolveByPhoneScoped(admin, digits);
+    // Last resort — a call we somehow have no registration for at all. Only when
+    // the caller is trusted (a signature-verified webhook); otherwise this would
+    // hand a lead's PII to any anonymous request that knows a phone number.
+    if (!resolved && (opts.allowPhoneFallback ?? true)) {
+      resolved = await resolveByPhoneScoped(admin, digits);
+    }
 
     const dynamicVariables = resolved
       ? agentVariablesForLead(resolved.lead, { company: resolved.orgLike?.name })

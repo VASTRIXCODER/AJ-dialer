@@ -13,6 +13,7 @@ import {
   buildOverridePayload,
   elevenLabsConfig,
   fetchOverridePolicy,
+  verifyWebhookSignature,
 } from "@/lib/elevenlabs";
 
 export const dynamic = "force-dynamic";
@@ -26,9 +27,25 @@ const last10 = (s: string) => (s || "").replace(/\D/g, "").slice(-10);
  * post-call, not here, to avoid call-setup latency.
  */
 export async function POST(req: Request) {
-  const body = (await req
-    .json()
-    .catch(() => ({}))) as Record<string, unknown>;
+  // Read the raw body so we can verify the ElevenLabs HMAC signature. A verified
+  // request is trusted enough to enable the phone-number fallback in
+  // resolveAgentContext; an unsigned/forged request is not, so it can only ever
+  // resolve a call we actually registered (by conversationId/callSid) and can
+  // never be used as a phone→PII / script-exfiltration oracle. Signing is only
+  // enforced when ELEVENLABS_WEBHOOK_SECRET is set, so this never breaks a
+  // deployment that hasn't enabled webhook signing — those requests simply lose
+  // the last-resort personalization, not the call.
+  const raw = await req.text();
+  const signed =
+    Boolean(elevenLabsConfig.webhookSecret) &&
+    verifyWebhookSignature(raw, req.headers.get("elevenlabs-signature"));
+
+  let body: Record<string, unknown>;
+  try {
+    body = raw ? (JSON.parse(raw) as Record<string, unknown>) : {};
+  } catch {
+    body = {};
+  }
 
   const calledNumber = String(
     body.called_number ?? body.to_number ?? body.caller_id ?? "",
@@ -51,6 +68,7 @@ export async function POST(req: Request) {
     conversationId: conversationId || undefined,
     callSid: callSid || undefined,
     agentKey,
+    allowPhoneFallback: signed,
   });
 
   // ── Who actually answered? ──────────────────────────────────────────────────

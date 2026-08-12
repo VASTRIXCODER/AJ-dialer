@@ -1,4 +1,6 @@
 import { NextResponse } from "next/server";
+import { getUser } from "@/lib/auth";
+import { isSupabaseConfigured } from "@/lib/supabase/config";
 import {
   createVoiceToken,
   isRestConfigured,
@@ -22,6 +24,15 @@ export const dynamic = "force-dynamic";
 export async function GET(req: Request) {
   if (!isVoiceConfigured()) {
     return NextResponse.json({ mode: "offline" });
+  }
+
+  // AUTH: a Voice access token lets the browser SDK dial through our TwiML app,
+  // so it must never be minted for an anonymous caller. When Supabase is
+  // configured (production), require a signed-in user; demo mode (no Supabase)
+  // stays open so the dialer is explorable. Returning the "offline" shape keeps
+  // the client's existing no-token handling working instead of throwing.
+  if (isSupabaseConfigured() && !(await getUser())) {
+    return NextResponse.json({ mode: "offline" }, { status: 401 });
   }
 
   // The Voice SDK identity MUST be globally unique across every rep. Two browser
