@@ -461,15 +461,35 @@ ${COMPLIANCE_GUIDE}
  * it always runs the second script (Emily + the two documented overrides — warmer
  * opening, battery owners escalated), independent of the org's custom primary prompt.
  */
+/**
+ * The org's configured recording disclosure, as a prompt section the agent must
+ * deliver — so `compliance.recordingDisclosure` / `consentRequired` are actually
+ * honored on the call (two-party-consent states require this). Injected into every
+ * prompt variant (custom, Emily, generic, secondary). Empty when recording is off
+ * or no disclosure text is set. Note: in ELEVENLABS_USE_DASHBOARD_PROMPT mode the
+ * app sends no prompt override, so the disclosure must live in the dashboard prompt.
+ */
+function complianceSuffix(org: AgentOrgLike | null): string {
+  const compliance = org?.settings.compliance;
+  const disclosure = compliance?.recordingDisclosure?.trim();
+  const recording = org?.settings.dialing?.recording !== false;
+  if (!disclosure || !recording) return "";
+  const consent = compliance?.consentRequired
+    ? " If they object to being recorded, acknowledge it and don't push."
+    : "";
+  return `\n\n# Recording disclosure (REQUIRED — say this plainly and early, before qualifying)\n- Disclose: "${disclosure}".${consent}`;
+}
+
 export function resolveAgentConfig(
   org: AgentOrgLike | null,
   agentKey: AgentKey = "primary",
 ): AgentConfig {
   const ai = org?.settings.ai;
+  const disclosure = complianceSuffix(org);
 
   if (agentKey === "secondary") {
     return {
-      systemPrompt: AGENT2_SYSTEM_PROMPT,
+      systemPrompt: AGENT2_SYSTEM_PROMPT + disclosure,
       firstMessage: AGENT2_FIRST_MESSAGE,
       language: ai?.language || "en",
       voiceSpeed: typeof ai?.voiceSpeed === "number" ? ai.voiceSpeed : 0.9,
@@ -493,7 +513,7 @@ export function resolveAgentConfig(
         : EMILY_FIRST_MESSAGE;
 
   return {
-    systemPrompt,
+    systemPrompt: systemPrompt + disclosure,
     firstMessage,
     language: ai?.language || "en",
     voiceSpeed: typeof ai?.voiceSpeed === "number" ? ai.voiceSpeed : 0.9,
