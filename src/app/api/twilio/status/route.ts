@@ -15,7 +15,7 @@ import {
   ringHumanCall,
 } from "@/lib/human-call-store";
 import { createAdminClient, isAdminConfigured } from "@/lib/supabase/admin";
-import { getRestClient } from "@/lib/twilio";
+import { getRestClient, readVerifiedTwilioForm } from "@/lib/twilio";
 
 export const dynamic = "force-dynamic";
 
@@ -42,12 +42,20 @@ export async function POST(req: Request) {
   const leadId = url.searchParams.get("leadId");
   const conversationId = url.searchParams.get("conversationId");
 
-  const form = await req.formData();
-  const callStatus = String(form.get("CallStatus") ?? "");
-  const recordingStatus = String(form.get("RecordingStatus") ?? "");
-  const recordingUrl = String(form.get("RecordingUrl") ?? "");
-  const callSid = String(form.get("CallSid") ?? "");
-  const errorCode = Number(form.get("ErrorCode")) || null;
+  // Verify Twilio's signature before acting on anything. This route mutates
+  // call_records / pending_recordings / pending_call_verdicts / live_calls and
+  // releases parallel legs, all with the service-role client — an unsigned POST
+  // could forge recordings, drop live calls, and poison verdicts. Reject before
+  // any of that. (Skips only when unconfigured/demo or the emergency valve is on.)
+  const form = await readVerifiedTwilioForm(req);
+  if (!form) {
+    return new Response(null, { status: 403 });
+  }
+  const callStatus = String(form.CallStatus ?? "");
+  const recordingStatus = String(form.RecordingStatus ?? "");
+  const recordingUrl = String(form.RecordingUrl ?? "");
+  const callSid = String(form.CallSid ?? "");
+  const errorCode = Number(form.ErrorCode) || null;
 
   // ── Recording complete: save URL to the matching call record ────────────────
   // Manual calls are conferences, so the webhook carries the room (passed on the
@@ -163,7 +171,7 @@ export async function POST(req: Request) {
       const verdict = {
         twilio_call_status: callStatus,
         twilio_error_code: errorCode,
-        answered_by: String(form.get("AnsweredBy") ?? "") || null,
+        answered_by: String(form.AnsweredBy ?? "") || null,
       };
       if (room) {
         const { data: updated } = await admin

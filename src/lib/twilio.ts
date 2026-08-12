@@ -113,6 +113,79 @@ export function getPublicBaseUrl(req?: Request): string | null {
 }
 
 /**
+ * Verify an inbound Twilio webhook's `X-Twilio-Signature`. Twilio HMAC-SHA1s the
+ * EXACT callback URL we configured (built by getPublicBaseUrl at placement time)
+ * plus the sorted POST params, keyed on the account auth token. We reconstruct
+ * the URL from the same origins getPublicBaseUrl would produce and accept if ANY
+ * candidate validates — so a proxy hop (Cloudflare → Vercel) that rewrites the
+ * host can't cause a false reject and silently drop real callbacks.
+ *
+ * Returns true (skips) when there's no auth token (demo / unconfigured) or when
+ * TWILIO_SKIP_SIGNATURE=true is set — an emergency valve in case a specific
+ * edge/proxy setup makes reconstruction diverge in production.
+ */
+export async function verifyTwilioSignature(
+  req: Request,
+  params: Record<string, string>,
+): Promise<boolean> {
+  const token = twilioConfig.authToken;
+  if (!token) return true;
+  if (process.env.TWILIO_SKIP_SIGNATURE === "true") return true;
+
+  const signature = req.headers.get("x-twilio-signature");
+  if (!signature) return false;
+
+  let pathname = "";
+  let search = "";
+  try {
+    const u = new URL(req.url);
+    pathname = u.pathname;
+    search = u.search;
+  } catch {
+    return false;
+  }
+
+  const bases = new Set<string>();
+  const pinned = getPublicBaseUrl(req);
+  if (pinned) bases.add(pinned);
+  const proto = req.headers.get("x-forwarded-proto") ?? "https";
+  const host = req.headers.get("x-forwarded-host") ?? req.headers.get("host");
+  if (host) bases.add(`${proto}://${host}`);
+  try {
+    bases.add(new URL(req.url).origin);
+  } catch {
+    /* ignore */
+  }
+
+  const twilioSdk = (await import("twilio")).default;
+  for (const base of bases) {
+    try {
+      if (twilioSdk.validateRequest(token, signature, `${base}${pathname}${search}`, params)) {
+        return true;
+      }
+    } catch {
+      /* try the next candidate origin */
+    }
+  }
+  return false;
+}
+
+/**
+ * Read a Twilio webhook's url-encoded form body into a plain object AND verify
+ * its signature in one pass — the request body can only be consumed once, so the
+ * two have to happen together. Returns the params on a valid signature, or null
+ * when the signature is missing/invalid (the caller should then reject).
+ */
+export async function readVerifiedTwilioForm(
+  req: Request,
+): Promise<Record<string, string> | null> {
+  const form = await req.formData();
+  const params: Record<string, string> = {};
+  for (const [k, v] of form.entries()) params[k] = typeof v === "string" ? v : "";
+  return (await verifyTwilioSignature(req, params)) ? params : null;
+}
+
+/**
  * Mint a Voice access token scoped to a TwiML app for inbound (browser) calls and
  * outbound dialing. Returns null in demo mode.
  */
