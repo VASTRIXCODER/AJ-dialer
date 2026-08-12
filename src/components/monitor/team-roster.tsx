@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { ROLE_LABEL, type OrgRole } from "@/lib/permissions";
 import type { PresenceStatus } from "@/lib/types";
+import { useVisiblePoll } from "@/lib/use-visible-poll";
 import { cn, formatDuration, formatPhone, initials } from "@/lib/utils";
 
 type TeamMember = {
@@ -57,20 +58,18 @@ export function TeamRoster() {
   const [loading, setLoading] = useState(true);
   const [now, setNow] = useState(() => Date.now());
 
+  // Paused while the tab is hidden; refreshes immediately on return.
+  useVisiblePoll(() => {
+    fetch("/api/team/presence", { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : { team: [] }))
+      .then((j) => setTeam(j.team ?? []))
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, 5000);
+
   useEffect(() => {
-    const load = () =>
-      fetch("/api/team/presence", { cache: "no-store" })
-        .then((r) => (r.ok ? r.json() : { team: [] }))
-        .then((j) => setTeam(j.team ?? []))
-        .catch(() => {})
-        .finally(() => setLoading(false));
-    load();
-    const poll = setInterval(load, 5000);
     const tick = setInterval(() => setNow(Date.now()), 1000);
-    return () => {
-      clearInterval(poll);
-      clearInterval(tick);
-    };
+    return () => clearInterval(tick);
   }, []);
 
   const activeCount = team.filter((m) => m.status !== "idle").length;

@@ -1,9 +1,10 @@
 "use client";
 
 import { ChevronDown, PhoneCall, Radio } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Avatar } from "@/components/ui/avatar";
 import { Card } from "@/components/ui/card";
+import { useVisiblePoll } from "@/lib/use-visible-poll";
 import { cn, initials } from "@/lib/utils";
 
 interface FloorDialer {
@@ -29,25 +30,27 @@ export function DialerFloor() {
   const [data, setData] = useState<Snapshot | null>(null);
   const [open, setOpen] = useState(false);
 
+  const alive = useRef(true);
   useEffect(() => {
-    let alive = true;
-    const load = async () => {
+    alive.current = true;
+    return () => {
+      alive.current = false;
+    };
+  }, []);
+  // Display-only poll — paused while the tab is hidden (the dial engine's own
+  // intervals in use-dialer.ts are untouched and keep running during calls).
+  useVisiblePoll(() => {
+    void (async () => {
       try {
         const r = await fetch("/api/floor", { cache: "no-store" });
         if (!r.ok) return;
         const j = (await r.json()) as Snapshot;
-        if (alive) setData(j);
+        if (alive.current) setData(j);
       } catch {
         /* transient — keep the last snapshot */
       }
-    };
-    void load();
-    const t = setInterval(load, 5000);
-    return () => {
-      alive = false;
-      clearInterval(t);
-    };
-  }, []);
+    })();
+  }, 5000);
 
   // Nothing to show until there's activity today (keeps a fresh org's dialer clean).
   if (!data || (data.dialers.length === 0 && data.totalCallsToday === 0)) return null;

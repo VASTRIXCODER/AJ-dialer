@@ -130,22 +130,39 @@ export function CallDashboard({
   }, [conversationId]);
 
   // Poll: fast while live, slow once terminal (to catch the late recording).
+  // Skips the fetch while the tab is hidden (and re-checks lazily), UNLESS
+  // read-aloud is on — spoken turns come from this poll, and listening with the
+  // tab in the background is the whole point of read-aloud. A visibilitychange
+  // listener fires an immediate tick on return so the board never shows a
+  // stale transcript while waiting out the next interval.
   useEffect(() => {
     let stopped = false;
     let timer: ReturnType<typeof setTimeout>;
     async function tick() {
+      if (document.visibilityState === "hidden" && !listen) {
+        timer = setTimeout(tick, 10000);
+        return;
+      }
       const d = await fetchDetail();
       setLoading(false);
       if (stopped) return;
       const terminal = d?.state === "completed" || d?.state === "failed";
       timer = setTimeout(tick, terminal ? 10000 : 2000);
     }
+    function onVisibility() {
+      if (document.visibilityState === "visible" && !stopped) {
+        clearTimeout(timer);
+        void tick();
+      }
+    }
     tick();
+    document.addEventListener("visibilitychange", onVisibility);
     return () => {
       stopped = true;
       clearTimeout(timer);
+      document.removeEventListener("visibilitychange", onVisibility);
     };
-  }, [fetchDetail]);
+  }, [fetchDetail, listen]);
 
   useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), 1000);

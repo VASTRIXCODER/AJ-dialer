@@ -5,6 +5,7 @@ import { Headphones, Loader2, Phone, User } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
+import { useVisiblePoll } from "@/lib/use-visible-poll";
 import { cn, formatDuration, formatPhone } from "@/lib/utils";
 
 type HumanCall = {
@@ -90,21 +91,21 @@ export function HumanLiveMonitor({
     });
   }, []);
 
+  const load = useCallback(() => {
+    fetch("/api/calls/active", { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : { active: [] }))
+      .then((j) => setCalls(j.active ?? []))
+      .catch(() => {});
+  }, []);
+  // 2s, matching the AI monitor. Twilio drives these states now, so the feed is
+  // a plain DB read and polling harder is cheap. Paused in hidden tabs — EXCEPT
+  // while listening in, because the poll is what notices the call ended and
+  // stops the supervisor's live audio (see the effect below).
+  useVisiblePoll(load, 2000, { ignoreHidden: listeningId !== null });
+
   useEffect(() => {
-    const load = () =>
-      fetch("/api/calls/active", { cache: "no-store" })
-        .then((r) => (r.ok ? r.json() : { active: [] }))
-        .then((j) => setCalls(j.active ?? []))
-        .catch(() => {});
-    load();
-    // 2s, matching the AI monitor. Twilio drives these states now, so the feed is
-    // a plain DB read and polling harder is cheap.
-    const poll = setInterval(load, 2000);
     const tick = setInterval(() => setNow(Date.now()), 1000);
-    return () => {
-      clearInterval(poll);
-      clearInterval(tick);
-    };
+    return () => clearInterval(tick);
   }, []);
 
   // Stop audio when the call we're listening to disappears, and on unmount.

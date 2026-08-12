@@ -23,6 +23,7 @@ import { Button, buttonVariants } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import type { AILiveState, CallOutcome } from "@/lib/types";
 import { liveStateConfig, outcomeConfig } from "@/lib/status";
+import { useVisiblePoll } from "@/lib/use-visible-poll";
 import { cn, formatDuration } from "@/lib/utils";
 import { CallDashboard } from "./call-dashboard";
 
@@ -167,13 +168,14 @@ export function AiLiveMonitor({
       .catch(() => {});
   }, []);
 
+  // 2s, down from 4s. The feed is now a plain DB read — Twilio has already
+  // pushed the truth into the row by the time we ask — so polling harder is
+  // cheap, and halves the worst-case lag between a phone ringing and the
+  // monitor saying so. Paused while the tab is hidden; refreshes the moment
+  // the supervisor comes back.
+  useVisiblePoll(load, 2000);
+
   useEffect(() => {
-    load();
-    // 2s, down from 4s. The feed is now a plain DB read — Twilio has already
-    // pushed the truth into the row by the time we ask — so polling harder is
-    // cheap, and halves the worst-case lag between a phone ringing and the
-    // monitor saying so.
-    const poll = setInterval(load, 2000);
     const tick = setInterval(() => {
       const t = Date.now();
       setNow(t);
@@ -182,11 +184,8 @@ export function AiLiveMonitor({
         return kept.length === prev.length ? prev : kept;
       });
     }, 1000);
-    return () => {
-      clearInterval(poll);
-      clearInterval(tick);
-    };
-  }, [load]);
+    return () => clearInterval(tick);
+  }, []);
 
   async function intervene(conversationId: string, action: "takeover" | "end") {
     setBusy(conversationId + action);

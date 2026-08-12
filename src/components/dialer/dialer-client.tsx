@@ -21,6 +21,7 @@ import {
   persistDisposition,
   replayQueuedDispositions,
 } from "@/lib/dialer/disposition-queue";
+import { useVisiblePoll } from "@/lib/use-visible-poll";
 import { cn } from "@/lib/utils";
 import type { BookedLead } from "@/lib/db/leads";
 import type { CallOutcome, Lead } from "@/lib/types";
@@ -77,27 +78,29 @@ export function DialerClient({
   const [tab, setTab] = useState<"queue" | "booked">("queue");
   const [bookedLeads, setBookedLeads] = useState<BookedLead[]>([]);
   const [bookedLoading, setBookedLoading] = useState(true);
+  const bookedAlive = useRef(true);
   useEffect(() => {
-    let alive = true;
-    const load = async () => {
+    bookedAlive.current = true;
+    return () => {
+      bookedAlive.current = false;
+    };
+  }, []);
+  // Display-only poll — paused while the tab is hidden. The dial engine's own
+  // intervals (use-dialer.ts) are untouched and keep running during calls.
+  useVisiblePoll(() => {
+    void (async () => {
       try {
         const r = await fetch("/api/leads/booked", { cache: "no-store" });
         if (!r.ok) return;
         const j = (await r.json().catch(() => ({}))) as { leads?: BookedLead[] };
-        if (alive) setBookedLeads(Array.isArray(j.leads) ? j.leads : []);
+        if (bookedAlive.current) setBookedLeads(Array.isArray(j.leads) ? j.leads : []);
       } catch {
         /* transient — keep the last snapshot */
       } finally {
-        if (alive) setBookedLoading(false);
+        if (bookedAlive.current) setBookedLoading(false);
       }
-    };
-    void load();
-    const t = setInterval(load, 15000);
-    return () => {
-      alive = false;
-      clearInterval(t);
-    };
-  }, []);
+    })();
+  }, 15000);
 
   // How many of the currently-loaded leads this viewer personally uploaded —
   // powers the toggle's badge so a supervisor knows what to expect before
