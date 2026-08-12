@@ -1477,3 +1477,61 @@ drop policy if exists "lead_packs write" on public.lead_packs;
 create policy "lead_packs write" on public.lead_packs for all
   using (app_is_superadmin() or (app_is_active() and app_is_org_supervisor(org_id)))
   with check (app_is_superadmin() or (app_is_active() and app_is_org_supervisor(org_id)));
+
+-- ═════════════════════════════════════════════════════════════════════════════
+-- PART: RLS READ LOCKDOWN (P0.4)
+--
+-- Placed at the END so every helper function (app_is_org_member, app_active_org,
+-- app_is_superadmin) already exists. The original "orgs read"/"companies read"
+-- policies above used `using (auth.uid() is not null)`, which let ANY signed-in
+-- user read EVERY tenant's row via the public anon key — leaking each org's
+-- join_code, caller IDs, AI system prompt, notification emails and billing.
+-- These tightened policies override them (drop + recreate). Kept in sync with
+-- supabase/rls-lockdown.sql.
+-- ═════════════════════════════════════════════════════════════════════════════
+
+-- Onboarding directory of joinable orgs — only non-sensitive columns. SECURITY
+-- DEFINER so it works under the tightened organizations policy below.
+create or replace function public.app_list_joinable_orgs()
+returns table (id uuid, name text, industry text, slug text, require_approval boolean)
+language sql stable security definer set search_path = public as $$
+  select id, name, industry, slug, coalesce(require_approval, true)
+  from public.organizations
+  where status = 'active' and coalesce(allow_join, true) = true
+  order by name asc;
+$$;
+grant execute on function public.app_list_joinable_orgs() to anon, authenticated;
+
+-- Organizations: your active org (covers the member-row-less resilience bridge),
+-- orgs you're an active member of (the Hub), or superadmin.
+drop policy if exists "orgs read" on public.organizations;
+create policy "orgs read" on public.organizations for select using (
+  public.app_is_superadmin()
+  or id = public.app_active_org()
+  or public.app_is_org_member(id)
+);
+
+-- Companies: members of the company's org (or your active org) only.
+drop policy if exists "companies read" on public.companies;
+create policy "companies read" on public.companies for select using (
+  public.app_is_superadmin()
+  or org_id = public.app_active_org()
+  or public.app_is_org_member(org_id)
+);
+
+-- Leads read/update: scope the shared-pool branch to the caller's ACTIVE org, so
+-- a dual-org member can't reach the OTHER org's leads while active in one.
+drop policy if exists "leads read" on public.leads;
+create policy "leads read" on public.leads for select using (
+  public.app_is_superadmin() or (public.app_is_active() and (
+    (owner_id = auth.uid() and (org_id is null or org_id = public.app_active_org()))
+    or (org_id is not null and org_id = public.app_active_org() and public.app_is_org_member(org_id)))));
+
+drop policy if exists "leads update" on public.leads;
+create policy "leads update" on public.leads for update
+  using (public.app_is_superadmin() or (public.app_is_active() and (
+    (owner_id = auth.uid() and (org_id is null or org_id = public.app_active_org()))
+    or (org_id is not null and org_id = public.app_active_org() and public.app_is_org_member(org_id)))))
+  with check (public.app_is_superadmin() or (public.app_is_active() and (
+    (owner_id = auth.uid() and (org_id is null or org_id = public.app_active_org()))
+    or (org_id is not null and org_id = public.app_active_org() and public.app_is_org_member(org_id)))));

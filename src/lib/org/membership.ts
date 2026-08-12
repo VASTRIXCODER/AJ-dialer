@@ -506,8 +506,23 @@ export async function listActiveOrgsWithSettings(): Promise<OrgFull[]> {
 export async function listJoinableOrgs(): Promise<
   { id: string; name: string; industry: string; slug: string; requireApproval: boolean }[]
 > {
+  const mapRow = (o: Row) => ({
+    id: String(o.id),
+    name: String(o.name ?? ""),
+    industry: String(o.industry ?? ""),
+    slug: String(o.slug ?? ""),
+    requireApproval: o.require_approval !== false,
+  });
   try {
     const supabase = await createClient();
+    // Prefer the SECURITY DEFINER directory function: it returns ONLY safe
+    // columns (no join_code / settings) and works under the members-only
+    // organizations read policy (see supabase/rls-lockdown.sql). Fall back to a
+    // direct table read when the function isn't present yet (pre-migration).
+    const { data: rpcData, error: rpcErr } = await supabase.rpc("app_list_joinable_orgs");
+    if (!rpcErr && Array.isArray(rpcData)) {
+      return (rpcData as Row[]).map(mapRow);
+    }
     const { data } = await supabase
       .from("organizations")
       .select("id,name,industry,slug,allow_join,require_approval,status")
@@ -515,13 +530,7 @@ export async function listJoinableOrgs(): Promise<
       .order("name", { ascending: true });
     return ((data ?? []) as Row[])
       .filter((o) => o.allow_join !== false)
-      .map((o) => ({
-        id: String(o.id),
-        name: String(o.name ?? ""),
-        industry: String(o.industry ?? ""),
-        slug: String(o.slug ?? ""),
-        requireApproval: o.require_approval !== false,
-      }));
+      .map(mapRow);
   } catch {
     return [];
   }
