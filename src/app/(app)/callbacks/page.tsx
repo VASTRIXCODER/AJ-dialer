@@ -40,9 +40,11 @@ function groupOf(c: CallbackRow): "overdue" | "due" | "upcoming" {
 }
 
 export default async function CallbacksPage() {
-  const callbacks = await getCallbacks();
+  // `rows` are the OPEN callbacks only (completed/cancelled stay in the DB),
+  // bounded and soonest-due first; the Completed KPI ships as its own count.
+  const { rows: active, completedCount, teamWide } = await getCallbacks();
 
-  if (callbacks.length === 0) {
+  if (active.length === 0 && completedCount === 0) {
     return (
       <PageContainer>
         <PageHeader
@@ -58,9 +60,6 @@ export default async function CallbacksPage() {
     );
   }
 
-  const teamWide = callbacks[0]?.teamWide;
-  const active = callbacks.filter((c) => c.status !== "completed" && c.status !== "cancelled");
-  const completed = callbacks.filter((c) => c.status === "completed").length;
   const count = (k: string) => active.filter((c) => groupOf(c) === k).length;
 
   return (
@@ -80,7 +79,7 @@ export default async function CallbacksPage() {
         <MetricCard label="Overdue" value={String(count("overdue"))} icon={AlarmClock} accent="danger" />
         <MetricCard label="Due now" value={String(count("due"))} icon={Clock} accent="warning" />
         <MetricCard label="Upcoming" value={String(count("upcoming"))} icon={CheckCircle2} accent="accent" />
-        <MetricCard label="Completed" value={String(completed)} icon={PhoneCall} accent="success" />
+        <MetricCard label="Completed" value={String(completedCount)} icon={PhoneCall} accent="success" />
       </div>
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">

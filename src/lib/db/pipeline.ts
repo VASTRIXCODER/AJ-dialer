@@ -28,6 +28,57 @@ const toFloatingLocal = (v: string): string => {
   return m ? `${m[1]}T${m[2]}` : v;
 };
 
+// ─────────────────────────────────────────────────────────────────────────────
+// PostgREST silently caps every un-ranged response at 1,000 rows — a plain
+// `.limit(5000)` therefore returns AT MOST 1,000, with no error. (Full story in
+// src/lib/db/leads.ts, "THE 1,000-ROW CEILING".) Anything here that promises
+// more than 1,000 rows must page explicitly with `.range()`.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** PostgREST's per-response ceiling. Pages are requested at exactly this size. */
+const PAGE = 1000;
+
+/**
+ * Read up to `max` rows, paging past the 1,000-row cap in `.range()` windows.
+ * `build()` must return a FRESH query builder each call (they aren't reusable).
+ */
+async function fetchPagedUpTo(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  build: () => any,
+  max: number,
+): Promise<Row[]> {
+  const out: Row[] = [];
+  for (let from = 0; from < max; from += PAGE) {
+    const size = Math.min(PAGE, max - from);
+    const { data, error } = await build().range(from, from + size - 1);
+    if (error) {
+      console.error("[pipeline] paged read failed:", error.message);
+      break;
+    }
+    const rows = (data ?? []) as Row[];
+    out.push(...rows);
+    if (rows.length < size) break; // short page ⇒ end of the result set
+  }
+  return out;
+}
+
+/**
+ * User-typed search text gets interpolated into PostgREST `.or()`/`.ilike`
+ * filter strings, where commas and parens are FILTER SYNTAX and `%`/`_` are
+ * LIKE wildcards. Strip anything that could break out of (or wildcard) the
+ * pattern rather than trying to escape it — names and phone fragments never
+ * legitimately contain these characters.
+ */
+function sanitizeFilterTerm(raw: string): string {
+  return raw
+    .replace(/[,()%_\\]/g, " ")
+    // eslint-disable-next-line no-control-regex
+    .replace(/[\u0000-\u001f\u007f]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 60);
+}
+
 /** owner_id → display name for an org (to attribute team rows). */
 async function memberNames(orgId: string): Promise<Map<string, string>> {
   try {
@@ -263,28 +314,32 @@ export async function getAppointments(): Promise<AppointmentRow[]> {
     // `scope.supervisor` check — but an override finally means something.
     const orgWide = scope.team && isAdminConfigured() && Boolean(scope.orgId);
     const reader = orgWide ? createAdminClient() : await createClient();
-    let query = reader
-      .from("appointments")
-      .select("*")
-      .eq(orgWide ? "org_id" : "owner_id", orgWide ? scope.orgId : scope.userId);
-    // A rep's "own" scope must stay within their CURRENT org — never surface
-    // appointments they happen to own from an org they've since left.
-    if (!orgWide && scope.orgId) query = query.eq("org_id", scope.orgId);
-    const { data, error } = await query
-      .order("created_at", { ascending: false })
-      .limit(orgWide ? 5000 : 500);
-    if (error) console.error("[pipeline] getAppointments query failed:", error.message);
-    const rows = (data ?? []) as Row[];
+    // The old `.limit(5000)` silently returned at most 1,000 (the PostgREST
+    // ceiling) — page explicitly so the advertised ceiling is real. The
+    // workspace needs the working set in memory for its calendar/bucket views.
+    const rows = await fetchPagedUpTo(() => {
+      let query = reader
+        .from("appointments")
+        .select("*")
+        .eq(orgWide ? "org_id" : "owner_id", orgWide ? scope.orgId : scope.userId);
+      // A rep's "own" scope must stay within their CURRENT org — never surface
+      // appointments they happen to own from an org they've since left.
+      if (!orgWide && scope.orgId) query = query.eq("org_id", scope.orgId);
+      // `id` tiebreaker keeps the page windows stable when created_at collides.
+      return query.order("created_at", { ascending: false }).order("id", { ascending: true });
+    }, orgWide ? 5000 : 500);
     const names = orgWide ? await memberNames(scope.orgId as string) : null;
 
     // Batch the leads' contact details for the review lane + the email context.
+    // Chunked: `.in()` lists ride in the request URL and responses cap at
+    // 1,000 rows, so one giant list would truncate (or fail) past that.
     const leadIds = [...new Set(rows.map((r) => r.lead_id).filter(Boolean).map(String))];
     const contacts = new Map<string, { phone: string; city: string; address: string }>();
-    if (leadIds.length) {
+    for (let i = 0; i < leadIds.length; i += 500) {
       const { data: ls } = await reader
         .from("leads")
         .select("id,phone,city,address,state,zip")
-        .in("id", leadIds);
+        .in("id", leadIds.slice(i, i + 500));
       for (const l of (ls ?? []) as Row[])
         contacts.set(s(l.id), {
           phone: s(l.phone),
@@ -386,42 +441,134 @@ export interface BillsFineRow {
   teamWide: boolean;
 }
 
-export async function getBillsFine(): Promise<BillsFineRow[]> {
-  if (!isSupabaseConfigured()) return [];
+export interface BillsFineResult {
+  /** One page of the (possibly searched) book. */
+  rows: BillsFineRow[];
+  /** Count of EVERY row the scope + search match — not just this page. */
+  total: number;
+  /** Full-book count of rows carrying both bill amounts (same scope + search). */
+  withBills: number;
+  /** Average combined monthly energy cost across `withBills` rows; null when none. */
+  avgEnergyCost: number | null;
+  /** Whether the viewer sees the whole org's book (drives the Team-wide badge). */
+  teamWide: boolean;
+}
+
+const BILLS_FINE_COLS =
+  "id,first_name,last_name,phone,address,utility_bill,solar_payment,utility_provider,last_contacted_at,created_at,owner_id";
+
+/** How many with-bill rows the average is computed over before it becomes a sample. */
+const BILLS_FINE_AVG_MAX = 5000;
+
+export async function getBillsFine(
+  opts: { page?: number; pageSize?: number; q?: string } = {},
+): Promise<BillsFineResult> {
+  const empty: BillsFineResult = {
+    rows: [],
+    total: 0,
+    withBills: 0,
+    avgEnergyCost: null,
+    teamWide: false,
+  };
+  if (!isSupabaseConfigured()) return empty;
   try {
     const scope = await getScope();
-    if (!scope) return [];
+    if (!scope) return empty;
     const orgWide = scope.supervisor && isAdminConfigured() && Boolean(scope.orgId);
     const reader = orgWide ? createAdminClient() : await createClient();
-    let query = reader
-      .from("leads")
-      .select("id,first_name,last_name,phone,address,utility_bill,solar_payment,utility_provider,last_contacted_at,created_at,owner_id")
-      .eq(orgWide ? "org_id" : "owner_id", orgWide ? scope.orgId : scope.userId)
-      .eq("status", "bills_fine");
-    // A rep's "own" scope must stay within their CURRENT org — never surface
-    // leads they happen to own from an org they've since left.
-    if (!orgWide && scope.orgId) query = query.eq("org_id", scope.orgId);
-    const { data, error } = await query
-      .order("last_contacted_at", { ascending: false })
-      .limit(orgWide ? 50000 : 5000);
-    if (error) console.error("[pipeline] getBillsFine query failed:", error.message);
+
+    const pageSize = Math.min(200, Math.max(1, Math.floor(opts.pageSize ?? 50)));
+    const page = Math.max(1, Math.floor(opts.page ?? 1));
+    const from = (page - 1) * pageSize;
+
+    const term = sanitizeFilterTerm(opts.q ?? "");
+    const digits = term.replace(/\D/g, "");
+
+    // Apply the SAME scope/status/search filters to every query below, so the
+    // counts describe exactly the book the list pages through. Builders aren't
+    // reusable — this decorates a fresh one each time.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const filtered = (base: any) => {
+      let q = base
+        .eq(orgWide ? "org_id" : "owner_id", orgWide ? scope.orgId : scope.userId)
+        .eq("status", "bills_fine");
+      // A rep's "own" scope must stay within their CURRENT org — never surface
+      // leads they happen to own from an org they've since left.
+      if (!orgWide && scope.orgId) q = q.eq("org_id", scope.orgId);
+      if (term) {
+        const ors = [`first_name.ilike.%${term}%`, `last_name.ilike.%${term}%`];
+        if (digits) ors.push(`phone.ilike.%${digits}%`);
+        q = q.or(ors.join(","));
+      }
+      return q;
+    };
+
+    const [pageRes, totalRes, withBillsRes] = await Promise.all([
+      filtered(reader.from("leads").select(BILLS_FINE_COLS))
+        .order("last_contacted_at", { ascending: false })
+        // `id` tiebreaker keeps page windows stable when timestamps collide.
+        .order("id", { ascending: true })
+        .range(from, from + pageSize - 1),
+      filtered(reader.from("leads").select("id", { count: "exact", head: true })),
+      filtered(reader.from("leads").select("id", { count: "exact", head: true }))
+        .gt("utility_bill", 0)
+        .gt("solar_payment", 0),
+    ]);
+    if (pageRes.error) console.error("[pipeline] getBillsFine query failed:", pageRes.error.message);
+    if (totalRes.error) console.error("[pipeline] getBillsFine count failed:", totalRes.error.message);
+
+    const rows = (pageRes.data ?? []) as Row[];
+    // If the count query failed, fall back to what this page proves exists so
+    // the UI never claims an empty book while showing rows.
+    const total = totalRes.count ?? from + rows.length;
+    const withBills = withBillsRes.count ?? 0;
+
+    // Average combined energy cost over the whole (filtered) book. There's no
+    // aggregate endpoint to lean on, so read just the two numeric columns in
+    // bounded pages — exact up to BILLS_FINE_AVG_MAX with-bill rows, a large
+    // deterministic sample beyond that.
+    let avgEnergyCost: number | null = null;
+    if (withBills > 0) {
+      const billRows = await fetchPagedUpTo(
+        () =>
+          filtered(reader.from("leads").select("utility_bill,solar_payment"))
+            .gt("utility_bill", 0)
+            .gt("solar_payment", 0)
+            .order("id", { ascending: true }),
+        BILLS_FINE_AVG_MAX,
+      );
+      if (billRows.length) {
+        const sum = billRows.reduce(
+          (acc, r) => acc + Number(r.utility_bill ?? 0) + Number(r.solar_payment ?? 0),
+          0,
+        );
+        avgEnergyCost = sum / billRows.length;
+      }
+    }
+
     const names = orgWide ? await memberNames(scope.orgId as string) : null;
-    return ((data ?? []) as Row[]).map((r) => ({
-      id: s(r.id),
-      leadName: `${s(r.first_name)} ${s(r.last_name)}`.trim() || "Homeowner",
-      phone: s(r.phone),
-      address: s(r.address),
-      utilityBill: r.utility_bill == null ? null : Number(r.utility_bill),
-      solarPayment: r.solar_payment == null ? null : Number(r.solar_payment),
-      utilityProvider: s(r.utility_provider),
-      lastContactedAt: r.last_contacted_at ? s(r.last_contacted_at) : null,
-      createdAt: s(r.created_at),
-      repName: names ? names.get(s(r.owner_id)) || "Rep" : undefined,
+    return {
+      rows: rows.map((r) => ({
+        id: s(r.id),
+        leadName: `${s(r.first_name)} ${s(r.last_name)}`.trim() || "Homeowner",
+        phone: s(r.phone),
+        address: s(r.address),
+        utilityBill: r.utility_bill == null ? null : Number(r.utility_bill),
+        solarPayment: r.solar_payment == null ? null : Number(r.solar_payment),
+        utilityProvider: s(r.utility_provider),
+        lastContactedAt: r.last_contacted_at ? s(r.last_contacted_at) : null,
+        createdAt: s(r.created_at),
+        repName: names ? names.get(s(r.owner_id)) || "Rep" : undefined,
+        teamWide: orgWide,
+      })),
+      total,
+      withBills,
+      avgEnergyCost,
       teamWide: orgWide,
-    }));
+    };
   } catch (e) {
     console.error("[pipeline] getBillsFine failed:", e instanceof Error ? e.message : e);
-    return [];
+    return empty;
   }
 }
 
@@ -439,41 +586,74 @@ export interface CallbackRow {
   teamWide: boolean;
 }
 
-export async function getCallbacks(): Promise<CallbackRow[]> {
-  if (!isSupabaseConfigured()) return [];
+export interface CallbacksResult {
+  /** Open callbacks only (completed/cancelled are excluded), soonest due first. */
+  rows: CallbackRow[];
+  /** Full-book count of completed callbacks — they never ride along as rows. */
+  completedCount: number;
+  /** Whether the viewer sees the whole org's callbacks. */
+  teamWide: boolean;
+}
+
+/** Open callbacks worth showing on the board — closed history stays in the DB. */
+const CALLBACKS_MAX = 500;
+
+export async function getCallbacks(): Promise<CallbacksResult> {
+  const empty: CallbacksResult = { rows: [], completedCount: 0, teamWide: false };
+  if (!isSupabaseConfigured()) return empty;
   try {
     const scope = await getScope();
-    if (!scope) return [];
+    if (!scope) return empty;
     // Finalize any stuck calls first so callback-dispositioned ones show up.
     await reconcileOwnerActiveCalls();
     const orgWide = scope.supervisor && isAdminConfigured() && Boolean(scope.orgId);
     const reader = orgWide ? createAdminClient() : await createClient();
-    let query = reader
-      .from("callbacks")
-      .select("*")
-      .eq(orgWide ? "org_id" : "owner_id", orgWide ? scope.orgId : scope.userId);
-    // A rep's "own" scope must stay within their CURRENT org — never surface
-    // callbacks they happen to own from an org they've since left.
-    if (!orgWide && scope.orgId) query = query.eq("org_id", scope.orgId);
-    const { data, error } = await query
-      .order("created_at", { ascending: false })
-      .limit(orgWide ? 5000 : 500);
-    if (error) console.error("[pipeline] getCallbacks query failed:", error.message);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const scoped = (base: any) => {
+      let q = base.eq(orgWide ? "org_id" : "owner_id", orgWide ? scope.orgId : scope.userId);
+      // A rep's "own" scope must stay within their CURRENT org — never surface
+      // callbacks they happen to own from an org they've since left.
+      if (!orgWide && scope.orgId) q = q.eq("org_id", scope.orgId);
+      return q;
+    };
+    // Closed rows accumulate forever — only OPEN work belongs on the board.
+    // Statuses in play: rows insert as "due" (records.ts) and the page's ⋯ menu
+    // writes "completed" | "cancelled" | "due" (dispositions.ts). Soonest due
+    // first so a bounded read can never crowd today's queue out with history;
+    // the Completed KPI comes from its own count so truncation can't skew it.
+    const [listRes, doneRes] = await Promise.all([
+      scoped(reader.from("callbacks").select("*"))
+        .not("status", "in", '("completed","cancelled")')
+        .order("due_at", { ascending: true, nullsFirst: false })
+        .order("created_at", { ascending: false })
+        .limit(CALLBACKS_MAX),
+      scoped(reader.from("callbacks").select("id", { count: "exact", head: true })).eq(
+        "status",
+        "completed",
+      ),
+    ]);
+    if (listRes.error) console.error("[pipeline] getCallbacks query failed:", listRes.error.message);
+    if (doneRes.error)
+      console.error("[pipeline] getCallbacks completed count failed:", doneRes.error.message);
     const names = orgWide ? await memberNames(scope.orgId as string) : null;
-    return (data ?? []).map((r: Row) => ({
-      id: s(r.id),
-      leadId: r.lead_id ? s(r.lead_id) : null,
-      leadName: s(r.lead_name) || "Homeowner",
-      phone: s(r.phone),
-      reason: s(r.reason),
-      status: s(r.status) || "due",
-      dueAt: r.due_at ? s(r.due_at) : null,
-      createdAt: s(r.created_at),
-      repName: names ? names.get(s(r.owner_id)) || "Rep" : undefined,
+    return {
+      rows: ((listRes.data ?? []) as Row[]).map((r) => ({
+        id: s(r.id),
+        leadId: r.lead_id ? s(r.lead_id) : null,
+        leadName: s(r.lead_name) || "Homeowner",
+        phone: s(r.phone),
+        reason: s(r.reason),
+        status: s(r.status) || "due",
+        dueAt: r.due_at ? s(r.due_at) : null,
+        createdAt: s(r.created_at),
+        repName: names ? names.get(s(r.owner_id)) || "Rep" : undefined,
+        teamWide: orgWide,
+      })),
+      completedCount: doneRes.count ?? 0,
       teamWide: orgWide,
-    }));
+    };
   } catch (e) {
     console.error("[pipeline] getCallbacks failed:", e instanceof Error ? e.message : e);
-    return [];
+    return empty;
   }
 }
