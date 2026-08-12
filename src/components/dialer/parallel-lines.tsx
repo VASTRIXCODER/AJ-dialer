@@ -1,6 +1,6 @@
 "use client";
 
-import { AnimatePresence, motion } from "framer-motion";
+import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import { Check, PhoneOff, X } from "lucide-react";
 import { Avatar } from "@/components/ui/avatar";
 import type { DialLine } from "@/lib/use-dialer";
@@ -9,6 +9,9 @@ import { cn, formatPhone, initials } from "@/lib/utils";
 const colors = ["#3B82F6", "#0EA5E9", "#8B5CF6"];
 
 export function ParallelLines({ lines }: { lines: DialLine[] }) {
+  // MotionConfig reducedMotion="user" nulls transform animations but leaves
+  // opacity running — this infinite ringing pulse needs an explicit guard.
+  const reduce = useReducedMotion();
   return (
     <div className="space-y-2.5">
       <AnimatePresence initial={false}>
@@ -60,8 +63,12 @@ export function ParallelLines({ lines }: { lines: DialLine[] }) {
                       <motion.span
                         key={d}
                         className="h-1.5 w-1.5 rounded-full bg-warning"
-                        animate={{ opacity: [0.3, 1, 0.3] }}
-                        transition={{ duration: 1, repeat: Infinity, delay: d * 0.2 }}
+                        animate={reduce ? { opacity: 0.7 } : { opacity: [0.3, 1, 0.3] }}
+                        transition={
+                          reduce
+                            ? { duration: 0 }
+                            : { duration: 1, repeat: Infinity, delay: d * 0.2 }
+                        }
                       />
                     ))}
                   </span>
