@@ -5,6 +5,7 @@ import { statsForCampaign, type CampaignStats } from "../campaign-stats";
 import { createAdminClient, isAdminConfigured } from "../supabase/admin";
 import { isSupabaseConfigured } from "../supabase/config";
 import { createClient } from "../supabase/server";
+import type { CallOutcome, CampaignStatus } from "../types";
 import { formatAddress } from "../utils";
 import { apptScope } from "./appointments";
 import { canActOn, getScope } from "./scope";
@@ -99,7 +100,7 @@ export interface CampaignRow {
   id: string;
   name: string;
   utilityProvider: string;
-  status: "active" | "paused" | "completed";
+  status: CampaignStatus;
   color: string;
   createdAt: string;
   ownerId: string | null;
@@ -206,12 +207,55 @@ async function authorizeCampaign(
 
 export async function setCampaignStatus(
   id: string,
-  status: "active" | "paused" | "completed",
+  status: CampaignStatus,
 ): Promise<Result> {
   if (!isSupabaseConfigured()) return { ok: false, error: "Not configured." };
   const auth = await authorizeCampaign(id);
   if ("error" in auth) return { ok: false, error: auth.error };
   const { error } = await auth.admin.from("campaigns").update({ status }).eq("id", id);
+  return error ? { ok: false, error: error.message } : { ok: true };
+}
+
+/** Runtime guard for statuses arriving over the API as arbitrary strings. */
+const CAMPAIGN_STATUSES: ReadonlySet<string> = new Set<CampaignStatus>([
+  "active",
+  "paused",
+  "completed",
+]);
+
+/**
+ * Sparse edit of a campaign's own fields — name, utility provider, color,
+ * status. Only the provided keys change; same authorization as
+ * setCampaignStatus (any member the campaign's owner/org scope admits).
+ */
+export async function updateCampaign(
+  id: string,
+  patch: {
+    name?: string;
+    utilityProvider?: string;
+    color?: string;
+    status?: CampaignStatus;
+  },
+): Promise<Result> {
+  if (!isSupabaseConfigured())
+    return { ok: false, error: "Connect Supabase to edit campaigns." };
+  const update: Record<string, string> = {};
+  if (patch.name !== undefined) {
+    const name = patch.name.trim();
+    if (!name) return { ok: false, error: "Name is required." };
+    update.name = name;
+  }
+  if (patch.utilityProvider !== undefined) update.utility_provider = patch.utilityProvider.trim();
+  if (patch.color !== undefined) update.color = patch.color;
+  if (patch.status !== undefined) {
+    if (!CAMPAIGN_STATUSES.has(patch.status))
+      return { ok: false, error: "Status must be active, paused, or completed." };
+    update.status = patch.status;
+  }
+  if (Object.keys(update).length === 0) return { ok: false, error: "Nothing to update." };
+  const auth = await authorizeCampaign(id);
+  if ("error" in auth) return { ok: false, error: auth.error };
+  const { error } = await auth.admin.from("campaigns").update(update).eq("id", id);
   return error ? { ok: false, error: error.message } : { ok: true };
 }
 
@@ -256,6 +300,64 @@ export async function assignLeadsToCampaign(
   if (!scope.supervisor && scope.orgId) q = q.eq("org_id", scope.orgId);
   const { error } = await q;
   return error ? { ok: false, error: error.message } : { ok: true };
+}
+
+/** One row of a campaign's recent call activity (the detail page's feed). */
+export interface CampaignCallRow {
+  id: string;
+  leadName: string;
+  /** null when the call never got a disposition (or an unknown legacy value). */
+  outcome: CallOutcome | null;
+  durationSec: number;
+  startedAt: string;
+}
+
+/**
+ * The latest calls placed against one campaign. Campaigns are org-shared, so
+ * reads go org-wide via the service-role client when available (org_id pinned
+ * in code), own-scoped otherwise — the same split as getCampaigns. Note
+ * campaign_id is TEXT on call_records while campaigns.id is a uuid; the string
+ * equality here matches how campaign-stats keys the same rows.
+ */
+export async function getCampaignRecentCalls(
+  campaignId: string,
+  limit = 10,
+): Promise<CampaignCallRow[]> {
+  if (!isSupabaseConfigured()) return [];
+  try {
+    const scope = await getScope();
+    if (!scope) return [];
+    const useOrg = isAdminConfigured() && Boolean(scope.orgId);
+    const reader = useOrg ? createAdminClient() : await createClient();
+    let q = reader
+      .from("call_records")
+      .select("id,lead_name,outcome,duration_sec,started_at")
+      .eq(useOrg ? "org_id" : "owner_id", useOrg ? (scope.orgId as string) : scope.userId)
+      .eq("campaign_id", campaignId);
+    // A rep's "own" scope must stay within their CURRENT org — never surface
+    // calls they happen to own from an org they've since left.
+    if (!useOrg && scope.orgId) q = q.eq("org_id", scope.orgId);
+    const { data, error } = await q
+      .order("started_at", { ascending: false })
+      .limit(Math.min(50, Math.max(1, Math.floor(limit))));
+    if (error) {
+      console.error("[pipeline] getCampaignRecentCalls failed:", error.message);
+      return [];
+    }
+    return ((data ?? []) as Row[]).map((r) => ({
+      id: s(r.id),
+      leadName: s(r.lead_name) || "Homeowner",
+      outcome: r.outcome ? (s(r.outcome) as CallOutcome) : null,
+      durationSec: Number(r.duration_sec ?? 0) || 0,
+      startedAt: s(r.started_at),
+    }));
+  } catch (e) {
+    console.error(
+      "[pipeline] getCampaignRecentCalls failed:",
+      e instanceof Error ? e.message : e,
+    );
+    return [];
+  }
 }
 
 // ── Appointments ─────────────────────────────────────────────────────────────

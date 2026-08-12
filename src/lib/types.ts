@@ -226,11 +226,13 @@ export interface Callback {
   status: "due" | "upcoming" | "overdue" | "completed";
 }
 
+export type CampaignStatus = "active" | "paused" | "completed";
+
 export interface Campaign {
   id: string;
   name: string;
   utilityProvider: string;
-  status: "active" | "paused" | "completed";
+  status: CampaignStatus;
   totalLeads: number;
   activeLeads: number;
   completedLeads: number;

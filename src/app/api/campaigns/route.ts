@@ -1,5 +1,10 @@
 import { NextResponse } from "next/server";
-import { createCampaign, deleteCampaign, setCampaignStatus } from "@/lib/db/pipeline";
+import {
+  createCampaign,
+  deleteCampaign,
+  setCampaignStatus,
+  updateCampaign,
+} from "@/lib/db/pipeline";
 
 export const dynamic = "force-dynamic";
 
@@ -15,17 +20,32 @@ export async function POST(req: Request) {
 }
 
 export async function PATCH(req: Request) {
-  const { id, status } = (await req.json().catch(() => ({}))) as {
+  const { id, status, name, utilityProvider, color } = (await req
+    .json()
+    .catch(() => ({}))) as {
     id?: string;
     status?: "active" | "paused" | "completed";
+    name?: string;
+    utilityProvider?: string;
+    color?: string;
   };
-  if (!id || !status) {
-    return NextResponse.json(
-      { ok: false, error: "id and status are required." },
-      { status: 400 },
-    );
+  if (!id) {
+    return NextResponse.json({ ok: false, error: "id is required." }, { status: 400 });
   }
-  const r = await setCampaignStatus(id, status);
+  // A status-only PATCH stays the lightweight pause/resume toggle; anything
+  // more becomes a sparse edit of the campaign's own fields.
+  const editing = name !== undefined || utilityProvider !== undefined || color !== undefined;
+  if (!editing) {
+    if (!status) {
+      return NextResponse.json(
+        { ok: false, error: "id and status are required." },
+        { status: 400 },
+      );
+    }
+    const r = await setCampaignStatus(id, status);
+    return NextResponse.json(r, { status: r.ok ? 200 : 400 });
+  }
+  const r = await updateCampaign(id, { name, utilityProvider, color, status });
   return NextResponse.json(r, { status: r.ok ? 200 : 400 });
 }
 

@@ -6,6 +6,7 @@ import {
   Loader2,
   Megaphone,
   Pause,
+  Pencil,
   Play,
   Plus,
   Trash2,
@@ -14,27 +15,24 @@ import {
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { EditCampaignDialog } from "@/components/campaigns/edit-campaign-dialog";
 import { SpotlightCard } from "@/components/motion";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input, Label } from "@/components/ui/input";
 import type { CampaignStats } from "@/lib/campaign-stats";
+import { campaignStatusConfig } from "@/lib/status";
+import type { CampaignStatus } from "@/lib/types";
 
 type Campaign = {
   id: string;
   name: string;
   utilityProvider: string;
-  status: "active" | "paused" | "completed";
+  status: CampaignStatus;
   color: string;
   createdAt: string;
   ownerId: string | null;
   stats: CampaignStats;
-};
-
-const tone = {
-  active: { tone: "success" as const, label: "Active" },
-  paused: { tone: "warning" as const, label: "Paused" },
-  completed: { tone: "neutral" as const, label: "Completed" },
 };
 
 export function CampaignsView({ campaigns }: { campaigns: Campaign[] }) {
@@ -46,6 +44,7 @@ export function CampaignsView({ campaigns }: { campaigns: Campaign[] }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const [pendingId, setPendingId] = useState<string | null>(null);
+  const [editing, setEditing] = useState<Campaign | null>(null);
 
   async function create(e: React.FormEvent) {
     e.preventDefault();
@@ -152,7 +151,7 @@ export function CampaignsView({ campaigns }: { campaigns: Campaign[] }) {
       ) : (
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
           {campaigns.map((c) => {
-            const cfg = tone[c.status];
+            const cfg = campaignStatusConfig[c.status];
             const st = c.stats;
             const pending = pendingId === c.id;
             return (
@@ -194,9 +193,19 @@ export function CampaignsView({ campaigns }: { campaigns: Campaign[] }) {
                     <Button
                       variant="outline"
                       size="sm"
+                      onClick={() => setEditing(c)}
+                      disabled={pending}
+                      aria-label={`Edit ${c.name}`}
+                    >
+                      <Pencil className="h-3.5 w-3.5" />
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
                       className="gap-1.5"
                       onClick={() => toggle(c)}
                       disabled={c.status === "completed" || pending}
+                      aria-label={c.status === "active" ? `Pause ${c.name}` : `Resume ${c.name}`}
                     >
                       {pending ? (
                         <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -221,6 +230,10 @@ export function CampaignsView({ campaigns }: { campaigns: Campaign[] }) {
             );
           })}
         </div>
+      )}
+
+      {editing && (
+        <EditCampaignDialog campaign={editing} onClose={() => setEditing(null)} />
       )}
     </div>
   );

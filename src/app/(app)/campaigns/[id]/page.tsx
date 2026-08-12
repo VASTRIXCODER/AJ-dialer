@@ -1,22 +1,27 @@
-import { ArrowLeft, CalendarCheck, PhoneCall, PhoneOutgoing, Target, Users, Zap } from "lucide-react";
+import {
+  ArrowLeft,
+  CalendarCheck,
+  PhoneCall,
+  PhoneOutgoing,
+  Target,
+  Users,
+  Zap,
+} from "lucide-react";
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { CampaignEditButton } from "@/components/campaigns/campaign-edit-button";
 import { MetricCard } from "@/components/dashboard/metric-card";
 import { ReportFunnel } from "@/components/reports/report-sections";
 import { PageContainer, PageHeader } from "@/components/shared/page-header";
 import { SectionCard } from "@/components/shared/section-card";
 import { Badge } from "@/components/ui/badge";
 import { buttonVariants } from "@/components/ui/button";
-import { getCampaign } from "@/lib/db/pipeline";
-import { formatNumber } from "@/lib/utils";
+import { getLeadsPage } from "@/lib/db/leads";
+import { getCampaign, getCampaignRecentCalls } from "@/lib/db/pipeline";
+import { campaignStatusConfig, leadStatusConfig, outcomeConfig } from "@/lib/status";
+import { formatDuration, formatNumber, relativeTime } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
-
-const tone = {
-  active: { tone: "success" as const, label: "Active" },
-  paused: { tone: "warning" as const, label: "Paused" },
-  completed: { tone: "neutral" as const, label: "Completed" },
-};
 
 export default async function CampaignDetailPage({
   params,
@@ -24,11 +29,15 @@ export default async function CampaignDetailPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  const c = await getCampaign(id);
+  const [c, leadsPage, recentCalls] = await Promise.all([
+    getCampaign(id),
+    getLeadsPage({ page: 1, pageSize: 25, campaignId: id }),
+    getCampaignRecentCalls(id),
+  ]);
   if (!c) notFound();
 
   const st = c.stats;
-  const cfg = tone[c.status];
+  const cfg = campaignStatusConfig[c.status];
   const apptRate = st.connects
     ? Math.round((st.appointments / st.connects) * 1000) / 10
     : 0;
@@ -49,6 +58,15 @@ export default async function CampaignDetailPage({
           <Badge tone={cfg.tone} dot>
             {cfg.label}
           </Badge>
+          <CampaignEditButton
+            campaign={{
+              id: c.id,
+              name: c.name,
+              utilityProvider: c.utilityProvider,
+              color: c.color,
+              status: c.status,
+            }}
+          />
           <Link
             href={`/dialer?campaign=${c.id}`}
             className={buttonVariants({ size: "sm", className: "gap-2" })}
@@ -92,6 +110,86 @@ export default async function CampaignDetailPage({
             <p className="mt-3 text-sm text-muted-foreground">
               No leads assigned yet — assign some from the Leads tab or on CSV import.
             </p>
+          )}
+        </SectionCard>
+      </div>
+
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+        <SectionCard
+          className="lg:col-span-2"
+          title="Leads in this campaign"
+          description={
+            leadsPage.total > leadsPage.leads.length
+              ? `Showing ${leadsPage.leads.length} of ${formatNumber(leadsPage.total)}`
+              : `${formatNumber(leadsPage.total)} assigned`
+          }
+          action={{ label: "View all in Leads", href: `/leads?campaign=${c.id}` }}
+        >
+          {leadsPage.leads.length === 0 ? (
+            <p className="text-sm text-muted-foreground">
+              No leads assigned yet — select some in the Leads tab and assign them to this
+              campaign.
+            </p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-border text-left text-xs uppercase tracking-wide text-muted-foreground">
+                    <th className="pb-2 pr-4 font-semibold">Lead</th>
+                    <th className="pb-2 pr-4 font-semibold">Status</th>
+                    <th className="pb-2 pr-4 font-semibold">AI score</th>
+                    <th className="pb-2 font-semibold">Last contacted</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {leadsPage.leads.map((l) => {
+                    const lc = leadStatusConfig[l.status];
+                    return (
+                      <tr key={l.id} className="border-b border-border/60 last:border-0">
+                        <td className="max-w-[220px] truncate py-2.5 pr-4 font-medium">
+                          {`${l.firstName} ${l.lastName}`.trim() || "Homeowner"}
+                        </td>
+                        <td className="py-2.5 pr-4">
+                          <Badge tone={lc.tone}>{lc.label}</Badge>
+                        </td>
+                        <td className="py-2.5 pr-4 tabular">{l.aiScore ?? "—"}</td>
+                        <td className="whitespace-nowrap py-2.5 text-muted-foreground">
+                          {l.lastContactedAt ? relativeTime(l.lastContactedAt) : "Never"}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </SectionCard>
+
+        <SectionCard title="Recent calls" description="Latest dials against this campaign">
+          {recentCalls.length === 0 ? (
+            <p className="text-sm text-muted-foreground">
+              No calls logged for this campaign yet.
+            </p>
+          ) : (
+            <div className="space-y-4">
+              {recentCalls.map((r) => {
+                const oc = (r.outcome ? outcomeConfig[r.outcome] : undefined) ?? {
+                  label: "No outcome",
+                  tone: "neutral" as const,
+                };
+                return (
+                  <div key={r.id} className="flex items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-medium">{r.leadName}</p>
+                      <p className="mt-0.5 text-xs text-muted-foreground tabular">
+                        {formatDuration(r.durationSec)} · {relativeTime(r.startedAt)}
+                      </p>
+                    </div>
+                    <Badge tone={oc.tone}>{oc.label}</Badge>
+                  </div>
+                );
+              })}
+            </div>
           )}
         </SectionCard>
       </div>
