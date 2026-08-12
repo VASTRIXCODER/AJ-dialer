@@ -427,6 +427,7 @@ export function DialerClient({
             state={state}
             focusLead={focusLead}
             hasQueue={queueForDialer.length > 0}
+            wrapupNotes={notesRef.current}
             aiConfigured={config.aiAgentConfigured}
             manualEnabled={config.manualEnabled}
             aiEnabled={config.aiEnabled}

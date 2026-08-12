@@ -1735,3 +1735,15 @@ grant execute on function public.app_leads_page(uuid, uuid, boolean, text, text,
 revoke execute on function public.app_leads_page(uuid, uuid, boolean, text, text, text, text, uuid, boolean, text, integer, integer) from public;
 revoke execute on function public.app_leads_page(uuid, uuid, boolean, text, text, text, text, uuid, boolean, text, integer, integer) from anon;
 revoke execute on function public.app_leads_page(uuid, uuid, boolean, text, text, text, text, uuid, boolean, text, integer, integer) from authenticated;
+
+-- ═════════════════════════════════════════════════════════════════════════════
+-- Persisted call transcripts (P5.TRANSCRIPT)
+--
+-- The ElevenLabs webhook received the full turn array, fed it once into
+-- analyzeConversation, and threw it away — so the call dashboard re-fetched
+-- the transcript from the ElevenLabs API on every poll (even for long-ended
+-- calls) and no other AI surface could ever see it.
+-- Shape: [{ "role": "agent"|"user", "message": text, "secs": number|null }]
+-- ═════════════════════════════════════════════════════════════════════════════
+alter table public.ai_conversations
+  add column if not exists transcript jsonb;

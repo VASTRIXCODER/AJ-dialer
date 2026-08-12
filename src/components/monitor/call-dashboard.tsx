@@ -25,6 +25,7 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { OutcomeGrid } from "@/components/dialer/outcome-grid";
+import { CopilotPanel } from "@/components/monitor/copilot-panel";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Modal } from "@/components/ui/modal";
@@ -688,6 +689,16 @@ export function CallDashboard({
           </div>
           {audioErr && (
             <p className="mb-2 text-xs font-medium text-danger">{audioErr}</p>
+          )}
+
+          {/* On-demand copilot for supervisors deciding whether to step in —
+              fed the live transcript, so its guidance describes THIS call.
+              leadId comes from the in-memory store, so it's present exactly
+              when this instance placed the call (the takeover case). */}
+          {live && canIntervene && detail?.leadId && detail.transcript.length > 0 && (
+            <div className="mb-4">
+              <CopilotPanel leadId={detail.leadId} transcript={detail.transcript} />
+            </div>
           )}
 
           {loading && !detail ? (

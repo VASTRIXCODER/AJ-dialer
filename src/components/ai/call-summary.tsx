@@ -2,7 +2,7 @@
 
 import { motion } from "framer-motion";
 import { CheckCircle2, ListChecks, Sparkles } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import type { CallSummary } from "@/lib/ai/types";
 import { outcomeConfig } from "@/lib/status";
@@ -14,8 +14,20 @@ type State = {
   source?: "claude" | "demo";
 };
 
-export function AiCallSummary({ leadId }: { leadId: string | null }) {
+export function AiCallSummary({
+  leadId,
+  notes,
+  durationSec,
+}: {
+  leadId: string | null;
+  /** The rep's in-call notes — real evidence for the documentation. */
+  notes?: string;
+  durationSec?: number;
+}) {
   const [state, setState] = useState<State>({ loading: true });
+  // Snapshot the evidence once: the summary documents the call as it ended,
+  // and re-fetching because a prop identity wobbled would double the AI spend.
+  const evidenceRef = useRef({ notes, durationSec });
 
   useEffect(() => {
     if (!leadId) {
@@ -27,7 +39,7 @@ export function AiCallSummary({ leadId }: { leadId: string | null }) {
     fetch("/api/ai/summary", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ leadId }),
+      body: JSON.stringify({ leadId, ...evidenceRef.current }),
       signal: ctrl.signal,
     })
       .then((r) => r.json())

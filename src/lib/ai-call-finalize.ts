@@ -29,6 +29,9 @@ export interface Turn {
   speaker?: string;
   message?: string;
   text?: string;
+  /** Offset into the call, as ElevenLabs reports it (webhook + API shapes). */
+  time_in_call_secs?: number;
+  secs?: number | null;
 }
 
 export interface FinalizeResult {
@@ -290,6 +293,8 @@ export async function finalizeAIConversation(input: {
   });
 
   // Durable persistence (Supabase) — idempotent, attributed to the owner.
+  // The normalized turn array rides along so the dashboard can serve ended
+  // calls from the DB instead of re-hitting the ElevenLabs API forever.
   await completeAIConversation({
     conversationId,
     summary,
@@ -300,6 +305,18 @@ export async function finalizeAIConversation(input: {
     durationSec: input.durationSec,
     appointment,
     state: connected ? "completed" : "failed",
+    transcript: turns
+      .map((t) => ({
+        role: String(t.role ?? t.speaker ?? "agent"),
+        message: String(t.message ?? t.text ?? ""),
+        secs:
+          typeof t.secs === "number"
+            ? t.secs
+            : typeof t.time_in_call_secs === "number"
+              ? t.time_in_call_secs
+              : null,
+      }))
+      .filter((t) => t.message.trim().length > 0),
   });
 
   // Process the extracted data back onto the lead (bill, solar, EV/pool/battery,

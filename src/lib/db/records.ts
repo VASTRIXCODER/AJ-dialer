@@ -476,6 +476,13 @@ export async function completeAIConversation(input: {
   appointment?: { when: string; iso?: string; notes: string } | null;
   /** "failed" for calls that never connected; defaults to "completed". */
   state?: "completed" | "failed";
+  /**
+   * The call's turn array, persisted with the conversation so the dashboard
+   * stops re-fetching ended calls from the ElevenLabs API and other AI
+   * surfaces can see what was actually said. Omitted/empty leaves any
+   * previously stored transcript untouched.
+   */
+  transcript?: { role: string; message: string; secs: number | null }[] | null;
 }): Promise<void> {
   if (!isAdminConfigured()) return;
   try {
@@ -516,6 +523,9 @@ export async function completeAIConversation(input: {
         duration_sec: input.durationSec ?? null,
         appointment: input.appointment ?? null,
         ended_at: new Date().toISOString(),
+        ...(input.transcript && input.transcript.length
+          ? { transcript: input.transcript }
+          : {}),
       })
       .eq("conversation_id", input.conversationId);
 
@@ -861,6 +871,8 @@ export interface AIConversationRow {
   /** They picked up. The live timer counts from here, not startedAt. */
   connectedAt: number | null;
   appointment: { when: string; notes: string } | null;
+  /** Stored turn array (null for calls finalized before persistence landed). */
+  transcript: { role: string; message: string; secs: number | null }[] | null;
 }
 
 export async function getAIConversation(
@@ -895,6 +907,9 @@ export async function getAIConversation(
         : null,
       appointment:
         (data.appointment as { when: string; notes: string } | null) ?? null,
+      transcript: Array.isArray(data.transcript)
+        ? (data.transcript as { role: string; message: string; secs: number | null }[])
+        : null,
     };
   } catch {
     return null;

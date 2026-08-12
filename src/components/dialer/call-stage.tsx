@@ -116,10 +116,13 @@ export function CallStage({
   onStopAICampaign,
   onEndAISession,
   onReconnect,
+  wrapupNotes,
 }: {
   state: DialerState;
   focusLead: Lead | null;
   hasQueue: boolean;
+  /** The rep's in-call notes at wrap-up — evidence for the AI summary. */
+  wrapupNotes?: string;
   aiConfigured: boolean;
   manualEnabled?: boolean;
   aiEnabled?: boolean;
@@ -705,7 +708,11 @@ export function CallStage({
                   {name} · {formatDuration(state.durationSec)} talk time
                 </p>
               </div>
-              <AiCallSummary leadId={focusLead?.id ?? null} />
+              <AiCallSummary
+                leadId={focusLead?.id ?? null}
+                notes={wrapupNotes}
+                durationSec={state.durationSec}
+              />
               <OutcomeGrid onSelect={onOutcome} />
               <Button variant="ghost" className="gap-2 text-muted-foreground" onClick={onSkip}>
                 <SkipForward className="h-4 w-4" />

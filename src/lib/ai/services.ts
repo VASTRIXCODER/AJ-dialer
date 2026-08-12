@@ -130,6 +130,12 @@ export function getLeadBriefing(
 export function getCallCopilot(
   lead: Lead,
   isSolar = true,
+  /**
+   * The conversation SO FAR ("role: message" lines). With it the copilot's
+   * stage/signals describe the actual call; without it the model can only
+   * reason from CRM fields, and the prompt says so instead of pretending.
+   */
+  transcript?: string,
 ): Promise<AIResult<CallCopilot>> {
   return runAI(
     () =>
@@ -138,8 +144,14 @@ export function getCallCopilot(
         prompt:
           "The rep is mid-call with this homeowner. Act as a real-time sales copilot: " +
           "track the stage, recommend the single next best question, surface live signals, " +
-          "give one objection handler and one coaching tip, and list missing qualification info.\n\n" +
-          `Lead: ${leadContext(lead)}`,
+          "give one objection handler and one coaching tip, and list missing qualification info.\n" +
+          (transcript
+            ? "Base the stage and every signal on the live transcript below — what was " +
+              "ACTUALLY said — not on assumptions about how such calls usually go.\n"
+            : "No transcript is available: derive guidance from the lead data alone and " +
+              "keep signals limited to what that data supports.\n") +
+          `\nLead: ${leadContext(lead)}` +
+          (transcript ? `\n\nLive transcript so far:\n${transcript.slice(0, 6000)}` : ""),
         schemaName: "call_copilot",
         effort: "low",
         schema: obj({
@@ -162,11 +174,34 @@ export function getCallCopilot(
 }
 
 // ── Post-call documentation ──────────────────────────────────────────────────
+export interface CallEvidence {
+  /** "role: message" transcript lines, when the channel produced one. */
+  transcript?: string;
+  /** The rep's in-call notes — the real evidence a manual call leaves behind. */
+  notes?: string;
+  durationSec?: number;
+}
+
 export function getCallSummary(
   lead: Lead,
   outcome?: CallOutcome,
   isSolar = true,
+  /**
+   * What actually happened on the call. Without evidence the old prompt made
+   * the model write confident "documentation" for a call it never saw; now it
+   * is told exactly what it has and to keep anything beyond that minimal.
+   */
+  evidence?: CallEvidence,
 ): Promise<AIResult<CallSummary>> {
+  const evidenceBlock = [
+    evidence?.durationSec != null ? `Call duration: ${evidence.durationSec}s.` : "",
+    evidence?.notes?.trim() ? `Rep's in-call notes:\n${evidence.notes.trim().slice(0, 2000)}` : "",
+    evidence?.transcript?.trim()
+      ? `Transcript:\n${evidence.transcript.trim().slice(0, 8000)}`
+      : "",
+  ]
+    .filter(Boolean)
+    .join("\n\n");
   return runAI(
     () =>
       generateJSON<CallSummary>({
@@ -174,9 +209,13 @@ export function getCallSummary(
         prompt:
           "Write structured documentation for the call that just ended. " +
           `${outcome ? `The rep dispositioned it as "${outcome}". ` : ""}` +
+          "Base every statement on the evidence provided (disposition, duration, notes, " +
+          "transcript). Where the evidence is thin, keep the documentation short and " +
+          "factual — never invent quotes, objections, or events that are not in it. " +
           "recommendedOutcome must be one of: appointment_booked, callback_scheduled, qualified, " +
           "not_interested, no_answer, voicemail, wrong_number, do_not_call.\n\n" +
-          `Lead: ${leadContext(lead)}`,
+          `Lead: ${leadContext(lead)}` +
+          (evidenceBlock ? `\n\n${evidenceBlock}` : "\n\nNo call evidence was captured beyond the disposition."),
         schemaName: "call_summary",
         effort: "low",
         schema: obj({
