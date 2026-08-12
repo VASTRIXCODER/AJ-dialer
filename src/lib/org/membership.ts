@@ -15,6 +15,7 @@ import {
 import { createAdminClient, isAdminConfigured } from "../supabase/admin";
 import { isSupabaseConfigured } from "../supabase/config";
 import { createClient } from "../supabase/server";
+import { isRestConfigured, verifyNumbersOwnedByTwilio } from "../twilio";
 import { normalizePhone } from "../utils";
 import {
   type OrgBlueprint,
@@ -1033,6 +1034,20 @@ export async function updateOrganizationSettings(patch: OrgUpdate): Promise<Resu
           ok: false,
           error: `${conflict} is already configured as a caller ID for another organization on this platform — each organization needs its own dedicated number(s).`,
         };
+      }
+      // Reject a number that isn't actually on the Twilio account — dialing from
+      // it fails (Twilio 21210), and on an AI call it silently falls back to the
+      // default number while the UI reports the rotated one. Skipped when Twilio
+      // REST isn't configured (nothing to check against).
+      if (isRestConfigured()) {
+        const { ok, missing } = await verifyNumbersOwnedByTwilio(candidates);
+        if (!ok) {
+          const one = missing.length === 1;
+          return {
+            ok: false,
+            error: `${missing.join(", ")} ${one ? "isn’t a Twilio number on this account" : "aren’t Twilio numbers on this account"} — dialing from ${one ? "it" : "them"} will fail. Add ${one ? "it" : "them"} in Twilio (or remove ${one ? "it" : "them"} from the pool) first.`,
+          };
+        }
       }
     }
   }

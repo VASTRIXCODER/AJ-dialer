@@ -1,7 +1,7 @@
 import "server-only";
 
 import { getRestClient } from "@/lib/twilio";
-import { toE164 } from "@/lib/utils";
+import { normalizePhone, toE164 } from "@/lib/utils";
 
 /**
  * Find the outbound legs a dial attempt just placed, from the dialed numbers
@@ -60,6 +60,13 @@ export function parseDialTargets(value: unknown): DialTarget[] {
 export async function findRecentLegs(
   targets: DialTarget[],
   windowMs: number = RECOVERY_WINDOW_MS,
+  // The caller's org's OWN caller-ID numbers (normalized). When non-empty, only
+  // legs placed FROM one of them count — so a signed-in user of org A can't hang
+  // up (or enumerate) org B's live call to a homeowner just by knowing the
+  // number. Empty (an org with no dedicated pool, dialing the shared platform
+  // number) falls back to the old best-effort behavior, since a shared number
+  // can't be attributed to one org anyway.
+  allowedFrom: Set<string> = new Set(),
 ): Promise<RecoveredLeg[]> {
   if (!targets.length) return [];
   const client = await getRestClient();
@@ -82,7 +89,9 @@ export async function findRecentLegs(
         const leg = calls.find(
           (c) =>
             LIVE.has(String(c.status)) &&
-            (c.dateCreated ? c.dateCreated.getTime() >= cutoff : false),
+            (c.dateCreated ? c.dateCreated.getTime() >= cutoff : false) &&
+            (allowedFrom.size === 0 ||
+              allowedFrom.has(normalizePhone(String(c.from ?? "")))),
         );
         return leg ? { leadId, sid: leg.sid, status: String(leg.status) } : null;
       } catch {
@@ -93,4 +102,16 @@ export async function findRecentLegs(
   );
 
   return found.filter((l): l is RecoveredLeg => Boolean(l));
+}
+
+/** The caller org's own caller-ID pool (normalized), for scoping findRecentLegs. */
+export function orgCallerIdSet(dialing?: {
+  callerId?: string;
+  callerIds?: string[];
+}): Set<string> {
+  return new Set(
+    [dialing?.callerId, ...(dialing?.callerIds ?? [])]
+      .map((n) => normalizePhone(String(n ?? "")))
+      .filter(Boolean),
+  );
 }

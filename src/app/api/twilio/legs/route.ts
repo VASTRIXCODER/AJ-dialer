@@ -1,5 +1,9 @@
 import { NextResponse } from "next/server";
-import { findRecentLegs, parseDialTargets } from "@/lib/dialer/recover-legs";
+import {
+  findRecentLegs,
+  orgCallerIdSet,
+  parseDialTargets,
+} from "@/lib/dialer/recover-legs";
 import { getViewer } from "@/lib/org/membership";
 
 export const dynamic = "force-dynamic";
@@ -28,7 +32,9 @@ export async function POST(req: Request) {
   const targets = parseDialTargets(body.leads);
   if (!targets.length) return NextResponse.json({ calls: [] });
 
-  const legs = await findRecentLegs(targets);
+  // Scope to legs from this org's own caller IDs — never another tenant's calls.
+  const allowedFrom = orgCallerIdSet(viewer.org?.settings?.dialing);
+  const legs = await findRecentLegs(targets, undefined, allowedFrom);
   return NextResponse.json({
     calls: legs.map((l) => ({ leadId: l.leadId, sid: l.sid })),
   });

@@ -1,6 +1,7 @@
 import "server-only";
 
 import crypto from "node:crypto";
+import { normalizePhone } from "./utils";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Server-side Twilio configuration.
@@ -225,6 +226,33 @@ export async function getRestClient() {
   if (!isRestConfigured()) return null;
   const twilio = (await import("twilio")).default;
   return twilio(twilioConfig.accountSid, twilioConfig.authToken);
+}
+
+/**
+ * Check which of `numbers` are actually owned by this Twilio account. Used to
+ * validate a caller-ID pool at save time: a number that isn't on the account
+ * fails outright on a manual dial (Twilio 21210) and, on an AI call, silently
+ * falls back to the default number while the UI still reports the rotated one.
+ * Returns ok:true (can't verify → don't block) when there's no REST client or on
+ * a Twilio error, so a transient hiccup never blocks a legitimate save.
+ */
+export async function verifyNumbersOwnedByTwilio(
+  numbers: string[],
+): Promise<{ ok: boolean; missing: string[] }> {
+  const want = numbers.map((n) => normalizePhone(n)).filter(Boolean);
+  if (!want.length) return { ok: true, missing: [] };
+  const client = await getRestClient();
+  if (!client) return { ok: true, missing: [] };
+  try {
+    const owned = await client.incomingPhoneNumbers.list({ limit: 1000 });
+    const ownedSet = new Set(
+      owned.map((n) => normalizePhone(String(n.phoneNumber ?? ""))).filter(Boolean),
+    );
+    const missing = want.filter((n) => !ownedSet.has(n));
+    return { ok: missing.length === 0, missing };
+  } catch {
+    return { ok: true, missing: [] };
+  }
 }
 
 /**

@@ -1,5 +1,9 @@
 import { NextResponse } from "next/server";
-import { findRecentLegs, parseDialTargets } from "@/lib/dialer/recover-legs";
+import {
+  findRecentLegs,
+  orgCallerIdSet,
+  parseDialTargets,
+} from "@/lib/dialer/recover-legs";
 import { getViewer } from "@/lib/org/membership";
 import { getRestClient } from "@/lib/twilio";
 
@@ -47,7 +51,12 @@ export async function POST(req: Request) {
   if (!list.length) {
     const targets = parseDialTargets(leads);
     if (targets.length) {
-      for (const leg of await findRecentLegs(targets)) list.push(leg.sid);
+      // Scope recovery to legs placed from THIS org's own caller IDs, so it can
+      // only ever hang up the caller's own dial, never another tenant's live call.
+      const allowedFrom = orgCallerIdSet(viewer.org?.settings?.dialing);
+      for (const leg of await findRecentLegs(targets, undefined, allowedFrom)) {
+        list.push(leg.sid);
+      }
     }
   }
 
