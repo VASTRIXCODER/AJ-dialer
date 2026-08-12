@@ -22,7 +22,7 @@ import { PageContainer, PageHeader } from "@/components/shared/page-header";
 import { SectionCard } from "@/components/shared/section-card";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
-import { isAIConfigured } from "@/lib/ai/claude";
+import { isAIConfigured, pingAI } from "@/lib/ai/claude";
 import { isElevenLabsConfigured } from "@/lib/elevenlabs";
 import { getViewer } from "@/lib/org/membership";
 import { cn } from "@/lib/utils";
@@ -69,7 +69,12 @@ function tipsFor(isSolar: boolean) {
 
 export default async function AiAgentPage() {
   const viewer = await getViewer();
-  const aiLive = isAIConfigured();
+  // "Live" means Claude is ACTUALLY reachable and the model resolves — not merely
+  // that a key is present. Without this the badge said "live" even when the key
+  // was invalid or the model unavailable, while every surface silently served
+  // demo data. pingAI is a 16-token round-trip and never throws; skipped entirely
+  // when no key is configured (so demo mode makes no wasted call).
+  const aiLive = isAIConfigured() ? (await pingAI()).ok : false;
   const voiceLive = isElevenLabsConfigured();
   const isSolar = viewer.org?.dialerTemplate === "solar";
   const capabilities = capabilitiesFor(isSolar);
