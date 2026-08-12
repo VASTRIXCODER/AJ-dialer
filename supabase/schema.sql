@@ -1586,3 +1586,152 @@ $$;
 
 revoke all on function public.app_claim_notifications(int) from public, anon, authenticated;
 grant execute on function public.app_claim_notifications(int) to service_role;
+
+-- ═════════════════════════════════════════════════════════════════════════════
+-- Server-side leads page (P4.PAGINATE)
+--
+-- One round trip for the Leads tab: a filtered, upload-ordered page of rows
+-- plus the filtered total, scope-wide KPI aggregates, and smart-list counts.
+-- Lives in SQL because the supervisor scope is a two-source union (org pool +
+-- the caller's pre-org rows) that PostgREST filter strings cannot paginate,
+-- and because phone search / smart lists need digit-stripping regexes.
+-- SERVICE-ROLE ONLY: trusts p_user/p_org/p_supervisor with no auth.uid()
+-- check — the app computes them first (same trust model as app_upsert_presence).
+-- ═════════════════════════════════════════════════════════════════════════════
+
+create index if not exists leads_org_created_idx   on public.leads (org_id, created_at, id);
+create index if not exists leads_owner_created_idx on public.leads (owner_id, created_at, id);
+
+create or replace function public.app_leads_page(
+  p_org        uuid,
+  p_user       uuid,
+  p_supervisor boolean,
+  p_q          text    default null,
+  p_status     text    default null,
+  p_group      text    default null,   -- group key; '__misc__' = ungrouped
+  p_campaign   text    default null,   -- campaign id; '__none__' = unassigned
+  p_uploader   uuid    default null,
+  p_mine       boolean default false,
+  p_smart      text    default null,   -- smart-list id (src/lib/leads/smart-lists.ts)
+  p_offset     integer default 0,
+  p_limit      integer default 50
+) returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_limit  int  := least(greatest(coalesce(p_limit, 50), 1), 200);
+  v_offset int  := greatest(coalesce(p_offset, 0), 0);
+  -- Escape LIKE wildcards in the user's text; separate digits variant for phone.
+  v_q      text := nullif(replace(replace(replace(btrim(coalesce(p_q, '')), '\', '\\'), '%', '\%'), '_', '\_'), '');
+  v_digits text := nullif(regexp_replace(coalesce(p_q, ''), '\D', '', 'g'), '');
+  v_rows   jsonb;
+  v_total  bigint;
+  v_stats  jsonb;
+begin
+  -- 1-2 digit fragments match everyone — ignore (mirrors the old client rule).
+  if v_digits is not null and length(v_digits) < 3 then
+    v_digits := null;
+  end if;
+
+  with scope as (
+    select l.*, coalesce(m.name, '') as owner_name
+    from public.leads l
+    left join public.organization_members m
+      on m.org_id = l.org_id and m.user_id = l.owner_id and m.status = 'active'
+    where case
+      when p_supervisor
+        then (l.org_id = p_org or (l.owner_id = p_user and l.org_id is null))
+      else (
+        (l.owner_id = p_user or l.assigned_rep_id = p_user::text)
+        and (p_org is null or l.org_id = p_org)
+      )
+    end
+  ),
+  filtered as (
+    select * from scope
+    where (p_status is null or status = p_status)
+      and (p_group is null
+           or (case when p_group = '__misc__' then lead_group is null
+                    else lead_group = p_group end))
+      and (p_campaign is null
+           or (case when p_campaign = '__none__' then coalesce(campaign_id, '') = ''
+                    else campaign_id = p_campaign end))
+      and (p_uploader is null or owner_id = p_uploader)
+      and (not p_mine or owner_id = p_user or assigned_rep_id = p_user::text)
+      and (p_smart is null or case p_smart
+        when 'high_bill'       then coalesce(utility_bill, 0) >= 200
+        when 'big_load'        then (has_ev or has_pool or has_battery or multiple_systems)
+        when 'fresh'           then (status = 'new' and last_contacted_at is null)
+        when 'going_cold'      then (status in ('new', 'no_answer', 'callback')
+                                     and last_contacted_at is not null
+                                     and last_contacted_at < now() - interval '14 days')
+        -- Mirrors isValidPhone(): 10 digits, or 11 starting with 1.
+        when 'no_phone'        then not (
+                                     length(regexp_replace(coalesce(phone, ''), '\D', '', 'g')) = 10
+                                     or (length(regexp_replace(coalesce(phone, ''), '\D', '', 'g')) = 11
+                                         and regexp_replace(coalesce(phone, ''), '\D', '', 'g') like '1%'))
+        when 'missing_address' then (coalesce(btrim(address), '') = '' and coalesce(btrim(city), '') = '')
+        else true end)
+      and (v_q is null or (
+        (first_name || ' ' || last_name) ilike ('%' || v_q || '%')
+        or city ilike ('%' || v_q || '%')
+        or utility_provider ilike ('%' || v_q || '%')
+        or (v_digits is not null
+            and regexp_replace(coalesce(phone, ''), '\D', '', 'g') like ('%' || v_digits || '%'))
+      ))
+  )
+  select
+    coalesce(jsonb_agg(page.row_json order by page.created_at, page.id), '[]'::jsonb),
+    coalesce(max(page.full_count), 0)
+  into v_rows, v_total
+  from (
+    select to_jsonb(f.*) as row_json, f.created_at, f.id, count(*) over () as full_count
+    from filtered f
+    order by f.created_at asc, f.id asc
+    limit v_limit offset v_offset
+  ) page;
+
+  -- Scope-wide aggregates, deliberately UNfiltered: the KPI tiles and the
+  -- smart-list chips describe the whole book, not the current filter.
+  select jsonb_build_object(
+    'total',        count(*),
+    'qualified',    count(*) filter (where status in ('qualified', 'appointment')),
+    'appointments', count(*) filter (where status = 'appointment'),
+    'avgScore',     coalesce(round(avg(ai_score)), 0),
+    'smart', jsonb_build_object(
+      'high_bill',       count(*) filter (where coalesce(utility_bill, 0) >= 200),
+      'big_load',        count(*) filter (where has_ev or has_pool or has_battery or multiple_systems),
+      'fresh',           count(*) filter (where status = 'new' and last_contacted_at is null),
+      'going_cold',      count(*) filter (where status in ('new', 'no_answer', 'callback')
+                                          and last_contacted_at is not null
+                                          and last_contacted_at < now() - interval '14 days'),
+      'no_phone',        count(*) filter (where not (
+                           length(regexp_replace(coalesce(phone, ''), '\D', '', 'g')) = 10
+                           or (length(regexp_replace(coalesce(phone, ''), '\D', '', 'g')) = 11
+                               and regexp_replace(coalesce(phone, ''), '\D', '', 'g') like '1%'))),
+      'missing_address', count(*) filter (where coalesce(btrim(address), '') = '' and coalesce(btrim(city), '') = '')
+    )
+  )
+  into v_stats
+  from public.leads l
+  where case
+    when p_supervisor
+      then (l.org_id = p_org or (l.owner_id = p_user and l.org_id is null))
+    else (
+      (l.owner_id = p_user or l.assigned_rep_id = p_user::text)
+      and (p_org is null or l.org_id = p_org)
+    )
+  end;
+
+  return jsonb_build_object('rows', v_rows, 'total', v_total, 'stats', v_stats);
+end;
+$$;
+
+grant execute on function public.app_leads_page(uuid, uuid, boolean, text, text, text, text, uuid, boolean, text, integer, integer) to service_role;
+-- CREATE FUNCTION grants PUBLIC execute by default; this function trusts its
+-- p_* scope params, so it must only be reachable via the service-role client.
+revoke execute on function public.app_leads_page(uuid, uuid, boolean, text, text, text, text, uuid, boolean, text, integer, integer) from public;
+revoke execute on function public.app_leads_page(uuid, uuid, boolean, text, text, text, text, uuid, boolean, text, integer, integer) from anon;
+revoke execute on function public.app_leads_page(uuid, uuid, boolean, text, text, text, text, uuid, boolean, text, integer, integer) from authenticated;

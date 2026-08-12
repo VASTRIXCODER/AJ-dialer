@@ -17,16 +17,37 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
+import {
+  Fragment,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useTransition,
+} from "react";
 import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import type { Lead, LeadStatus } from "@/lib/types";
 import { leadStatusConfig } from "@/lib/status";
 import { applyLabelOverride } from "@/lib/leads/group-labels";
-import { SMART_LISTS, countSmartLists, smartListById } from "@/lib/leads/smart-lists";
-import { cn, digitsOnly, formatAddress, formatCurrency, formatPhone, initials } from "@/lib/utils";
+import { SMART_LISTS } from "@/lib/leads/smart-lists";
+import { cn, formatAddress, formatCurrency, formatNumber, formatPhone, initials } from "@/lib/utils";
 import { EditLeadDialog } from "./edit-lead-dialog";
+
+/** The server-side filter set, mirrored in the URL (see leads/page.tsx). */
+export interface LeadsTableFilters {
+  q?: string;
+  status?: LeadStatus;
+  smart?: string;
+  /** Group key; "__misc__" = ungrouped. */
+  group?: string;
+  /** Campaign id; "__none__" = unassigned. */
+  campaignId?: string;
+  uploaderId?: string;
+  mine?: boolean;
+}
 
 const FILTERS: Array<{ value: LeadStatus | "all"; label: string }> = [
   { value: "all", label: "All" },
@@ -50,6 +71,11 @@ const LEGACY_GROUP_LABELS: Record<string, string> = {
 
 export function LeadsTable({
   leads,
+  total,
+  page,
+  pageSize,
+  smartCounts,
+  filters,
   campaigns = [],
   canManage = false,
   meId = null,
@@ -58,7 +84,16 @@ export function LeadsTable({
   orgGroups = [],
   showSolarPayment = true,
 }: {
+  /** ONE server-filtered page of rows — filtering happens in getLeadsPage. */
   leads: Lead[];
+  /** Rows matching the current filters (the pagination denominator). */
+  total: number;
+  page: number;
+  pageSize: number;
+  /** Scope-wide smart-list counts (chips stay stable as filters change). */
+  smartCounts: Record<string, number>;
+  /** The active URL-driven filters this page was rendered with. */
+  filters: LeadsTableFilters;
   campaigns?: { id: string; name: string }[];
   /** Whether the viewer can delete/reassign leads (managers+). Gates that UI. */
   canManage?: boolean;
@@ -76,6 +111,37 @@ export function LeadsTable({
   showSolarPayment?: boolean;
 }) {
   const router = useRouter();
+  const [isPending, startTransition] = useTransition();
+
+  // Every filter lives in the URL — the server does the actual filtering, so
+  // changing one is a navigation, not a state update. replace() keeps the
+  // history clean while typing; page resets to 1 on any filter change.
+  const navigate = useCallback(
+    (next: LeadsTableFilters, nextPage: number) => {
+      const sp = new URLSearchParams();
+      if (next.q) sp.set("q", next.q);
+      if (next.status) sp.set("status", next.status);
+      if (next.smart) sp.set("smart", next.smart);
+      if (next.group) sp.set("group", next.group);
+      if (next.campaignId) sp.set("campaign", next.campaignId);
+      if (next.uploaderId) sp.set("uploader", next.uploaderId);
+      if (next.mine) sp.set("mine", "1");
+      if (nextPage > 1) sp.set("page", String(nextPage));
+      const qs = sp.toString();
+      startTransition(() => {
+        router.replace(qs ? `/leads?${qs}` : "/leads", { scroll: false });
+      });
+    },
+    [router],
+  );
+  const applyFilters = useCallback(
+    (patch: Partial<LeadsTableFilters>) => navigate({ ...filters, ...patch }, 1),
+    [filters, navigate],
+  );
+  const goToPage = useCallback(
+    (p: number) => navigate(filters, Math.max(1, p)),
+    [filters, navigate],
+  );
 
   // Filter options = the org's groups, plus any key the loaded leads still
   // carry that isn't in that list (a deleted group's leftovers), so a lead is
@@ -105,30 +171,43 @@ export function LeadsTable({
     [groupOptions],
   );
 
-  const [query, setQuery] = useState("");
-  const [filter, setFilter] = useState<LeadStatus | "all">("all");
-  const [smartList, setSmartList] = useState<string | null>(null);
-  const [campaignFilter, setCampaignFilter] = useState<string>("all");
-  const [uploaderFilter, setUploaderFilter] = useState<string>("all");
+  // The search input is the one filter kept in local state — for keystroke
+  // responsiveness — and debounced into the URL, where the server reads it.
+  const [query, setQuery] = useState(filters.q ?? "");
+  const applyFiltersRef = useRef(applyFilters);
+  applyFiltersRef.current = applyFilters;
+  const urlQ = filters.q ?? "";
+  useEffect(() => {
+    const target = query.trim();
+    if (target === urlQ) return;
+    const t = setTimeout(
+      () => applyFiltersRef.current({ q: target || undefined }),
+      350,
+    );
+    return () => clearTimeout(t);
+  }, [query, urlQ]);
+
   // "My leads" = uploaded by me OR assigned to me — the same working set the
   // dialer's toggle uses, so the two screens agree on what "mine" means.
   // Deliberately broader than the "Your uploads" option in the uploader
   // dropdown, which is owner-only and would hide leads a manager routed to you.
-  const [mineOnly, setMineOnly] = useState(false);
-  // Remembered per user across visits, matching the dialer's toggle. Read after
-  // mount rather than in the initializer so the server-rendered markup matches.
+  // Remembered per user across visits (matching the dialer's toggle): on first
+  // mount a saved preference is promoted into the URL, where the filter lives.
   const mineKey = meId ? `aj:leadsMineOnly:${meId}` : null;
+  const mineSeeded = useRef(false);
   useEffect(() => {
-    if (!mineKey) return;
+    if (!mineKey || mineSeeded.current) return;
+    mineSeeded.current = true;
     try {
-      const saved = window.localStorage.getItem(mineKey);
-      if (saved != null) setMineOnly(saved === "1");
+      if (window.localStorage.getItem(mineKey) === "1" && !filters.mine) {
+        applyFiltersRef.current({ mine: true });
+      }
     } catch {
       /* storage disabled — the toggle just won't persist */
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mineKey]);
   const setMineOnlyPersisted = (v: boolean) => {
-    setMineOnly(v);
     if (mineKey) {
       try {
         window.localStorage.setItem(mineKey, v ? "1" : "0");
@@ -136,9 +215,15 @@ export function LeadsTable({
         /* noop */
       }
     }
+    applyFilters({ mine: v || undefined });
   };
-  const [groupFilter, setGroupFilter] = useState<string>("all");
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  // Selection is page-scoped: ids from a previous page or filter would make
+  // the bulk bar act on rows the user can no longer see.
+  const pageKey = `${page}|${JSON.stringify(filters)}`;
+  useEffect(() => {
+    setSelected(new Set());
+  }, [pageKey]);
   const [assignTo, setAssignTo] = useState("");
   const [reassignTo, setReassignTo] = useState("");
   const [assignRepTo, setAssignRepTo] = useState("");
@@ -180,12 +265,18 @@ export function LeadsTable({
     [campaigns],
   );
 
-  // Distinct uploaders present in the data — powers the "Uploaded by" filter
-  // (only meaningful for supervisors, who see more than one).
+  // Options for the "Uploaded by" filter: the org's members (a supervisor's
+  // reassign list) plus any owner present on the page the members list misses
+  // (e.g. a departed member's leftovers) — so a lead is never unreachable.
   const uploaders = useMemo(() => {
     const m = new Map<string, string>();
+    if (canManage) {
+      for (const mem of members) {
+        m.set(mem.id, mem.id === meId ? "Your uploads" : mem.name || "Teammate");
+      }
+    }
     for (const l of leads) {
-      if (!l.ownerId) continue;
+      if (!l.ownerId || m.has(l.ownerId)) continue;
       m.set(
         l.ownerId,
         meId && l.ownerId === meId
@@ -194,71 +285,20 @@ export function LeadsTable({
       );
     }
     return [...m.entries()].map(([id, name]) => ({ id, name }));
-  }, [leads, meId]);
+  }, [canManage, members, leads, meId]);
 
-  // Is there anything for "My leads" to hide? False for a rep who only ever
-  // sees their own book, in which case the toggle is pointless noise.
-  const hasOthersLeads = useMemo(
-    () =>
-      Boolean(meId) &&
-      leads.some((l) => l.ownerId !== meId && l.assignedRepId !== meId),
-    [leads, meId],
-  );
+  // Is there anything for "My leads" to hide? With server filtering the page
+  // can't prove it, so also key off org size — and keep the toggle visible
+  // while it's ACTIVE (every visible row is mine then, by construction).
+  const hasOthersLeads =
+    Boolean(meId) &&
+    (Boolean(filters.mine) ||
+      members.length > 1 ||
+      leads.some((l) => l.ownerId !== meId && l.assignedRepId !== meId));
 
-  // Counts for the smart-list chips — over ALL leads so they stay stable as
-  // other filters change. Cheap pure evaluation, same idiom as the row filter.
-  const smartCounts = useMemo(() => countSmartLists(leads), [leads]);
-  const activeSmartList = smartList ? smartListById(smartList) : undefined;
-
-  const filtered = useMemo(() => {
-    return leads.filter((l) => {
-      const matchesFilter = filter === "all" || l.status === filter;
-      const matchesSmart = !activeSmartList || activeSmartList.match(l);
-      const matchesCampaign =
-        campaignFilter === "all" ||
-        (campaignFilter === "none" ? !l.campaignId : l.campaignId === campaignFilter);
-      const matchesUploader =
-        uploaderFilter === "all" || l.ownerId === uploaderFilter;
-      const matchesMine =
-        !mineOnly || (Boolean(meId) && (l.ownerId === meId || l.assignedRepId === meId));
-      const matchesGroup =
-        groupFilter === "all" ||
-        (groupFilter === "unsorted" ? !l.leadGroup : l.leadGroup === groupFilter);
-      const q = query.trim().toLowerCase();
-      // Phone numbers are stored E.164 ("+14085551234") but reps type what they
-      // see formatted ("(408) 555-1234") — a plain substring check never matches
-      // punctuation against the raw digits, so numbers effectively never turn up
-      // in search. Compare digits-only too whenever the query has enough of them
-      // to mean something (guards against a 1-2 digit fragment matching everyone).
-      const qDigits = digitsOnly(query);
-      const matchesQuery =
-        !q ||
-        `${l.firstName} ${l.lastName}`.toLowerCase().includes(q) ||
-        l.city.toLowerCase().includes(q) ||
-        l.phone.includes(q) ||
-        (qDigits.length >= 3 && digitsOnly(l.phone).includes(qDigits)) ||
-        l.utilityProvider.toLowerCase().includes(q);
-      return (
-        matchesFilter &&
-        matchesSmart &&
-        matchesCampaign &&
-        matchesUploader &&
-        matchesMine &&
-        matchesGroup &&
-        matchesQuery
-      );
-    });
-  }, [
-    leads,
-    filter,
-    activeSmartList,
-    campaignFilter,
-    uploaderFilter,
-    mineOnly,
-    meId,
-    groupFilter,
-    query,
-  ]);
+  // Rows arrive already filtered by the server — `filtered` survives only as
+  // the name downstream markup renders.
+  const filtered = leads;
 
   const allSelected = filtered.length > 0 && filtered.every((l) => selected.has(l.id));
   const toggleAll = () =>
@@ -451,13 +491,13 @@ export function LeadsTable({
             Smart lists
           </span>
           {SMART_LISTS.filter((sl) => smartCounts[sl.id] > 0).map((sl) => {
-            const active = smartList === sl.id;
+            const active = filters.smart === sl.id;
             return (
               <button
                 key={sl.id}
                 type="button"
                 title={sl.description}
-                onClick={() => setSmartList(active ? null : sl.id)}
+                onClick={() => applyFilters({ smart: active ? undefined : sl.id })}
                 className={cn(
                   "flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium transition-colors",
                   active
@@ -477,10 +517,10 @@ export function LeadsTable({
               </button>
             );
           })}
-          {smartList && (
+          {filters.smart && (
             <button
               type="button"
-              onClick={() => setSmartList(null)}
+              onClick={() => applyFilters({ smart: undefined })}
               className="text-xs font-medium text-muted-foreground hover:text-foreground"
             >
               Clear
@@ -505,12 +545,12 @@ export function LeadsTable({
           {hasOthersLeads && (
             <button
               type="button"
-              onClick={() => setMineOnlyPersisted(!mineOnly)}
-              aria-pressed={mineOnly}
+              onClick={() => setMineOnlyPersisted(!filters.mine)}
+              aria-pressed={Boolean(filters.mine)}
               title="Show only leads you uploaded or that are assigned to you"
               className={cn(
                 "flex h-9 items-center gap-1.5 rounded-lg border px-2.5 text-sm font-medium transition-colors",
-                mineOnly
+                filters.mine
                   ? "border-primary/60 bg-primary-soft text-primary"
                   : "border-border bg-background/60 text-muted-foreground hover:bg-muted",
               )}
@@ -519,12 +559,16 @@ export function LeadsTable({
               My leads
             </button>
           )}
-          {uploaders.length > 1 && (
+          {(uploaders.length > 1 || filters.uploaderId) && (
             <select
-              value={uploaderFilter}
-              onChange={(e) => setUploaderFilter(e.target.value)}
+              value={filters.uploaderId ?? "all"}
+              onChange={(e) =>
+                applyFilters({
+                  uploaderId: e.target.value === "all" ? undefined : e.target.value,
+                })
+              }
               aria-label="Filter by uploader"
-              disabled={mineOnly}
+              disabled={Boolean(filters.mine)}
               className="h-9 rounded-lg border border-border bg-background/60 px-2.5 text-sm font-medium focus-visible:border-primary/50 focus-visible:outline-none"
             >
               <option value="all">All uploaders</option>
@@ -537,8 +581,17 @@ export function LeadsTable({
           )}
           {campaigns.length > 0 && (
             <select
-              value={campaignFilter}
-              onChange={(e) => setCampaignFilter(e.target.value)}
+              value={filters.campaignId === "__none__" ? "none" : (filters.campaignId ?? "all")}
+              onChange={(e) =>
+                applyFilters({
+                  campaignId:
+                    e.target.value === "all"
+                      ? undefined
+                      : e.target.value === "none"
+                        ? "__none__"
+                        : e.target.value,
+                })
+              }
               className="h-9 rounded-lg border border-border bg-background/60 px-2.5 text-sm font-medium focus-visible:border-primary/50 focus-visible:outline-none"
             >
               <option value="all">All campaigns</option>
@@ -550,10 +603,19 @@ export function LeadsTable({
               ))}
             </select>
           )}
-          {leads.some((l) => l.leadGroup) && (
+          {(orgGroups.length > 0 || leads.some((l) => l.leadGroup) || filters.group) && (
             <select
-              value={groupFilter}
-              onChange={(e) => setGroupFilter(e.target.value)}
+              value={filters.group === "__misc__" ? "unsorted" : (filters.group ?? "all")}
+              onChange={(e) =>
+                applyFilters({
+                  group:
+                    e.target.value === "all"
+                      ? undefined
+                      : e.target.value === "unsorted"
+                        ? "__misc__"
+                        : e.target.value,
+                })
+              }
               aria-label="Filter by group"
               className="h-9 rounded-lg border border-border bg-background/60 px-2.5 text-sm font-medium focus-visible:border-primary/50 focus-visible:outline-none"
             >
@@ -567,12 +629,14 @@ export function LeadsTable({
             </select>
           )}
           {FILTERS.map((f) => {
-            const active = filter === f.value;
+            const active = (filters.status ?? "all") === f.value;
             return (
               <button
                 key={f.value}
                 type="button"
-                onClick={() => setFilter(f.value)}
+                onClick={() =>
+                  applyFilters({ status: f.value === "all" ? undefined : f.value })
+                }
                 className={cn(
                   "relative rounded-lg px-3 py-1.5 text-sm font-medium transition-colors duration-200",
                   active ? "text-background" : "bg-muted text-muted-foreground hover:bg-secondary",
@@ -764,7 +828,12 @@ export function LeadsTable({
 
       {err && <p className="text-sm font-medium text-danger">{err}</p>}
 
-      <div className="overflow-hidden rounded-2xl border border-border/60 surface-glass">
+      <div
+        className={cn(
+          "overflow-hidden rounded-2xl border border-border/60 surface-glass transition-opacity",
+          isPending && "opacity-60",
+        )}
+      >
         <div className="overflow-x-auto">
           <table className="w-full min-w-[900px] text-sm">
             <thead>
@@ -959,9 +1028,40 @@ export function LeadsTable({
           </div>
         )}
       </div>
-      <p className="text-xs text-muted-foreground">
-        Showing {filtered.length} of {leads.length} leads
-      </p>
+      {/* Server-side pagination — `total` counts every row matching the current
+          filters, of which this page renders at most `pageSize`. */}
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-xs text-muted-foreground tabular">
+          {total === 0
+            ? "0 leads"
+            : `Showing ${formatNumber((page - 1) * pageSize + 1)}–${formatNumber(
+                Math.min(page * pageSize, total),
+              )} of ${formatNumber(total)} leads`}
+        </p>
+        {total > pageSize && (
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={page <= 1 || isPending}
+              onClick={() => goToPage(page - 1)}
+            >
+              Previous
+            </Button>
+            <span className="text-xs text-muted-foreground tabular">
+              Page {formatNumber(page)} of {formatNumber(Math.max(1, Math.ceil(total / pageSize)))}
+            </span>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={page >= Math.ceil(total / pageSize) || isPending}
+              onClick={() => goToPage(page + 1)}
+            >
+              Next
+            </Button>
+          </div>
+        )}
+      </div>
 
       {editing && (
         <EditLeadDialog

@@ -122,6 +122,10 @@ export function DialerClient({
     if (activatedRef.current) return;
     activatedRef.current = true;
     activate(initialQueue, campaigns, initialCampaign);
+    // The page no longer serializes the queue into the RSC payload (it ships
+    // ONCE as JSON via /api/leads/queue instead of twice) — so fetch it here,
+    // unless the provider still holds a queue from an earlier visit.
+    if (initialQueue.length === 0 && queue.length === 0) void loadLeads();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

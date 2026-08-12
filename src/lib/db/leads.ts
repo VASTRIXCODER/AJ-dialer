@@ -1,6 +1,7 @@
 import "server-only";
 
 import { leads as fallbackLeads, getLeadById as fallbackById } from "../data";
+import { SMART_LISTS, countSmartLists, smartListById } from "../leads/smart-lists";
 import { createAdminClient, isAdminConfigured } from "../supabase/admin";
 import { isSupabaseConfigured } from "../supabase/config";
 import { createClient } from "../supabase/server";
@@ -995,6 +996,250 @@ export async function getMyLeadsCount(): Promise<number> {
       return count ?? 0;
     }
     let q = supabase.from("leads").select("id", { count: "exact", head: true }).eq("owner_id", user.id);
+    if (orgId) q = q.eq("org_id", orgId);
+    const { count } = await q;
+    return count ?? 0;
+  } catch {
+    return 0;
+  }
+}
+
+// ── Server-paginated Leads tab ───────────────────────────────────────────────
+
+export const LEADS_PAGE_SIZE = 50;
+
+export interface LeadsPageParams {
+  /** 1-based. */
+  page: number;
+  pageSize?: number;
+  q?: string;
+  status?: LeadStatus;
+  /** Group key; "__misc__" selects ungrouped leads. */
+  group?: string;
+  /** Campaign id; "__none__" selects leads with no campaign. */
+  campaignId?: string;
+  uploaderId?: string;
+  /** Uploaded by or assigned to the viewer (the dialer's "my leads" set). */
+  mine?: boolean;
+  /** Smart-list id — see src/lib/leads/smart-lists.ts. */
+  smart?: string;
+}
+
+export interface LeadsPageStats {
+  total: number;
+  qualified: number;
+  appointments: number;
+  avgScore: number;
+}
+
+export interface LeadsPageResult {
+  leads: Lead[];
+  /** Rows matching the CURRENT filters — the pagination denominator. */
+  total: number;
+  /** Scope-wide aggregates, deliberately UNfiltered, for the KPI tiles. */
+  stats: LeadsPageStats;
+  /** Scope-wide smart-list counts, for the chips. */
+  smartCounts: Record<string, number>;
+  page: number;
+  pageSize: number;
+}
+
+function emptyLeadsPage(params: LeadsPageParams): LeadsPageResult {
+  const smartCounts: Record<string, number> = {};
+  for (const sl of SMART_LISTS) smartCounts[sl.id] = 0;
+  return {
+    leads: [],
+    total: 0,
+    stats: { total: 0, qualified: 0, appointments: 0, avgScore: 0 },
+    smartCounts,
+    page: Math.max(params.page, 1),
+    pageSize: Math.min(Math.max(params.pageSize ?? LEADS_PAGE_SIZE, 1), 200),
+  };
+}
+
+/**
+ * Pure JS twin of the app_leads_page SQL — used in demo mode and as the
+ * degraded path when no service key exists (the RPC is service-role only).
+ * Must stay in lockstep with the SQL's filter semantics.
+ */
+function filterLeadsPage(
+  all: Lead[],
+  params: LeadsPageParams,
+  meId: string | null,
+): LeadsPageResult {
+  const pageSize = Math.min(Math.max(params.pageSize ?? LEADS_PAGE_SIZE, 1), 200);
+  const page = Math.max(params.page, 1);
+  const q = (params.q ?? "").trim().toLowerCase();
+  const qDigits = (params.q ?? "").replace(/\D/g, "");
+  const digits = qDigits.length >= 3 ? qDigits : "";
+  const smart = params.smart ? smartListById(params.smart) : undefined;
+
+  const filtered = all.filter((l) => {
+    if (params.status && l.status !== params.status) return false;
+    if (
+      params.group &&
+      (params.group === "__misc__" ? Boolean(l.leadGroup) : l.leadGroup !== params.group)
+    )
+      return false;
+    if (
+      params.campaignId &&
+      (params.campaignId === "__none__"
+        ? Boolean(l.campaignId)
+        : l.campaignId !== params.campaignId)
+    )
+      return false;
+    if (params.uploaderId && l.ownerId !== params.uploaderId) return false;
+    if (params.mine && meId && !(l.ownerId === meId || l.assignedRepId === meId))
+      return false;
+    if (smart && !smart.match(l)) return false;
+    if (q) {
+      const hit =
+        `${l.firstName} ${l.lastName}`.toLowerCase().includes(q) ||
+        l.city.toLowerCase().includes(q) ||
+        l.utilityProvider.toLowerCase().includes(q) ||
+        (digits !== "" && l.phone.replace(/\D/g, "").includes(digits));
+      if (!hit) return false;
+    }
+    return true;
+  });
+
+  return {
+    leads: filtered.slice((page - 1) * pageSize, page * pageSize),
+    total: filtered.length,
+    stats: {
+      total: all.length,
+      qualified: all.filter((l) => l.status === "qualified" || l.status === "appointment")
+        .length,
+      appointments: all.filter((l) => l.status === "appointment").length,
+      avgScore: all.length
+        ? Math.round(all.reduce((a, l) => a + (l.aiScore ?? 0), 0) / all.length)
+        : 0,
+    },
+    smartCounts: countSmartLists(all),
+    page,
+    pageSize,
+  };
+}
+
+/**
+ * One page of the viewer's leads plus everything the Leads tab needs around it
+ * (filtered total, scope-wide KPIs, smart-list counts) — in a single round
+ * trip via the app_leads_page RPC. Same scope split as getLeads (rep → own +
+ * assigned; supervisor → org pool + own pre-org rows), same upload ordering
+ * (created_at, id), evaluated in SQL so 100k-lead books stop being serialized
+ * into the RSC payload.
+ */
+export async function getLeadsPage(params: LeadsPageParams): Promise<LeadsPageResult> {
+  if (!isSupabaseConfigured()) return filterLeadsPage(fallbackLeads, params, null);
+  try {
+    const supabase = await createClient();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) return emptyLeadsPage(params);
+
+    // The RPC is revoked from `authenticated` (it trusts its scope params), so
+    // without a service key fall back to the RLS full fetch + JS paging — the
+    // degraded self-host mode, correct just not cheap.
+    if (!isAdminConfigured()) {
+      return filterLeadsPage(await getLeads(), params, user.id);
+    }
+
+    const { data: prof } = await supabase
+      .from("profiles")
+      .select("org_id, role")
+      .eq("id", user.id)
+      .maybeSingle();
+    const orgId = prof?.org_id ? String(prof.org_id) : null;
+    const supervisor = Boolean(orgId) && isSupervisorRole(prof?.role);
+
+    const pageSize = Math.min(Math.max(params.pageSize ?? LEADS_PAGE_SIZE, 1), 200);
+    const page = Math.max(params.page, 1);
+    const admin = createAdminClient();
+    const { data, error } = await admin.rpc("app_leads_page", {
+      p_org: orgId,
+      p_user: user.id,
+      p_supervisor: supervisor,
+      p_q: params.q?.trim() || null,
+      p_status: params.status ?? null,
+      p_group: params.group ?? null,
+      p_campaign: params.campaignId ?? null,
+      p_uploader: params.uploaderId ?? null,
+      p_mine: Boolean(params.mine),
+      p_smart: params.smart ?? null,
+      p_offset: (page - 1) * pageSize,
+      p_limit: pageSize,
+    });
+    if (error || !data) return emptyLeadsPage(params);
+
+    const payload = data as {
+      rows?: Row[];
+      total?: number;
+      stats?: Partial<LeadsPageStats> & { smart?: Record<string, number> };
+    };
+    const leads = (payload.rows ?? []).map((r) => ({
+      ...rowToLead(r),
+      ownerName: String(r.owner_name ?? ""),
+    }));
+    const smartCounts: Record<string, number> = {};
+    for (const sl of SMART_LISTS) {
+      smartCounts[sl.id] = Number(payload.stats?.smart?.[sl.id] ?? 0);
+    }
+    return {
+      leads,
+      total: Number(payload.total ?? 0),
+      stats: {
+        total: Number(payload.stats?.total ?? 0),
+        qualified: Number(payload.stats?.qualified ?? 0),
+        appointments: Number(payload.stats?.appointments ?? 0),
+        avgScore: Number(payload.stats?.avgScore ?? 0),
+      },
+      smartCounts,
+      page,
+      pageSize,
+    };
+  } catch {
+    return emptyLeadsPage(params);
+  }
+}
+
+/**
+ * Head-count of the viewer's dial queue (same scope + status filter as
+ * getDialQueue) for the dialer's header badge, so the page stops serializing
+ * the entire queue into the RSC payload just to render a number. Slightly
+ * generous — the 10-digit-phone check and DNC scrub happen at load time in the
+ * client, which refetches the real queue anyway.
+ */
+export async function getDialQueueCount(): Promise<number> {
+  if (!isSupabaseConfigured())
+    return fallbackLeads.filter((l) => DIALABLE.includes(l.status)).length;
+  try {
+    const supabase = await createClient();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) return 0;
+    const { data: prof } = await supabase
+      .from("profiles")
+      .select("org_id, role")
+      .eq("id", user.id)
+      .maybeSingle();
+    const orgId = prof?.org_id ? String(prof.org_id) : null;
+    const supervisor =
+      Boolean(orgId) && isSupervisorRole(prof?.role) && isAdminConfigured();
+    if (supervisor) {
+      const { count } = await createAdminClient()
+        .from("leads")
+        .select("id", { count: "exact", head: true })
+        .eq("org_id", orgId as string)
+        .in("status", DIALABLE);
+      return count ?? 0;
+    }
+    let q = supabase
+      .from("leads")
+      .select("id", { count: "exact", head: true })
+      .or(`owner_id.eq.${user.id},assigned_rep_id.eq.${user.id}`)
+      .in("status", DIALABLE);
     if (orgId) q = q.eq("org_id", orgId);
     const { count } = await q;
     return count ?? 0;
