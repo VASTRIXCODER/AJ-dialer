@@ -1,7 +1,12 @@
 import "server-only";
 
 import { reconcileOwnerActiveCalls } from "../ai-call-reconcile";
-import { statsForCampaign, type CampaignStats } from "../campaign-stats";
+import {
+  scriptTestForCampaign,
+  statsForCampaign,
+  type CampaignStats,
+  type ScriptTestStats,
+} from "../campaign-stats";
 import { createAdminClient, isAdminConfigured } from "../supabase/admin";
 import { isSupabaseConfigured } from "../supabase/config";
 import { createClient } from "../supabase/server";
@@ -104,7 +109,13 @@ export interface CampaignRow {
   color: string;
   createdAt: string;
   ownerId: string | null;
+  /** Call script shown to reps in the dialer ("" = none). */
+  scriptA: string;
+  /** Second script — when BOTH are set, an A/B test splits leads between them. */
+  scriptB: string;
   stats: CampaignStats;
+  /** Per-variant performance over calls where a script was actually shown. */
+  scriptTest: ScriptTestStats;
 }
 
 type Result = { ok: boolean; error?: string };
@@ -133,7 +144,7 @@ export async function getCampaigns(): Promise<CampaignRow[]> {
       reader.from("leads").select("campaign_id,status").eq(col, val).limit(useOrg ? 50000 : 5000),
       reader
         .from("call_records")
-        .select("campaign_id,outcome")
+        .select("campaign_id,outcome,script_variant")
         .eq(col, val)
         .limit(useOrg ? 20000 : 2000),
     ]);
@@ -150,7 +161,10 @@ export async function getCampaigns(): Promise<CampaignRow[]> {
       color: s(r.color) || "#3B82F6",
       createdAt: s(r.created_at),
       ownerId: r.owner_id ? s(r.owner_id) : null,
+      scriptA: s(r.script_a),
+      scriptB: s(r.script_b),
       stats: statsForCampaign(s(r.id), leads, calls),
+      scriptTest: scriptTestForCampaign(s(r.id), calls),
     }));
   } catch (e) {
     console.error("[pipeline] getCampaigns failed:", e instanceof Error ? e.message : e);
@@ -167,6 +181,8 @@ export async function createCampaign(input: {
   name: string;
   utilityProvider?: string;
   color?: string;
+  scriptA?: string;
+  scriptB?: string;
 }): Promise<Result> {
   if (!isSupabaseConfigured()) return { ok: false, error: "Connect Supabase to create campaigns." };
   if (!isAdminConfigured()) return { ok: false, error: "Service role required to create campaigns." };
@@ -179,6 +195,8 @@ export async function createCampaign(input: {
       name: input.name,
       utility_provider: input.utilityProvider ?? "",
       color: input.color ?? "#3B82F6",
+      script_a: (input.scriptA ?? "").trim(),
+      script_b: (input.scriptB ?? "").trim(),
     });
     return error ? { ok: false, error: error.message } : { ok: true };
   } catch (e) {
@@ -225,7 +243,7 @@ const CAMPAIGN_STATUSES: ReadonlySet<string> = new Set<CampaignStatus>([
 
 /**
  * Sparse edit of a campaign's own fields — name, utility provider, color,
- * status. Only the provided keys change; same authorization as
+ * status, scripts. Only the provided keys change; same authorization as
  * setCampaignStatus (any member the campaign's owner/org scope admits).
  */
 export async function updateCampaign(
@@ -235,6 +253,9 @@ export async function updateCampaign(
     utilityProvider?: string;
     color?: string;
     status?: CampaignStatus;
+    /** Trimmed on write; an empty string CLEARS the script (columns default ''). */
+    scriptA?: string;
+    scriptB?: string;
   },
 ): Promise<Result> {
   if (!isSupabaseConfigured())
@@ -247,6 +268,8 @@ export async function updateCampaign(
   }
   if (patch.utilityProvider !== undefined) update.utility_provider = patch.utilityProvider.trim();
   if (patch.color !== undefined) update.color = patch.color;
+  if (patch.scriptA !== undefined) update.script_a = patch.scriptA.trim();
+  if (patch.scriptB !== undefined) update.script_b = patch.scriptB.trim();
   if (patch.status !== undefined) {
     if (!CAMPAIGN_STATUSES.has(patch.status))
       return { ok: false, error: "Status must be active, paused, or completed." };

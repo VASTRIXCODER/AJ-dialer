@@ -174,6 +174,8 @@ export async function insertCallRecord(input: {
    * up in the "later" bucket rather than on the calendar.
    */
   appointment?: AppointmentDraft | null;
+  /** Which campaign script (A/B) was shown on this call — null when none was. */
+  scriptVariant?: "a" | "b" | null;
 }): Promise<string | null> {
   if (!isSupabaseConfigured()) return null;
   try {
@@ -208,6 +210,7 @@ export async function insertCallRecord(input: {
       call_sid: input.callSid ?? null,
       room: input.room ?? null,
       campaign_id: campaignId,
+      script_variant: input.scriptVariant ?? null,
     }).select("id").maybeSingle();
     const recordId = (rec as { id?: string } | null)?.id ?? null;
 

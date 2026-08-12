@@ -31,7 +31,14 @@ export async function POST(req: Request) {
       durationMin?: number;
       location?: string;
     } | null;
+    /** Which campaign script (A/B) the rep was shown for this lead, if any. */
+    scriptVariant?: string;
   };
+
+  // Strict allowlist — the DB check constraint only admits null | 'a' | 'b',
+  // so anything else must collapse to null rather than fail the whole insert.
+  const scriptVariant =
+    body.scriptVariant === "a" || body.scriptVariant === "b" ? body.scriptVariant : null;
 
   const appt =
     body.outcome === "appointment_booked" && body.appointment
@@ -55,6 +62,7 @@ export async function POST(req: Request) {
     room: body.room ?? null,
     notes: body.notes,
     appointment: appt,
+    scriptVariant,
   });
 
   if (!recordId) {

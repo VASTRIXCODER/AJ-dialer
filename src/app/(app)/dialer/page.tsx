@@ -34,7 +34,9 @@ export default async function DialerPage({
   );
   const dialCampaigns = campaigns
     .filter((c) => c.status !== "completed")
-    .map((c) => ({ id: c.id, name: c.name }));
+    // Scripts ride along so the in-call Script card can show the assigned
+    // variant without another fetch.
+    .map((c) => ({ id: c.id, name: c.name, scriptA: c.scriptA, scriptB: c.scriptB }));
 
   // Sanitise callback params — only digits/+ allowed in phone to prevent injection.
   const callbackPhone = dial ? dial.replace(/[^\d+]/g, "") : undefined;

@@ -3,10 +3,12 @@
 import {
   AlertTriangle,
   CalendarCheck2,
+  ChevronDown,
   ListFilter,
   Loader2,
   Phone,
   PhoneCall,
+  ScrollText,
   Settings,
   UserCheck,
   Users,
@@ -18,6 +20,11 @@ import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { Button, buttonVariants } from "@/components/ui/button";
 import {
+  isScriptTestRunning,
+  scriptTextForVariant,
+  scriptVariantForLead,
+} from "@/lib/campaign-scripts";
+import {
   persistDisposition,
   replayQueuedDispositions,
 } from "@/lib/dialer/disposition-queue";
@@ -28,7 +35,7 @@ import type { CallOutcome, Lead } from "@/lib/types";
 import { BookAppointmentDialog, type BookedAppointment } from "./book-appointment-dialog";
 import { BookedLeadsPanel } from "./booked-leads-panel";
 import { CallStage } from "./call-stage";
-import { useDialerContext } from "./dialer-context";
+import { useDialerContext, type DialerCampaign } from "./dialer-context";
 import { DialerFloor } from "./dialer-floor";
 import { LeadPanel } from "./lead-panel";
 import { groupLabel, LoadLeadsDialog } from "./load-leads-dialog";
@@ -42,7 +49,7 @@ export function DialerClient({
   callbackName,
 }: {
   queue: Lead[];
-  campaigns?: { id: string; name: string }[];
+  campaigns?: DialerCampaign[];
   initialCampaign?: string;
   /** When set, auto-dial this number (from the Callbacks page "Call back" link). */
   callbackPhone?: string;
@@ -133,6 +140,11 @@ export function DialerClient({
 
   // Track the rep's in-call notes so they can be saved with the disposition.
   const notesRef = useRef<string>("");
+  // The script variant (A/B) shown for the focus lead — same ref idiom as
+  // notesRef, so the disposition POST can carry it without re-binding
+  // fileOutcome on every render. Updated by an effect further down, once the
+  // focus lead + its campaign are resolved.
+  const scriptVariantRef = useRef<"a" | "b" | null>(null);
   const focusLeadId = (
     state.connectedLead ??
     state.lines[0]?.lead ??
@@ -176,6 +188,25 @@ export function DialerClient({
       )
     : [];
 
+  // ── Campaign script (A/B test) ─────────────────────────────────────────────
+  // Which script the focus lead's campaign assigns them. Deterministic per lead
+  // (hash of the id), so the same homeowner hears the same script on every
+  // attempt. No script on the campaign ⇒ nothing renders at all.
+  const focusCampaign = focusLead?.campaignId
+    ? campaignsForSelect.find((c) => c.id === focusLead.campaignId)
+    : undefined;
+  const focusScripts = focusCampaign
+    ? { scriptA: focusCampaign.scriptA ?? "", scriptB: focusCampaign.scriptB ?? "" }
+    : null;
+  const scriptVariant =
+    focusLead && focusScripts ? scriptVariantForLead(focusLead, focusScripts) : null;
+  const scriptText = focusScripts ? scriptTextForVariant(focusScripts, scriptVariant) : "";
+  const scriptTestRunning = focusScripts ? isScriptTestRunning(focusScripts) : false;
+  const [scriptOpen, setScriptOpen] = useState(true);
+  useEffect(() => {
+    scriptVariantRef.current = scriptVariant;
+  }, [scriptVariant]);
+
   // ── Disposition ────────────────────────────────────────────────────────────
   // "Appointment booked" pauses here to ask WHEN, because filing the disposition
   // is a one-way door: dialer.selectOutcome() advances the queue and, with
@@ -199,6 +230,9 @@ export function DialerClient({
           room: state.room,
           notes: notesRef.current || undefined,
           appointment: appointment ?? undefined,
+          // Which script (A/B) the rep was shown for this lead — powers the
+          // per-variant split on the campaign page. Absent when no script.
+          scriptVariant: scriptVariantRef.current ?? undefined,
         });
       }
       dialer.selectOutcome(o);
@@ -469,6 +503,37 @@ export function DialerClient({
               Qualify the lead & capture the account review
             </p>
           </div>
+          {scriptText.length > 0 && (
+            <div className="border-b border-border">
+              <button
+                type="button"
+                onClick={() => setScriptOpen((v) => !v)}
+                aria-expanded={scriptOpen}
+                className="flex w-full items-center gap-2 px-5 py-3 text-left transition-colors hover:bg-muted/50"
+              >
+                <ScrollText className="h-4 w-4 text-muted-foreground" />
+                <span className="text-sm font-semibold">Script</span>
+                {scriptTestRunning && scriptVariant && (
+                  <Badge tone={scriptVariant === "a" ? "primary" : "accent"}>
+                    Variant {scriptVariant.toUpperCase()}
+                  </Badge>
+                )}
+                <ChevronDown
+                  className={cn(
+                    "ml-auto h-4 w-4 text-muted-foreground transition-transform",
+                    scriptOpen && "rotate-180",
+                  )}
+                />
+              </button>
+              {scriptOpen && (
+                <div className="max-h-56 overflow-y-auto px-5 pb-4">
+                  <p className="whitespace-pre-wrap text-sm leading-relaxed text-muted-foreground">
+                    {scriptText}
+                  </p>
+                </div>
+              )}
+            </div>
+          )}
           <div className="p-5">
             <QualifyPanel
               key={focusLead?.id ?? "none"}

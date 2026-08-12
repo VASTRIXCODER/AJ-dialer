@@ -53,7 +53,16 @@ export interface DialerConfig {
   leadGroups?: { key: string; label: string }[];
 }
 
-type Campaign = { id: string; name: string };
+/** What the dialer knows about a campaign — enough to filter the queue and
+ *  show the assigned call script ("" / absent = no script). */
+export type DialerCampaign = {
+  id: string;
+  name: string;
+  scriptA?: string;
+  scriptB?: string;
+};
+
+type Campaign = DialerCampaign;
 
 interface DialerContextValue {
   dialer: ReturnType<typeof useDialer>;

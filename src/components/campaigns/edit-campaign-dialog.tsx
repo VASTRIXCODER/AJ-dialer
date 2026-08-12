@@ -4,7 +4,7 @@ import { Loader2, X } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
-import { Input, Label, Select } from "@/components/ui/input";
+import { Input, Label, Select, Textarea } from "@/components/ui/input";
 import { Modal } from "@/components/ui/modal";
 import { campaignStatusConfig } from "@/lib/status";
 import type { CampaignStatus } from "@/lib/types";
@@ -16,6 +16,9 @@ export interface EditableCampaign {
   utilityProvider: string;
   color: string;
   status: CampaignStatus;
+  /** Call scripts ("" = unset). Setting BOTH runs an A/B test in the dialer. */
+  scriptA: string;
+  scriptB: string;
 }
 
 /**
@@ -36,6 +39,8 @@ export function EditCampaignDialog({
   const [utility, setUtility] = useState(campaign.utilityProvider);
   const [color, setColor] = useState(campaign.color || "#3B82F6");
   const [status, setStatus] = useState<CampaignStatus>(campaign.status);
+  const [scriptA, setScriptA] = useState(campaign.scriptA);
+  const [scriptB, setScriptB] = useState(campaign.scriptB);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
 
@@ -57,6 +62,8 @@ export function EditCampaignDialog({
           utilityProvider: utility,
           color,
           status,
+          scriptA,
+          scriptB,
         }),
       });
       const json = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string };
@@ -145,6 +152,30 @@ export function EditCampaignDialog({
           <p className="text-xs text-muted-foreground">
             Completed campaigns drop out of the pause/resume toggle — reactivate them here.
           </p>
+          <div>
+            <Label htmlFor="campaign-edit-script-a">Script A</Label>
+            <Textarea
+              id="campaign-edit-script-a"
+              value={scriptA}
+              onChange={(e) => setScriptA(e.target.value)}
+              placeholder="Hi {first name}, this is … calling about your solar account review…"
+            />
+          </div>
+          <div>
+            <Label htmlFor="campaign-edit-script-b">
+              Script B (leave empty to run a single script)
+            </Label>
+            <Textarea
+              id="campaign-edit-script-b"
+              value={scriptB}
+              onChange={(e) => setScriptB(e.target.value)}
+              placeholder="An alternative opener to test against Script A…"
+            />
+            <p className="mt-1.5 text-xs text-muted-foreground">
+              With both scripts set, the dialer runs an A/B test: each lead is
+              deterministically assigned one script, and results split on the campaign page.
+            </p>
+          </div>
         </div>
 
         <div className="flex items-center gap-2 border-t border-border/60 p-5">

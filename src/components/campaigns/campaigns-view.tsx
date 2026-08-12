@@ -32,6 +32,9 @@ type Campaign = {
   color: string;
   createdAt: string;
   ownerId: string | null;
+  /** Call scripts ("" = unset) — edited in the dialog, shown in the dialer. */
+  scriptA: string;
+  scriptB: string;
   stats: CampaignStats;
 };
 

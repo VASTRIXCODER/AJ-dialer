@@ -16,6 +16,7 @@ import { PageContainer, PageHeader } from "@/components/shared/page-header";
 import { SectionCard } from "@/components/shared/section-card";
 import { Badge } from "@/components/ui/badge";
 import { buttonVariants } from "@/components/ui/button";
+import { isScriptTestRunning } from "@/lib/campaign-scripts";
 import { getLeadsPage } from "@/lib/db/leads";
 import { getCampaign, getCampaignRecentCalls } from "@/lib/db/pipeline";
 import { campaignStatusConfig, leadStatusConfig, outcomeConfig } from "@/lib/status";
@@ -41,6 +42,11 @@ export default async function CampaignDetailPage({
   const apptRate = st.connects
     ? Math.round((st.appointments / st.connects) * 1000) / 10
     : 0;
+  // Show the A/B split while a test is running, and keep showing it for
+  // campaigns with historical variant rows even after a script was cleared.
+  const scriptTest = c.scriptTest;
+  const showScriptTest =
+    isScriptTestRunning(c) || scriptTest.a.calls > 0 || scriptTest.b.calls > 0;
 
   return (
     <PageContainer>
@@ -65,6 +71,8 @@ export default async function CampaignDetailPage({
               utilityProvider: c.utilityProvider,
               color: c.color,
               status: c.status,
+              scriptA: c.scriptA,
+              scriptB: c.scriptB,
             }}
           />
           <Link
@@ -113,6 +121,52 @@ export default async function CampaignDetailPage({
           )}
         </SectionCard>
       </div>
+
+      {showScriptTest && (
+        <SectionCard
+          title="Script test"
+          description="A vs B across calls where a script was shown — auto-filed calls (e.g. parallel-dial no-answers) carry no variant and sit outside this split."
+        >
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-border text-left text-xs uppercase tracking-wide text-muted-foreground">
+                  <th className="pb-2 pr-4 font-semibold">Variant</th>
+                  <th className="pb-2 pr-4 font-semibold">Calls</th>
+                  <th className="pb-2 pr-4 font-semibold">Connects</th>
+                  <th className="pb-2 pr-4 font-semibold">Connect rate</th>
+                  <th className="pb-2 pr-4 font-semibold">Appointments</th>
+                  <th className="pb-2 font-semibold">Appt rate</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(["a", "b"] as const).map((v) => {
+                  const vs = scriptTest[v];
+                  return (
+                    <tr key={v} className="border-b border-border/60 last:border-0">
+                      <td className="py-2.5 pr-4">
+                        <Badge tone={v === "a" ? "primary" : "accent"}>
+                          Script {v.toUpperCase()}
+                        </Badge>
+                      </td>
+                      <td className="py-2.5 pr-4 tabular">{formatNumber(vs.calls)}</td>
+                      <td className="py-2.5 pr-4 tabular">{formatNumber(vs.connects)}</td>
+                      <td className="py-2.5 pr-4 tabular">{vs.connectRate}%</td>
+                      <td className="py-2.5 pr-4 tabular">{formatNumber(vs.appointments)}</td>
+                      <td className="py-2.5 tabular">{vs.apptRate}%</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          {scriptTest.a.calls === 0 && scriptTest.b.calls === 0 && (
+            <p className="mt-3 text-sm text-muted-foreground">
+              No scripted calls yet — dial this campaign and dispositions will split here.
+            </p>
+          )}
+        </SectionCard>
+      )}
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         <SectionCard
