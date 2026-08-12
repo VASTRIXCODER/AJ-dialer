@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
+import { getUser } from "@/lib/auth";
 import { AI_MODEL, pingAI } from "@/lib/ai/claude";
+import { isSupabaseConfigured } from "@/lib/supabase/config";
 
 export const dynamic = "force-dynamic";
 
@@ -13,6 +15,11 @@ export const dynamic = "force-dynamic";
  *                      access, network) — the `error` says which.
  */
 export async function GET() {
+  // Require a signed-in user when Supabase is configured: this pings Claude (real
+  // token spend) and returns the model name + raw provider error strings.
+  if (isSupabaseConfigured() && !(await getUser())) {
+    return NextResponse.json({ error: "Sign in first." }, { status: 401 });
+  }
   const result = await pingAI();
   return NextResponse.json(
     { expectedModel: AI_MODEL, ...result },

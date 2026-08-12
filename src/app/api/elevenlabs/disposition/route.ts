@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
-import { updateAICall } from "@/lib/ai-call-store";
-import { setConversationDisposition } from "@/lib/db/records";
+import { getAICall, updateAICall } from "@/lib/ai-call-store";
+import { getAIConversation, setConversationDisposition } from "@/lib/db/records";
+import { viewerCan, viewerOrgId } from "@/lib/org/membership";
 import type { CallOutcome } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -32,6 +33,23 @@ export async function POST(req: Request) {
       { error: "conversationId and a valid outcome are required" },
       { status: 400 },
     );
+  }
+
+  // AUTH: overriding a call's disposition is a supervisor intervention. This used
+  // to mutate the process-global live store BEFORE any check, so an anonymous
+  // caller could mark any conversation completed with any outcome. Require
+  // monitor.intervene and confirm the conversation belongs to the viewer's org.
+  if (!(await viewerCan("monitor.intervene"))) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
+  const orgId = await viewerOrgId();
+  if (!orgId) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  const store = getAICall(conversationId);
+  if (store) {
+    if (store.orgId !== orgId)
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  } else if (!(await getAIConversation(conversationId))) {
+    return NextResponse.json({ error: "Conversation not found" }, { status: 404 });
   }
 
   // Live store — immediate UI feedback during the session.

@@ -9,7 +9,18 @@ export async function POST(req: Request) {
     return NextResponse.json({ source: "demo", interpretation: "", matches: [] });
   }
 
-  const [leads, viewer] = await Promise.all([getLeads(), getViewer()]);
+  // Require a signed-in user: this embeds the caller's raw query into a Claude
+  // prompt, so an anonymous caller could otherwise run up unmetered Anthropic
+  // spend (and use it as a prompt-injection surface).
+  const viewer = await getViewer();
+  if (!viewer.isDemo && !viewer.user) {
+    return NextResponse.json({ error: "Sign in first." }, { status: 401 });
+  }
+  const leads = await getLeads();
+  // No accessible leads → nothing to search; skip the model call entirely.
+  if (!leads.length) {
+    return NextResponse.json({ source: "demo", interpretation: "", matches: [] });
+  }
   const isSolar = viewer.org ? viewer.org.dialerTemplate === "solar" : true;
   const { data, source } = await getSemanticSearch(query, leads, isSolar);
   const byId = new Map(leads.map((l) => [l.id, l]));

@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { getViewer } from "@/lib/org/membership";
 import { getPublicBaseUrl, getRestClient, isRestConfigured } from "@/lib/twilio";
 
 export const dynamic = "force-dynamic";
@@ -16,6 +17,14 @@ export const dynamic = "force-dynamic";
 export async function POST(req: Request) {
   if (!isRestConfigured()) {
     return NextResponse.json({ ok: false, error: "Twilio not configured" }, { status: 503 });
+  }
+
+  // AUTH: this route had no check, so anyone who guessed a conference room name
+  // could hold/unhold a live rep<->customer call (a DoS on in-progress calls) or
+  // make it play hold music mid-pitch. Require a signed-in user.
+  const viewer = await getViewer();
+  if (!viewer.user) {
+    return NextResponse.json({ ok: false, error: "Sign in first." }, { status: 401 });
   }
 
   const body = (await req.json().catch(() => ({}))) as {

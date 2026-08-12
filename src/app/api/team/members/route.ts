@@ -1,25 +1,29 @@
 import { NextResponse } from "next/server";
-import { getUser } from "@/lib/auth";
 import {
   addTeamMember,
   listTeamMembers,
   removeTeamMember,
   updateTeamMember,
 } from "@/lib/db/team";
+import { viewerCan } from "@/lib/org/membership";
 import { createAdminClient, isAdminConfigured } from "@/lib/supabase/admin";
 
 export const dynamic = "force-dynamic";
 
+const FORBIDDEN = NextResponse.json(
+  { ok: false, error: "You don’t have permission to do that." },
+  { status: 403 },
+);
+
 export async function GET() {
-  const me = await getUser();
-  if (!me) return NextResponse.json({ ok: false, error: "Sign in first." }, { status: 401 });
+  if (!(await viewerCan("members.view"))) return FORBIDDEN;
   return NextResponse.json({ members: await listTeamMembers() });
 }
 
 export async function POST(req: Request) {
-  const me = await getUser();
-  if (!me)
-    return NextResponse.json({ ok: false, error: "Sign in first." }, { status: 401 });
+  // Gated on members.invite: this can send a Supabase invite email with the
+  // service role, so any signed-in user must NOT be able to spray invites.
+  if (!(await viewerCan("members.invite"))) return FORBIDDEN;
 
   const body = (await req.json().catch(() => ({}))) as {
     email?: string;
@@ -70,9 +74,7 @@ export async function POST(req: Request) {
 }
 
 export async function PATCH(req: Request) {
-  const me = await getUser();
-  if (!me)
-    return NextResponse.json({ ok: false, error: "Sign in first." }, { status: 401 });
+  if (!(await viewerCan("members.role"))) return FORBIDDEN;
   const { id, ...patch } = (await req.json().catch(() => ({}))) as {
     id?: string;
     role?: string;
@@ -87,9 +89,7 @@ export async function PATCH(req: Request) {
 }
 
 export async function DELETE(req: Request) {
-  const me = await getUser();
-  if (!me)
-    return NextResponse.json({ ok: false, error: "Sign in first." }, { status: 401 });
+  if (!(await viewerCan("members.remove"))) return FORBIDDEN;
   const id = new URL(req.url).searchParams.get("id");
   if (!id)
     return NextResponse.json({ ok: false, error: "id required." }, { status: 400 });
