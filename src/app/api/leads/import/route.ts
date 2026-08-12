@@ -7,8 +7,12 @@ import { isValidGroupKey } from "@/lib/db/lead-groups";
 import { createPacks, planPacks, pruneEmptyPacks, setPackSizes } from "@/lib/db/lead-packs";
 import type { LeadGroup } from "@/lib/types";
 import { getViewer } from "@/lib/org/membership";
+import { clientIp, rateLimit } from "@/lib/rate-limit";
 
 export const dynamic = "force-dynamic";
+
+/** Reject CSV payloads larger than this (bytes) before we ever parse them. */
+const MAX_CSV_BYTES = 2_000_000;
 
 /**
  * Import leads from a CSV.
@@ -30,6 +34,16 @@ export async function POST(req: Request) {
     );
   }
 
+  // Throttle imports: each one can trigger CSV parsing + a Claude column-mapping
+  // call, so a loop would be a CPU + token DoS. Generous for real use.
+  const rl = rateLimit(`import:${viewer.user?.id ?? clientIp(req)}`, 12, 60_000);
+  if (!rl.ok) {
+    return NextResponse.json(
+      { inserted: 0, error: "Too many imports in a row — wait a moment and try again." },
+      { status: 429, headers: { "Retry-After": String(rl.retryAfter) } },
+    );
+  }
+
   const body = (await req.json().catch(() => ({}))) as {
     csv?: string;
     rows?: LeadInput[];
@@ -40,6 +54,21 @@ export async function POST(req: Request) {
     /** Label the packs carry — normally the source file name. */
     packBatch?: string | null;
   };
+
+  // Reject an oversized CSV before parsing: parseCsvToLeads walks the whole string
+  // character by character and the AI fallback ships the grid to Claude, so the
+  // cap has to come BEFORE that work (the 5,000-row slice below happens after it).
+  if (typeof body.csv === "string" && body.csv.length > MAX_CSV_BYTES) {
+    return NextResponse.json(
+      {
+        inserted: 0,
+        error:
+          "That file is too large to import at once. Split it into smaller CSVs " +
+          "(under ~2 MB each) and import them in batches.",
+      },
+      { status: 413 },
+    );
+  }
 
   const hasGroup = Object.prototype.hasOwnProperty.call(body, "leadGroup");
   // Group keys are per-org now, so validity is "does THIS org have it" rather

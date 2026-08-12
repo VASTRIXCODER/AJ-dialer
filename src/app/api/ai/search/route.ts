@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getSemanticSearch } from "@/lib/ai/services";
 import { getLeads } from "@/lib/db/leads";
 import { getViewer } from "@/lib/org/membership";
+import { clientIp, rateLimit } from "@/lib/rate-limit";
 
 export async function POST(req: Request) {
   const { query } = await req.json().catch(() => ({}) as { query?: string });
@@ -15,6 +16,14 @@ export async function POST(req: Request) {
   const viewer = await getViewer();
   if (!viewer.isDemo && !viewer.user) {
     return NextResponse.json({ error: "Sign in first." }, { status: 401 });
+  }
+  // Each query is a Claude call — throttle so it can't be run up in a loop.
+  const rl = rateLimit(`ai-search:${viewer.user?.id ?? clientIp(req)}`, 30, 60_000);
+  if (!rl.ok) {
+    return NextResponse.json(
+      { source: "demo", interpretation: "", matches: [] },
+      { status: 429, headers: { "Retry-After": String(rl.retryAfter) } },
+    );
   }
   const leads = await getLeads();
   // No accessible leads → nothing to search; skip the model call entirely.
