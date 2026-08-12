@@ -108,7 +108,21 @@ export interface OrgSettings {
     maxLines: number;
     ringTimeoutSec: number;
     recording: boolean;
+    /**
+     * Async answering-machine detection on manual/parallel outbound legs.
+     * Twilio's AsyncAmd never delays connecting a live human; when the verdict
+     * says machine, the leg is auto-dropped (or gets the voicemail drop below).
+     * Off by default: it adds per-minute AMD cost and changes floor behavior,
+     * so an admin has to opt in.
+     */
+    amd: boolean;
+    /** On AMD's end-of-greeting beep, speak `voicemailMessage` instead of hanging up. */
     voicemailDrop: boolean;
+    /**
+     * TTS text for the voicemail drop. Placeholders: {org}. Empty falls back
+     * to a neutral default at drop time.
+     */
+    voicemailMessage: string;
     retryAttempts: number;
     retryDelayMin: number;
     respectDnc: boolean;
@@ -255,7 +269,9 @@ export const DEFAULT_ORG_SETTINGS: OrgSettings = {
     maxLines: 3,
     ringTimeoutSec: 25,
     recording: true,
+    amd: false,
     voicemailDrop: true,
+    voicemailMessage: "",
     retryAttempts: 3,
     retryDelayMin: 60,
     respectDnc: true,

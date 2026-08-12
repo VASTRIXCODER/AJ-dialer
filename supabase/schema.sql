@@ -1747,3 +1747,17 @@ revoke execute on function public.app_leads_page(uuid, uuid, boolean, text, text
 -- ═════════════════════════════════════════════════════════════════════════════
 alter table public.ai_conversations
   add column if not exists transcript jsonb;
+
+-- ═════════════════════════════════════════════════════════════════════════════
+-- Campaign script A/B testing (P5.SCRIPTAB)
+--
+-- Campaigns gain two script slots; every human call record notes which variant
+-- the rep was reading, so the campaign detail page can split performance by
+-- script. A campaign with only script_a set runs single-script (no test).
+-- ═════════════════════════════════════════════════════════════════════════════
+alter table public.campaigns
+  add column if not exists script_a text not null default '',
+  add column if not exists script_b text not null default '';
+alter table public.call_records
+  add column if not exists script_variant text
+  check (script_variant is null or script_variant in ('a', 'b'));

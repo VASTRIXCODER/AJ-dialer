@@ -168,10 +168,14 @@ export async function POST(req: Request) {
   if (TERMINAL_STATUSES.has(callStatus) && isAdminConfigured()) {
     try {
       const admin = createAdminClient();
+      // answered_by is OMITTED (not nulled) when this callback doesn't carry
+      // it: with async AMD the verdict arrives at /api/twilio/amd and is
+      // parked there FIRST — a null here would overwrite it on the upsert.
+      const answeredBy = String(form.AnsweredBy ?? "");
       const verdict = {
         twilio_call_status: callStatus,
         twilio_error_code: errorCode,
-        answered_by: String(form.AnsweredBy ?? "") || null,
+        ...(answeredBy ? { answered_by: answeredBy } : {}),
       };
       if (room) {
         const { data: updated } = await admin

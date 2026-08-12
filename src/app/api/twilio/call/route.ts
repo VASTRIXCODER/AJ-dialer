@@ -126,6 +126,24 @@ export async function POST(req: Request) {
   // participants), so it never blocks the two-way audio bridge.
   const conferenceTwiml = `<?xml version="1.0" encoding="UTF-8"?><Response><Dial><Conference startConferenceOnEnter="true" endConferenceOnExit="${endOnExit}" beep="false">${room}</Conference></Dial></Response>`;
 
+  // Async answering-machine detection (opt-in per org). AsyncAmd never delays
+  // connecting a live human — the verdict arrives out-of-band at /api/twilio/amd,
+  // which drops (or voicemail-drops) machine legs. DetectMessageEnd is used when
+  // voicemail drop is on so the verdict lands exactly at the greeting's beep;
+  // plain Enable verdicts at machine_start, hanging up sooner. Requires a public
+  // callback origin, same as the status callback.
+  const amdEnabled = Boolean(orgSettings?.dialing.amd) && Boolean(base);
+  const orgId = viewer.org?.id ?? "";
+  const amdParams = amdEnabled
+    ? {
+        machineDetection: orgSettings?.dialing.voicemailDrop
+          ? "DetectMessageEnd"
+          : "Enable",
+        asyncAmd: "true",
+        asyncAmdStatusCallbackMethod: "POST" as const,
+      }
+    : {};
+
   // Resolve caller ID info for the first leg so we can return it for display.
   // Subsequent legs each advance the counter individually.
   let poolInfo: CallerIdInfo | null = null;
@@ -150,6 +168,12 @@ export async function POST(req: Request) {
             ? {
                 statusCallback: `${base}/api/twilio/status?room=${encodeURIComponent(room)}&leadId=${encodeURIComponent(leg.leadId)}`,
                 statusCallbackEvent: ["initiated", "ringing", "answered", "completed"],
+              }
+            : {}),
+          ...(amdEnabled
+            ? {
+                ...amdParams,
+                asyncAmdStatusCallback: `${base}/api/twilio/amd?room=${encodeURIComponent(room)}&leadId=${encodeURIComponent(leg.leadId)}&org=${encodeURIComponent(orgId)}`,
               }
             : {}),
         });

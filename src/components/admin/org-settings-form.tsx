@@ -505,11 +505,31 @@ export function OrgSettingsForm({
             onChange={(v) => setDialing({ ...dialing, recording: v })}
           />
           <Toggle
+            label="Answering-machine detection"
+            hint="Auto-drop machine pickups so reps never sit through a greeting. Adds Twilio's per-call AMD fee."
+            checked={dialing.amd}
+            onChange={(v) => setDialing({ ...dialing, amd: v })}
+          />
+          <Toggle
             label="Voicemail drop"
-            hint="Leave a pre-recorded message on no-answer."
+            hint="When AMD hears the greeting end, speak the message below instead of hanging up."
             checked={dialing.voicemailDrop}
             onChange={(v) => setDialing({ ...dialing, voicemailDrop: v })}
           />
+          {dialing.amd && dialing.voicemailDrop && (
+            <div className="sm:col-span-2">
+              <Field label="Voicemail message ({org} inserts your organization name)">
+                <Textarea
+                  value={dialing.voicemailMessage}
+                  rows={2}
+                  placeholder="This is a courtesy call from {org}. Sorry we missed you — we'll try to reach you another time."
+                  onChange={(e) =>
+                    setDialing({ ...dialing, voicemailMessage: e.target.value })
+                  }
+                />
+              </Field>
+            </div>
+          )}
           <Toggle
             label="Respect Do-Not-Call list"
             checked={dialing.respectDnc}
