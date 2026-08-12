@@ -312,6 +312,10 @@ export function useDialer(
   const pendingRebuildRef = useRef(false);
   const tickRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // Watches the winning homeowner leg AFTER connect on a parallel dial. At 2x/3x
+  // the conference has endOnExit=false, so the customer hanging up does NOT end
+  // the rep's leg — without this the rep would sit on "live" talking to nobody.
+  const customerWatchRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const presenceTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const presenceSnapshotRef = useRef<{
     status: DialerStatus;
@@ -577,6 +581,8 @@ export function useDialer(
   const stopPoll = useCallback(() => {
     if (pollRef.current) clearInterval(pollRef.current);
     pollRef.current = null;
+    if (customerWatchRef.current) clearInterval(customerWatchRef.current);
+    customerWatchRef.current = null;
   }, []);
 
   const stopAITimer = useCallback(() => {
@@ -1050,6 +1056,32 @@ export function useDialer(
     },
     [postHuman, startTick, stopPoll],
   );
+
+  // A parallel (2x/3x) dial rings several homeowners but only the WINNER gets a
+  // rep disposition. Without this the losing legs get NO call_record at all, so
+  // dial counts and connect-rate are wrong by up to Nx, there is no per-attempt
+  // trail (a TCPA exposure), and the auto-dialer silently re-rings them. File a
+  // best-effort no_answer record for every non-winning line. `keepLeadId` is the
+  // one the rep will disposition themselves (the winner, or the focus lead on a
+  // no-answer batch), so it's skipped here.
+  const recordNonWinners = useCallback((dialedLeads: Lead[], keepLeadId: string) => {
+    if (dialedLeads.length < 2) return;
+    for (const l of dialedLeads) {
+      if (!l.id || l.id === keepLeadId) continue;
+      void fetch("/api/calls", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          leadId: l.id,
+          leadName: `${l.firstName} ${l.lastName}`.trim(),
+          phone: l.phone,
+          durationSec: 0,
+          outcome: "no_answer",
+        }),
+        keepalive: true,
+      }).catch(() => {});
+    }
+  }, []);
 
   // A token-expiry error that arrived mid-call deferred its device rebuild so it
   // wouldn't drop the call. The call is over now — honor it, so the device
@@ -1882,9 +1914,36 @@ export function useDialer(
             };
             if (answeredLeadId) {
               const lead = leads.find((l) => l.id === answeredLeadId) ?? leads[0];
+              // File no_answer records for the homeowners dialed on the OTHER
+              // parallel lines — they don't get a rep disposition (P2.RECORDS).
+              recordNonWinners(leads, answeredLeadId);
               connectLine(lead); // connectLine stops the poll + starts the timer
+              // In parallel mode the conference has endOnExit=false, so the
+              // customer hanging up does NOT end the rep's leg and nothing else
+              // would tell us. Watch the winning leg and wrap up when it ends
+              // (P2.HANGUP) — the same outcome a single dial gets for free.
+              const winnerLeg = placed.find((p) => p.leadId === answeredLeadId);
+              if (leads.length > 1 && winnerLeg) {
+                customerWatchRef.current = setInterval(async () => {
+                  try {
+                    const w = await fetch("/api/twilio/answered", {
+                      method: "POST",
+                      headers: { "content-type": "application/json" },
+                      body: JSON.stringify({ legs: [winnerLeg] }),
+                    });
+                    const { done: gone } = (await w.json()) as { done?: boolean };
+                    // Only wrap up if we're still on THIS bridged call.
+                    if (gone && bridgedRef.current) endCall();
+                  } catch {
+                    /* transient read — keep watching */
+                  }
+                }, 4000);
+              }
             } else if (done) {
-              // Nobody answered — release the rep from the empty conference.
+              // Nobody answered — release the rep from the empty conference. File
+              // no_answer for the non-focus parallel lines (the rep dispositions
+              // the focus lead themselves).
+              recordNonWinners(leads, leads[0]?.id ?? "");
               stopPoll();
               if (callRef.current) {
                 // Nobody home is an OUTCOME, not a failure — flag the hang-up as
@@ -1925,10 +1984,12 @@ export function useDialer(
       attachCallHandlers,
       clearHumanPresence,
       connectLine,
+      endCall,
       nextLeads,
       patch,
       queue.length,
       recordDials,
+      recordNonWinners,
       recoverPlacedLegs,
       releaseLegs,
       resetToIdle,
