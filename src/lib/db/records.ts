@@ -285,7 +285,18 @@ export async function getConversationLeadRef(
   }
 }
 
-// ── AI conversation: seed at call placement (user session present) ───────────
+// ── AI conversation: seed at call placement ──────────────────────────────────
+// Interactive calls carry a rep session; the unattended cron does NOT. The old
+// code bailed when there was no session (`if (!user) return`), so EVERY
+// cron-placed AI call went unrecorded: no ai_conversations row, so the Twilio
+// status webhook found no ref and never hung up a no-answer (the agent monologued
+// to an empty conference on full credits), the reconciler couldn't see it, and
+// completeAIConversation returned early — yet the lead was already stamped
+// contacted, so it was burned with no disposition. Now the owner is resolved
+// session-first (rep attribution preserved) then falls back to an explicit
+// ownerId (the org owner for cron), and the row is written with the admin client
+// so it's created either way. owner_id is nullable, so even an owner-less org's
+// call is still recorded — enough for the no-answer hangup + reconciler to work.
 export async function seedAIConversation(input: {
   conversationId: string;
   callSid: string | null;
@@ -300,17 +311,29 @@ export async function seedAIConversation(input: {
    *  Carried onto the conversation so the appointment it books can be attributed
    *  to the agent that closed it. */
   agentKey?: string | null;
+  /** Fallback owner when there's no rep session (the org owner, for cron). */
+  ownerId?: string | null;
 }): Promise<void> {
-  if (!isSupabaseConfigured()) return;
+  if (!isSupabaseConfigured() || !isAdminConfigured()) return;
   try {
-    const supabase = await createClient();
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-    if (!user) return;
-    await supabase.from("ai_conversations").upsert({
+    // Prefer the signed-in rep (interactive path); fall back to the provided
+    // owner (cron). createClient()/getUser() returns a null user with no cookies
+    // rather than throwing, so this is safe from the session-less cron.
+    let ownerId = input.ownerId ?? null;
+    try {
+      const supabase = await createClient();
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (user?.id) ownerId = user.id;
+    } catch {
+      /* no session (cron) — keep the provided owner */
+    }
+
+    const admin = createAdminClient();
+    await admin.from("ai_conversations").upsert({
       conversation_id: input.conversationId,
-      owner_id: user.id,
+      owner_id: ownerId,
       lead_id: asUuid(input.leadId),
       lead_name: input.leadName,
       phone: input.phone,

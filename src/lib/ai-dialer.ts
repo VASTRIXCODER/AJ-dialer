@@ -290,6 +290,12 @@ export async function placeAiCallForLead(opts: {
       // Which persona placed the call (Agent 1 / Agent 2), so a booking it closes
       // is attributed to the right agent on the appointments tabs.
       agentKey: el.key,
+      // Fallback owner for the unattended cron path, which has no rep session:
+      // without this the row was never written and the call was never recorded.
+      // The interactive path still attributes to the signed-in rep (seed resolves
+      // the session first). repUserId can be a synthetic "org:<id>" rotation key,
+      // so use the real org owner id here (may be null → row still records).
+      ownerId: org?.ownerId ?? null,
     });
 
     return {
