@@ -17,6 +17,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { Button, buttonVariants } from "@/components/ui/button";
+import {
+  persistDisposition,
+  replayQueuedDispositions,
+} from "@/lib/dialer/disposition-queue";
 import { cn } from "@/lib/utils";
 import type { BookedLead } from "@/lib/db/leads";
 import type { CallOutcome, Lead } from "@/lib/types";
@@ -137,6 +141,11 @@ export function DialerClient({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [focusLeadId]);
 
+  // Flush any dispositions that failed to save on a previous (flaky) session.
+  useEffect(() => {
+    void replayQueuedDispositions();
+  }, []);
+
   // Auto-dial a callback number as soon as the Twilio device is live and idle.
   const callbackFiredRef = useRef(false);
   useEffect(() => {
@@ -170,21 +179,20 @@ export function DialerClient({
   const fileOutcome = useCallback(
     (o: CallOutcome, lead: Lead | null, appointment?: BookedAppointment | null) => {
       if (lead) {
-        void fetch("/api/calls", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({
-            leadId: lead.id,
-            leadName: `${lead.firstName} ${lead.lastName}`,
-            phone: lead.phone,
-            durationSec: state.durationSec,
-            outcome: o,
-            callSid: state.callSid,
-            room: state.room,
-            notes: notesRef.current || undefined,
-            appointment: appointment ?? undefined,
-          }),
-        }).catch(() => {});
+        // Durable: on any network failure the disposition is queued in
+        // localStorage and replayed on the next load, instead of being silently
+        // dropped while the queue advances. Advance immediately for snappy UX.
+        void persistDisposition({
+          leadId: lead.id,
+          leadName: `${lead.firstName} ${lead.lastName}`,
+          phone: lead.phone,
+          durationSec: state.durationSec,
+          outcome: o,
+          callSid: state.callSid,
+          room: state.room,
+          notes: notesRef.current || undefined,
+          appointment: appointment ?? undefined,
+        });
       }
       dialer.selectOutcome(o);
     },
