@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
-import { insertCallRecord } from "@/lib/db/records";
+import { orgAIContext } from "@/lib/ai/org-context";
 import { getCallSummary } from "@/lib/ai/services";
+import { insertCallRecord } from "@/lib/db/records";
+import { getViewer } from "@/lib/org/membership";
 import { createClient } from "@/lib/supabase/server";
 import { isSupabaseConfigured } from "@/lib/supabase/config";
 import type { CallOutcome, Lead } from "@/lib/types";
@@ -106,7 +108,11 @@ export async function POST(req: Request) {
           createdAt: String(row.created_at ?? ""),
           timezone: String(row.timezone ?? ""),
         };
-        const result = await getCallSummary(lead, body.outcome!);
+        // Summarize with the org's actual vertical/vocabulary — the last
+        // remaining solar-default caller after P6.AIADAPT.
+        const viewer = await getViewer();
+        const ctx = orgAIContext(viewer.org);
+        const result = await getCallSummary(lead, body.outcome!, ctx.isSolar, undefined, ctx);
         if (result.data.executiveSummary) {
           await supabase
             .from("call_records")
