@@ -2,8 +2,11 @@
 
 import { motion } from "framer-motion";
 import {
+  ArrowDown,
+  ArrowUp,
   BatteryCharging,
   Car,
+  ChevronsUpDown,
   Loader2,
   Pencil,
   PhoneCall,
@@ -30,10 +33,16 @@ import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import type { Lead, LeadStatus } from "@/lib/types";
+import {
+  CORE_LEAD_FIELDS,
+  formatFieldValue,
+  leadFieldValue,
+  type LeadFieldDef,
+} from "@/lib/leads/field-schema";
 import { leadStatusConfig } from "@/lib/status";
 import { applyLabelOverride } from "@/lib/leads/group-labels";
 import { SMART_LISTS } from "@/lib/leads/smart-lists";
-import { cn, formatAddress, formatCurrency, formatNumber, formatPhone, initials } from "@/lib/utils";
+import { cn, formatAddress, formatNumber, formatPhone, initials } from "@/lib/utils";
 import { EditLeadDialog } from "./edit-lead-dialog";
 
 /** The server-side filter set, mirrored in the URL (see leads/page.tsx). */
@@ -47,6 +56,9 @@ export interface LeadsTableFilters {
   campaignId?: string;
   uploaderId?: string;
   mine?: boolean;
+  /** Server-side sort as "key.dir" (e.g. "ai_score.desc") — whitelisted in
+   *  leads/page.tsx AND again inside the SQL. Absent = upload order. */
+  sort?: string;
 }
 
 const FILTERS: Array<{ value: LeadStatus | "all"; label: string }> = [
@@ -69,6 +81,70 @@ const LEGACY_GROUP_LABELS: Record<string, string> = {
   manual: "Manual Dialing",
 };
 
+/** Core field keys → the app_leads_page sort-whitelist key backing them. Only
+ *  these schema columns get sortable headers — custom fields sit in jsonb with
+ *  no SQL sort lane, so their headers stay static. */
+const CORE_FIELD_SORTS: Record<string, string> = {
+  utilityBill: "utility_bill",
+  solarPayment: "solar_payment",
+};
+
+/** Boolean core slots keep their signature icons; other booleans get a badge. */
+const FLAG_ICONS: Record<string, typeof Car> = {
+  hasEV: Car,
+  hasPool: Waves,
+  hasBattery: BatteryCharging,
+};
+
+type SortState = { key: string; dir: "asc" | "desc" } | null;
+
+/**
+ * A sortable column header. Click cycles: the column's natural direction →
+ * the opposite → back to upload order (the deliberate default). The chevron
+ * pair only surfaces on hover so resting headers stay quiet.
+ */
+function SortableTh({
+  label,
+  sortKey,
+  numeric = false,
+  sort,
+  onToggle,
+}: {
+  label: string;
+  sortKey: string;
+  /** Right-aligns and makes DESC the first-click direction (big values first). */
+  numeric?: boolean;
+  sort: SortState;
+  onToggle: (key: string, defaultDir: "asc" | "desc") => void;
+}) {
+  const dir = sort?.key === sortKey ? sort.dir : null;
+  return (
+    <th
+      aria-sort={dir ? (dir === "asc" ? "ascending" : "descending") : undefined}
+      className={cn("px-4 py-3", numeric && "text-right")}
+    >
+      <button
+        type="button"
+        onClick={() => onToggle(sortKey, numeric ? "desc" : "asc")}
+        title={`Sort by ${label.toLowerCase()}`}
+        className={cn(
+          "group/sort inline-flex items-center gap-1 text-xs font-semibold uppercase tracking-wide transition-colors",
+          dir ? "text-foreground" : "text-muted-foreground hover:text-foreground",
+        )}
+      >
+        {label}
+        {dir === "asc" ? (
+          <ArrowUp className="h-3 w-3 text-primary" />
+        ) : dir === "desc" ? (
+          <ArrowDown className="h-3 w-3 text-primary" />
+        ) : (
+          <ChevronsUpDown className="h-3 w-3 opacity-0 transition-opacity group-hover/sort:opacity-60" />
+        )}
+      </button>
+    </th>
+  );
+}
+
 export function LeadsTable({
   leads,
   total,
@@ -82,6 +158,7 @@ export function LeadsTable({
   members = [],
   labelOverrides,
   orgGroups = [],
+  fields = CORE_LEAD_FIELDS,
   showSolarPayment = true,
 }: {
   /** ONE server-filtered page of rows — filtering happens in getLeadsPage. */
@@ -107,6 +184,9 @@ export function LeadsTable({
   /** The org's own intake groups. Empty falls back to whatever the loaded leads
    *  carry, so the filter is never empty just because the list didn't load. */
   orgGroups?: { key: string; label: string }[];
+  /** The org's resolved lead-field schema (resolveLeadFields) — drives which
+   *  data columns render. Defaults to the solar-era core slots. */
+  fields?: LeadFieldDef[];
   /** Show solar-specific fields (per-tenant — off for non-solar orgs). */
   showSolarPayment?: boolean;
 }) {
@@ -126,6 +206,7 @@ export function LeadsTable({
       if (next.campaignId) sp.set("campaign", next.campaignId);
       if (next.uploaderId) sp.set("uploader", next.uploaderId);
       if (next.mine) sp.set("mine", "1");
+      if (next.sort) sp.set("sort", next.sort);
       if (nextPage > 1) sp.set("page", String(nextPage));
       const qs = sp.toString();
       startTransition(() => {
@@ -159,6 +240,43 @@ export function LeadsTable({
     (p: number) => navigate(intendedFilters.current, Math.max(1, p)),
     [navigate],
   );
+
+  // Sort state lives in the URL like every other filter ("key.dir"), rendered
+  // from the server-confirmed value so headers never show a sort that wasn't
+  // applied. Changing it resets to page 1 via applyFilters.
+  const activeSort: SortState = useMemo(() => {
+    const raw = filters.sort ?? "";
+    const dot = raw.indexOf(".");
+    if (dot <= 0) return null;
+    return { key: raw.slice(0, dot), dir: raw.slice(dot + 1) === "desc" ? "desc" : "asc" };
+  }, [filters.sort]);
+  const toggleSort = useCallback(
+    (key: string, defaultDir: "asc" | "desc") => {
+      let next: string | undefined;
+      if (activeSort?.key !== key) next = `${key}.${defaultDir}`;
+      else if (activeSort.dir === defaultDir)
+        next = `${key}.${defaultDir === "asc" ? "desc" : "asc"}`;
+      else next = undefined; // third click: back to upload order
+      applyFilters({ sort: next });
+    },
+    [activeSort, applyFilters],
+  );
+
+  // Schema-driven data columns. Booleans collapse into ONE compact flag cell
+  // (the old "Home" column, generalized); everything else gets its own column.
+  // Custom columns cap at 4 to keep row density sane — everything a lead
+  // carries beyond that stays reachable through the edit dialog.
+  const { valueColumns, flagFields } = useMemo(() => {
+    const visible = fields.filter((f) => f.showInTable);
+    const shown = [
+      ...visible.filter((f) => f.source === "core"),
+      ...visible.filter((f) => f.source === "custom").slice(0, 4),
+    ];
+    return {
+      valueColumns: shown.filter((f) => f.type !== "boolean"),
+      flagFields: shown.filter((f) => f.type === "boolean"),
+    };
+  }, [fields]);
 
   // Filter options = the org's groups, plus any key the loaded leads still
   // carry that isn't in that list (a deleted group's leftovers), so a lead is
@@ -495,7 +613,13 @@ export function LeadsTable({
     return [...m.values()].sort((a, b) => b.leads.length - a.leads.length);
   }, [filtered, meId]);
   const sectioned = groups.length > 1;
-  const colSpan = selectable ? 9 : 8;
+  // Fixed columns: Homeowner/Location/Campaign + Status/AI + actions (6), plus
+  // the dynamic schema columns and the optional checkbox column.
+  const dynamicCols = valueColumns.length + (flagFields.length > 0 ? 1 : 0);
+  const colSpan = (selectable ? 1 : 0) + 6 + dynamicCols;
+  // The old fixed layout (Bill + Home = 2 dynamic columns) fit in 900px; give
+  // every column beyond that its own breathing room and let the wrapper scroll.
+  const tableMinWidth = 900 + Math.max(0, dynamicCols - 2) * 110;
 
   return (
     <div className="space-y-4">
@@ -852,7 +976,7 @@ export function LeadsTable({
         )}
       >
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[900px] text-sm">
+          <table className="w-full text-sm" style={{ minWidth: tableMinWidth }}>
             <thead>
               <tr className="border-b border-border/70 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                 {selectable && (
@@ -866,13 +990,30 @@ export function LeadsTable({
                     />
                   </th>
                 )}
-                <th className="px-4 py-3">Homeowner</th>
-                <th className="px-4 py-3">Location</th>
+                <SortableTh label="Homeowner" sortKey="name" sort={activeSort} onToggle={toggleSort} />
+                <SortableTh label="Location" sortKey="city" sort={activeSort} onToggle={toggleSort} />
                 <th className="px-4 py-3">Campaign</th>
-                <th className="px-4 py-3 text-right">Bill</th>
-                <th className="px-4 py-3">Home</th>
-                <th className="px-4 py-3">Status</th>
-                <th className="px-4 py-3 text-right">AI</th>
+                {valueColumns.map((f) => {
+                  const sortKey = f.source === "core" ? CORE_FIELD_SORTS[f.key] : undefined;
+                  const numeric = f.type === "currency" || f.type === "number";
+                  return sortKey ? (
+                    <SortableTh
+                      key={f.key}
+                      label={f.label}
+                      sortKey={sortKey}
+                      numeric={numeric}
+                      sort={activeSort}
+                      onToggle={toggleSort}
+                    />
+                  ) : (
+                    <th key={f.key} className={cn("px-4 py-3", numeric && "text-right")}>
+                      {f.label}
+                    </th>
+                  );
+                })}
+                {flagFields.length > 0 && <th className="px-4 py-3">Profile</th>}
+                <SortableTh label="Status" sortKey="status" sort={activeSort} onToggle={toggleSort} />
+                <SortableTh label="AI" sortKey="ai_score" numeric sort={activeSort} onToggle={toggleSort} />
                 <th className="px-4 py-3" />
               </tr>
             </thead>
@@ -968,17 +1109,52 @@ export function LeadsTable({
                         )}
                       </div>
                     </td>
-                    <td className="px-4 py-3 text-right font-semibold tabular">
-                      {l.utilityBill ? formatCurrency(l.utilityBill) : "—"}
-                    </td>
-                    <td className="px-4 py-3">
-                      <div className="flex gap-1 text-muted-foreground">
-                        {l.hasEV && <Car className="h-4 w-4" />}
-                        {l.hasPool && <Waves className="h-4 w-4" />}
-                        {l.hasBattery && <BatteryCharging className="h-4 w-4" />}
-                        {!l.hasEV && !l.hasPool && !l.hasBattery && <span className="text-xs">—</span>}
-                      </div>
-                    </td>
+                    {valueColumns.map((f) => {
+                      const numeric = f.type === "currency" || f.type === "number";
+                      const text = formatFieldValue(leadFieldValue(l, f), f.type);
+                      return (
+                        <td
+                          key={f.key}
+                          className={cn(
+                            "px-4 py-3",
+                            numeric
+                              ? "text-right font-semibold tabular"
+                              : "text-muted-foreground",
+                          )}
+                        >
+                          {numeric ? (
+                            text
+                          ) : (
+                            <span className="block max-w-[180px] truncate" title={text}>
+                              {text}
+                            </span>
+                          )}
+                        </td>
+                      );
+                    })}
+                    {flagFields.length > 0 && (
+                      <td className="px-4 py-3">
+                        <div className="flex flex-wrap items-center gap-1 text-muted-foreground">
+                          {flagFields
+                            .filter((f) => leadFieldValue(l, f) === true)
+                            .map((f) => {
+                              const Icon = FLAG_ICONS[f.key];
+                              return Icon ? (
+                                <span key={f.key} title={f.label}>
+                                  <Icon className="h-4 w-4" />
+                                </span>
+                              ) : (
+                                <Badge key={f.key} tone="neutral">
+                                  {f.label}
+                                </Badge>
+                              );
+                            })}
+                          {flagFields.every((f) => leadFieldValue(l, f) !== true) && (
+                            <span className="text-xs">—</span>
+                          )}
+                        </div>
+                      </td>
+                    )}
                     <td className="px-4 py-3">
                       <Badge tone={cfg.tone}>{cfg.label}</Badge>
                     </td>
@@ -1085,6 +1261,7 @@ export function LeadsTable({
           lead={editing}
           onClose={() => setEditing(null)}
           showSolarPayment={showSolarPayment}
+          fields={fields}
         />
       )}
     </div>

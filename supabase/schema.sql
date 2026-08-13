@@ -1602,6 +1602,11 @@ grant execute on function public.app_claim_notifications(int) to service_role;
 create index if not exists leads_org_created_idx   on public.leads (org_id, created_at, id);
 create index if not exists leads_owner_created_idx on public.leads (owner_id, created_at, id);
 
+-- The pre-sort 12-arg signature must be dropped first: CREATE OR REPLACE with
+-- extra parameters would OVERLOAD the function rather than replace it, and two
+-- candidates make PostgREST's rpc() resolution ambiguous when defaults are used.
+drop function if exists public.app_leads_page(uuid, uuid, boolean, text, text, text, text, uuid, boolean, text, integer, integer);
+
 create or replace function public.app_leads_page(
   p_org        uuid,
   p_user       uuid,
@@ -1614,7 +1619,9 @@ create or replace function public.app_leads_page(
   p_mine       boolean default false,
   p_smart      text    default null,   -- smart-list id (src/lib/leads/smart-lists.ts)
   p_offset     integer default 0,
-  p_limit      integer default 50
+  p_limit      integer default 50,
+  p_sort       text    default null,   -- whitelisted sort key; anything else = upload order
+  p_dir        text    default 'asc'
 ) returns jsonb
 language plpgsql
 security definer
@@ -1623,6 +1630,15 @@ as $$
 declare
   v_limit  int  := least(greatest(coalesce(p_limit, 50), 1), 200);
   v_offset int  := greatest(coalesce(p_offset, 0), 0);
+  -- STRICT sort whitelist — p_sort arrives from a URL param and this function
+  -- trusts its callers, so anything unrecognized silently falls back to upload
+  -- order. The key is only ever matched in CASE arms below, never interpolated.
+  -- Mirrored in JS by filterLeadsPage (src/lib/db/leads.ts) — keep in lockstep.
+  v_sort   text := case when p_sort in
+    ('name', 'city', 'state', 'status', 'utility_bill', 'solar_payment',
+     'ai_score', 'last_contacted_at', 'created_at')
+    then p_sort else null end;
+  v_desc   boolean := lower(coalesce(p_dir, 'asc')) = 'desc';
   -- Escape LIKE wildcards in the user's text; separate digits variant for phone.
   v_q      text := nullif(replace(replace(replace(btrim(coalesce(p_q, '')), '\', '\\'), '%', '\%'), '_', '\_'), '');
   v_digits text := nullif(regexp_replace(coalesce(p_q, ''), '\D', '', 'g'), '');
@@ -1689,14 +1705,58 @@ begin
   total as (
     select count(*) as n from filtered
   ),
+  -- One window, six CASE lanes (text / numeric / time × asc / desc): only the
+  -- lane matching the active sort+direction produces values; every other lane
+  -- is all-null and a no-op. Nulls sort LAST in every lane (missing scores and
+  -- never-contacted rows go to the bottom regardless of direction), and
+  -- (created_at, id) always closes the ORDER BY so ties — and therefore pages —
+  -- stay stable. With v_sort null that closing pair IS the default: upload
+  -- order, the deliberate product default (see ORDERING in src/lib/db/leads.ts).
   page as (
-    select to_jsonb(f.*) as row_json, f.created_at, f.id
-    from filtered f
-    order by f.created_at asc, f.id asc
+    select s.row_json, s.rn
+    from (
+      select
+        to_jsonb(f.*) as row_json,
+        row_number() over (order by
+          case when not v_desc then case v_sort
+            when 'name'   then lower(coalesce(f.last_name, '') || ' ' || coalesce(f.first_name, ''))
+            when 'city'   then lower(coalesce(f.city, ''))
+            when 'state'  then lower(coalesce(f.state, ''))
+            when 'status' then f.status
+          end end asc nulls last,
+          case when v_desc then case v_sort
+            when 'name'   then lower(coalesce(f.last_name, '') || ' ' || coalesce(f.first_name, ''))
+            when 'city'   then lower(coalesce(f.city, ''))
+            when 'state'  then lower(coalesce(f.state, ''))
+            when 'status' then f.status
+          end end desc nulls last,
+          case when not v_desc then case v_sort
+            when 'utility_bill'  then f.utility_bill
+            when 'solar_payment' then f.solar_payment
+            when 'ai_score'      then f.ai_score::numeric
+          end end asc nulls last,
+          case when v_desc then case v_sort
+            when 'utility_bill'  then f.utility_bill
+            when 'solar_payment' then f.solar_payment
+            when 'ai_score'      then f.ai_score::numeric
+          end end desc nulls last,
+          case when not v_desc then case v_sort
+            when 'last_contacted_at' then f.last_contacted_at
+            when 'created_at'        then f.created_at
+          end end asc nulls last,
+          case when v_desc then case v_sort
+            when 'last_contacted_at' then f.last_contacted_at
+            when 'created_at'        then f.created_at
+          end end desc nulls last,
+          f.created_at asc, f.id asc
+        ) as rn
+      from filtered f
+    ) s
+    order by s.rn
     limit v_limit offset v_offset
   )
   select
-    coalesce((select jsonb_agg(row_json order by created_at, id) from page), '[]'::jsonb),
+    coalesce((select jsonb_agg(row_json order by rn) from page), '[]'::jsonb),
     (select n from total)
   into v_rows, v_total;
 
@@ -1736,12 +1796,12 @@ begin
 end;
 $$;
 
-grant execute on function public.app_leads_page(uuid, uuid, boolean, text, text, text, text, uuid, boolean, text, integer, integer) to service_role;
+grant execute on function public.app_leads_page(uuid, uuid, boolean, text, text, text, text, uuid, boolean, text, integer, integer, text, text) to service_role;
 -- CREATE FUNCTION grants PUBLIC execute by default; this function trusts its
 -- p_* scope params, so it must only be reachable via the service-role client.
-revoke execute on function public.app_leads_page(uuid, uuid, boolean, text, text, text, text, uuid, boolean, text, integer, integer) from public;
-revoke execute on function public.app_leads_page(uuid, uuid, boolean, text, text, text, text, uuid, boolean, text, integer, integer) from anon;
-revoke execute on function public.app_leads_page(uuid, uuid, boolean, text, text, text, text, uuid, boolean, text, integer, integer) from authenticated;
+revoke execute on function public.app_leads_page(uuid, uuid, boolean, text, text, text, text, uuid, boolean, text, integer, integer, text, text) from public;
+revoke execute on function public.app_leads_page(uuid, uuid, boolean, text, text, text, text, uuid, boolean, text, integer, integer, text, text) from anon;
+revoke execute on function public.app_leads_page(uuid, uuid, boolean, text, text, text, text, uuid, boolean, text, integer, integer, text, text) from authenticated;
 
 -- ═════════════════════════════════════════════════════════════════════════════
 -- Persisted call transcripts (P5.TRANSCRIPT)

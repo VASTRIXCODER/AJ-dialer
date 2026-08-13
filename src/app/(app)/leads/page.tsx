@@ -6,10 +6,12 @@ import { EmptyState } from "@/components/shared/empty-state";
 import { PageContainer, PageHeader } from "@/components/shared/page-header";
 import { buttonVariants } from "@/components/ui/button";
 import { CalendarCheck, Sparkles, Zap } from "lucide-react";
-import { getLeadsPage } from "@/lib/db/leads";
+import { getLeadsPage, type LeadsSort } from "@/lib/db/leads";
 import { getCampaigns } from "@/lib/db/pipeline";
 import { listLeadGroupsWithCounts } from "@/lib/db/lead-groups";
+import { resolveLeadFields, type CoreFieldOverrides } from "@/lib/leads/field-schema";
 import { getViewer, listMembers } from "@/lib/org/membership";
+import { templateProfile } from "@/lib/org/templates";
 import { isSolarVertical } from "@/lib/org/vertical";
 import { leadStatusConfig } from "@/lib/status";
 import type { LeadStatus } from "@/lib/types";
@@ -19,6 +21,30 @@ export const metadata = { title: "Leads" };
 export const dynamic = "force-dynamic";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** The sort keys app_leads_page's CASE whitelist accepts — anything else never
+ *  leaves this page. The SQL re-validates anyway (defense in depth). */
+const SORTABLE = new Set([
+  "name",
+  "city",
+  "state",
+  "status",
+  "utility_bill",
+  "solar_payment",
+  "ai_score",
+  "last_contacted_at",
+  "created_at",
+]);
+
+/** Parse `?sort=key.dir` — unknown keys and malformed values drop to undefined
+ *  (upload order) rather than forwarding user input to the RPC. */
+function parseSort(raw: string | undefined): LeadsSort | undefined {
+  if (!raw) return undefined;
+  const dot = raw.indexOf(".");
+  const key = dot > 0 ? raw.slice(0, dot) : raw;
+  if (!SORTABLE.has(key)) return undefined;
+  return { key, dir: raw.slice(dot + 1) === "desc" ? "desc" : "asc" };
+}
 
 export default async function LeadsPage({
   searchParams,
@@ -37,6 +63,7 @@ export default async function LeadsPage({
   // A malformed ?uploader= would fail the RPC's uuid cast and render the whole
   // book as the onboarding empty state — validate instead of forwarding.
   const uploaderId = sp.uploader && UUID.test(sp.uploader) ? sp.uploader : undefined;
+  const sort = parseSort(sp.sort);
   const filters: LeadsTableFilters = {
     q: sp.q?.trim() || undefined,
     status,
@@ -45,11 +72,14 @@ export default async function LeadsPage({
     campaignId: sp.campaign || undefined,
     uploaderId,
     mine: sp.mine === "1",
+    // The VALIDATED value goes back to the table, so its headers only ever
+    // reflect a sort the server actually applied.
+    sort: sort ? `${sort.key}.${sort.dir}` : undefined,
   };
   const pageNum = Math.max(1, Number.parseInt(sp.page ?? "1", 10) || 1);
 
   let [pageData, campaigns, viewer] = await Promise.all([
-    getLeadsPage({ page: pageNum, ...filters }),
+    getLeadsPage({ page: pageNum, ...filters, sort }),
     getCampaigns(),
     getViewer(),
   ]);
@@ -59,7 +89,7 @@ export default async function LeadsPage({
   if (pageData.leads.length === 0 && pageData.total > 0 && pageNum > 1) {
     const lastPage = Math.max(1, Math.ceil(pageData.total / pageData.pageSize));
     if (lastPage < pageNum) {
-      pageData = await getLeadsPage({ page: lastPage, ...filters });
+      pageData = await getLeadsPage({ page: lastPage, ...filters, sort });
     }
   }
   const { leads, total, stats, smartCounts, page, pageSize } = pageData;
@@ -81,6 +111,16 @@ export default async function LeadsPage({
   const campaignList = campaigns
     .filter((c) => c.status !== "completed")
     .map((c) => ({ id: c.id, name: c.name }));
+
+  // The org's effective lead-field schema: explicit settings.leadFields when
+  // saved (imports/Admin), otherwise the core slots with the dialer template's
+  // relabels/hides applied. TemplateProfile.fields ships with the templates
+  // half of this epic — read it defensively so either half builds alone.
+  const fields = resolveLeadFields(
+    viewer.org?.settings.leadFields,
+    (templateProfile(viewer.org?.dialerTemplate) as { fields?: CoreFieldOverrides })
+      .fields,
+  );
 
   const header = (
     <PageHeader
@@ -151,6 +191,7 @@ export default async function LeadsPage({
         members={members}
         labelOverrides={groupLabels}
         orgGroups={leadGroups.map((g) => ({ key: g.key, label: g.label }))}
+        fields={fields}
         // Both signals, one prop: a non-solar vertical drops the solar fields
         // outright, and a solar org can still switch them off per-tenant.
         showSolarPayment={

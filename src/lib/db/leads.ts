@@ -1174,6 +1174,35 @@ export async function getMyLeadsCount(): Promise<number> {
 
 export const LEADS_PAGE_SIZE = 50;
 
+/**
+ * Server-side sort for the Leads tab. `key` must be one of the whitelist below —
+ * the SQL (app_leads_page) re-validates it in a CASE and silently falls back to
+ * upload order for anything else, so an invalid key can never reach an ORDER BY.
+ */
+export interface LeadsSort {
+  key: string;
+  dir: "asc" | "desc";
+}
+
+/**
+ * JS mirror of app_leads_page's sort whitelist — the demo/degraded-path twin of
+ * the SQL CASE arms. Keep the two in lockstep. Text keys coalesce to "" (like
+ * the SQL's coalesce), value keys return null for missing data (sorted last
+ * regardless of direction, like the SQL's NULLS LAST).
+ */
+const LEADS_SORT_VALUES: Record<string, (l: Lead) => string | number | null> = {
+  name: (l) => `${l.lastName ?? ""} ${l.firstName ?? ""}`.toLowerCase(),
+  city: (l) => (l.city ?? "").toLowerCase(),
+  state: (l) => (l.state ?? "").toLowerCase(),
+  status: (l) => l.status,
+  utility_bill: (l) => l.utilityBill ?? null,
+  solar_payment: (l) => l.solarPayment ?? null,
+  ai_score: (l) => l.aiScore ?? null,
+  last_contacted_at: (l) =>
+    l.lastContactedAt ? Date.parse(l.lastContactedAt) || null : null,
+  created_at: (l) => (l.createdAt ? Date.parse(l.createdAt) || null : null),
+};
+
 export interface LeadsPageParams {
   /** 1-based. */
   page: number;
@@ -1189,6 +1218,9 @@ export interface LeadsPageParams {
   mine?: boolean;
   /** Smart-list id — see src/lib/leads/smart-lists.ts. */
   smart?: string;
+  /** Whitelisted sort key + direction. Absent (or an unknown key) = upload
+   *  order (created_at, id) — the deliberate product default; see ORDERING. */
+  sort?: LeadsSort;
 }
 
 export interface LeadsPageStats {
@@ -1269,8 +1301,32 @@ function filterLeadsPage(
     return true;
   });
 
+  // Mirror of the SQL's sort lanes: whitelist via LEADS_SORT_VALUES (unknown
+  // keys leave upload order untouched), nulls last regardless of direction.
+  // Array.prototype.sort is stable, so the input's upload order stands in for
+  // the SQL's (created_at, id) tiebreaker.
+  const sortValue = params.sort ? LEADS_SORT_VALUES[params.sort.key] : undefined;
+  const ordered = sortValue
+    ? [...filtered].sort((a, b) => {
+        const va = sortValue(a);
+        const vb = sortValue(b);
+        if (va === null && vb === null) return 0;
+        if (va === null) return 1;
+        if (vb === null) return -1;
+        const cmp =
+          typeof va === "string" && typeof vb === "string"
+            ? va.localeCompare(vb)
+            : va < vb
+              ? -1
+              : va > vb
+                ? 1
+                : 0;
+        return params.sort!.dir === "desc" ? -cmp : cmp;
+      })
+    : filtered;
+
   return {
-    leads: filtered.slice((page - 1) * pageSize, page * pageSize),
+    leads: ordered.slice((page - 1) * pageSize, page * pageSize),
     total: filtered.length,
     stats: {
       total: all.length,
@@ -1292,8 +1348,8 @@ function filterLeadsPage(
  * (filtered total, scope-wide KPIs, smart-list counts) — in a single round
  * trip via the app_leads_page RPC. Same scope split as getLeads (rep → own +
  * assigned; supervisor → org pool + own pre-org rows), same upload ordering
- * (created_at, id), evaluated in SQL so 100k-lead books stop being serialized
- * into the RSC payload.
+ * (created_at, id) unless a whitelisted `sort` is given, evaluated in SQL so
+ * 100k-lead books stop being serialized into the RSC payload.
  */
 export async function getLeadsPage(params: LeadsPageParams): Promise<LeadsPageResult> {
   if (!isSupabaseConfigured()) return filterLeadsPage(fallbackLeads, params, null);
@@ -1335,6 +1391,8 @@ export async function getLeadsPage(params: LeadsPageParams): Promise<LeadsPageRe
       p_smart: params.smart ?? null,
       p_offset: (page - 1) * pageSize,
       p_limit: pageSize,
+      p_sort: params.sort?.key ?? null,
+      p_dir: params.sort?.dir ?? "asc",
     });
     if (error || !data) return emptyLeadsPage(params);
 
