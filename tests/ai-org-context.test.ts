@@ -231,10 +231,29 @@ describe("voice-agent prompt schema injection", () => {
     settings: mergeSettings({ leadFields: [CUSTOM_DEF] }),
   };
 
-  it("genericPrompt asks the org's schema-driven qualifying questions", () => {
-    const cfg = resolveAgentConfig(orgWithSchema);
+  it("genericPrompt asks the org's EXPLICIT qualify list (same precedence as the human panel)", () => {
+    // The insurance template ships a curated qualifyFields preset which now
+    // outranks bare showInQualify flags — so the org lists its custom field
+    // explicitly, exactly like the Admin qualify multi-select would save it.
+    const listed = {
+      ...orgWithSchema,
+      settings: mergeSettings({
+        leadFields: [CUSTOM_DEF],
+        qualify: { fields: [CUSTOM_DEF.key] },
+      }),
+    };
+    const cfg = resolveAgentConfig(listed);
     expect(cfg.systemPrompt).toContain("Qualifying questions");
     expect(cfg.systemPrompt).toContain("When is your policy expiry?");
+  });
+
+  it("honors the template's qualify preset when the org saved no explicit list", () => {
+    const cfg = resolveAgentConfig(orgWithSchema);
+    // Insurance preset leads with the premium slot — relabeled, not solar.
+    expect(cfg.systemPrompt).toContain("Qualifying questions");
+    expect(cfg.systemPrompt.toLowerCase()).toContain("premium");
+    // The un-listed custom field stays out until the org lists it.
+    expect(cfg.systemPrompt).not.toContain("When is your policy expiry?");
   });
 
   it("injects the qualify section into org-custom prompts too", () => {
@@ -242,12 +261,27 @@ describe("voice-agent prompt schema injection", () => {
       ...orgWithSchema,
       settings: mergeSettings({
         leadFields: [CUSTOM_DEF],
+        qualify: { fields: [CUSTOM_DEF.key] },
         ai: { systemPrompt: "You are Quinn. Do exactly as configured." },
       }),
     };
     const cfg = resolveAgentConfig(custom);
     expect(cfg.systemPrompt).toContain("You are Quinn.");
     expect(cfg.systemPrompt).toContain("When is your policy expiry?");
+  });
+
+  it("never appends the qualify suffix to a solar org's custom prompt (Emily already encodes it)", () => {
+    const solarCustom = {
+      name: "Sunrise Solar",
+      productName: "",
+      dialerTemplate: "solar",
+      settings: mergeSettings({
+        ai: { systemPrompt: "You are Emily. Custom-edited script." },
+      }),
+    };
+    const cfg = resolveAgentConfig(solarCustom);
+    expect(cfg.systemPrompt).toContain("You are Emily.");
+    expect(cfg.systemPrompt).not.toContain("Qualifying questions");
   });
 
   it("does not put solar-era default questions in a non-solar agent's mouth", () => {

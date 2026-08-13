@@ -165,16 +165,18 @@ describe("sanitizeDiscoveredFields", () => {
     expect(sanitizeDiscoveredFields("nope")).toEqual([]);
   });
 
-  it("re-normalizes keys, validates types, and forces custom/hidden defaults", () => {
+  it("REJECTS non-normalized keys (silently renaming would orphan row values)", () => {
     const out = sanitizeDiscoveredFields([
+      // Not normalized — renaming to policy_number would register the def
+      // under a different key than the round-tripped row values carry.
       { key: "Policy Number", label: "Policy Number", type: "text", source: "core", showInTable: true, showInQualify: true },
       { key: "premium", label: "", type: "currency" },
       { key: "evil", label: "Evil", type: "script" }, // unknown type dropped
       { key: "%%%", label: "No key", type: "text" }, // unkeyable dropped
       null,
     ]);
-    expect(out.map((f) => f.key)).toEqual(["policy_number", "premium"]);
-    expect(out[1].label).toBe("premium"); // empty label falls back to the key
+    expect(out.map((f) => f.key)).toEqual(["premium"]);
+    expect(out[0].label).toBe("premium"); // empty label falls back to the key
     for (const f of out) {
       expect(f.source).toBe("custom");
       expect(f.showInTable).toBe(false);
@@ -182,13 +184,35 @@ describe("sanitizeDiscoveredFields", () => {
     }
   });
 
-  it("dedupes keys after normalization", () => {
+  it("keeps already-normalized keys and drops reserved ones", () => {
     const out = sanitizeDiscoveredFields([
-      { key: "Has Pets", label: "Has Pets", type: "boolean" },
-      { key: "has_pets", label: "Duplicate", type: "text" },
+      { key: "has_pets", label: "Has Pets", type: "boolean" },
+      { key: "status", label: "Status", type: "text" }, // reserved — never a custom field
+      { key: "ai_score", label: "AI Score", type: "number" }, // reserved
     ]);
     expect(out).toHaveLength(1);
+    expect(out[0].key).toBe("has_pets");
     expect(out[0].type).toBe("boolean");
+  });
+
+  it("normalizeFieldKey is idempotent even at the length cap", () => {
+    const long = "Estimated Annual Household Discretionary Income USD";
+    const key = normalizeFieldKey(long);
+    expect(key.endsWith("_")).toBe(false);
+    expect(normalizeFieldKey(key)).toBe(key);
+  });
+
+  it("parseFieldValue keeps digit-less placeholders as text, not 0", () => {
+    expect(parseFieldValue("N/A", "currency")).toBe("N/A");
+    expect(parseFieldValue("TBD", "number")).toBe("TBD");
+    expect(parseFieldValue("$", "currency")).toBe("$");
+    expect(parseFieldValue("$250", "currency")).toBe(250);
+  });
+
+  it("detectFieldType keeps identifier-shaped numerics as text", () => {
+    expect(detectFieldType(["00123", "00456", "07890"])).toBe("text");
+    expect(detectFieldType(["9007199254740993111", "9007199254740993112"])).toBe("text");
+    expect(detectFieldType(["12", "34", "56"])).toBe("number");
   });
 });
 

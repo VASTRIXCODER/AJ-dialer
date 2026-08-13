@@ -49,15 +49,64 @@ export const CORE_LEAD_FIELDS: LeadFieldDef[] = [
 
 const CORE_KEYS = new Set(CORE_LEAD_FIELDS.map((f) => f.key));
 
-/** "Policy Expiry (date) " → "policy_expiry_date". Empty when nothing survives. */
+/**
+ * "Policy Expiry (date) " → "policy_expiry_date". Empty when nothing survives.
+ * MUST be idempotent — /api/leads/update rejects any key where
+ * key !== normalizeFieldKey(key), so the trailing-underscore strip has to run
+ * AFTER the length cap (slicing at 48 can land on an underscore).
+ */
 export function normalizeFieldKey(header: string): string {
   return header
     .trim()
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "_")
     .replace(/^_+|_+$/g, "")
-    .slice(0, 48);
+    .slice(0, 48)
+    .replace(/_+$/g, "");
 }
+
+/**
+ * Normalized keys that must NEVER become custom fields: the CSV export's
+ * metadata tail columns (documented as "ignored on re-import" — capturing them
+ * would register 11 junk fields and store stale per-lead shadows of live
+ * columns like status/ai_score), plus core column names that could shadow
+ * real lead properties.
+ */
+export const RESERVED_FIELD_KEYS = new Set([
+  "status",
+  "lead_group",
+  "group",
+  "campaign",
+  "campaign_id",
+  "has_ev",
+  "has_pool",
+  "has_battery",
+  "multiple_systems",
+  "ai_score",
+  "score",
+  "timezone",
+  "last_contacted",
+  "last_contacted_at",
+  "created_at",
+  "uploaded_by",
+  "owner",
+  "owner_id",
+  "notes",
+  "phone",
+  "email",
+  "first_name",
+  "last_name",
+  "name",
+  "full_name",
+  "address",
+  "city",
+  "state",
+  "zip",
+  "utility_provider",
+  "solar_provider",
+  "utility_bill",
+  "solar_payment",
+]);
 
 const MONEY_RE = /^\s*-?\$?\s*\d{1,3}(?:,\d{3})*(?:\.\d{1,2})?\s*$/;
 const NUMBER_RE = /^\s*-?\d+(?:\.\d+)?\s*$/;
@@ -89,6 +138,11 @@ export function detectFieldType(samples: string[]): LeadFieldType {
   if (share((v) => PHONE_RE.test(v) && v.replace(/\D/g, "").length >= 10) >= 0.6)
     return "phone";
   if (share((v) => NUMBER_RE.test(v) || MONEY_RE.test(v)) >= 0.6) {
+    // Identifier-shaped numerics must stay TEXT: zero-padded codes ("00123")
+    // lose their leading zeros through Number(), and 16+ digit ids lose
+    // precision past 2^53. Both corruptions are permanent.
+    if (share((v) => /^0\d+$/.test(v)) >= 0.2) return "text";
+    if (share((v) => /^\d{16,}$/.test(v.replace(/\D/g, ""))) >= 0.2) return "text";
     // All-numeric but $-less: money only when values look like dollar amounts
     // with cents; otherwise a plain number (zip-like columns map elsewhere).
     return share((v) => /\.\d{2}\s*$/.test(v)) >= 0.6 ? "currency" : "number";
@@ -105,7 +159,12 @@ export function parseFieldValue(
   switch (type) {
     case "currency":
     case "number": {
-      const n = Number(v.replace(/[^0-9.-]/g, ""));
+      // A digit-less value ("N/A", "TBD", a lone "$") must survive as text —
+      // stripping to "" makes Number("") === 0, a finite number, so the
+      // isFinite fallback alone silently turned every placeholder into $0.
+      const cleaned = v.replace(/[^0-9.-]/g, "");
+      if (!/\d/.test(cleaned)) return v;
+      const n = Number(cleaned);
       return Number.isFinite(n) ? n : v;
     }
     case "boolean":

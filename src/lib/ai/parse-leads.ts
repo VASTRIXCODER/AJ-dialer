@@ -13,6 +13,7 @@ import {
   detectFieldType,
   normalizeFieldKey,
   parseFieldValue,
+  RESERVED_FIELD_KEYS,
   type LeadFieldType,
 } from "@/lib/leads/field-schema";
 import { isValidPhone, normalizePhone } from "@/lib/utils";
@@ -189,6 +190,7 @@ function typedExtras(
     if (!label || !Number.isInteger(ex.col) || ex.col < 0) continue;
     const key = normalizeFieldKey(label);
     if (!key || seen.has(key)) continue;
+    if (RESERVED_FIELD_KEYS.has(key)) continue; // never shadow live columns
     const samples = sampleColumn(grid, ex.col, start);
     if (!samples.length) continue;
     seen.add(key);

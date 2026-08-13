@@ -419,11 +419,27 @@ function fillTokens(s: string, org: AgentOrgLike): string {
  */
 function qualifyFieldDefs(org: AgentOrgLike): LeadFieldDef[] {
   const ctx = orgAIContext(org);
-  const defs = ctx.fields.filter((f) => f.showInQualify);
-  if (ctx.isSolar) return defs;
   const profile = templateProfile(org.dialerTemplate) as TemplateProfile & {
     fields?: unknown;
+    qualifyFields?: string[];
   };
+  // Same precedence as the HUMAN qualify panel ((app)/layout.tsx): the org's
+  // explicit qualify list → the template's preset → the showInQualify flags.
+  // Without this, insurance/finance/automotive agents ignored their template's
+  // curated question set and asked whatever happened to be flagged.
+  const explicit = (
+    org.settings as { qualify?: { fields?: string[] } }
+  ).qualify?.fields;
+  const listed = (explicit?.length ? explicit : profile.qualifyFields) ?? [];
+  if (listed.length) {
+    const byKey = new Map(ctx.fields.map((f) => [f.key, f]));
+    const fromList = listed
+      .map((k) => byKey.get(k))
+      .filter((f): f is LeadFieldDef => Boolean(f));
+    if (fromList.length) return fromList;
+  }
+  const defs = ctx.fields.filter((f) => f.showInQualify);
+  if (ctx.isSolar) return defs;
   const templateShaped = Boolean(profile.fields);
   const savedCore = (org.settings.leadFields ?? []).some(
     (f) => f && f.source === "core",
@@ -441,6 +457,11 @@ function qualifyFieldDefs(org: AgentOrgLike): LeadFieldDef[] {
  */
 function qualifySuffix(org: AgentOrgLike | null): string {
   if (!org) return "";
+  // Solar orgs never get the suffix: Emily's checklist already encodes the
+  // solar qualify flow, and a solar org's "custom" prompt is Emily-derived
+  // (the admin form surfaces her script as the editable starting point) —
+  // appending schema questions would duplicate her entire qualifying section.
+  if (orgAIContext(org).isSolar) return "";
   const defs = qualifyFieldDefs(org).slice(0, 8);
   if (defs.length === 0) return "";
   const lines = defs

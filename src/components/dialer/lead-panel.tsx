@@ -191,7 +191,15 @@ function LeadDetail({
   // Stat tiles: the schema's first two money/number fields (solar: Utility
   // bill + Solar payment, exactly the old pair). The "(…)" unit suffix is
   // dropped — the tile is too small for it.
-  const tiles = fields.filter((f) => f.type === "currency" || f.type === "number").slice(0, 2);
+  // Visibility matters: a template-hidden slot the admin's schema editor
+  // happened to pin (with both flags false) must NOT resurrect as a tile.
+  const tiles = fields
+    .filter(
+      (f) =>
+        (f.type === "currency" || f.type === "number") &&
+        (f.showInTable || f.showInQualify),
+    )
+    .slice(0, 2);
   const tileLabel = (label: string) => label.replace(/\s*\(.*\)\s*$/, "");
   // Flag chips: every boolean the schema actually surfaces that is true on
   // this lead (multipleSystems stays invisible by default, as before).

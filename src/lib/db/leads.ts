@@ -771,18 +771,35 @@ export async function updateLead(
     if (patch.multipleSystems !== undefined) fields.multiple_systems = patch.multipleSystems;
     if (patch.notes !== undefined) fields.notes = patch.notes || null;
     if (patch.customFields && Object.keys(patch.customFields).length > 0) {
-      // Per-key merge onto the stored object (read above for canActOn anyway);
-      // null deletes a key. Whole-object replace would race concurrent editors
-      // of DIFFERENT keys, and there's no jsonb || operator through PostgREST.
-      const existing =
-        r.custom_fields && typeof r.custom_fields === "object"
-          ? { ...(r.custom_fields as Record<string, string | number | boolean>) }
-          : {};
-      for (const [k, v] of Object.entries(patch.customFields)) {
-        if (v === null) delete existing[k];
-        else existing[k] = v;
+      if (isAdminConfigured()) {
+        // ATOMIC per-key patch (app_patch_lead_custom_fields): jsonb || and -
+        // inside one UPDATE, so two nearly-concurrent requests patching
+        // DIFFERENT keys both survive — the JS read-modify-write below loses
+        // the first writer's keys. Authorization already happened (canActOn).
+        const sets: Record<string, string | number | boolean> = {};
+        const dels: string[] = [];
+        for (const [k, v] of Object.entries(patch.customFields)) {
+          if (v === null) dels.push(k);
+          else sets[k] = v;
+        }
+        await createAdminClient().rpc("app_patch_lead_custom_fields", {
+          p_lead: id,
+          p_set: sets,
+          p_delete: dels,
+        });
+      } else {
+        // Keyless self-host fallback: the RPC is service-role only, so degrade
+        // to the read-modify-write (single-writer assumption).
+        const existing =
+          r.custom_fields && typeof r.custom_fields === "object"
+            ? { ...(r.custom_fields as Record<string, string | number | boolean>) }
+            : {};
+        for (const [k, v] of Object.entries(patch.customFields)) {
+          if (v === null) delete existing[k];
+          else existing[k] = v;
+        }
+        fields.custom_fields = existing;
       }
-      fields.custom_fields = existing;
     }
 
     if (Object.keys(fields).length === 0) return { ok: true };
@@ -1394,7 +1411,12 @@ export async function getLeadsPage(params: LeadsPageParams): Promise<LeadsPageRe
       p_sort: params.sort?.key ?? null,
       p_dir: params.sort?.dir ?? "asc",
     });
-    if (error || !data) return emptyLeadsPage(params);
+    if (error || !data) {
+      // NEVER render a populated book as empty because the RPC failed — a
+      // schema-drift deploy (old function signature, missing column) or a
+      // transient error degrades to the RLS full fetch + JS twin instead.
+      return filterLeadsPage(await getLeads(), params, user.id);
+    }
 
     const payload = data as {
       rows?: Row[];
@@ -1602,9 +1624,16 @@ export async function insertLeads(
       created_at: new Date(base + i).toISOString(),
     }));
 
-    const { error, count } = await supabase
+    let { error, count } = await supabase
       .from("leads")
       .insert(stamped, { count: "exact" });
+    if (error && /custom_fields/i.test(error.message)) {
+      // Schema drift (DB not yet migrated with the custom_fields column):
+      // rather than failing the whole import, retry without the spillover so
+      // the core lead data still lands.
+      const bare = stamped.map(({ custom_fields: _cf, ...rest }) => rest);
+      ({ error, count } = await supabase.from("leads").insert(bare, { count: "exact" }));
+    }
     if (error) return { inserted: 0, invalidPhone, duplicates, error: error.message };
     return { inserted: count ?? payload.length, invalidPhone, duplicates };
   } catch (e) {

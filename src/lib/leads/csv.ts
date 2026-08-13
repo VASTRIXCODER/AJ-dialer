@@ -2,6 +2,7 @@ import {
   detectFieldType,
   normalizeFieldKey,
   parseFieldValue,
+  RESERVED_FIELD_KEYS,
   type LeadFieldDef,
   type LeadFieldType,
 } from "./field-schema";
@@ -264,6 +265,10 @@ function discoverCustomColumns(grid: string[][], header: Field[]): CustomCapture
     if (!label) continue; // headerless column — no key to store it under
     const key = normalizeFieldKey(label);
     if (!key || seen.has(key)) continue;
+    // Never capture reserved keys: the export's metadata tail (Status, AI
+    // Score, Created At…) would otherwise re-import as junk custom fields
+    // holding stale shadows of live columns.
+    if (RESERVED_FIELD_KEYS.has(key)) continue;
     const samples = sampleColumn(grid, c);
     if (!samples.length) continue; // entirely empty column — nothing to keep
     seen.add(key);
@@ -404,8 +409,12 @@ export function sanitizeDiscoveredFields(raw: unknown): LeadFieldDef[] {
     if (out.length >= MAX_CUSTOM_FIELDS) break;
     if (!item || typeof item !== "object") continue;
     const f = item as Record<string, unknown>;
-    const key = normalizeFieldKey(String(f.key ?? ""));
-    if (!key || seen.has(key)) continue;
+    const key = String(f.key ?? "");
+    // REJECT (never silently rename) keys that aren't already normalized:
+    // renaming here would register the def under a different key than the one
+    // the round-tripped row values carry — a permanent def/value mismatch.
+    if (!key || key !== normalizeFieldKey(key) || seen.has(key)) continue;
+    if (RESERVED_FIELD_KEYS.has(key)) continue;
     const type = String(f.type ?? "") as LeadFieldType;
     if (!FIELD_TYPES.has(type)) continue;
     const label = String(f.label ?? "").trim().slice(0, 80) || key;

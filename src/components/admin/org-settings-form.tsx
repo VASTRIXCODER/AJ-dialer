@@ -1152,7 +1152,26 @@ export function OrgSettingsForm({
         <div className="mt-4 flex justify-end">
           <SaveBtn
             k="leadFields"
-            onClick={() => save({ settings: { leadFields: leadFieldRows } }, "leadFields")}
+            onClick={() => {
+              // Persist only DELTAS: core rows identical to the template-
+              // resolved default are dropped, so an untouched Save doesn't pin
+              // template-hidden solar slots into settings.leadFields (which
+              // would resurrect them in the dialer config for non-solar orgs).
+              const baseline = new Map(
+                resolveLeadFields([], profile.fields).map((f) => [f.key, f]),
+              );
+              const changed = leadFieldRows.filter((f) => {
+                if (f.source === "custom") return true;
+                const base = baseline.get(f.key);
+                return (
+                  !base ||
+                  base.label !== f.label ||
+                  base.showInTable !== f.showInTable ||
+                  base.showInQualify !== f.showInQualify
+                );
+              });
+              save({ settings: { leadFields: changed } }, "leadFields");
+            }}
           />
         </div>
       </SectionCard>

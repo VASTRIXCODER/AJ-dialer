@@ -1839,3 +1839,32 @@ alter table public.call_records
 -- ═════════════════════════════════════════════════════════════════════════════
 alter table public.leads
   add column if not exists custom_fields jsonb not null default '{}'::jsonb;
+
+-- ═════════════════════════════════════════════════════════════════════════════
+-- Atomic custom-fields patch (P6 review fix)
+--
+-- The JS read-modify-write in updateLead loses keys when two requests patch
+-- DIFFERENT keys on the same lead nearly concurrently (qualify-panel flushes
+-- from two tabs, a rep + a manager editing). jsonb || and - are atomic within
+-- the UPDATE. SERVICE-ROLE ONLY: the app authorizes (canActOn) before calling.
+-- ═════════════════════════════════════════════════════════════════════════════
+create or replace function public.app_patch_lead_custom_fields(
+  p_lead   uuid,
+  p_set    jsonb   default '{}'::jsonb,
+  p_delete text[]  default '{}'::text[]
+) returns void
+language sql volatile
+security definer
+set search_path = public
+as $$
+  update public.leads
+  set custom_fields =
+    (coalesce(custom_fields, '{}'::jsonb) || coalesce(p_set, '{}'::jsonb))
+    - coalesce(p_delete, '{}'::text[])
+  where id = p_lead;
+$$;
+
+grant execute on function public.app_patch_lead_custom_fields(uuid, jsonb, text[]) to service_role;
+revoke execute on function public.app_patch_lead_custom_fields(uuid, jsonb, text[]) from public;
+revoke execute on function public.app_patch_lead_custom_fields(uuid, jsonb, text[]) from anon;
+revoke execute on function public.app_patch_lead_custom_fields(uuid, jsonb, text[]) from authenticated;
