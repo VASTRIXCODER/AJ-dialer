@@ -2,10 +2,16 @@
 
 import { motion } from "framer-motion";
 import { BatteryCharging, Car, CircleEllipsis, Waves } from "lucide-react";
-import { useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { AiBriefing } from "@/components/ai/lead-briefing";
 import { CountUp } from "@/components/motion";
 import { Input, Label, Textarea } from "@/components/ui/input";
+import {
+  CORE_LEAD_FIELDS,
+  leadFieldValue,
+  parseFieldValue,
+  type LeadFieldDef,
+} from "@/lib/leads/field-schema";
 import type { Lead } from "@/lib/types";
 import { cn, formatCurrency } from "@/lib/utils";
 
@@ -40,104 +46,238 @@ function Toggle({
   );
 }
 
+/** The solar-era icons keep their toggles; everything else gets a neutral dot. */
+function toggleIcon(label: string): typeof Car {
+  if (label === "EV") return Car;
+  if (label === "Pool") return Waves;
+  if (label === "Battery") return BatteryCharging;
+  return CircleEllipsis;
+}
+
+/** Placeholder + input attributes per field type. */
+function inputProps(def: LeadFieldDef): React.ComponentProps<typeof Input> {
+  switch (def.type) {
+    case "currency":
+      return { inputMode: "decimal", placeholder: "$0" };
+    case "number":
+      return { inputMode: "decimal", placeholder: "0" };
+    case "date":
+      return { type: "date" };
+    case "phone":
+      return { inputMode: "tel", placeholder: "(555) 555-1234" };
+    case "email":
+      return { type: "email", placeholder: "name@example.com" };
+    case "url":
+      return { type: "url", placeholder: "https://" };
+    default:
+      return { placeholder: "—" };
+  }
+}
+
+/** A stored value, rendered into an editable input's string form. */
+function toInputString(
+  value: string | number | boolean | null | undefined,
+  type: LeadFieldDef["type"],
+): string {
+  if (value == null || value === "" || typeof value === "boolean") return "";
+  if (type === "date") {
+    const t = Date.parse(String(value));
+    if (!Number.isNaN(t)) return new Date(t).toISOString().slice(0, 10);
+  }
+  return String(value);
+}
+
+const DEFAULT_QUALIFY_FIELDS = CORE_LEAD_FIELDS.filter((f) => f.showInQualify);
+
 export function QualifyPanel({
   lead,
   onNotesChange,
-  showSolarPayment = true,
-  otherLabel = "Battery",
+  fields,
+  showAiBriefing = true,
 }: {
   lead: Lead | null;
   onNotesChange?: (notes: string) => void;
-  /** Solar orgs show the "Solar payment" field; non-solar tenants hide it. */
-  showSolarPayment?: boolean;
-  /** Label for the third home-profile toggle (default "Battery"). */
-  otherLabel?: string;
+  /** The fields to render, in order — the org's resolved qualify schema. */
+  fields?: LeadFieldDef[];
+  /** Layout toggle for the AI briefing block. */
+  showAiBriefing?: boolean;
 }) {
-  const [utility, setUtility] = useState("");
-  const [solar, setSolar] = useState("");
-  const [notes, setNotes] = useState(lead?.notes ?? "");
-  const [flags, setFlags] = useState({
-    ev: lead?.hasEV ?? false,
-    pool: lead?.hasPool ?? false,
-    battery: lead?.hasBattery ?? false,
-  });
+  const defs = fields ?? DEFAULT_QUALIFY_FIELDS;
+  const inputs = defs.filter((f) => f.type !== "boolean");
+  const toggles = defs.filter((f) => f.type === "boolean");
 
-  const u = Number(utility) || lead?.utilityBill || 0;
-  const s = Number(solar) || lead?.solarPayment || 0;
-  const total = u + s;
+  // Prefill from the lead — these inputs now PERSIST (see queueChange below),
+  // so showing the stored values is honest rather than leaving blanks over
+  // placeholders that silently discarded whatever the rep typed.
+  const [values, setValues] = useState<Record<string, string>>(() => {
+    const init: Record<string, string> = {};
+    if (lead) {
+      for (const def of inputs) init[def.key] = toInputString(leadFieldValue(lead, def), def.type);
+    }
+    return init;
+  });
+  const [flags, setFlags] = useState<Record<string, boolean>>(() => {
+    const init: Record<string, boolean> = {};
+    if (lead) {
+      for (const def of toggles) init[def.key] = leadFieldValue(lead, def) === true;
+    }
+    return init;
+  });
+  const [notes, setNotes] = useState(lead?.notes ?? "");
+
+  // ── Persistence (debounced 800ms) ──────────────────────────────────────────
+  // These entries used to be local state only — reps thought they were saving
+  // data, and every keystroke evaporated when the queue advanced (the panel is
+  // remounted per lead). Each change now lands on the lead via
+  // POST /api/leads/update: core slots as their camelCase patch fields, custom
+  // keys under `customFields` (tolerated as a no-op until the route accepts it).
+  const leadId = lead?.id ?? null;
+  const pendingRef = useRef<Record<string, string | number | boolean | null>>({});
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const defsRef = useRef(defs);
+  defsRef.current = defs;
+
+  const flush = useCallback(() => {
+    if (timerRef.current) {
+      clearTimeout(timerRef.current);
+      timerRef.current = null;
+    }
+    const pending = pendingRef.current;
+    if (!leadId || Object.keys(pending).length === 0) return;
+    pendingRef.current = {};
+    const body: Record<string, unknown> = { id: leadId, leadId };
+    const custom: Record<string, string | number | boolean> = {};
+    for (const [key, value] of Object.entries(pending)) {
+      const def = defsRef.current.find((d) => d.key === key);
+      if (def?.source === "custom") {
+        // Custom values must stay scalar — a cleared field persists as "".
+        custom[key] = value ?? "";
+      } else {
+        body[key] = value;
+      }
+    }
+    if (Object.keys(custom).length > 0) body.customFields = custom;
+    // keepalive so a save racing a lead advance / navigation still lands.
+    void fetch("/api/leads/update", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+      keepalive: true,
+    }).catch(() => {
+      /* transient — the rep's screen already shows their entry */
+    });
+  }, [leadId]);
+
+  const flushRef = useRef(flush);
+  flushRef.current = flush;
+  // The panel is remounted per lead (key={lead.id}) — flush whatever is still
+  // pending on the way out so a fast disposition never outruns the debounce.
+  useEffect(() => () => flushRef.current(), []);
+
+  const queueChange = useCallback(
+    (def: LeadFieldDef, raw: string | boolean) => {
+      if (!leadId) return;
+      let value: string | number | boolean | null;
+      if (typeof raw === "boolean") {
+        value = raw;
+      } else if (def.type === "currency" || def.type === "number") {
+        const trimmed = raw.trim();
+        if (trimmed === "") {
+          value = null; // clears the field
+        } else {
+          const parsed = parseFieldValue(trimmed, def.type);
+          if (typeof parsed !== "number") return; // not a number yet — wait
+          value = parsed;
+        }
+      } else {
+        value = raw;
+      }
+      pendingRef.current[def.key] = value;
+      if (timerRef.current) clearTimeout(timerRef.current);
+      timerRef.current = setTimeout(() => flushRef.current(), 800);
+    },
+    [leadId],
+  );
+
+  // Combined monthly total — only meaningful when the classic solar pair is on
+  // screen (utility bill + solar payment); otherwise it would just echo one
+  // field back at the rep.
+  const billDef = inputs.find((f) => f.key === "utilityBill");
+  const solarDef = inputs.find((f) => f.key === "solarPayment");
+  const showTotal = Boolean(billDef && solarDef);
+  const total =
+    (Number(values.utilityBill) || lead?.utilityBill || 0) +
+    (Number(values.solarPayment) || lead?.solarPayment || 0);
+
+  const inputsTitle = inputs.some((f) => f.type === "currency") ? "Billing" : "Details";
+  const togglesTitle = toggles.some((f) => ["EV", "Pool", "Battery"].includes(f.label))
+    ? "Home profile"
+    : "Profile";
 
   return (
     <div className="space-y-5">
-      <AiBriefing leadId={lead?.id ?? null} />
+      {showAiBriefing && <AiBriefing leadId={lead?.id ?? null} />}
 
-      <div>
-        <p className="mb-2.5 text-xs font-bold uppercase tracking-wide text-muted-foreground">
-          Billing
-        </p>
-        <div className={cn("grid gap-3", showSolarPayment ? "grid-cols-2" : "grid-cols-1")}>
-          <div>
-            <Label>Monthly utility</Label>
-            <Input
-              inputMode="decimal"
-              placeholder={lead?.utilityBill ? `$${lead.utilityBill}` : "$0"}
-              value={utility}
-              onChange={(e) => setUtility(e.target.value)}
-            />
+      {inputs.length > 0 && (
+        <div>
+          <p className="mb-2.5 text-xs font-bold uppercase tracking-wide text-muted-foreground">
+            {inputsTitle}
+          </p>
+          <div className={cn("grid gap-3", inputs.length > 1 ? "grid-cols-2" : "grid-cols-1")}>
+            {inputs.map((def) => (
+              <div key={def.key} className={cn(def.type === "url" && "col-span-full")}>
+                <Label>{def.label}</Label>
+                <Input
+                  {...inputProps(def)}
+                  value={values[def.key] ?? ""}
+                  onChange={(e) => {
+                    setValues((v) => ({ ...v, [def.key]: e.target.value }));
+                    queueChange(def, e.target.value);
+                  }}
+                />
+              </div>
+            ))}
           </div>
-          {showSolarPayment && (
-            <div>
-              <Label>Solar payment</Label>
-              <Input
-                inputMode="decimal"
-                placeholder={lead?.solarPayment ? `$${lead.solarPayment}` : "$0"}
-                value={solar}
-                onChange={(e) => setSolar(e.target.value)}
-              />
+          {/* With no solar payment the "total" would just echo the utility bill,
+              so the combined line only appears when both figures are present. */}
+          {showTotal && (
+            <div className="mt-3 flex items-center justify-between rounded-xl bg-muted px-3.5 py-2.5">
+              <span className="text-sm text-muted-foreground">Total energy cost</span>
+              <span className="text-lg font-bold tabular text-primary">
+                <CountUp
+                  value={total}
+                  duration={0.5}
+                  format={(n) => formatCurrency(Math.round(n))}
+                />
+                <span className="text-xs font-normal text-muted-foreground">/mo</span>
+              </span>
             </div>
           )}
         </div>
-        {/* With no solar payment the "total" would just echo the utility bill, so
-            only show the combined energy-cost line when both figures are present. */}
-        {showSolarPayment && (
-          <div className="mt-3 flex items-center justify-between rounded-xl bg-muted px-3.5 py-2.5">
-            <span className="text-sm text-muted-foreground">Total energy cost</span>
-            <span className="text-lg font-bold tabular text-primary">
-              <CountUp
-                value={total}
-                duration={0.5}
-                format={(n) => formatCurrency(Math.round(n))}
-              />
-              <span className="text-xs font-normal text-muted-foreground">/mo</span>
-            </span>
-          </div>
-        )}
-      </div>
+      )}
 
-      <div>
-        <p className="mb-2.5 text-xs font-bold uppercase tracking-wide text-muted-foreground">
-          Home profile
-        </p>
-        <div className="grid grid-cols-3 gap-2">
-          <Toggle
-            label="EV"
-            icon={Car}
-            active={flags.ev}
-            onClick={() => setFlags((f) => ({ ...f, ev: !f.ev }))}
-          />
-          <Toggle
-            label="Pool"
-            icon={Waves}
-            active={flags.pool}
-            onClick={() => setFlags((f) => ({ ...f, pool: !f.pool }))}
-          />
-          <Toggle
-            label={otherLabel}
-            icon={otherLabel === "Battery" ? BatteryCharging : CircleEllipsis}
-            active={flags.battery}
-            onClick={() => setFlags((f) => ({ ...f, battery: !f.battery }))}
-          />
+      {toggles.length > 0 && (
+        <div>
+          <p className="mb-2.5 text-xs font-bold uppercase tracking-wide text-muted-foreground">
+            {togglesTitle}
+          </p>
+          <div className="grid grid-cols-3 gap-2">
+            {toggles.map((def) => (
+              <Toggle
+                key={def.key}
+                label={def.label}
+                icon={toggleIcon(def.label)}
+                active={flags[def.key] ?? false}
+                onClick={() => {
+                  const next = !(flags[def.key] ?? false);
+                  setFlags((f) => ({ ...f, [def.key]: next }));
+                  queueChange(def, next);
+                }}
+              />
+            ))}
+          </div>
         </div>
-      </div>
+      )}
 
       <div>
         <p className="mb-2.5 text-xs font-bold uppercase tracking-wide text-muted-foreground">

@@ -1,7 +1,8 @@
 "use client";
 
 import { createContext, useContext, useEffect, useRef, useState } from "react";
-import type { AiLockReason } from "@/lib/org/settings";
+import type { LeadFieldDef } from "@/lib/leads/field-schema";
+import type { AiLockReason, DialerLayout } from "@/lib/org/settings";
 import type { Lead, LeadGroup } from "@/lib/types";
 import { MAX_PARALLEL_HUMAN, useDialer } from "@/lib/use-dialer";
 
@@ -47,6 +48,14 @@ export interface DialerConfig {
   qualifyShowSolarPayment?: boolean;
   /** Label for the third home-profile toggle in the qualification panel. */
   qualifyOtherLabel?: string;
+  /** Effective dialer-page layout (default ⊕ template preset ⊕ org toggles). */
+  dialerLayout?: DialerLayout;
+  /** The org's resolved lead field schema — drives the lead panel's stat
+   *  tiles, flag chips and the lead-browser search haystack. */
+  leadFields?: LeadFieldDef[];
+  /** The fields the qualify panel renders, in order (already resolved and
+   *  filtered server-side — solar slots never reach a non-solar tenant). */
+  qualifyFields?: LeadFieldDef[];
   /** Legacy per-org display-label overrides (still honored on top of labels). */
   leadGroupLabels?: Record<string, string>;
   /** The org's own intake groups, in display order — drives the group filter. */

@@ -4,6 +4,7 @@ import {
   BatteryCharging,
   Bot,
   Car,
+  CheckCircle2,
   ChevronLeft,
   ChevronRight,
   Loader2,
@@ -24,6 +25,12 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Modal } from "@/components/ui/modal";
 import { Ring } from "@/components/ui/progress";
+import {
+  CORE_LEAD_FIELDS,
+  formatFieldValue,
+  leadFieldValue,
+  type LeadFieldDef,
+} from "@/lib/leads/field-schema";
 import type { Lead } from "@/lib/types";
 import { outcomeConfig } from "@/lib/status";
 import type { CallOutcome } from "@/lib/types";
@@ -31,7 +38,6 @@ import {
   cn,
   digitsOnly,
   formatAddress,
-  formatCurrency,
   formatDuration,
   formatPhone,
   initials,
@@ -50,7 +56,9 @@ export function LeadPanel({
   navDisabled = false,
   onLoadLeads,
   loadingLeads = false,
-  showSolarPayment = true,
+  fields,
+  showCallHistory = true,
+  showUpNext = true,
 }: {
   lead: Lead | null;
   upNext: Lead[];
@@ -64,8 +72,11 @@ export function LeadPanel({
   /** Pull the shared lead pool into the dialer on demand. */
   onLoadLeads?: () => void;
   loadingLeads?: boolean;
-  /** Show solar-specific fields (per-tenant — off for non-solar orgs). */
-  showSolarPayment?: boolean;
+  /** The org's resolved field schema — drives stat tiles, chips & rows. */
+  fields?: LeadFieldDef[];
+  /** Layout toggles (Admin → Dialer layout). */
+  showCallHistory?: boolean;
+  showUpNext?: boolean;
 }) {
   const [browseOpen, setBrowseOpen] = useState(false);
 
@@ -134,7 +145,12 @@ export function LeadPanel({
           </p>
         </div>
       ) : (
-        <LeadDetail lead={lead} upNext={upNext} showSolarPayment={showSolarPayment} />
+        <LeadDetail
+          lead={lead}
+          upNext={showUpNext ? upNext : []}
+          fields={fields ?? CORE_LEAD_FIELDS}
+          showCallHistory={showCallHistory}
+        />
       )}
 
       {browseOpen && (
@@ -152,21 +168,41 @@ export function LeadPanel({
   );
 }
 
+/** The solar-era chips keep their icons; other labels get a neutral check. */
+function chipIcon(label: string): typeof Car {
+  if (label === "EV") return Car;
+  if (label === "Pool") return Waves;
+  if (label === "Battery") return BatteryCharging;
+  return CheckCircle2;
+}
+
 function LeadDetail({
   lead,
   upNext,
-  showSolarPayment,
+  fields,
+  showCallHistory,
 }: {
   lead: Lead;
   upNext: Lead[];
-  showSolarPayment: boolean;
+  fields: LeadFieldDef[];
+  showCallHistory: boolean;
 }) {
   const name = `${lead.firstName} ${lead.lastName}`;
-  const flags = [
-    { on: lead.hasEV, icon: Car, label: "EV" },
-    { on: lead.hasPool, icon: Waves, label: "Pool" },
-    { on: lead.hasBattery, icon: BatteryCharging, label: "Battery" },
-  ].filter((f) => f.on);
+  // Stat tiles: the schema's first two money/number fields (solar: Utility
+  // bill + Solar payment, exactly the old pair). The "(…)" unit suffix is
+  // dropped — the tile is too small for it.
+  const tiles = fields.filter((f) => f.type === "currency" || f.type === "number").slice(0, 2);
+  const tileLabel = (label: string) => label.replace(/\s*\(.*\)\s*$/, "");
+  // Flag chips: every boolean the schema actually surfaces that is true on
+  // this lead (multipleSystems stays invisible by default, as before).
+  const flags = fields.filter(
+    (f) =>
+      f.type === "boolean" &&
+      (f.showInTable || f.showInQualify) &&
+      leadFieldValue(lead, f) === true,
+  );
+  const providerDef = fields.find((f) => f.key === "utilityProvider");
+  const solarProviderDef = fields.find((f) => f.key === "solarProvider");
 
   return (
     <>
@@ -207,52 +243,52 @@ function LeadDetail({
               <span className="truncate">{lead.email}</span>
             </div>
           )}
-          {lead.utilityProvider && (
+          {providerDef && lead.utilityProvider && (
             <div className="flex items-center gap-2.5 text-muted-foreground">
               <Zap className="h-4 w-4 shrink-0" />
-              <span>{lead.utilityProvider}</span>
+              <span title={providerDef.label}>{lead.utilityProvider}</span>
             </div>
           )}
-          {showSolarPayment && lead.solarProvider && (
+          {solarProviderDef && lead.solarProvider && (
             <div className="flex items-center gap-2.5 text-muted-foreground">
               <Sun className="h-4 w-4 shrink-0" />
-              <span>{lead.solarProvider}</span>
+              <span title={solarProviderDef.label}>{lead.solarProvider}</span>
             </div>
           )}
         </div>
 
-        <div className={cn("mt-4 grid gap-2", showSolarPayment ? "grid-cols-2" : "grid-cols-1")}>
-          <div className="rounded-xl bg-muted px-3 py-2">
-            <p className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground">
-              Utility bill
-            </p>
-            <p className="text-base font-bold tabular">
-              {lead.utilityBill ? formatCurrency(lead.utilityBill) : "—"}
-            </p>
+        {tiles.length > 0 && (
+          <div className={cn("mt-4 grid gap-2", tiles.length > 1 ? "grid-cols-2" : "grid-cols-1")}>
+            {tiles.map((def) => {
+              const value = leadFieldValue(lead, def);
+              return (
+                <div key={def.key} className="rounded-xl bg-muted px-3 py-2">
+                  <p className="truncate text-[10px] font-bold uppercase tracking-wide text-muted-foreground">
+                    {tileLabel(def.label)}
+                  </p>
+                  <p className="text-base font-bold tabular">
+                    {value ? formatFieldValue(value, def.type) : "—"}
+                  </p>
+                </div>
+              );
+            })}
           </div>
-          {showSolarPayment && (
-            <div className="rounded-xl bg-muted px-3 py-2">
-              <p className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground">
-                Solar pmt
-              </p>
-              <p className="text-base font-bold tabular">
-                {lead.solarPayment ? formatCurrency(lead.solarPayment) : "—"}
-              </p>
-            </div>
-          )}
-        </div>
+        )}
 
         {flags.length > 0 && (
           <div className="mt-3 flex flex-wrap gap-1.5">
-            {flags.map((f) => (
-              <span
-                key={f.label}
-                className="inline-flex items-center gap-1 rounded-lg bg-accent-soft px-2 py-1 text-xs font-semibold text-accent"
-              >
-                <f.icon className="h-3.5 w-3.5" />
-                {f.label}
-              </span>
-            ))}
+            {flags.map((f) => {
+              const Icon = chipIcon(f.label);
+              return (
+                <span
+                  key={f.key}
+                  className="inline-flex items-center gap-1 rounded-lg bg-accent-soft px-2 py-1 text-xs font-semibold text-accent"
+                >
+                  <Icon className="h-3.5 w-3.5" />
+                  {f.label}
+                </span>
+              );
+            })}
           </div>
         )}
 
@@ -263,7 +299,7 @@ function LeadDetail({
         )}
       </div>
 
-      <CallHistory leadId={lead.id} />
+      {showCallHistory && <CallHistory leadId={lead.id} />}
 
       <div className={upNext.length ? "flex-1 p-5" : "hidden"}>
         <p className="mb-2.5 text-xs font-bold uppercase tracking-wide text-muted-foreground">
@@ -384,7 +420,11 @@ function LeadBrowser({
     const needleDigits = digitsOnly(q);
     return queue.filter(
       (l) =>
-        `${l.firstName} ${l.lastName} ${l.city} ${l.state} ${l.phone} ${l.utilityProvider}`
+        // Custom-field values join the haystack, so a rep can find a lead by a
+        // policy number or job type their CSV carried — not just name/city.
+        `${l.firstName} ${l.lastName} ${l.city} ${l.state} ${l.phone} ${l.utilityProvider} ${Object.values(
+          l.customFields ?? {},
+        ).join(" ")}`
           .toLowerCase()
           .includes(needle) ||
         (needleDigits.length >= 3 && digitsOnly(l.phone).includes(needleDigits)),

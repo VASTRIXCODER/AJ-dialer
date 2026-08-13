@@ -102,7 +102,48 @@ export interface QualifySettings {
   showSolarPayment: boolean;
   /** Label for the third home-profile toggle (default "Battery"). */
   otherToggleLabel: string;
+  /**
+   * Schema keys (see src/lib/leads/field-schema.ts) the qualify panel renders,
+   * in order — core slots by their camelCase key, custom fields by their
+   * snake_case key. Absent/empty = derive from the vertical template's
+   * `qualifyFields` preset, falling back to every schema field flagged
+   * `showInQualify`. Unknown keys are ignored at render time, so a field
+   * deleted from the schema never breaks the panel.
+   */
+  fields?: string[];
 }
+
+/**
+ * Which panels of the dialer page this workspace shows. All-on is today's
+ * dialer; vertical templates preset a shape (e.g. healthcare hides the live
+ * floor) and admins fine-tune from there. Stored PARTIAL by design: only keys
+ * an admin explicitly saved persist, so anything untouched keeps following the
+ * template preset — resolved in the (app) layout as
+ * DEFAULT ⊕ template preset ⊕ stored overrides.
+ */
+export interface DialerLayout {
+  /** Org-wide live floor strip (who's dialing right now, calls today). */
+  floor: boolean;
+  /** The "Booked" tab beside the dial queue. */
+  bookedTab: boolean;
+  /** Collapsible campaign-script card above the qualify panel. */
+  scriptCard: boolean;
+  /** AI lead briefing at the top of the qualify panel. */
+  aiBriefing: boolean;
+  /** Per-lead call history in the lead panel. */
+  callHistory: boolean;
+  /** "Up next in queue" preview in the lead panel. */
+  upNext: boolean;
+}
+
+export const DEFAULT_DIALER_LAYOUT: DialerLayout = {
+  floor: true,
+  bookedTab: true,
+  scriptCard: true,
+  aiBriefing: true,
+  callHistory: true,
+  upNext: true,
+};
 
 export interface OrgSettings {
   dialing: {
@@ -196,6 +237,12 @@ export interface OrgSettings {
   dispositions: { label: string; tone: DispositionTone }[];
   /** Qualification-panel customization (solar field + third toggle label). */
   qualify: QualifySettings;
+  /**
+   * Dialer-page layout toggles. PARTIAL on purpose: only the keys an admin has
+   * explicitly saved live here — unset keys keep following the vertical
+   * template's preset (see DEFAULT_DIALER_LAYOUT and the (app) layout).
+   */
+  dialerLayout: Partial<DialerLayout>;
   notifications: NotificationSettings;
   features: OrgFeatures;
   billing: OrgBilling;
@@ -336,6 +383,7 @@ export const DEFAULT_ORG_SETTINGS: OrgSettings = {
     { label: "No answer", tone: "neutral" },
   ],
   qualify: { ...DEFAULT_QUALIFY },
+  dialerLayout: {},
   notifications: { ...DEFAULT_NOTIFICATIONS },
   features: { ...DEFAULT_FEATURES },
   billing: { ...DEFAULT_BILLING },
@@ -400,7 +448,21 @@ export function mergeSettings(raw: unknown): OrgSettings {
     dispositions: Array.isArray(s.dispositions)
       ? s.dispositions
       : DEFAULT_ORG_SETTINGS.dispositions,
-    qualify: { ...DEFAULT_QUALIFY, ...(s.qualify ?? {}) },
+    qualify: {
+      ...DEFAULT_QUALIFY,
+      ...(s.qualify ?? {}),
+      // Arrays replace wholesale, and anything that isn't an array is dropped
+      // (undefined = "derive from the template's preset").
+      fields: Array.isArray(s.qualify?.fields) ? s.qualify!.fields : undefined,
+    },
+    // Deliberately NOT back-filled with defaults: this section stays partial so
+    // the (app) layout can layer it over the vertical template's preset —
+    // back-filling `true` here would make every org look like it explicitly
+    // chose all-on and the presets would never apply.
+    dialerLayout:
+      s.dialerLayout && typeof s.dialerLayout === "object" && !Array.isArray(s.dialerLayout)
+        ? s.dialerLayout
+        : {},
     notifications: {
       ...DEFAULT_NOTIFICATIONS,
       ...(s.notifications ?? {}),

@@ -77,6 +77,12 @@ export function DialerClient({
   const { state } = dialer;
   const [showLoadDialog, setShowLoadDialog] = useState(false);
 
+  // Which dialer panels this workspace shows (template preset ⊕ admin toggles).
+  const layout = config.dialerLayout;
+  const showFloor = layout?.floor !== false;
+  const showBookedTab = layout?.bookedTab !== false;
+  const showScriptCard = layout?.scriptCard !== false;
+
   // ── Booked tab ────────────────────────────────────────────────────────────
   // Leads with an appointment already on the calendar. getDialQueue already
   // excludes them from the dial queue (status "appointment" isn't in DIALABLE),
@@ -94,7 +100,9 @@ export function DialerClient({
   }, []);
   // Display-only poll — paused while the tab is hidden. The dial engine's own
   // intervals (use-dialer.ts) are untouched and keep running during calls.
+  // Skipped entirely when the Booked tab is laid out of this workspace.
   useVisiblePoll(() => {
+    if (!showBookedTab) return;
     void (async () => {
       try {
         const r = await fetch("/api/leads/booked", { cache: "no-store" });
@@ -297,43 +305,46 @@ export function DialerClient({
 
       {/* Dial queue vs already-booked leads — booked leads are skipped by the
           queue automatically; this tab is where they're visible instead of
-          just vanishing on the next reload. */}
-      <div className="flex items-center gap-1.5 border-b border-border/60">
-        <button
-          type="button"
-          onClick={() => setTab("queue")}
-          className={cn(
-            "flex items-center gap-1.5 border-b-2 px-3 py-2 text-sm font-medium transition-colors",
-            tab === "queue"
-              ? "border-primary text-foreground"
-              : "border-transparent text-muted-foreground hover:text-foreground",
-          )}
-        >
-          <PhoneCall className="h-4 w-4" />
-          Dial queue
-        </button>
-        <button
-          type="button"
-          onClick={() => setTab("booked")}
-          className={cn(
-            "flex items-center gap-1.5 border-b-2 px-3 py-2 text-sm font-medium transition-colors",
-            tab === "booked"
-              ? "border-primary text-foreground"
-              : "border-transparent text-muted-foreground hover:text-foreground",
-          )}
-        >
-          <CalendarCheck2 className="h-4 w-4" />
-          Booked
-          <Badge tone={tab === "booked" ? "success" : "neutral"} className="ml-0.5">
-            {bookedLeads.length}
-          </Badge>
-        </button>
-      </div>
+          just vanishing on the next reload. A one-tab bar is pointless, so the
+          whole strip disappears when the layout drops the Booked tab. */}
+      {showBookedTab && (
+        <div className="flex items-center gap-1.5 border-b border-border/60">
+          <button
+            type="button"
+            onClick={() => setTab("queue")}
+            className={cn(
+              "flex items-center gap-1.5 border-b-2 px-3 py-2 text-sm font-medium transition-colors",
+              tab === "queue"
+                ? "border-primary text-foreground"
+                : "border-transparent text-muted-foreground hover:text-foreground",
+            )}
+          >
+            <PhoneCall className="h-4 w-4" />
+            Dial queue
+          </button>
+          <button
+            type="button"
+            onClick={() => setTab("booked")}
+            className={cn(
+              "flex items-center gap-1.5 border-b-2 px-3 py-2 text-sm font-medium transition-colors",
+              tab === "booked"
+                ? "border-primary text-foreground"
+                : "border-transparent text-muted-foreground hover:text-foreground",
+            )}
+          >
+            <CalendarCheck2 className="h-4 w-4" />
+            Booked
+            <Badge tone={tab === "booked" ? "success" : "neutral"} className="ml-0.5">
+              {bookedLeads.length}
+            </Badge>
+          </button>
+        </div>
+      )}
 
       {/* Shared live floor — who's dialing + calls today, org-wide */}
-      <DialerFloor />
+      {showFloor && <DialerFloor />}
 
-      {tab === "booked" ? (
+      {showBookedTab && tab === "booked" ? (
         <Card className="overflow-hidden">
           <BookedLeadsPanel leads={bookedLeads} loading={bookedLoading} />
         </Card>
@@ -452,7 +463,9 @@ export function DialerClient({
             navDisabled={state.status !== "idle"}
             onLoadLeads={loadLeads}
             loadingLeads={loadingLeads}
-            showSolarPayment={config.qualifyShowSolarPayment !== false}
+            fields={config.leadFields}
+            showCallHistory={layout?.callHistory !== false}
+            showUpNext={layout?.upNext !== false}
           />
         </Card>
 
@@ -503,7 +516,7 @@ export function DialerClient({
               Qualify the lead & capture the account review
             </p>
           </div>
-          {scriptText.length > 0 && (
+          {showScriptCard && scriptText.length > 0 && (
             <div className="border-b border-border">
               <button
                 type="button"
@@ -538,8 +551,8 @@ export function DialerClient({
             <QualifyPanel
               key={focusLead?.id ?? "none"}
               lead={focusLead}
-              showSolarPayment={config.qualifyShowSolarPayment !== false}
-              otherLabel={config.qualifyOtherLabel || "Battery"}
+              fields={config.qualifyFields}
+              showAiBriefing={layout?.aiBriefing !== false}
               onNotesChange={(n) => {
                 notesRef.current = n;
               }}

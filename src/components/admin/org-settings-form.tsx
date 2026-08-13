@@ -22,12 +22,47 @@ import { Button } from "@/components/ui/button";
 import { Input, Label, Select, Textarea } from "@/components/ui/input";
 import { EMILY_SYSTEM_PROMPT } from "@/lib/ai/agent-prompt";
 import { describeDays, describeWindows } from "@/lib/dialer/schedule";
+import { resolveLeadFields, type LeadFieldDef } from "@/lib/leads/field-schema";
 import type { OrgFull, OrgSettings, OrgUpdate } from "@/lib/org/membership";
-import { DIALER_TEMPLATES } from "@/lib/org/templates";
+import { DEFAULT_DIALER_LAYOUT, type DialerLayout } from "@/lib/org/settings";
+import { DIALER_TEMPLATES, templateProfile } from "@/lib/org/templates";
 import { ROLE_LABEL } from "@/lib/permissions";
 import { cn } from "@/lib/utils";
 
 const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+const LAYOUT_TOGGLES: { key: keyof DialerLayout; label: string; hint: string }[] = [
+  {
+    key: "floor",
+    label: "Live floor",
+    hint: "Org-wide strip of who's dialing right now and calls made today.",
+  },
+  {
+    key: "bookedTab",
+    label: "Booked tab",
+    hint: "A tab beside the dial queue listing leads already on the calendar.",
+  },
+  {
+    key: "scriptCard",
+    label: "Script card",
+    hint: "Collapsible campaign call script above the qualify checklist.",
+  },
+  {
+    key: "aiBriefing",
+    label: "AI briefing",
+    hint: "AI-generated lead briefing at the top of the qualify panel.",
+  },
+  {
+    key: "callHistory",
+    label: "Call history",
+    hint: "The current lead's past calls, shown in the lead panel.",
+  },
+  {
+    key: "upNext",
+    label: "Up-next list",
+    hint: "Preview of the next few leads in the queue.",
+  },
+];
 
 const FEATURE_FLAGS: { key: keyof OrgSettings["features"]; label: string }[] = [
   { key: "aiDialer", label: "Power dialer" },
@@ -112,6 +147,28 @@ export function OrgSettingsForm({
   const [costRates, setCostRates] = useState<OrgSettings["costRates"]>(
     org.settings.costRates,
   );
+  // ── Dialer layout, qualify fields & lead-field schema ──────────────────────
+  // The toggles show the EFFECTIVE state (template preset ⊕ stored overrides);
+  // saving pins the whole section explicitly for this workspace.
+  const profile = templateProfile(org.dialerTemplate);
+  const [layoutCfg, setLayoutCfg] = useState<DialerLayout>(() => ({
+    ...DEFAULT_DIALER_LAYOUT,
+    ...(profile.dialerLayout ?? {}),
+    ...(org.settings.dialerLayout ?? {}),
+  }));
+  // The org's effective field schema — core slots (template relabels applied)
+  // plus custom fields discovered from CSV imports.
+  const [leadFieldRows, setLeadFieldRows] = useState<LeadFieldDef[]>(() =>
+    resolveLeadFields(org.settings.leadFields, profile.fields),
+  );
+  const [qualifyKeys, setQualifyKeys] = useState<string[]>(() => {
+    const schema = resolveLeadFields(org.settings.leadFields, profile.fields);
+    const explicit = org.settings.qualify?.fields;
+    if (explicit?.length) return explicit.filter((k) => schema.some((f) => f.key === k));
+    const preset = profile.qualifyFields;
+    if (preset?.length) return preset.filter((k) => schema.some((f) => f.key === k));
+    return schema.filter((f) => f.showInQualify).map((f) => f.key);
+  });
 
   async function save(patch: OrgUpdate, key: string) {
     setBusy(key);
@@ -952,6 +1009,154 @@ export function OrgSettingsForm({
         </div>
       </SectionCard>
 
+      {/* Dialer layout & qualify */}
+      <SectionCard
+        title="Dialer layout & qualify"
+        description="Which panels the dialer page shows, and which fields reps qualify on a call. Defaults come from your specialization — anything you save here wins."
+      >
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+          {LAYOUT_TOGGLES.map(({ key, label, hint }) => (
+            <Toggle
+              key={key}
+              label={label}
+              hint={hint}
+              checked={layoutCfg[key]}
+              onChange={(v) => setLayoutCfg({ ...layoutCfg, [key]: v })}
+            />
+          ))}
+        </div>
+        <div className="mt-4">
+          <Label>Qualify panel fields</Label>
+          <div className="flex flex-wrap gap-1.5">
+            {leadFieldRows.map((f) => {
+              const on = qualifyKeys.includes(f.key);
+              return (
+                <button
+                  key={f.key}
+                  type="button"
+                  aria-pressed={on}
+                  onClick={() =>
+                    setQualifyKeys(
+                      on
+                        ? qualifyKeys.filter((k) => k !== f.key)
+                        : // Keep schema order regardless of click order.
+                          leadFieldRows
+                            .filter((x) => x.key === f.key || qualifyKeys.includes(x.key))
+                            .map((x) => x.key),
+                    )
+                  }
+                  className={cn(
+                    "flex h-9 items-center gap-1.5 rounded-lg border px-3 text-xs font-semibold transition-colors",
+                    on
+                      ? "border-primary bg-primary-soft text-primary"
+                      : "border-border text-muted-foreground hover:bg-muted/60",
+                  )}
+                >
+                  {f.label}
+                  <span className={cn("font-normal", on ? "text-primary/70" : "text-muted-foreground/70")}>
+                    · {f.type}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+          <p className="mt-2 text-xs text-muted-foreground">
+            Selected fields appear in the dialer's qualify panel, in this order — reps' entries
+            save back to the lead automatically. Add more fields in “Lead fields” below.
+          </p>
+        </div>
+        <div className="mt-4 flex justify-end">
+          <SaveBtn
+            k="dialerLayout"
+            onClick={() =>
+              save(
+                {
+                  settings: {
+                    dialerLayout: layoutCfg,
+                    qualify: { ...org.settings.qualify, fields: qualifyKeys },
+                  },
+                },
+                "dialerLayout",
+              )
+            }
+          />
+        </div>
+      </SectionCard>
+
+      {/* Lead fields */}
+      <SectionCard
+        title="Lead fields"
+        description="The typed fields your leads carry. Core fields are shared slots you can rename to fit your vertical; custom fields are added automatically when a CSV import carries extra columns."
+      >
+        <div className="space-y-2">
+          {leadFieldRows.map((f, i) => (
+            <div key={f.key} className="flex flex-wrap items-center gap-2">
+              <Input
+                className="min-w-40 flex-1"
+                value={f.label}
+                aria-label={`Label for ${f.key}`}
+                onChange={(e) => {
+                  const next = [...leadFieldRows];
+                  next[i] = { ...f, label: e.target.value };
+                  setLeadFieldRows(next);
+                }}
+              />
+              <span
+                className="w-16 shrink-0 text-xs font-medium capitalize text-muted-foreground"
+                title={f.source === "core" ? "Built-in field" : "Custom field (from CSV import)"}
+              >
+                {f.type}
+              </span>
+              <PillToggle
+                label="Table"
+                active={f.showInTable}
+                title="Show as a column on the Leads table"
+                onClick={() => {
+                  const next = [...leadFieldRows];
+                  next[i] = { ...f, showInTable: !f.showInTable };
+                  setLeadFieldRows(next);
+                }}
+              />
+              <PillToggle
+                label="Qualify"
+                active={f.showInQualify}
+                title="Offer in the dialer's qualify panel by default"
+                onClick={() => {
+                  const next = [...leadFieldRows];
+                  next[i] = { ...f, showInQualify: !f.showInQualify };
+                  setLeadFieldRows(next);
+                }}
+              />
+              {f.source === "custom" ? (
+                <button
+                  type="button"
+                  aria-label={`Delete ${f.label}`}
+                  className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-muted-foreground hover:bg-danger/10 hover:text-danger"
+                  onClick={() =>
+                    setLeadFieldRows(leadFieldRows.filter((_, x) => x !== i))
+                  }
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              ) : (
+                <span className="h-9 w-9 shrink-0" aria-hidden />
+              )}
+            </div>
+          ))}
+        </div>
+        <p className="mt-3 text-xs text-muted-foreground">
+          Deleting a custom field hides it everywhere — the imported values stay on your leads
+          and reappear if the field is re-imported. Saving pins these labels for this workspace,
+          so changing the specialization later won't rename them.
+        </p>
+        <div className="mt-4 flex justify-end">
+          <SaveBtn
+            k="leadFields"
+            onClick={() => save({ settings: { leadFields: leadFieldRows } }, "leadFields")}
+          />
+        </div>
+      </SectionCard>
+
       {/* Features & terminology */}
       <SectionCard
         title="Features & terminology"
@@ -1143,6 +1348,36 @@ function ColorInput({
         onChange={(e) => onChange(e.target.value)}
       />
     </div>
+  );
+}
+
+/** Compact pill toggle for dense per-row switches (the Lead-fields table). */
+function PillToggle({
+  label,
+  active,
+  title,
+  onClick,
+}: {
+  label: string;
+  active: boolean;
+  title?: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      aria-pressed={active}
+      title={title}
+      onClick={onClick}
+      className={cn(
+        "h-9 shrink-0 rounded-lg border px-3 text-xs font-semibold transition-colors",
+        active
+          ? "border-primary bg-primary-soft text-primary"
+          : "border-border text-muted-foreground hover:bg-muted/60",
+      )}
+    >
+      {label}
+    </button>
   );
 }
 
