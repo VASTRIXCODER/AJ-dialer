@@ -103,6 +103,10 @@ export function rowToLead(r: Row): Lead {
     lastContactedAt: (r.last_contacted_at as string) ?? undefined,
     createdAt: (r.created_at as string) ?? new Date().toISOString(),
     ownerId: (r.owner_id as string) ?? undefined,
+    customFields:
+      r.custom_fields && typeof r.custom_fields === "object"
+        ? (r.custom_fields as Record<string, string | number | boolean>)
+        : undefined,
   };
 }
 
@@ -689,6 +693,11 @@ export interface LeadPatch {
   multipleSystems?: boolean;
   /** null clears the field. */
   notes?: string | null;
+  /**
+   * Per-key merge onto leads.custom_fields — only the provided keys change;
+   * a null value deletes that key. Keys/values are validated at the API edge.
+   */
+  customFields?: Record<string, string | number | boolean | null>;
 }
 
 const LOCKED_STATUSES: LeadStatus[] = ["appointment", "callback"];
@@ -728,7 +737,7 @@ export async function updateLead(
     const reader = isAdminConfigured() ? createAdminClient() : await createClient();
     const { data: row } = await reader
       .from("leads")
-      .select("owner_id, org_id")
+      .select("owner_id, org_id, custom_fields")
       .eq("id", id)
       .maybeSingle();
     if (!row) return { ok: false, error: "Lead not found." };
@@ -761,6 +770,20 @@ export async function updateLead(
     if (patch.hasBattery !== undefined) fields.has_battery = patch.hasBattery;
     if (patch.multipleSystems !== undefined) fields.multiple_systems = patch.multipleSystems;
     if (patch.notes !== undefined) fields.notes = patch.notes || null;
+    if (patch.customFields && Object.keys(patch.customFields).length > 0) {
+      // Per-key merge onto the stored object (read above for canActOn anyway);
+      // null deletes a key. Whole-object replace would race concurrent editors
+      // of DIFFERENT keys, and there's no jsonb || operator through PostgREST.
+      const existing =
+        r.custom_fields && typeof r.custom_fields === "object"
+          ? { ...(r.custom_fields as Record<string, string | number | boolean>) }
+          : {};
+      for (const [k, v] of Object.entries(patch.customFields)) {
+        if (v === null) delete existing[k];
+        else existing[k] = v;
+      }
+      fields.custom_fields = existing;
+    }
 
     if (Object.keys(fields).length === 0) return { ok: true };
 
@@ -1412,6 +1435,8 @@ export interface LeadInput {
   /** Pack (numbered slice of an upload) this row belongs to. */
   leadPackId?: string | null;
   notes?: string;
+  /** Typed spillover for CSV columns beyond the core slots (custom_fields jsonb). */
+  customFields?: Record<string, string | number | boolean>;
 }
 
 /**
@@ -1472,6 +1497,7 @@ export async function insertLeads(
             lead_group: r.leadGroup ?? null,
             lead_pack_id: r.leadPackId ?? null,
             notes: r.notes || null,
+            custom_fields: r.customFields ?? {},
           },
         };
       });

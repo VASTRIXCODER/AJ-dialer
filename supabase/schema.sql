@@ -1768,3 +1768,14 @@ alter table public.campaigns
 alter table public.call_records
   add column if not exists script_variant text
   check (script_variant is null or script_variant in ('a', 'b'));
+
+-- ═════════════════════════════════════════════════════════════════════════════
+-- Custom lead fields (P6.FIELDS — the generic-dialer epic)
+--
+-- The fixed solar-era columns stay as typed "core slots" (templates relabel or
+-- hide them); every other CSV column lands here, keyed by a normalized
+-- snake_case version of its header, with values stored as the type the
+-- importer detected (string | number | boolean).
+-- ═════════════════════════════════════════════════════════════════════════════
+alter table public.leads
+  add column if not exists custom_fields jsonb not null default '{}'::jsonb;

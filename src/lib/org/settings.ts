@@ -8,6 +8,8 @@
 // `OrgBlueprint` is the full white-label spec the AI builder produces.
 // ─────────────────────────────────────────────────────────────────────────────
 
+import type { LeadFieldDef } from "../leads/field-schema";
+
 export type DispositionTone = "success" | "warning" | "danger" | "neutral";
 
 export interface OrgFeatures {
@@ -199,6 +201,13 @@ export interface OrgSettings {
   billing: OrgBilling;
   /** Per-minute call cost estimates — drives the Reports "Cost & usage" panel. */
   costRates: CostRates;
+  /**
+   * The org's lead field schema: custom fields discovered from CSV imports plus
+   * any explicit overrides of the core slots. Empty = derive everything from the
+   * vertical template's defaults (see resolveLeadFields in
+   * src/lib/leads/field-schema.ts).
+   */
+  leadFields: LeadFieldDef[];
   /** Domain noun the dialer uses for a contact, e.g. "homeowner". */
   leadNoun: string;
   leadNounPlural: string;
@@ -331,6 +340,7 @@ export const DEFAULT_ORG_SETTINGS: OrgSettings = {
   features: { ...DEFAULT_FEATURES },
   billing: { ...DEFAULT_BILLING },
   costRates: { ...DEFAULT_COST_RATES },
+  leadFields: [],
   leadNoun: "lead",
   leadNounPlural: "leads",
   leadGroupLabels: {},
@@ -403,6 +413,9 @@ export function mergeSettings(raw: unknown): OrgSettings {
     features: { ...DEFAULT_FEATURES, ...(s.features ?? {}) },
     billing: { ...DEFAULT_BILLING, ...(s.billing ?? {}) },
     costRates: { ...DEFAULT_COST_RATES, ...(s.costRates ?? {}) },
+    // Arrays replace wholesale (like dispositions) — spread-merging would
+    // resurrect a field an admin just deleted.
+    leadFields: Array.isArray(s.leadFields) ? s.leadFields : [],
     leadNoun: s.leadNoun ?? DEFAULT_ORG_SETTINGS.leadNoun,
     leadNounPlural: s.leadNounPlural ?? DEFAULT_ORG_SETTINGS.leadNounPlural,
     leadGroupLabels:

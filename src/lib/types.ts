@@ -146,6 +146,12 @@ export interface Lead {
   ownerId?: string;
   /** Uploader's display name, resolved for the supervisor's sectioned view. */
   ownerName?: string;
+  /**
+   * Arbitrary per-lead data captured from the CSV (leads.custom_fields jsonb),
+   * keyed by normalized snake_case header, typed at import time. Rendered and
+   * edited through the org's field schema — see src/lib/leads/field-schema.ts.
+   */
+  customFields?: Record<string, string | number | boolean>;
 }
 
 export interface Rep {
