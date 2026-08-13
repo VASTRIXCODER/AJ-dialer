@@ -2,18 +2,63 @@ import { NextResponse } from "next/server";
 import { dncKey, getDncDigits } from "@/lib/db/dnc";
 import { insertLeads, type LeadInput } from "@/lib/db/leads";
 import { hasCurrentCertification, normalizeCampaignId } from "@/lib/legal/campaign-cert";
-import type { ParsedLead } from "@/lib/leads/csv";
+import {
+  mergeDiscoveredLeadFields,
+  sanitizeDiscoveredFields,
+  type ParsedLead,
+} from "@/lib/leads/csv";
+import type { LeadFieldDef } from "@/lib/leads/field-schema";
 import { parseCsvToLeads } from "@/lib/leads/parse-request";
 import { isValidGroupKey } from "@/lib/db/lead-groups";
 import { createPacks, planPacks, pruneEmptyPacks, setPackSizes } from "@/lib/db/lead-packs";
 import type { LeadGroup } from "@/lib/types";
 import { getViewer } from "@/lib/org/membership";
 import { clientIp, rateLimit } from "@/lib/rate-limit";
+import { createAdminClient, isAdminConfigured } from "@/lib/supabase/admin";
 
 export const dynamic = "force-dynamic";
 
 /** Reject CSV payloads larger than this (bytes) before we ever parse them. */
 const MAX_CSV_BYTES = 2_000_000;
+
+/**
+ * Append NEW discovered custom fields to the org's settings.leadFields so the
+ * table / qualify / AI surfaces know each field's label and type. Read-merge-
+ * write with the admin client (importers are managers who may lack `org.edit`,
+ * so updateOrganizationSettings' authorize gate would wrongly reject them).
+ * Existing defs are never duplicated or overwritten (mergeDiscoveredLeadFields),
+ * and only the `leadFields` key of the settings blob is touched. Best-effort:
+ * the leads have already landed, so a settings hiccup must not fail the import.
+ */
+async function persistDiscoveredFields(
+  orgId: string | null | undefined,
+  discovered: LeadFieldDef[],
+): Promise<void> {
+  if (!orgId || !discovered.length || !isAdminConfigured()) return;
+  try {
+    const admin = createAdminClient();
+    const { data } = await admin
+      .from("organizations")
+      .select("settings")
+      .eq("id", orgId)
+      .maybeSingle();
+    const raw =
+      data?.settings && typeof data.settings === "object"
+        ? (data.settings as Record<string, unknown>)
+        : {};
+    const existing = Array.isArray(raw.leadFields)
+      ? (raw.leadFields as LeadFieldDef[])
+      : [];
+    const { fields, added } = mergeDiscoveredLeadFields(existing, discovered);
+    if (!added) return;
+    await admin
+      .from("organizations")
+      .update({ settings: { ...raw, leadFields: fields } })
+      .eq("id", orgId);
+  } catch {
+    // Non-fatal by design — the field VALUES are already on the leads.
+  }
+}
 
 /**
  * Import leads from a CSV.
@@ -48,6 +93,9 @@ export async function POST(req: Request) {
   const body = (await req.json().catch(() => ({}))) as {
     csv?: string;
     rows?: LeadInput[];
+    /** Field defs for the rows' customFields (the sort-preview round trip
+     *  carries them so AI-sorted imports register their columns too). */
+    discoveredFields?: unknown;
     campaignId?: string | null;
     leadGroup?: LeadGroup | null;
     /** Cut this import into numbered packs of roughly this many leads. */
@@ -108,6 +156,7 @@ export async function POST(req: Request) {
   let leads: ParsedLead[] | LeadInput[] = [];
   let source: "headers" | "ai" | "rows" = "rows";
   let aiError: string | null = null;
+  let discoveredFields: LeadFieldDef[] = [];
 
   if (typeof body.csv === "string" && body.csv.trim()) {
     const parsed = await parseCsvToLeads(body.csv);
@@ -117,8 +166,12 @@ export async function POST(req: Request) {
     leads = parsed.leads;
     source = parsed.source;
     aiError = parsed.aiError;
+    discoveredFields = parsed.discoveredFields;
   } else if (Array.isArray(body.rows)) {
     leads = body.rows;
+    // Client-held ParsedLead JSON (the sort-preview round trip) — its field
+    // defs arrive over the wire, so re-validate every one before trusting it.
+    discoveredFields = sanitizeDiscoveredFields(body.discoveredFields);
   }
 
   if (!leads.length) {
@@ -180,6 +233,12 @@ export async function POST(req: Request) {
   }));
 
   const result = await insertLeads(rows);
+
+  // Register any newly discovered custom fields AFTER the rows land — an
+  // import that failed (or inserted nothing) must not grow the org's schema.
+  if (!result.error && result.inserted > 0) {
+    await persistDiscoveredFields(viewer.org?.id, discoveredFields);
+  }
 
   if (packIds.length && viewer.org?.id) {
     // Count what actually landed per pack rather than what we intended, then

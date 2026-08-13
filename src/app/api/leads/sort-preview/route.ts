@@ -92,5 +92,8 @@ export async function POST(req: Request) {
     buckets,
     columnSource: parsed.source,
     aiError: parsed.aiError,
+    // The review screen posts these back with each bucket's `rows` so AI-sorted
+    // imports register their custom columns exactly like direct CSV imports.
+    discoveredFields: parsed.discoveredFields,
   });
 }

@@ -2,6 +2,7 @@ import "server-only";
 
 import { aiParseLeads, canAIParse } from "../ai/parse-leads";
 import { isConfident, parseSheet, rowsToLeads, type ParsedLead } from "./csv";
+import type { LeadFieldDef } from "./field-schema";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Shared CSV → ParsedLead[] parsing chain, extracted out of
@@ -16,6 +17,9 @@ export interface ParseCsvResult {
   leads: ParsedLead[];
   source: "headers" | "ai";
   aiError: string | null;
+  /** Typed defs for every column captured into customFields — the import route
+   *  appends the new ones to the org's settings.leadFields after inserting. */
+  discoveredFields: LeadFieldDef[];
 }
 
 export async function parseCsvToLeads(
@@ -32,6 +36,7 @@ export async function parseCsvToLeads(
   let leads: ParsedLead[];
   let source: "headers" | "ai";
   let aiError: string | null = null;
+  let discoveredFields = deterministic.discoveredFields;
 
   if (isConfident(deterministic)) {
     leads = deterministic.leads;
@@ -43,6 +48,7 @@ export async function parseCsvToLeads(
       const ai = await aiParseLeads(grid);
       leads = ai.leads.length ? ai.leads : deterministic.leads;
       source = ai.leads.length ? "ai" : "headers";
+      if (ai.leads.length) discoveredFields = ai.discoveredFields;
     } catch (e) {
       aiError = e instanceof Error ? e.message : "AI parsing failed.";
       leads = deterministic.leads;
@@ -64,5 +70,5 @@ export async function parseCsvToLeads(
     };
   }
 
-  return { leads, source, aiError };
+  return { leads, source, aiError, discoveredFields };
 }

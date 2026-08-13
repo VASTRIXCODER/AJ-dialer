@@ -16,6 +16,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import type { ParsedLead } from "@/lib/leads/csv";
+import type { LeadFieldDef } from "@/lib/leads/field-schema";
 import { formatPhone } from "@/lib/utils";
 import { CampaignCertificationDialog } from "./campaign-certification-dialog";
 
@@ -40,6 +41,9 @@ export interface SortPreviewResponse {
   buckets: Record<string, PreviewLead[]>;
   columnSource: "headers" | "ai";
   aiError: string | null;
+  /** Custom-field defs the parse discovered — posted back with each bucket so
+   *  the import route can register them in the org's field schema. */
+  discoveredFields?: LeadFieldDef[];
 }
 
 type BucketState = "idle" | "pending" | "done" | "error";
@@ -130,6 +134,11 @@ export function SortPreviewReview({
         body: JSON.stringify({
           rows: list.map(({ tempId: _tempId, ...rest }) => rest),
           leadGroup: key === MISC_KEY ? null : key,
+          // Sent with every bucket — the route merge dedupes, so repeats are
+          // harmless and a partial-failure retry still registers the fields.
+          ...(preview.discoveredFields?.length
+            ? { discoveredFields: preview.discoveredFields }
+            : {}),
           ...(packSize && packSize > 0
             ? { packSize, packBatch: `${packBatch ?? "Upload"} · ${labelOf.get(key) ?? key}` }
             : {}),
