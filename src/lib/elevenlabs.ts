@@ -2,6 +2,7 @@ import "server-only";
 
 import crypto from "node:crypto";
 import { currentDateContext } from "./ai/appointment";
+import { isSolarVertical } from "./org/vertical";
 import type { Lead } from "./types";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -160,30 +161,68 @@ export function currentDateVariables(tz?: string): Record<string, string> {
   };
 }
 
+/** "Policy Expiry " → "policy_expiry": a safe {{token}}-friendly variable key. */
+function sanitizeVariableKey(key: string): string {
+  return key
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 40);
+}
+
 /**
  * The single source of truth for the dynamic variables sent to the agent on
  * every call. The agent's prompt/first-message reference these with {{name}}
- * syntax so each conversation is personalized to the homeowner and matches the
- * Sunrun resolution script (name + address opener, EV/pool question, etc.).
+ * syntax so each conversation is personalized to the customer and matches the
+ * org's script (name + address opener, qualifying questions, etc.).
  * Used by both the outbound-call route and the personalization webhook so the
  * agent gets identical context regardless of which path fires.
+ *
+ * Custom lead fields ride along as {{custom_<key>}} variables (keys sanitized,
+ * string values capped at 200 chars) so a dashboard or org prompt can reference
+ * anything the org's CSV carried.
  */
 export function agentVariablesForLead(
   lead: Lead,
-  opts?: { company?: string },
+  opts?: {
+    company?: string;
+    /**
+     * The calling org's vertical. Gates the solar-era brand fallback: omitted
+     * (demo / legacy callers) behaves like solar, matching history.
+     */
+    dialerTemplate?: string | null;
+  },
 ): Record<string, string | number | boolean> {
   const homeAddress =
     [lead.address, lead.city, lead.state].filter(Boolean).join(", ") +
     (lead.zip ? ` ${lead.zip}` : "");
   // The brand the agent introduces itself with = the CALLING organization (e.g.
-  // "UNRG"), not the homeowner's installer. Falls back to the lead's solar
-  // provider, then "Sunrun" for the demo. We expose it as {{company}} AND alias
-  // {{solar_provider}} to it, so the agent only ever names the calling company —
-  // and any prompt still using {{solar_provider}} keeps working unchanged.
+  // "UNRG"), not the homeowner's installer. The solar-era fallback chain (lead's
+  // solar provider, then "Sunrun" for the demo) applies ONLY to solar-template
+  // orgs — an insurance org with no name set must never be introduced as a solar
+  // installer, so non-solar falls back to a neutral "our team". We expose the
+  // brand as {{company}} AND alias {{solar_provider}} to it, so the agent only
+  // ever names the calling company — and any prompt still using
+  // {{solar_provider}} keeps working unchanged.
+  const solar =
+    opts?.dialerTemplate == null ? true : isSolarVertical(opts.dialerTemplate);
   const brand =
-    (opts?.company || "").trim() || lead.solarProvider?.trim() || "Sunrun";
+    (opts?.company || "").trim() ||
+    (solar ? lead.solarProvider?.trim() || "Sunrun" : "our team");
+
+  // Sanitized custom-field variables first, so they can never shadow the fixed
+  // set below (a CSV column named "company" becomes {{custom_company}} anyway).
+  const custom: Record<string, string | number | boolean> = {};
+  for (const [key, value] of Object.entries(lead.customFields ?? {})) {
+    const safe = sanitizeVariableKey(key);
+    if (!safe || value == null) continue;
+    custom[`custom_${safe}`] =
+      typeof value === "string" ? value.slice(0, 200) : value;
+  }
+
   return {
     ...currentDateVariables(lead.timezone || undefined),
+    ...custom,
     customer_name: `${lead.firstName} ${lead.lastName}`.trim(),
     first_name: lead.firstName,
     last_name: lead.lastName,

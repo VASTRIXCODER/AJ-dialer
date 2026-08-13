@@ -246,7 +246,10 @@ export async function placeAiCallForLead(opts: {
     const result = await placeOutboundCall({
       toNumber: dialTarget,
       agentId: el.agentId,
-      dynamicVariables: agentVariablesForLead(lead, { company: org?.name }),
+      dynamicVariables: agentVariablesForLead(lead, {
+        company: org?.name,
+        dialerTemplate: org?.dialerTemplate,
+      }),
       promptOverride: agent.systemPrompt,
       firstMessage: agent.firstMessage,
       language: agent.language,

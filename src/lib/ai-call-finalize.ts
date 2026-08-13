@@ -2,8 +2,10 @@ import "server-only";
 
 import { recordCallSuccess, recordProviderFailure } from "./ai-call-breaker";
 import { getAICall, updateAICall } from "./ai-call-store";
+import { orgLikeForConversation } from "./ai/agent-context";
 import { isAIConfigured } from "./ai/claude";
 import { readCall, resolveAppointment } from "./ai/appointment";
+import { orgAIContext } from "./ai/org-context";
 import { analyzeConversation } from "./ai/services";
 import { classifyNonConversation, type FailureKind } from "./call-disposition";
 import { getLeadById, getLeadByIdAdmin, getLeadByPhoneAdmin } from "./db/leads";
@@ -141,11 +143,17 @@ export async function finalizeAIConversation(input: {
   if (connected) {
     const now = new Date();
     const tz = lead?.timezone || undefined;
+    // Analyze with the CALLING org's AI context — its vertical framing and
+    // vocabulary, not solar's. For non-solar orgs the analysis carries no solar
+    // qualification block, so nothing solar is ever written back to their lead
+    // below. Null (demo / unstamped conversation) keeps the solar default.
+    const orgLike = await orgLikeForConversation(conversationId);
     const { data: analysis, source } = await analyzeConversation({
       transcript,
       lead,
       now,
       tz,
+      ctx: orgAIContext(orgLike),
     });
     summary = analysis.summary;
     outcome = analysis.outcome;

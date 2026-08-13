@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { orgAIContext } from "@/lib/ai/org-context";
 import { getCallSummary } from "@/lib/ai/services";
 import { getLeadById } from "@/lib/db/leads";
 import { getViewer } from "@/lib/org/membership";
@@ -21,14 +22,20 @@ export async function POST(req: Request) {
   if (!lead) {
     return NextResponse.json({ error: "Lead not found" }, { status: 404 });
   }
-  const isSolar = viewer.org ? viewer.org.dialerTemplate === "solar" : true;
+  const ctx = orgAIContext(viewer.org);
   return NextResponse.json(
-    await getCallSummary(lead, outcome, isSolar, {
-      notes: typeof notes === "string" ? notes.slice(0, 4000) : undefined,
-      durationSec:
-        typeof durationSec === "number" && Number.isFinite(durationSec)
-          ? Math.max(0, Math.round(durationSec))
-          : undefined,
-    }),
+    await getCallSummary(
+      lead,
+      outcome,
+      ctx.isSolar,
+      {
+        notes: typeof notes === "string" ? notes.slice(0, 4000) : undefined,
+        durationSec:
+          typeof durationSec === "number" && Number.isFinite(durationSec)
+            ? Math.max(0, Math.round(durationSec))
+            : undefined,
+      },
+      ctx,
+    ),
   );
 }

@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { orgAIContext } from "@/lib/ai/org-context";
 import { getSemanticSearch } from "@/lib/ai/services";
 import { searchLeadCandidates } from "@/lib/db/leads";
 import { getViewer } from "@/lib/org/membership";
@@ -35,8 +36,8 @@ export async function POST(req: Request) {
   if (!leads.length) {
     return NextResponse.json({ source: "demo", interpretation: "", matches: [] });
   }
-  const isSolar = viewer.org ? viewer.org.dialerTemplate === "solar" : true;
-  const { data, source } = await getSemanticSearch(query, leads, isSolar);
+  const ctx = orgAIContext(viewer.org);
+  const { data, source } = await getSemanticSearch(query, leads, ctx.isSolar, ctx);
   const byId = new Map(leads.map((l) => [l.id, l]));
 
   // Enrich AI matches with display fields so the palette can render rich rows.

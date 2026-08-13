@@ -67,6 +67,12 @@ function rowToLead(r: Row): Lead {
     multipleSystems: Boolean(r.multiple_systems),
     createdAt: String(r.created_at ?? new Date().toISOString()),
     timezone: String(r.timezone ?? ""),
+    // Typed CSV spillover — without this, custom fields would silently never
+    // reach the voice agent's {{custom_*}} dynamic variables.
+    customFields:
+      r.custom_fields && typeof r.custom_fields === "object"
+        ? (r.custom_fields as Record<string, string | number | boolean>)
+        : undefined,
   };
 }
 
@@ -87,6 +93,42 @@ async function loadOrgLike(admin: AdminClient, orgId: unknown): Promise<AgentOrg
     .eq("id", orgId)
     .maybeSingle();
   return org ? rowToOrgLike(org as Row) : null;
+}
+
+/**
+ * The organization an AI conversation belongs to (service-role; webhook path —
+ * no session). Lets the post-call pipeline analyze a transcript with the RIGHT
+ * org's AI context instead of assuming every tenant is solar. Null in demo mode
+ * or when the conversation was never stamped with an org — callers treat that
+ * as the historical solar default.
+ */
+export async function orgLikeForConversation(
+  conversationId: string,
+): Promise<AgentOrgLike | null> {
+  if (!isSupabaseConfigured() || !isAdminConfigured()) return null;
+  try {
+    const admin = createAdminClient();
+    const { data } = await admin
+      .from("ai_conversations")
+      .select("org_id, lead_id")
+      .eq("conversation_id", conversationId)
+      .maybeSingle();
+    const row = data as Row | null;
+    let orgId: unknown = row?.org_id ?? null;
+    // Conversations predating the stamp_org_id trigger (or owner-less ones)
+    // may lack the stamp — the lead row still knows its org.
+    if (!orgId && row?.lead_id) {
+      const { data: leadRow } = await admin
+        .from("leads")
+        .select("org_id")
+        .eq("id", row.lead_id)
+        .maybeSingle();
+      orgId = (leadRow as Row | null)?.org_id ?? null;
+    }
+    return await loadOrgLike(admin, orgId);
+  } catch {
+    return null;
+  }
 }
 
 /** Load one lead + its stamped organization by an EXACT lead id. Unambiguous. */
@@ -211,7 +253,10 @@ export async function resolveAgentContext(opts: {
     }
 
     const dynamicVariables = resolved
-      ? agentVariablesForLead(resolved.lead, { company: resolved.orgLike?.name })
+      ? agentVariablesForLead(resolved.lead, {
+          company: resolved.orgLike?.name,
+          dialerTemplate: resolved.orgLike?.dialerTemplate,
+        })
       : currentDateVariables();
     return {
       dynamicVariables,

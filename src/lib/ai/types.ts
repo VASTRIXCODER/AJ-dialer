@@ -89,7 +89,12 @@ export interface ConversationAnalysis {
   detailedSummary: string;
   outcome: CallOutcome;
   sentiment: "positive" | "neutral" | "negative";
-  qualification: {
+  /**
+   * The solar core slots extracted from the call — present ONLY for
+   * solar-template orgs. Non-solar analyses omit it entirely so the finalize
+   * pipeline (enrichLeadFromAI) never writes solar fields onto their leads.
+   */
+  qualification?: {
     utilityBill: number | null;
     solarPayment: number | null;
     hasEV: boolean;

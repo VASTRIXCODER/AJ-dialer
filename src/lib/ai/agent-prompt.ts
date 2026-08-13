@@ -11,9 +11,11 @@
 // respect opt-outs, never over-promise).
 // ─────────────────────────────────────────────────────────────────────────────
 
+import type { LeadFieldDef } from "../leads/field-schema";
 import type { AgentKey } from "../elevenlabs";
 import type { OrgSettings } from "../org/settings";
-import { templateProfile } from "../org/templates";
+import { type TemplateProfile, templateProfile } from "../org/templates";
+import { orgAIContext, qualifyingQuestion, spokenFieldLabel } from "./org-context";
 
 /** Emily's first line — confirm who answered. */
 export const EMILY_FIRST_MESSAGE = "Hey — is this {{first_name}}?";
@@ -407,12 +409,53 @@ function fillTokens(s: string, org: AgentOrgLike): string {
     .replace(/\{org\}/g, org.name || org.productName || "our team");
 }
 
+/**
+ * The schema fields this org's agent should qualify on (showInQualify), in
+ * schema order. Defensive on one point: for a NON-solar org whose template
+ * defines no field overrides and whose settings carry no saved core defs, the
+ * core slots still wear their solar-era labels — asking those would put solar
+ * words in a non-solar agent's mouth, so only org-saved custom fields count
+ * until the template (or an admin) shapes the core slots.
+ */
+function qualifyFieldDefs(org: AgentOrgLike): LeadFieldDef[] {
+  const ctx = orgAIContext(org);
+  const defs = ctx.fields.filter((f) => f.showInQualify);
+  if (ctx.isSolar) return defs;
+  const profile = templateProfile(org.dialerTemplate) as TemplateProfile & {
+    fields?: unknown;
+  };
+  const templateShaped = Boolean(profile.fields);
+  const savedCore = (org.settings.leadFields ?? []).some(
+    (f) => f && f.source === "core",
+  );
+  if (templateShaped || savedCore) return defs;
+  return defs.filter((f) => f.source === "custom");
+}
+
+/**
+ * Schema-driven qualifying questions as a prompt section — how the org's lead
+ * field schema reaches the voice agent. Injected inline into genericPrompt AND
+ * appended to org-custom system prompts (which win outright, like
+ * complianceSuffix) so a custom-prompt org still qualifies on its own fields.
+ * Empty when the org has nothing to qualify on.
+ */
+function qualifySuffix(org: AgentOrgLike | null): string {
+  if (!org) return "";
+  const defs = qualifyFieldDefs(org).slice(0, 8);
+  if (defs.length === 0) return "";
+  const lines = defs
+    .map((f, i) => `${i + 1}. "${qualifyingQuestion(f)}"  (captures: ${spokenFieldLabel(f.label)})`)
+    .join("\n");
+  return `\n\n# Qualifying questions (ask these while qualifying — ONE per turn, in this order)\n${lines}\n- React to each answer first, then ask the next. A refusal counts as answered — note it warmly and move on. Never ask two in one breath.`;
+}
+
 /** White-label prompt for any non-solar vertical, built from its settings. */
 function genericPrompt(org: AgentOrgLike): string {
   const p = templateProfile(org.dialerTemplate);
   const ai = org.settings.ai;
   const noun = org.settings.leadNoun || "customer";
   const dispositions = org.settings.dispositions.map((d) => d.label).join(", ");
+  const qualify = qualifySuffix(org);
   return `# Identity
 You are ${ai.agentName}, a warm, human-sounding outbound representative for ${org.name}${org.productName ? ` (${org.productName})` : ""}, calling a ${noun} at {{address}} on a recorded line.
 ${ai.persona}
@@ -437,7 +480,7 @@ ${p.blurb} Build rapport, qualify quickly, and book a follow-up appointment for 
 1. "Hey — is this {{first_name}}?" Wait.
 2. Confirm the address: "This is ${ai.agentName} from ${org.name} — so I've got you at {{address}}… is that right?" Do not continue until confirmed.
 3. ${ai.greeting ? fillTokens(ai.greeting, org) : "Explain why you're calling and check interest."}
-4. Qualify, then book a specific day + time. Confirm it back to them and let them know they'll get a reminder call an hour before.
+4. Qualify${qualify ? " using the qualifying questions below (one per turn, in order)" : ""}, then book a specific day + time. Confirm it back to them and let them know they'll get a reminder call an hour before.${qualify}
 
 # Answering questions
 - Field whatever they ask using Acknowledge → Answer → Bridge: react, give a real and honest answer, then tie it back to the reason for the call.
@@ -499,8 +542,13 @@ export function resolveAgentConfig(
   const isSolar = !org || org.dialerTemplate === "solar";
   const custom = ai?.systemPrompt?.trim();
 
+  // An org's custom prompt wins outright, but schema-driven sections are still
+  // injected (exactly like the compliance disclosure below) — otherwise a
+  // custom-prompt org would silently lose its own qualifying questions. The
+  // default Emily script doesn't get the suffix: its checklist already encodes
+  // the solar qualify fields; genericPrompt injects its own copy inline.
   const systemPrompt = custom
-    ? custom
+    ? custom + qualifySuffix(org)
     : isSolar
       ? EMILY_SYSTEM_PROMPT
       : genericPrompt(org as AgentOrgLike);
