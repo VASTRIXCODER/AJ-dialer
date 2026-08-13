@@ -36,11 +36,13 @@ const BF_STATUS_OPTIONS = [
 export default async function BillsFinePage({
   searchParams,
 }: {
-  searchParams: Promise<{ page?: string; q?: string }>;
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const sp = await searchParams;
-  const q = (sp.q ?? "").trim().slice(0, 60);
-  const page = Math.max(1, Math.floor(Number(sp.page) || 1));
+  // A repeated query param arrives as an array — take the first, never crash.
+  const one = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v);
+  const q = (one(sp.q) ?? "").trim().slice(0, 60);
+  const page = Math.max(1, Math.floor(Number(one(sp.page)) || 1));
 
   const [{ rows: leads, total, withBills, avgEnergyCost, teamWide }, viewer] = await Promise.all([
     getBillsFine({ page, pageSize: PAGE_SIZE, q }),

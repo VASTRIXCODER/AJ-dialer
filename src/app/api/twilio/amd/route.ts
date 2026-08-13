@@ -60,18 +60,36 @@ export async function POST(req: Request) {
   // Park the verdict first (best-effort): the call record is only written at
   // disposition time, so this usually lands in pending_call_verdicts and is
   // claimed by insertCallRecord — the exact dance the status webhook does.
+  //
+  // ROOM-KEY GUARD: every leg of a parallel round shares one room, and the
+  // round's single call record belongs to the conversation the rep actually
+  // had — the HUMAN one. So a human verdict always wins the room, and a
+  // machine verdict only fills a room with no verdict yet (the single-dial /
+  // all-machines case). Without this, a losing leg's answering machine
+  // (answering ~2s after the live homeowner) would stamp the human
+  // conversation's record as a voicemail pickup.
+  const isHumanVerdict = answeredBy === "human";
   if (isAdminConfigured() && room) {
     try {
       const admin = createAdminClient();
-      const { data: updated } = await admin
+      let recordQuery = admin
         .from("call_records")
         .update({ answered_by: answeredBy })
-        .eq("room", room)
-        .select("id");
+        .eq("room", room);
+      if (!isHumanVerdict) recordQuery = recordQuery.is("answered_by", null);
+      const { data: updated } = await recordQuery.select("id");
       if (!updated || updated.length === 0) {
-        await admin
+        const { data: parked } = await admin
           .from("pending_call_verdicts")
-          .upsert({ room, answered_by: answeredBy }, { onConflict: "room" });
+          .select("answered_by")
+          .eq("room", room)
+          .maybeSingle();
+        const parkedBy = parked ? String(parked.answered_by ?? "") : "";
+        if (isHumanVerdict || !parkedBy) {
+          await admin
+            .from("pending_call_verdicts")
+            .upsert({ room, answered_by: answeredBy }, { onConflict: "room" });
+        }
       }
     } catch {
       /* best-effort */

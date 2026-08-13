@@ -1681,17 +1681,24 @@ begin
         or (v_digits is not null
             and regexp_replace(coalesce(phone, ''), '\D', '', 'g') like ('%' || v_digits || '%'))
       ))
-  )
-  select
-    coalesce(jsonb_agg(page.row_json order by page.created_at, page.id), '[]'::jsonb),
-    coalesce(max(page.full_count), 0)
-  into v_rows, v_total
-  from (
-    select to_jsonb(f.*) as row_json, f.created_at, f.id, count(*) over () as full_count
+  ),
+  -- The total is computed INDEPENDENTLY of pagination: taking max(count(*)
+  -- over ()) inside the LIMIT/OFFSET subquery reported total=0 whenever the
+  -- offset landed past the last matching row (stale ?page=N links, deleting
+  -- the last row of the last page), making the whole book look empty.
+  total as (
+    select count(*) as n from filtered
+  ),
+  page as (
+    select to_jsonb(f.*) as row_json, f.created_at, f.id
     from filtered f
     order by f.created_at asc, f.id asc
     limit v_limit offset v_offset
-  ) page;
+  )
+  select
+    coalesce((select jsonb_agg(row_json order by created_at, id) from page), '[]'::jsonb),
+    (select n from total)
+  into v_rows, v_total;
 
   -- Scope-wide aggregates, deliberately UNfiltered: the KPI tiles and the
   -- smart-list chips describe the whole book, not the current filter.

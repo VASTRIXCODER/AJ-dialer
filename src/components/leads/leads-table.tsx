@@ -134,13 +134,30 @@ export function LeadsTable({
     },
     [router],
   );
+  // Merge every change onto the latest INTENDED filters, not the server-
+  // rendered prop: the prop only updates when the RSC round trip lands, so two
+  // quick changes (click a status chip, then a smart chip — or type while a
+  // chip navigation is pending) would silently drop the first one.
+  const intendedFilters = useRef(filters);
+  const filtersKey = JSON.stringify(filters);
+  useEffect(() => {
+    // Re-sync only when the SERVER-CONFIRMED filters actually changed value —
+    // a parent re-render mid-transition passes the same old values under a new
+    // object identity and must not revert a pending intent.
+    intendedFilters.current = filters;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filtersKey]);
   const applyFilters = useCallback(
-    (patch: Partial<LeadsTableFilters>) => navigate({ ...filters, ...patch }, 1),
-    [filters, navigate],
+    (patch: Partial<LeadsTableFilters>) => {
+      const next = { ...intendedFilters.current, ...patch };
+      intendedFilters.current = next;
+      navigate(next, 1);
+    },
+    [navigate],
   );
   const goToPage = useCallback(
-    (p: number) => navigate(filters, Math.max(1, p)),
-    [filters, navigate],
+    (p: number) => navigate(intendedFilters.current, Math.max(1, p)),
+    [navigate],
   );
 
   // Filter options = the org's groups, plus any key the loaded leads still

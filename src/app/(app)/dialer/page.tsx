@@ -14,18 +14,23 @@ export const dynamic = "force-dynamic";
 export default async function DialerPage({
   searchParams,
 }: {
-  searchParams: Promise<{ campaign?: string; dial?: string; name?: string }>;
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   // Count only — the queue itself is fetched ONCE client-side via
   // /api/leads/queue (the same path every refetch already uses). Serializing
   // tens of thousands of Lead objects into the RSC payload just to seed a
   // provider that ignores them on every revisit was pure transfer waste.
-  const [{ campaign, dial, name }, queueCount, campaigns, viewer] = await Promise.all([
+  const [sp, queueCount, campaigns, viewer] = await Promise.all([
     searchParams,
     getDialQueueCount(),
     getCampaigns(),
     getViewer(),
   ]);
+  // A repeated query param arrives as an array — take the first, never crash.
+  const one = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v);
+  const campaign = one(sp.campaign);
+  const dial = one(sp.dial);
+  const name = one(sp.name);
   // Only used for the header badge copy — the dialer engine + its full access
   // gates now live in the app-wide DialerProvider (AppShell).
   const { manualEnabled } = resolveDialerAccess(

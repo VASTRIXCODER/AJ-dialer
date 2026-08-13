@@ -18,33 +18,51 @@ import { formatNumber } from "@/lib/utils";
 export const metadata = { title: "Leads" };
 export const dynamic = "force-dynamic";
 
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export default async function LeadsPage({
   searchParams,
 }: {
-  searchParams: Promise<Record<string, string | undefined>>;
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   // Filters live in the URL so pagination survives router.refresh() after
   // bulk actions, and so a filtered view is shareable/bookmarkable.
-  const sp = await searchParams;
+  const raw = await searchParams;
+  // The App Router delivers a REPEATED param as an array — take the first
+  // rather than crashing on ['smith','jones'].trim().
+  const one = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v);
+  const sp = Object.fromEntries(Object.entries(raw).map(([k, v]) => [k, one(v)]));
   const status =
     sp.status && sp.status in leadStatusConfig ? (sp.status as LeadStatus) : undefined;
+  // A malformed ?uploader= would fail the RPC's uuid cast and render the whole
+  // book as the onboarding empty state — validate instead of forwarding.
+  const uploaderId = sp.uploader && UUID.test(sp.uploader) ? sp.uploader : undefined;
   const filters: LeadsTableFilters = {
     q: sp.q?.trim() || undefined,
     status,
     smart: sp.smart || undefined,
     group: sp.group || undefined,
     campaignId: sp.campaign || undefined,
-    uploaderId: sp.uploader || undefined,
+    uploaderId,
     mine: sp.mine === "1",
   };
   const pageNum = Math.max(1, Number.parseInt(sp.page ?? "1", 10) || 1);
 
-  const [{ leads, total, stats, smartCounts, page, pageSize }, campaigns, viewer] =
-    await Promise.all([
-      getLeadsPage({ page: pageNum, ...filters }),
-      getCampaigns(),
-      getViewer(),
-    ]);
+  let [pageData, campaigns, viewer] = await Promise.all([
+    getLeadsPage({ page: pageNum, ...filters }),
+    getCampaigns(),
+    getViewer(),
+  ]);
+  // Out-of-range page (stale bookmark, or the last row of the last page was
+  // just deleted and router.refresh() kept ?page=N): clamp to the real last
+  // page instead of rendering a book that looks empty.
+  if (pageData.leads.length === 0 && pageData.total > 0 && pageNum > 1) {
+    const lastPage = Math.max(1, Math.ceil(pageData.total / pageData.pageSize));
+    if (lastPage < pageNum) {
+      pageData = await getLeadsPage({ page: lastPage, ...filters });
+    }
+  }
+  const { leads, total, stats, smartCounts, page, pageSize } = pageData;
   // The org's own intake groups (+ how many leads sit in each, and in the
   // Miscellaneous catch-all) drive both the upload tiles and the group filter.
   const { groups: leadGroups, miscCount } = await listLeadGroupsWithCounts(

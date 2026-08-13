@@ -134,25 +134,38 @@ export async function getCampaigns(): Promise<CampaignRow[]> {
     const reader = useOrg ? createAdminClient() : await createClient();
     const col = useOrg ? "org_id" : "owner_id";
     const val = useOrg ? (scope.orgId as string) : scope.userId;
-    const [cRes, lRes, callRes] = await Promise.all([
+    // The stats inputs MUST page: a bare .limit() above 1,000 is a no-op
+    // (PostgREST silently caps every un-ranged response at 1,000 rows — see
+    // the header comment), so campaign lead counts, connect rates, and the
+    // script A/B split were computed over an arbitrary 1,000-row sample of
+    // any real book. Ordered so pages are stable while paging.
+    const [cRes, leads, calls] = await Promise.all([
       reader
         .from("campaigns")
         .select("*")
         .eq(col, val)
         .order("created_at", { ascending: false })
         .limit(useOrg ? 2000 : 500),
-      reader.from("leads").select("campaign_id,status").eq(col, val).limit(useOrg ? 50000 : 5000),
-      reader
-        .from("call_records")
-        .select("campaign_id,outcome,script_variant")
-        .eq(col, val)
-        .limit(useOrg ? 20000 : 2000),
+      fetchPagedUpTo(
+        () =>
+          reader
+            .from("leads")
+            .select("campaign_id,status")
+            .eq(col, val)
+            .order("id", { ascending: true }),
+        useOrg ? 50000 : 5000,
+      ),
+      fetchPagedUpTo(
+        () =>
+          reader
+            .from("call_records")
+            .select("campaign_id,outcome,script_variant")
+            .eq(col, val)
+            .order("id", { ascending: true }),
+        useOrg ? 20000 : 2000,
+      ),
     ]);
     if (cRes.error) console.error("[pipeline] getCampaigns campaigns query failed:", cRes.error.message);
-    if (lRes.error) console.error("[pipeline] getCampaigns leads query failed:", lRes.error.message);
-    if (callRes.error) console.error("[pipeline] getCampaigns call_records query failed:", callRes.error.message);
-    const leads = (lRes.data ?? []) as Row[];
-    const calls = (callRes.data ?? []) as Row[];
     return ((cRes.data ?? []) as Row[]).map((r) => ({
       id: s(r.id),
       name: s(r.name),
@@ -350,7 +363,11 @@ export async function getCampaignRecentCalls(
   try {
     const scope = await getScope();
     if (!scope) return [];
-    const useOrg = isAdminConfigured() && Boolean(scope.orgId);
+    // Org-wide is SUPERVISOR-only, like every sibling read (getBillsFine,
+    // getCallbacks): these are row-level call records (who said what, when),
+    // which RLS reserves for the row's owner or an org supervisor — a rep on
+    // the campaign page sees their own calls, not the whole floor's.
+    const useOrg = isAdminConfigured() && Boolean(scope.orgId) && scope.supervisor;
     const reader = useOrg ? createAdminClient() : await createClient();
     let q = reader
       .from("call_records")

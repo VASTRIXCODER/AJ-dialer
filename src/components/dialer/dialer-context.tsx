@@ -230,8 +230,12 @@ export function DialerProvider({
 
   function activate(initialQueue?: Lead[], initialCampaigns?: Campaign[], initialCampaign?: string) {
     if (initialQueue && initialQueue.length && queue.length === 0) setQueue(initialQueue);
-    if (initialCampaigns && initialCampaigns.length && campaigns.length === 0)
-      setCampaigns(initialCampaigns);
+    // Campaigns REFRESH on every activation (each /dialer visit ships a fresh
+    // server-rendered list) — unlike the queue, replacing them can't disturb a
+    // live call, and holding the first visit's copy froze script A/B edits out
+    // of long-lived sessions: a rep kept reading (and attributing) script A for
+    // leads assigned to a B variant launched after their session began.
+    if (initialCampaigns && initialCampaigns.length) setCampaigns(initialCampaigns);
     if (
       initialCampaign &&
       !campaignFilter &&
