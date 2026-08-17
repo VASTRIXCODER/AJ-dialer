@@ -1,6 +1,7 @@
 import { Download, Users } from "lucide-react";
 import { LeadsTable } from "@/components/leads/leads-table";
 import { GroupUploadGrid } from "@/components/leads/group-upload-grid";
+import { LeadPacksPanel } from "@/components/leads/lead-packs-panel";
 import { MetricCard } from "@/components/dashboard/metric-card";
 import { EmptyState } from "@/components/shared/empty-state";
 import { PageContainer, PageHeader } from "@/components/shared/page-header";
@@ -86,6 +87,13 @@ export default async function LeadsPage() {
     <PageContainer>
       {header}
       <GroupUploadGrid canImport={canManage} labelOverrides={groupLabels} />
+      {canManage && (
+        <LeadPacksPanel
+          members={members}
+          campaigns={campaignList}
+          labelOverrides={groupLabels}
+        />
+      )}
 
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
         <MetricCard label="Total leads" value={formatNumber(leads.length)} icon={Users} accent="primary" />

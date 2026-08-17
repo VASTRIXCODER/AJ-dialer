@@ -1371,3 +1371,45 @@ create table if not exists public.campaign_certifications (
 create index if not exists campaign_certifications_org_idx
   on public.campaign_certifications (org_id, campaign_id, version);
 alter table public.campaign_certifications enable row level security;
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- PART 17 — LEAD PACKS  (idempotent; safe to re-run)
+--
+-- A "pack" is a named, durable batch of leads handed to one rep: "Houston Batch
+-- 3 — 200 leads, Marcus, created Tuesday". Managers could already bulk-assign
+-- leads, but only by hand-ticking rows in the table, which doesn't scale past a
+-- screenful and leaves no record of what was handed out or how far through it
+-- the rep got.
+--
+-- The pack row is the record; `leads.pack_id` is the membership. Progress is
+-- derived by counting member leads per status rather than stored, so it can
+-- never drift from the leads themselves.
+-- ─────────────────────────────────────────────────────────────────────────────
+create table if not exists public.lead_packs (
+  id           uuid primary key default gen_random_uuid(),
+  org_id       uuid not null references public.organizations (id) on delete cascade,
+  name         text not null,
+  -- The rep holding the pack. Null once reclaimed (the pack row survives as
+  -- history — who had what, and when it came back).
+  assigned_to  uuid references auth.users (id) on delete set null,
+  created_by   uuid references auth.users (id) on delete set null,
+  -- Lead count at creation. Kept as a snapshot: member leads can be deleted
+  -- later, and "we handed over 200" stays true regardless.
+  size         int not null default 0,
+  -- The filter the pack was built from (group / campaign / statuses), stored so
+  -- a manager can see how a pack was cut months later.
+  source       jsonb not null default '{}'::jsonb,
+  status       text not null default 'active',   -- active | reclaimed
+  created_at   timestamptz not null default now(),
+  reclaimed_at timestamptz
+);
+create index if not exists lead_packs_org_idx on public.lead_packs (org_id, status, created_at desc);
+create index if not exists lead_packs_rep_idx on public.lead_packs (assigned_to, status);
+alter table public.lead_packs enable row level security;
+
+-- Membership. `on delete set null` so deleting a pack releases its leads rather
+-- than cascading into lead deletion — losing the paperwork must never lose the
+-- homeowners.
+alter table public.leads add column if not exists pack_id uuid
+  references public.lead_packs (id) on delete set null;
+create index if not exists leads_pack_idx on public.leads (pack_id);
