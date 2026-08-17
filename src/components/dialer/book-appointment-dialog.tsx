@@ -1,11 +1,10 @@
 "use client";
 
-import { motion, useReducedMotion } from "framer-motion";
 import { CalendarCheck, Clock, MapPin, X } from "lucide-react";
 import { useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input, Label, Select, Textarea } from "@/components/ui/input";
-import { Portal } from "@/components/ui/portal";
+import { Modal } from "@/components/ui/modal";
 import {
   DEFAULT_DURATION_MIN,
   addDays,
@@ -84,7 +83,6 @@ export function BookAppointmentDialog({
   /** Backed out entirely: no appointment, no disposition. */
   onCancel: () => void;
 }) {
-  const reduce = useReducedMotion();
   const address = useMemo(() => formatAddress(lead), [lead]);
 
   const [when, setWhen] = useState(() => toDateTimeInput(defaultSlot()));
@@ -110,153 +108,138 @@ export function BookAppointmentDialog({
   }
 
   return (
-    <Portal>
-      <div className="fixed inset-0 z-[100] flex items-end justify-center sm:items-center sm:p-4">
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          className="absolute inset-0 bg-background/70 backdrop-blur-xl"
+    <Modal onClose={onCancel} label="Book the account review" maxWidth="max-w-md">
+      <div className="flex items-start gap-3 border-b border-border/60 p-5">
+        <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-success/15 text-success">
+          <CalendarCheck className="h-5 w-5" />
+        </span>
+        <div className="min-w-0 flex-1">
+          <h2 className="truncate text-lg font-semibold">Book the account review</h2>
+          <p className="truncate text-sm text-muted-foreground">
+            {lead.firstName} {lead.lastName}
+            {lead.city ? ` · ${lead.city}` : ""}
+          </p>
+        </div>
+        <button
+          type="button"
           onClick={onCancel}
-        />
-        <motion.div
-          initial={reduce ? { opacity: 0 } : { opacity: 0, y: 24, scale: 0.98 }}
-          animate={{ opacity: 1, y: 0, scale: 1 }}
-          transition={{ type: "spring", stiffness: 320, damping: 30 }}
-          className="glass relative max-h-[92vh] w-full max-w-md overflow-y-auto rounded-t-2xl border border-border/60 shadow-lift sm:rounded-2xl"
+          aria-label="Close"
+          className="flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
         >
-          <div className="flex items-start gap-3 border-b border-border/60 p-5">
-            <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-success/15 text-success">
-              <CalendarCheck className="h-5 w-5" />
-            </span>
-            <div className="min-w-0 flex-1">
-              <h2 className="truncate text-lg font-semibold">Book the account review</h2>
-              <p className="truncate text-sm text-muted-foreground">
-                {lead.firstName} {lead.lastName}
-                {lead.city ? ` · ${lead.city}` : ""}
-              </p>
-            </div>
+          <X className="h-4 w-4" />
+        </button>
+      </div>
+
+      <div className="space-y-4 overflow-y-auto p-5">
+        <div>
+          <Label>Quick slots</Label>
+          <div className="grid grid-cols-2 gap-2">
+            {slots.map((s) => {
+              const value = toDateTimeInput(s.at);
+              const selected = when === value;
+              return (
+                <button
+                  key={s.label}
+                  type="button"
+                  onClick={() => setWhen(value)}
+                  className={cn(
+                    "rounded-xl border px-3 py-2 text-xs font-semibold transition-colors",
+                    selected
+                      ? "border-primary bg-primary/10 text-primary"
+                      : "border-border bg-surface text-muted-foreground hover:border-primary/50 hover:text-foreground",
+                  )}
+                >
+                  {s.label}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <div>
+            <Label htmlFor="book-when">When</Label>
+            <input
+              id="book-when"
+              type="datetime-local"
+              value={when}
+              onChange={(e) => setWhen(e.target.value)}
+              className="w-full rounded-xl border border-input bg-background/40 px-3.5 py-2.5 text-sm transition-all duration-200 focus-visible:border-primary/50 focus-visible:bg-background/70 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-primary/15"
+            />
+          </div>
+          <div>
+            <Label htmlFor="book-duration">Duration</Label>
+            <Select
+              id="book-duration"
+              value={String(durationMin)}
+              onChange={(e) => setDurationMin(Number(e.target.value))}
+            >
+              {DURATIONS.map((d) => (
+                <option key={d} value={d}>
+                  {d < 60 ? `${d} min` : d === 60 ? "1 hour" : `${d / 60} hours`}
+                </option>
+              ))}
+            </Select>
+          </div>
+        </div>
+
+        {start && (
+          <p
+            className={cn(
+              "flex items-center gap-1.5 rounded-xl px-3 py-2 text-xs font-medium",
+              inPast ? "bg-warning/15 text-warning" : "bg-muted/60 text-muted-foreground",
+            )}
+          >
+            <Clock className="h-3.5 w-3.5 shrink-0" />
+            {inPast
+              ? `That's in the past — ${formatDayLabel(start)}, ${formatRange(start, durationMin)}`
+              : `${formatDayLabel(start)} · ${formatRange(start, durationMin)}`}
+          </p>
+        )}
+
+        <div>
+          <Label htmlFor="book-location">Location</Label>
+          <Input
+            id="book-location"
+            value={location}
+            onChange={(e) => setLocation(e.target.value)}
+            placeholder="Where is the review?"
+          />
+          {address && location !== address && (
             <button
               type="button"
-              onClick={onCancel}
-              aria-label="Close"
-              className="flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+              onClick={() => setLocation(address)}
+              className="mt-1 flex items-center gap-1 text-[11px] font-medium text-muted-foreground hover:text-foreground"
             >
-              <X className="h-4 w-4" />
+              <MapPin className="h-3 w-3" /> Use the home address
             </button>
-          </div>
+          )}
+        </div>
 
-          <div className="space-y-4 p-5">
-            <div>
-              <Label>Quick slots</Label>
-              <div className="grid grid-cols-2 gap-2">
-                {slots.map((s) => {
-                  const value = toDateTimeInput(s.at);
-                  const selected = when === value;
-                  return (
-                    <button
-                      key={s.label}
-                      type="button"
-                      onClick={() => setWhen(value)}
-                      className={cn(
-                        "rounded-xl border px-3 py-2 text-xs font-semibold transition-colors",
-                        selected
-                          ? "border-primary bg-primary/10 text-primary"
-                          : "border-border bg-surface text-muted-foreground hover:border-primary/50 hover:text-foreground",
-                      )}
-                    >
-                      {s.label}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-              <div>
-                <Label htmlFor="book-when">When</Label>
-                <input
-                  id="book-when"
-                  type="datetime-local"
-                  value={when}
-                  onChange={(e) => setWhen(e.target.value)}
-                  className="w-full rounded-xl border border-input bg-background/40 px-3.5 py-2.5 text-sm transition-all duration-200 focus-visible:border-primary/50 focus-visible:bg-background/70 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-primary/15"
-                />
-              </div>
-              <div>
-                <Label htmlFor="book-duration">Duration</Label>
-                <Select
-                  id="book-duration"
-                  value={String(durationMin)}
-                  onChange={(e) => setDurationMin(Number(e.target.value))}
-                >
-                  {DURATIONS.map((d) => (
-                    <option key={d} value={d}>
-                      {d < 60 ? `${d} min` : d === 60 ? "1 hour" : `${d / 60} hours`}
-                    </option>
-                  ))}
-                </Select>
-              </div>
-            </div>
-
-            {start && (
-              <p
-                className={cn(
-                  "flex items-center gap-1.5 rounded-xl px-3 py-2 text-xs font-medium",
-                  inPast ? "bg-warning/15 text-warning" : "bg-muted/60 text-muted-foreground",
-                )}
-              >
-                <Clock className="h-3.5 w-3.5 shrink-0" />
-                {inPast
-                  ? `That's in the past — ${formatDayLabel(start)}, ${formatRange(start, durationMin)}`
-                  : `${formatDayLabel(start)} · ${formatRange(start, durationMin)}`}
-              </p>
-            )}
-
-            <div>
-              <Label htmlFor="book-location">Location</Label>
-              <Input
-                id="book-location"
-                value={location}
-                onChange={(e) => setLocation(e.target.value)}
-                placeholder="Where is the review?"
-              />
-              {address && location !== address && (
-                <button
-                  type="button"
-                  onClick={() => setLocation(address)}
-                  className="mt-1 flex items-center gap-1 text-[11px] font-medium text-muted-foreground hover:text-foreground"
-                >
-                  <MapPin className="h-3 w-3" /> Use the home address
-                </button>
-              )}
-            </div>
-
-            <div>
-              <Label htmlFor="book-notes">Notes</Label>
-              <Textarea
-                id="book-notes"
-                value={notes}
-                onChange={(e) => setNotes(e.target.value)}
-                placeholder="What did they agree to? Anything the closer should know…"
-              />
-            </div>
-          </div>
-
-          <div className="flex flex-wrap items-center gap-2 border-t border-border/60 p-4">
-            <Button variant="ghost" size="sm" onClick={onSkip}>
-              No time agreed
-            </Button>
-            <div className="ml-auto flex items-center gap-2">
-              <Button variant="outline" size="sm" onClick={onCancel}>
-                Back
-              </Button>
-              <Button variant="success" size="sm" onClick={confirm} disabled={!start} className="gap-1.5">
-                <CalendarCheck className="h-3.5 w-3.5" /> Book it
-              </Button>
-            </div>
-          </div>
-        </motion.div>
+        <div>
+          <Label htmlFor="book-notes">Notes</Label>
+          <Textarea
+            id="book-notes"
+            value={notes}
+            onChange={(e) => setNotes(e.target.value)}
+            placeholder="What did they agree to? Anything the closer should know…"
+          />
+        </div>
       </div>
-    </Portal>
+
+      <div className="flex flex-wrap items-center gap-2 border-t border-border/60 p-4">
+        <Button variant="ghost" size="sm" onClick={onSkip}>
+          No time agreed
+        </Button>
+        <div className="ml-auto flex items-center gap-2">
+          <Button variant="outline" size="sm" onClick={onCancel}>
+            Back
+          </Button>
+          <Button variant="success" size="sm" onClick={confirm} disabled={!start} className="gap-1.5">
+            <CalendarCheck className="h-3.5 w-3.5" /> Book it
+          </Button>
+        </div>
+      </div>
+    </Modal>
   );
 }

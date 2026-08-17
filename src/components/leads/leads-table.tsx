@@ -2,8 +2,11 @@
 
 import { motion } from "framer-motion";
 import {
+  ArrowDown,
+  ArrowUp,
   BatteryCharging,
   Car,
+  ChevronsUpDown,
   Loader2,
   Pencil,
   PhoneCall,
@@ -17,16 +20,46 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
+import {
+  Fragment,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useTransition,
+} from "react";
 import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
-import { LEAD_GROUPS, type Lead, type LeadStatus } from "@/lib/types";
+import type { Lead, LeadStatus } from "@/lib/types";
+import {
+  CORE_LEAD_FIELDS,
+  formatFieldValue,
+  leadFieldValue,
+  type LeadFieldDef,
+} from "@/lib/leads/field-schema";
 import { leadStatusConfig } from "@/lib/status";
 import { applyLabelOverride } from "@/lib/leads/group-labels";
-import { SMART_LISTS, countSmartLists, smartListById } from "@/lib/leads/smart-lists";
-import { cn, digitsOnly, formatAddress, formatCurrency, formatPhone, initials } from "@/lib/utils";
+import { SMART_LISTS } from "@/lib/leads/smart-lists";
+import { cn, formatAddress, formatNumber, formatPhone, initials } from "@/lib/utils";
 import { EditLeadDialog } from "./edit-lead-dialog";
+
+/** The server-side filter set, mirrored in the URL (see leads/page.tsx). */
+export interface LeadsTableFilters {
+  q?: string;
+  status?: LeadStatus;
+  smart?: string;
+  /** Group key; "__misc__" = ungrouped. */
+  group?: string;
+  /** Campaign id; "__none__" = unassigned. */
+  campaignId?: string;
+  uploaderId?: string;
+  mine?: boolean;
+  /** Server-side sort as "key.dir" (e.g. "ai_score.desc") — whitelisted in
+   *  leads/page.tsx AND again inside the SQL. Absent = upload order. */
+  sort?: string;
+}
 
 const FILTERS: Array<{ value: LeadStatus | "all"; label: string }> = [
   { value: "all", label: "All" },
@@ -37,7 +70,10 @@ const FILTERS: Array<{ value: LeadStatus | "all"; label: string }> = [
   { value: "appointment", label: "Appointment" },
 ];
 
-const GROUP_LABELS: Record<(typeof LEAD_GROUPS)[number], string> = {
+/** Human labels for the ORIGINAL fixed keys, used only when a lead carries a
+ *  key the org's current group list no longer contains (e.g. a group deleted
+ *  after those leads were filed) — better a readable name than a raw slug. */
+const LEGACY_GROUP_LABELS: Record<string, string> = {
   fresno: "Fresno",
   houston: "Houston",
   dallas: "Dallas",
@@ -45,16 +81,96 @@ const GROUP_LABELS: Record<(typeof LEAD_GROUPS)[number], string> = {
   manual: "Manual Dialing",
 };
 
+/** Core field keys → the app_leads_page sort-whitelist key backing them. Only
+ *  these schema columns get sortable headers — custom fields sit in jsonb with
+ *  no SQL sort lane, so their headers stay static. */
+const CORE_FIELD_SORTS: Record<string, string> = {
+  utilityBill: "utility_bill",
+  solarPayment: "solar_payment",
+};
+
+/** Boolean core slots keep their signature icons; other booleans get a badge. */
+const FLAG_ICONS: Record<string, typeof Car> = {
+  hasEV: Car,
+  hasPool: Waves,
+  hasBattery: BatteryCharging,
+};
+
+type SortState = { key: string; dir: "asc" | "desc" } | null;
+
+/**
+ * A sortable column header. Click cycles: the column's natural direction →
+ * the opposite → back to upload order (the deliberate default). The chevron
+ * pair only surfaces on hover so resting headers stay quiet.
+ */
+function SortableTh({
+  label,
+  sortKey,
+  numeric = false,
+  sort,
+  onToggle,
+}: {
+  label: string;
+  sortKey: string;
+  /** Right-aligns and makes DESC the first-click direction (big values first). */
+  numeric?: boolean;
+  sort: SortState;
+  onToggle: (key: string, defaultDir: "asc" | "desc") => void;
+}) {
+  const dir = sort?.key === sortKey ? sort.dir : null;
+  return (
+    <th
+      aria-sort={dir ? (dir === "asc" ? "ascending" : "descending") : undefined}
+      className={cn("px-4 py-3", numeric && "text-right")}
+    >
+      <button
+        type="button"
+        onClick={() => onToggle(sortKey, numeric ? "desc" : "asc")}
+        title={`Sort by ${label.toLowerCase()}`}
+        className={cn(
+          "group/sort inline-flex items-center gap-1 text-xs font-semibold uppercase tracking-wide transition-colors",
+          dir ? "text-foreground" : "text-muted-foreground hover:text-foreground",
+        )}
+      >
+        {label}
+        {dir === "asc" ? (
+          <ArrowUp className="h-3 w-3 text-primary" />
+        ) : dir === "desc" ? (
+          <ArrowDown className="h-3 w-3 text-primary" />
+        ) : (
+          <ChevronsUpDown className="h-3 w-3 opacity-0 transition-opacity group-hover/sort:opacity-60" />
+        )}
+      </button>
+    </th>
+  );
+}
+
 export function LeadsTable({
   leads,
+  total,
+  page,
+  pageSize,
+  smartCounts,
+  filters,
   campaigns = [],
   canManage = false,
   meId = null,
   members = [],
   labelOverrides,
+  orgGroups = [],
+  fields = CORE_LEAD_FIELDS,
   showSolarPayment = true,
 }: {
+  /** ONE server-filtered page of rows — filtering happens in getLeadsPage. */
   leads: Lead[];
+  /** Rows matching the current filters (the pagination denominator). */
+  total: number;
+  page: number;
+  pageSize: number;
+  /** Scope-wide smart-list counts (chips stay stable as filters change). */
+  smartCounts: Record<string, number>;
+  /** The active URL-driven filters this page was rendered with. */
+  filters: LeadsTableFilters;
   campaigns?: { id: string; name: string }[];
   /** Whether the viewer can delete/reassign leads (managers+). Gates that UI. */
   canManage?: boolean;
@@ -62,36 +178,171 @@ export function LeadsTable({
   meId?: string | null;
   /** Org members (id = user id) — targets for reassigning leads between accounts. */
   members?: { id: string; name: string }[];
-  /** Per-org display-label overrides for the dropbox groups (display only). */
+  /** Legacy per-org display-label overrides. The group's own label (below) is
+   *  the primary source now; an override still wins for orgs that set one. */
   labelOverrides?: Record<string, string>;
+  /** The org's own intake groups. Empty falls back to whatever the loaded leads
+   *  carry, so the filter is never empty just because the list didn't load. */
+  orgGroups?: { key: string; label: string }[];
+  /** The org's resolved lead-field schema (resolveLeadFields) — drives which
+   *  data columns render. Defaults to the solar-era core slots. */
+  fields?: LeadFieldDef[];
   /** Show solar-specific fields (per-tenant — off for non-solar orgs). */
   showSolarPayment?: boolean;
 }) {
   const router = useRouter();
-  const [query, setQuery] = useState("");
-  const [filter, setFilter] = useState<LeadStatus | "all">("all");
-  const [smartList, setSmartList] = useState<string | null>(null);
-  const [campaignFilter, setCampaignFilter] = useState<string>("all");
-  const [uploaderFilter, setUploaderFilter] = useState<string>("all");
+  const [isPending, startTransition] = useTransition();
+
+  // Every filter lives in the URL — the server does the actual filtering, so
+  // changing one is a navigation, not a state update. replace() keeps the
+  // history clean while typing; page resets to 1 on any filter change.
+  const navigate = useCallback(
+    (next: LeadsTableFilters, nextPage: number) => {
+      const sp = new URLSearchParams();
+      if (next.q) sp.set("q", next.q);
+      if (next.status) sp.set("status", next.status);
+      if (next.smart) sp.set("smart", next.smart);
+      if (next.group) sp.set("group", next.group);
+      if (next.campaignId) sp.set("campaign", next.campaignId);
+      if (next.uploaderId) sp.set("uploader", next.uploaderId);
+      if (next.mine) sp.set("mine", "1");
+      if (next.sort) sp.set("sort", next.sort);
+      if (nextPage > 1) sp.set("page", String(nextPage));
+      const qs = sp.toString();
+      startTransition(() => {
+        router.replace(qs ? `/leads?${qs}` : "/leads", { scroll: false });
+      });
+    },
+    [router],
+  );
+  // Merge every change onto the latest INTENDED filters, not the server-
+  // rendered prop: the prop only updates when the RSC round trip lands, so two
+  // quick changes (click a status chip, then a smart chip — or type while a
+  // chip navigation is pending) would silently drop the first one.
+  const intendedFilters = useRef(filters);
+  const filtersKey = JSON.stringify(filters);
+  useEffect(() => {
+    // Re-sync only when the SERVER-CONFIRMED filters actually changed value —
+    // a parent re-render mid-transition passes the same old values under a new
+    // object identity and must not revert a pending intent.
+    intendedFilters.current = filters;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filtersKey]);
+  const applyFilters = useCallback(
+    (patch: Partial<LeadsTableFilters>) => {
+      const next = { ...intendedFilters.current, ...patch };
+      intendedFilters.current = next;
+      navigate(next, 1);
+    },
+    [navigate],
+  );
+  const goToPage = useCallback(
+    (p: number) => navigate(intendedFilters.current, Math.max(1, p)),
+    [navigate],
+  );
+
+  // Sort state lives in the URL like every other filter ("key.dir"), rendered
+  // from the server-confirmed value so headers never show a sort that wasn't
+  // applied. Changing it resets to page 1 via applyFilters.
+  const activeSort: SortState = useMemo(() => {
+    const raw = filters.sort ?? "";
+    const dot = raw.indexOf(".");
+    if (dot <= 0) return null;
+    return { key: raw.slice(0, dot), dir: raw.slice(dot + 1) === "desc" ? "desc" : "asc" };
+  }, [filters.sort]);
+  const toggleSort = useCallback(
+    (key: string, defaultDir: "asc" | "desc") => {
+      let next: string | undefined;
+      if (activeSort?.key !== key) next = `${key}.${defaultDir}`;
+      else if (activeSort.dir === defaultDir)
+        next = `${key}.${defaultDir === "asc" ? "desc" : "asc"}`;
+      else next = undefined; // third click: back to upload order
+      applyFilters({ sort: next });
+    },
+    [activeSort, applyFilters],
+  );
+
+  // Schema-driven data columns. Booleans collapse into ONE compact flag cell
+  // (the old "Home" column, generalized); everything else gets its own column.
+  // Custom columns cap at 4 to keep row density sane — everything a lead
+  // carries beyond that stays reachable through the edit dialog.
+  const { valueColumns, flagFields } = useMemo(() => {
+    const visible = fields.filter((f) => f.showInTable);
+    const shown = [
+      ...visible.filter((f) => f.source === "core"),
+      ...visible.filter((f) => f.source === "custom").slice(0, 4),
+    ];
+    return {
+      valueColumns: shown.filter((f) => f.type !== "boolean"),
+      flagFields: shown.filter((f) => f.type === "boolean"),
+    };
+  }, [fields]);
+
+  // Filter options = the org's groups, plus any key the loaded leads still
+  // carry that isn't in that list (a deleted group's leftovers), so a lead is
+  // never unreachable by filtering.
+  const groupOptions = useMemo(() => {
+    const seen = new Map<string, string>();
+    for (const g of orgGroups) {
+      seen.set(g.key, applyLabelOverride(g.key, g.label, labelOverrides));
+    }
+    for (const l of leads) {
+      if (l.leadGroup && !seen.has(l.leadGroup)) {
+        seen.set(
+          l.leadGroup,
+          applyLabelOverride(
+            l.leadGroup,
+            LEGACY_GROUP_LABELS[l.leadGroup] ?? l.leadGroup,
+            labelOverrides,
+          ),
+        );
+      }
+    }
+    return [...seen].map(([key, label]) => ({ key, label }));
+  }, [orgGroups, leads, labelOverrides]);
+
+  const groupLabelOf = useCallback(
+    (key: string) => groupOptions.find((g) => g.key === key)?.label ?? key,
+    [groupOptions],
+  );
+
+  // The search input is the one filter kept in local state — for keystroke
+  // responsiveness — and debounced into the URL, where the server reads it.
+  const [query, setQuery] = useState(filters.q ?? "");
+  const applyFiltersRef = useRef(applyFilters);
+  applyFiltersRef.current = applyFilters;
+  const urlQ = filters.q ?? "";
+  useEffect(() => {
+    const target = query.trim();
+    if (target === urlQ) return;
+    const t = setTimeout(
+      () => applyFiltersRef.current({ q: target || undefined }),
+      350,
+    );
+    return () => clearTimeout(t);
+  }, [query, urlQ]);
+
   // "My leads" = uploaded by me OR assigned to me — the same working set the
   // dialer's toggle uses, so the two screens agree on what "mine" means.
   // Deliberately broader than the "Your uploads" option in the uploader
   // dropdown, which is owner-only and would hide leads a manager routed to you.
-  const [mineOnly, setMineOnly] = useState(false);
-  // Remembered per user across visits, matching the dialer's toggle. Read after
-  // mount rather than in the initializer so the server-rendered markup matches.
+  // Remembered per user across visits (matching the dialer's toggle): on first
+  // mount a saved preference is promoted into the URL, where the filter lives.
   const mineKey = meId ? `aj:leadsMineOnly:${meId}` : null;
+  const mineSeeded = useRef(false);
   useEffect(() => {
-    if (!mineKey) return;
+    if (!mineKey || mineSeeded.current) return;
+    mineSeeded.current = true;
     try {
-      const saved = window.localStorage.getItem(mineKey);
-      if (saved != null) setMineOnly(saved === "1");
+      if (window.localStorage.getItem(mineKey) === "1" && !filters.mine) {
+        applyFiltersRef.current({ mine: true });
+      }
     } catch {
       /* storage disabled — the toggle just won't persist */
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mineKey]);
   const setMineOnlyPersisted = (v: boolean) => {
-    setMineOnly(v);
     if (mineKey) {
       try {
         window.localStorage.setItem(mineKey, v ? "1" : "0");
@@ -99,9 +350,15 @@ export function LeadsTable({
         /* noop */
       }
     }
+    applyFilters({ mine: v || undefined });
   };
-  const [groupFilter, setGroupFilter] = useState<string>("all");
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  // Selection is page-scoped: ids from a previous page or filter would make
+  // the bulk bar act on rows the user can no longer see.
+  const pageKey = `${page}|${JSON.stringify(filters)}`;
+  useEffect(() => {
+    setSelected(new Set());
+  }, [pageKey]);
   const [assignTo, setAssignTo] = useState("");
   const [reassignTo, setReassignTo] = useState("");
   const [assignRepTo, setAssignRepTo] = useState("");
@@ -143,12 +400,18 @@ export function LeadsTable({
     [campaigns],
   );
 
-  // Distinct uploaders present in the data — powers the "Uploaded by" filter
-  // (only meaningful for supervisors, who see more than one).
+  // Options for the "Uploaded by" filter: the org's members (a supervisor's
+  // reassign list) plus any owner present on the page the members list misses
+  // (e.g. a departed member's leftovers) — so a lead is never unreachable.
   const uploaders = useMemo(() => {
     const m = new Map<string, string>();
+    if (canManage) {
+      for (const mem of members) {
+        m.set(mem.id, mem.id === meId ? "Your uploads" : mem.name || "Teammate");
+      }
+    }
     for (const l of leads) {
-      if (!l.ownerId) continue;
+      if (!l.ownerId || m.has(l.ownerId)) continue;
       m.set(
         l.ownerId,
         meId && l.ownerId === meId
@@ -157,71 +420,20 @@ export function LeadsTable({
       );
     }
     return [...m.entries()].map(([id, name]) => ({ id, name }));
-  }, [leads, meId]);
+  }, [canManage, members, leads, meId]);
 
-  // Is there anything for "My leads" to hide? False for a rep who only ever
-  // sees their own book, in which case the toggle is pointless noise.
-  const hasOthersLeads = useMemo(
-    () =>
-      Boolean(meId) &&
-      leads.some((l) => l.ownerId !== meId && l.assignedRepId !== meId),
-    [leads, meId],
-  );
+  // Is there anything for "My leads" to hide? With server filtering the page
+  // can't prove it, so also key off org size — and keep the toggle visible
+  // while it's ACTIVE (every visible row is mine then, by construction).
+  const hasOthersLeads =
+    Boolean(meId) &&
+    (Boolean(filters.mine) ||
+      members.length > 1 ||
+      leads.some((l) => l.ownerId !== meId && l.assignedRepId !== meId));
 
-  // Counts for the smart-list chips — over ALL leads so they stay stable as
-  // other filters change. Cheap pure evaluation, same idiom as the row filter.
-  const smartCounts = useMemo(() => countSmartLists(leads), [leads]);
-  const activeSmartList = smartList ? smartListById(smartList) : undefined;
-
-  const filtered = useMemo(() => {
-    return leads.filter((l) => {
-      const matchesFilter = filter === "all" || l.status === filter;
-      const matchesSmart = !activeSmartList || activeSmartList.match(l);
-      const matchesCampaign =
-        campaignFilter === "all" ||
-        (campaignFilter === "none" ? !l.campaignId : l.campaignId === campaignFilter);
-      const matchesUploader =
-        uploaderFilter === "all" || l.ownerId === uploaderFilter;
-      const matchesMine =
-        !mineOnly || (Boolean(meId) && (l.ownerId === meId || l.assignedRepId === meId));
-      const matchesGroup =
-        groupFilter === "all" ||
-        (groupFilter === "unsorted" ? !l.leadGroup : l.leadGroup === groupFilter);
-      const q = query.trim().toLowerCase();
-      // Phone numbers are stored E.164 ("+14085551234") but reps type what they
-      // see formatted ("(408) 555-1234") — a plain substring check never matches
-      // punctuation against the raw digits, so numbers effectively never turn up
-      // in search. Compare digits-only too whenever the query has enough of them
-      // to mean something (guards against a 1-2 digit fragment matching everyone).
-      const qDigits = digitsOnly(query);
-      const matchesQuery =
-        !q ||
-        `${l.firstName} ${l.lastName}`.toLowerCase().includes(q) ||
-        l.city.toLowerCase().includes(q) ||
-        l.phone.includes(q) ||
-        (qDigits.length >= 3 && digitsOnly(l.phone).includes(qDigits)) ||
-        l.utilityProvider.toLowerCase().includes(q);
-      return (
-        matchesFilter &&
-        matchesSmart &&
-        matchesCampaign &&
-        matchesUploader &&
-        matchesMine &&
-        matchesGroup &&
-        matchesQuery
-      );
-    });
-  }, [
-    leads,
-    filter,
-    activeSmartList,
-    campaignFilter,
-    uploaderFilter,
-    mineOnly,
-    meId,
-    groupFilter,
-    query,
-  ]);
+  // Rows arrive already filtered by the server — `filtered` survives only as
+  // the name downstream markup renders.
+  const filtered = leads;
 
   const allSelected = filtered.length > 0 && filtered.every((l) => selected.has(l.id));
   const toggleAll = () =>
@@ -401,7 +613,13 @@ export function LeadsTable({
     return [...m.values()].sort((a, b) => b.leads.length - a.leads.length);
   }, [filtered, meId]);
   const sectioned = groups.length > 1;
-  const colSpan = selectable ? 9 : 8;
+  // Fixed columns: Homeowner/Location/Campaign + Status/AI + actions (6), plus
+  // the dynamic schema columns and the optional checkbox column.
+  const dynamicCols = valueColumns.length + (flagFields.length > 0 ? 1 : 0);
+  const colSpan = (selectable ? 1 : 0) + 6 + dynamicCols;
+  // The old fixed layout (Bill + Home = 2 dynamic columns) fit in 900px; give
+  // every column beyond that its own breathing room and let the wrapper scroll.
+  const tableMinWidth = 900 + Math.max(0, dynamicCols - 2) * 110;
 
   return (
     <div className="space-y-4">
@@ -414,13 +632,13 @@ export function LeadsTable({
             Smart lists
           </span>
           {SMART_LISTS.filter((sl) => smartCounts[sl.id] > 0).map((sl) => {
-            const active = smartList === sl.id;
+            const active = filters.smart === sl.id;
             return (
               <button
                 key={sl.id}
                 type="button"
                 title={sl.description}
-                onClick={() => setSmartList(active ? null : sl.id)}
+                onClick={() => applyFilters({ smart: active ? undefined : sl.id })}
                 className={cn(
                   "flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium transition-colors",
                   active
@@ -440,10 +658,10 @@ export function LeadsTable({
               </button>
             );
           })}
-          {smartList && (
+          {filters.smart && (
             <button
               type="button"
-              onClick={() => setSmartList(null)}
+              onClick={() => applyFilters({ smart: undefined })}
               className="text-xs font-medium text-muted-foreground hover:text-foreground"
             >
               Clear
@@ -468,12 +686,12 @@ export function LeadsTable({
           {hasOthersLeads && (
             <button
               type="button"
-              onClick={() => setMineOnlyPersisted(!mineOnly)}
-              aria-pressed={mineOnly}
+              onClick={() => setMineOnlyPersisted(!filters.mine)}
+              aria-pressed={Boolean(filters.mine)}
               title="Show only leads you uploaded or that are assigned to you"
               className={cn(
                 "flex h-9 items-center gap-1.5 rounded-lg border px-2.5 text-sm font-medium transition-colors",
-                mineOnly
+                filters.mine
                   ? "border-primary/60 bg-primary-soft text-primary"
                   : "border-border bg-background/60 text-muted-foreground hover:bg-muted",
               )}
@@ -482,12 +700,16 @@ export function LeadsTable({
               My leads
             </button>
           )}
-          {uploaders.length > 1 && (
+          {(uploaders.length > 1 || filters.uploaderId) && (
             <select
-              value={uploaderFilter}
-              onChange={(e) => setUploaderFilter(e.target.value)}
+              value={filters.uploaderId ?? "all"}
+              onChange={(e) =>
+                applyFilters({
+                  uploaderId: e.target.value === "all" ? undefined : e.target.value,
+                })
+              }
               aria-label="Filter by uploader"
-              disabled={mineOnly}
+              disabled={Boolean(filters.mine)}
               className="h-9 rounded-lg border border-border bg-background/60 px-2.5 text-sm font-medium focus-visible:border-primary/50 focus-visible:outline-none"
             >
               <option value="all">All uploaders</option>
@@ -500,8 +722,17 @@ export function LeadsTable({
           )}
           {campaigns.length > 0 && (
             <select
-              value={campaignFilter}
-              onChange={(e) => setCampaignFilter(e.target.value)}
+              value={filters.campaignId === "__none__" ? "none" : (filters.campaignId ?? "all")}
+              onChange={(e) =>
+                applyFilters({
+                  campaignId:
+                    e.target.value === "all"
+                      ? undefined
+                      : e.target.value === "none"
+                        ? "__none__"
+                        : e.target.value,
+                })
+              }
               className="h-9 rounded-lg border border-border bg-background/60 px-2.5 text-sm font-medium focus-visible:border-primary/50 focus-visible:outline-none"
             >
               <option value="all">All campaigns</option>
@@ -513,29 +744,40 @@ export function LeadsTable({
               ))}
             </select>
           )}
-          {leads.some((l) => l.leadGroup) && (
+          {(orgGroups.length > 0 || leads.some((l) => l.leadGroup) || filters.group) && (
             <select
-              value={groupFilter}
-              onChange={(e) => setGroupFilter(e.target.value)}
+              value={filters.group === "__misc__" ? "unsorted" : (filters.group ?? "all")}
+              onChange={(e) =>
+                applyFilters({
+                  group:
+                    e.target.value === "all"
+                      ? undefined
+                      : e.target.value === "unsorted"
+                        ? "__misc__"
+                        : e.target.value,
+                })
+              }
               aria-label="Filter by group"
               className="h-9 rounded-lg border border-border bg-background/60 px-2.5 text-sm font-medium focus-visible:border-primary/50 focus-visible:outline-none"
             >
               <option value="all">All groups</option>
-              <option value="unsorted">Unsorted</option>
-              {LEAD_GROUPS.map((g) => (
-                <option key={g} value={g}>
-                  {applyLabelOverride(g, GROUP_LABELS[g], labelOverrides)}
+              <option value="unsorted">Miscellaneous</option>
+              {groupOptions.map((g) => (
+                <option key={g.key} value={g.key}>
+                  {g.label}
                 </option>
               ))}
             </select>
           )}
           {FILTERS.map((f) => {
-            const active = filter === f.value;
+            const active = (filters.status ?? "all") === f.value;
             return (
               <button
                 key={f.value}
                 type="button"
-                onClick={() => setFilter(f.value)}
+                onClick={() =>
+                  applyFilters({ status: f.value === "all" ? undefined : f.value })
+                }
                 className={cn(
                   "relative rounded-lg px-3 py-1.5 text-sm font-medium transition-colors duration-200",
                   active ? "text-background" : "bg-muted text-muted-foreground hover:bg-secondary",
@@ -727,9 +969,14 @@ export function LeadsTable({
 
       {err && <p className="text-sm font-medium text-danger">{err}</p>}
 
-      <div className="overflow-hidden rounded-2xl border border-border/60 surface-glass">
+      <div
+        className={cn(
+          "overflow-hidden rounded-2xl border border-border/60 surface-glass transition-opacity",
+          isPending && "opacity-60",
+        )}
+      >
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[900px] text-sm">
+          <table className="w-full text-sm" style={{ minWidth: tableMinWidth }}>
             <thead>
               <tr className="border-b border-border/70 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                 {selectable && (
@@ -743,13 +990,30 @@ export function LeadsTable({
                     />
                   </th>
                 )}
-                <th className="px-4 py-3">Homeowner</th>
-                <th className="px-4 py-3">Location</th>
+                <SortableTh label="Homeowner" sortKey="name" sort={activeSort} onToggle={toggleSort} />
+                <SortableTh label="Location" sortKey="city" sort={activeSort} onToggle={toggleSort} />
                 <th className="px-4 py-3">Campaign</th>
-                <th className="px-4 py-3 text-right">Bill</th>
-                <th className="px-4 py-3">Home</th>
-                <th className="px-4 py-3">Status</th>
-                <th className="px-4 py-3 text-right">AI</th>
+                {valueColumns.map((f) => {
+                  const sortKey = f.source === "core" ? CORE_FIELD_SORTS[f.key] : undefined;
+                  const numeric = f.type === "currency" || f.type === "number";
+                  return sortKey ? (
+                    <SortableTh
+                      key={f.key}
+                      label={f.label}
+                      sortKey={sortKey}
+                      numeric={numeric}
+                      sort={activeSort}
+                      onToggle={toggleSort}
+                    />
+                  ) : (
+                    <th key={f.key} className={cn("px-4 py-3", numeric && "text-right")}>
+                      {f.label}
+                    </th>
+                  );
+                })}
+                {flagFields.length > 0 && <th className="px-4 py-3">Profile</th>}
+                <SortableTh label="Status" sortKey="status" sort={activeSort} onToggle={toggleSort} />
+                <SortableTh label="AI" sortKey="ai_score" numeric sort={activeSort} onToggle={toggleSort} />
                 <th className="px-4 py-3" />
               </tr>
             </thead>
@@ -797,7 +1061,7 @@ export function LeadsTable({
                     )}
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-2.5">
-                        <Avatar initials={initials(name)} color="#3B82F6" size="sm" />
+                        <Avatar initials={initials(name)} tone="chart-1" size="sm" />
                         <div className="min-w-0">
                           <p className="font-semibold">{name || "—"}</p>
                           <p className="text-xs text-muted-foreground tabular">
@@ -837,7 +1101,7 @@ export function LeadsTable({
                             distinct tones so they're never visually conflated. */}
                         {l.leadGroup && (
                           <Badge tone={l.leadGroup === "manual" ? "neutral" : "primary"}>
-                            {applyLabelOverride(l.leadGroup, GROUP_LABELS[l.leadGroup], labelOverrides)}
+                            {groupLabelOf(l.leadGroup)}
                           </Badge>
                         )}
                         {!l.campaignId && !l.leadGroup && (
@@ -845,17 +1109,52 @@ export function LeadsTable({
                         )}
                       </div>
                     </td>
-                    <td className="px-4 py-3 text-right font-semibold tabular">
-                      {l.utilityBill ? formatCurrency(l.utilityBill) : "—"}
-                    </td>
-                    <td className="px-4 py-3">
-                      <div className="flex gap-1 text-muted-foreground">
-                        {l.hasEV && <Car className="h-4 w-4" />}
-                        {l.hasPool && <Waves className="h-4 w-4" />}
-                        {l.hasBattery && <BatteryCharging className="h-4 w-4" />}
-                        {!l.hasEV && !l.hasPool && !l.hasBattery && <span className="text-xs">—</span>}
-                      </div>
-                    </td>
+                    {valueColumns.map((f) => {
+                      const numeric = f.type === "currency" || f.type === "number";
+                      const text = formatFieldValue(leadFieldValue(l, f), f.type);
+                      return (
+                        <td
+                          key={f.key}
+                          className={cn(
+                            "px-4 py-3",
+                            numeric
+                              ? "text-right font-semibold tabular"
+                              : "text-muted-foreground",
+                          )}
+                        >
+                          {numeric ? (
+                            text
+                          ) : (
+                            <span className="block max-w-[180px] truncate" title={text}>
+                              {text}
+                            </span>
+                          )}
+                        </td>
+                      );
+                    })}
+                    {flagFields.length > 0 && (
+                      <td className="px-4 py-3">
+                        <div className="flex flex-wrap items-center gap-1 text-muted-foreground">
+                          {flagFields
+                            .filter((f) => leadFieldValue(l, f) === true)
+                            .map((f) => {
+                              const Icon = FLAG_ICONS[f.key];
+                              return Icon ? (
+                                <span key={f.key} title={f.label}>
+                                  <Icon className="h-4 w-4" />
+                                </span>
+                              ) : (
+                                <Badge key={f.key} tone="neutral">
+                                  {f.label}
+                                </Badge>
+                              );
+                            })}
+                          {flagFields.every((f) => leadFieldValue(l, f) !== true) && (
+                            <span className="text-xs">—</span>
+                          )}
+                        </div>
+                      </td>
+                    )}
                     <td className="px-4 py-3">
                       <Badge tone={cfg.tone}>{cfg.label}</Badge>
                     </td>
@@ -922,15 +1221,47 @@ export function LeadsTable({
           </div>
         )}
       </div>
-      <p className="text-xs text-muted-foreground">
-        Showing {filtered.length} of {leads.length} leads
-      </p>
+      {/* Server-side pagination — `total` counts every row matching the current
+          filters, of which this page renders at most `pageSize`. */}
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-xs text-muted-foreground tabular">
+          {total === 0
+            ? "0 leads"
+            : `Showing ${formatNumber((page - 1) * pageSize + 1)}–${formatNumber(
+                Math.min(page * pageSize, total),
+              )} of ${formatNumber(total)} leads`}
+        </p>
+        {total > pageSize && (
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={page <= 1 || isPending}
+              onClick={() => goToPage(page - 1)}
+            >
+              Previous
+            </Button>
+            <span className="text-xs text-muted-foreground tabular">
+              Page {formatNumber(page)} of {formatNumber(Math.max(1, Math.ceil(total / pageSize)))}
+            </span>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={page >= Math.ceil(total / pageSize) || isPending}
+              onClick={() => goToPage(page + 1)}
+            >
+              Next
+            </Button>
+          </div>
+        )}
+      </div>
 
       {editing && (
         <EditLeadDialog
           lead={editing}
           onClose={() => setEditing(null)}
           showSolarPayment={showSolarPayment}
+          fields={fields}
         />
       )}
     </div>

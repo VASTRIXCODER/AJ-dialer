@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { orgAIContext } from "@/lib/ai/org-context";
 import { getExecutiveReport } from "@/lib/ai/services";
 import { getUser } from "@/lib/auth";
 import { getReportingData } from "@/lib/db/metrics";
@@ -13,6 +14,6 @@ export async function POST() {
     return NextResponse.json({ data: null, source: "demo" });
   }
   const [{ metrics }, viewer] = await Promise.all([getReportingData(), getViewer()]);
-  const isSolar = viewer.org ? viewer.org.dialerTemplate === "solar" : true;
-  return NextResponse.json(await getExecutiveReport(metrics, isSolar));
+  const ctx = orgAIContext(viewer.org);
+  return NextResponse.json(await getExecutiveReport(metrics, ctx.isSolar, ctx));
 }

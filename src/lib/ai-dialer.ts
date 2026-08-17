@@ -1,9 +1,11 @@
 import "server-only";
 
 import { resolveAgentConfig } from "./ai/agent-prompt";
+import { finalizeAIConversation } from "./ai-call-finalize";
 import { armProbe, breakerStatus, recordProviderFailure } from "./ai-call-breaker";
 import { registerAICall } from "./ai-call-store";
 import { isQuotaMessage } from "./call-disposition";
+import { isOnDnc } from "./db/dnc";
 import { seedAIConversation } from "./db/records";
 import { nextCallerIdWithInfo } from "./dialer/rotation-server";
 import {
@@ -95,15 +97,27 @@ async function bridgeIntoConference(opts: {
   const moveTwiml = xml(
     `<Dial><Conference startConferenceOnEnter="true" endConferenceOnExit="false" beep="false">${escapeXml(opts.room)}</Conference></Dial>`,
   );
-  for (let i = 0; i < 5; i++) {
-    try {
-      await client.calls(opts.agentCallSid).update({ twiml: moveTwiml });
-      break;
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : "";
-      if (i === 4 || !/21220|not.?in.?progress/i.test(msg)) throw e;
-      await sleep(700);
+  try {
+    for (let i = 0; i < 5; i++) {
+      try {
+        await client.calls(opts.agentCallSid).update({ twiml: moveTwiml });
+        break;
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : "";
+        if (i === 4 || !/21220|not.?in.?progress/i.test(msg)) throw e;
+        await sleep(700);
+      }
     }
+  } catch (e) {
+    // The agent leg never made it into the conference. The homeowner's leg is
+    // already ringing/answered into an empty room — hang it up so a real person
+    // isn't left listening to silence while it (and the agent) burn on the clock.
+    try {
+      await client.calls(customer.sid).update({ status: "completed" });
+    } catch {
+      /* already gone */
+    }
+    throw e;
   }
   return customer.sid;
 }
@@ -154,6 +168,14 @@ export async function placeAiCallForLead(opts: {
   if (toNumber.replace(/\D/g, "").length < 10) {
     return { conversationId: null, callSid: null, error: "Invalid phone number" };
   }
+
+  // DNC scrub: never place an AI call to a suppressed number. The cron path also
+  // scrubs its lead list up front, but this backstops interactive AI calls and
+  // any number suppressed (via import / SMS STOP) after the queue was built.
+  if (org?.id && (await isOnDnc(org.id, toNumber))) {
+    return { conversationId: null, callSid: null, error: "On the Do Not Call list" };
+  }
+
   const leadName = `${lead.firstName} ${lead.lastName}`.trim() || formatPhone(toNumber);
 
   // ── GUARDRAIL 1: the circuit breaker ───────────────────────────────────────
@@ -224,7 +246,10 @@ export async function placeAiCallForLead(opts: {
     const result = await placeOutboundCall({
       toNumber: dialTarget,
       agentId: el.agentId,
-      dynamicVariables: agentVariablesForLead(lead, { company: org?.name }),
+      dynamicVariables: agentVariablesForLead(lead, {
+        company: org?.name,
+        dialerTemplate: org?.dialerTemplate,
+      }),
       promptOverride: agent.systemPrompt,
       firstMessage: agent.firstMessage,
       language: agent.language,
@@ -244,6 +269,7 @@ export async function placeAiCallForLead(opts: {
 
     let room: string | undefined;
     let customerCallSid: string | undefined;
+    let bridgeFailed = false;
     if (bridge && result.callSid) {
       try {
         room = aiConferenceRoom(result.conversationId);
@@ -258,7 +284,18 @@ export async function placeAiCallForLead(opts: {
         });
         customerCallSid = sid ?? undefined;
       } catch {
-        room = undefined; // bridge failed — call still connects, just no live-listen
+        // Bridge join failed. bridgeIntoConference already hung up the homeowner
+        // leg it created; hang up the AGENT leg too so it doesn't sit on the
+        // bridge <Pause> monologuing on credits, and disposition the call as a
+        // system failure below (so the lead stays un-burned, not a fake no-answer).
+        room = undefined;
+        bridgeFailed = true;
+        try {
+          const client = await getRestClient();
+          await client?.calls(result.callSid).update({ status: "completed" });
+        } catch {
+          /* best-effort — the reconciler is the backstop */
+        }
       }
     }
 
@@ -290,7 +327,29 @@ export async function placeAiCallForLead(opts: {
       // Which persona placed the call (Agent 1 / Agent 2), so a booking it closes
       // is attributed to the right agent on the appointments tabs.
       agentKey: el.key,
+      // Fallback owner for the unattended cron path, which has no rep session:
+      // without this the row was never written and the call was never recorded.
+      // The interactive path still attributes to the signed-in rep (seed resolves
+      // the session first). repUserId can be a synthetic "org:<id>" rotation key,
+      // so use the real org owner id here (may be null → row still records).
+      ownerId: org?.ownerId ?? null,
     });
+
+    if (bridgeFailed) {
+      // Disposition it as a system failure (outcome null → the lead is NOT
+      // re-filed and the call is excluded from every rate denominator). Seeded
+      // first so the row exists and this finalize can attribute it.
+      await finalizeAIConversation({
+        conversationId: result.conversationId,
+        turns: [],
+        failureKind: "bridge_join_failed",
+      }).catch(() => {});
+      return {
+        conversationId: result.conversationId,
+        callSid: result.callSid,
+        error: "The AI call couldn't be bridged into the conference.",
+      };
+    }
 
     return {
       conversationId: result.conversationId,

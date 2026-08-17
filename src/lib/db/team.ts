@@ -28,7 +28,9 @@ export async function getTeam(): Promise<TeamMember[]> {
       email: p.id === user.id ? (user.email ?? "") : "",
       role: (p.role as string) || "manager",
       team: (p.team as string) || "AIATWORK",
-      avatarColor: (p.avatar_color as string) || "#3B82F6",
+      // Empty when unset — Avatar's seed prop then hash-picks a chart tone,
+      // which tracks light/dark instead of a flat hardcoded blue.
+      avatarColor: (p.avatar_color as string) || "",
     }));
   } catch {
     return [];

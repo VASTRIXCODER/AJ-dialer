@@ -90,6 +90,15 @@ export async function POST(req: Request) {
 
   const viewer = await getViewer();
 
+  // AUTH: an anonymous caller must never reach the dialer. Previously the gate
+  // below was skipped entirely when `viewer.org` was null — which is exactly the
+  // case for an anonymous caller — so unauthenticated requests placed real AI
+  // calls (and burned ElevenLabs credits). Demo mode (no Supabase) resolves to a
+  // demo owner of the demo org, so it passes both checks and stays explorable.
+  if (!viewer.isDemo && !viewer.user) {
+    return NextResponse.json({ error: "Sign in to place calls." }, { status: 401 });
+  }
+
   // Gate the AI dialer server-side: an org may have it off (premium lock) or
   // restrict it to managers+ (reps without `dialer.ai`). Mirrors the dialer UI.
   if (viewer.org) {
@@ -103,6 +112,12 @@ export async function POST(req: Request) {
         { status: 403 },
       );
     }
+  } else if (!viewer.isDemo) {
+    // Signed in, but not a member of any organization — no dialing context.
+    return NextResponse.json(
+      { error: "Join an organization to place calls." },
+      { status: 403 },
+    );
   }
 
   const result = await placeAiCallForLead({

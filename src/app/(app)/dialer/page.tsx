@@ -3,7 +3,7 @@ import { DialerClient } from "@/components/dialer/dialer-client";
 import { PageContainer, PageHeader } from "@/components/shared/page-header";
 import { Badge } from "@/components/ui/badge";
 import { getCampaigns } from "@/lib/db/pipeline";
-import { getDialQueue } from "@/lib/leads-source";
+import { getDialQueueCount } from "@/lib/db/leads";
 import { getViewer } from "@/lib/org/membership";
 import { isSolarVertical } from "@/lib/org/vertical";
 import { DEFAULT_FEATURES, resolveDialerAccess } from "@/lib/org/settings";
@@ -14,14 +14,23 @@ export const dynamic = "force-dynamic";
 export default async function DialerPage({
   searchParams,
 }: {
-  searchParams: Promise<{ campaign?: string; dial?: string; name?: string }>;
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
-  const [{ campaign, dial, name }, queue, campaigns, viewer] = await Promise.all([
+  // Count only — the queue itself is fetched ONCE client-side via
+  // /api/leads/queue (the same path every refetch already uses). Serializing
+  // tens of thousands of Lead objects into the RSC payload just to seed a
+  // provider that ignores them on every revisit was pure transfer waste.
+  const [sp, queueCount, campaigns, viewer] = await Promise.all([
     searchParams,
-    getDialQueue(),
+    getDialQueueCount(),
     getCampaigns(),
     getViewer(),
   ]);
+  // A repeated query param arrives as an array — take the first, never crash.
+  const one = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v);
+  const campaign = one(sp.campaign);
+  const dial = one(sp.dial);
+  const name = one(sp.name);
   // Only used for the header badge copy — the dialer engine + its full access
   // gates now live in the app-wide DialerProvider (AppShell).
   const { manualEnabled } = resolveDialerAccess(
@@ -30,7 +39,9 @@ export default async function DialerPage({
   );
   const dialCampaigns = campaigns
     .filter((c) => c.status !== "completed")
-    .map((c) => ({ id: c.id, name: c.name }));
+    // Scripts ride along so the in-call Script card can show the assigned
+    // variant without another fetch.
+    .map((c) => ({ id: c.id, name: c.name, scriptA: c.scriptA, scriptB: c.scriptB }));
 
   // Sanitise callback params — only digits/+ allowed in phone to prevent injection.
   const callbackPhone = dial ? dial.replace(/[^\d+]/g, "") : undefined;
@@ -42,10 +53,10 @@ export default async function DialerPage({
         title="Power Dialer"
         description={`Browser-based dialing with live ${isSolarVertical(viewer.org?.dialerTemplate) ? "solar " : ""}qualification. No desk phone required.`}
       >
-        {queue.length > 0 ? (
+        {queueCount > 0 ? (
           <Badge tone="accent" className="gap-1.5">
             <Users className="h-3.5 w-3.5" />
-            {queue.length} in queue
+            {queueCount} in queue
           </Badge>
         ) : (
           <Badge tone="neutral" className="gap-1.5">
@@ -56,7 +67,7 @@ export default async function DialerPage({
       </PageHeader>
 
       <DialerClient
-        queue={queue}
+        queue={[]}
         campaigns={dialCampaigns}
         initialCampaign={campaign ?? ""}
         callbackPhone={callbackPhone}

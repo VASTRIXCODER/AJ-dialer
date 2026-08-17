@@ -70,3 +70,56 @@ export function statsForCampaign(
     connectRate: pct(connects, calls_),
   };
 }
+
+// ── Script A/B test splitter ─────────────────────────────────────────────────
+
+/** One script variant's slice of a campaign's call performance. */
+export interface ScriptVariantStats {
+  calls: number;
+  connects: number;
+  /** connects / calls, one decimal. */
+  connectRate: number;
+  appointments: number;
+  /** appointments / connects, one decimal — same math as the funnel's apptRate. */
+  apptRate: number;
+}
+
+export interface ScriptTestStats {
+  a: ScriptVariantStats;
+  b: ScriptVariantStats;
+}
+
+export function emptyVariantStats(): ScriptVariantStats {
+  return { calls: 0, connects: 0, connectRate: 0, appointments: 0, apptRate: 0 };
+}
+
+function variantStats(rows: Row[]): ScriptVariantStats {
+  const calls = rows.length;
+  const connects = rows.filter((c) => {
+    const o = c.outcome as CallOutcome | null;
+    return o != null && CONNECTED_OUTCOMES.has(o);
+  }).length;
+  const appointments = rows.filter((c) => c.outcome === "appointment_booked").length;
+  return {
+    calls,
+    connects,
+    connectRate: pct(connects, calls),
+    appointments,
+    apptRate: pct(appointments, connects),
+  };
+}
+
+/**
+ * Per-variant performance for one campaign's script A/B test, from already-
+ * fetched call rows ({ campaign_id, outcome, script_variant }). Only rows where
+ * a script was actually shown (script_variant "a"/"b") are counted — rows with
+ * a null/unknown variant (e.g. auto-filed no-answers from parallel dials, or
+ * calls predating the test) carry no script context and sit outside the split.
+ */
+export function scriptTestForCampaign(campaignId: string, calls: Row[]): ScriptTestStats {
+  const mine = calls.filter((c) => String(c.campaign_id ?? "") === campaignId);
+  return {
+    a: variantStats(mine.filter((c) => c.script_variant === "a")),
+    b: variantStats(mine.filter((c) => c.script_variant === "b")),
+  };
+}

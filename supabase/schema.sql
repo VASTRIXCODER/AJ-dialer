@@ -1372,44 +1372,518 @@ create index if not exists campaign_certifications_org_idx
   on public.campaign_certifications (org_id, campaign_id, version);
 alter table public.campaign_certifications enable row level security;
 
--- ─────────────────────────────────────────────────────────────────────────────
--- PART 17 — LEAD PACKS  (idempotent; safe to re-run)
+-- ═════════════════════════════════════════════════════════════════════════════
+-- PART 17 — ORG-DEFINED LEAD GROUPS + LEAD PACKS  (idempotent; safe to re-run)
 --
--- A "pack" is a named, durable batch of leads handed to one rep: "Houston Batch
--- 3 — 200 leads, Marcus, created Tuesday". Managers could already bulk-assign
--- leads, but only by hand-ticking rows in the table, which doesn't scale past a
--- screenful and leaves no record of what was handed out or how far through it
--- the rep got.
+-- Generalizes PART 14. `lead_group` used to be five hardcoded geographic buckets
+-- (fresno/houston/dallas/california/manual) enforced by a CHECK constraint and
+-- shared by every tenant, with per-org settings able to RENAME them but never
+-- change what they were. A workspace whose book isn't Californian or Texan had
+-- to file everything into someone else's taxonomy.
 --
--- The pack row is the record; `leads.pack_id` is the membership. Progress is
--- derived by counting member leads per status rather than stored, so it can
--- never drift from the leads themselves.
--- ─────────────────────────────────────────────────────────────────────────────
-create table if not exists public.lead_packs (
-  id           uuid primary key default gen_random_uuid(),
-  org_id       uuid not null references public.organizations (id) on delete cascade,
-  name         text not null,
-  -- The rep holding the pack. Null once reclaimed (the pack row survives as
-  -- history — who had what, and when it came back).
-  assigned_to  uuid references auth.users (id) on delete set null,
-  created_by   uuid references auth.users (id) on delete set null,
-  -- Lead count at creation. Kept as a snapshot: member leads can be deleted
-  -- later, and "we handed over 200" stays true regardless.
-  size         int not null default 0,
-  -- The filter the pack was built from (group / campaign / statuses), stored so
-  -- a manager can see how a pack was cut months later.
-  source       jsonb not null default '{}'::jsonb,
-  status       text not null default 'active',   -- active | reclaimed
-  created_at   timestamptz not null default now(),
-  reclaimed_at timestamptz
+-- Two tables now:
+--
+--   lead_groups — the buckets THIS org sorts into, created by its own admins.
+--     `description` is the plain-English rule the AI classifier sorts against
+--     ("Dallas/Fort Worth area codes and cities"), so a group means whatever the
+--     org says it means. `kind` is load-bearing:
+--       'sorted' — the AI may assign leads here.
+--       'manual' — a human files leads here on purpose; the AI NEVER assigns it
+--                  (enforced by omitting it from the classifier's enum, exactly
+--                  as the old geo classifier excluded 'manual').
+--
+--   lead_packs — numbered slices of ONE upload ("Jan list · Pack 7"), so a
+--     10,000-row file can be handed out 100 at a time. Deliberately a SEPARATE
+--     axis from groups: a lead has both, so "the North Texas leads in Pack 7"
+--     is answerable and packs can be dealt to reps without disturbing grouping.
+--
+-- leads.lead_group stays TEXT holding a group key (not a uuid FK) so the 7,614
+-- already-grouped rows keep working untouched and the legacy keys stay valid;
+-- validity is enforced in application code against this org's rows, the same
+-- way the rest of the app scopes by org. The old CHECK is dropped because it
+-- would reject every custom key.
+-- ═════════════════════════════════════════════════════════════════════════════
+
+create table if not exists public.lead_groups (
+  id          uuid primary key default gen_random_uuid(),
+  org_id      uuid not null references public.organizations(id) on delete cascade,
+  key         text not null,
+  label       text not null,
+  description text not null default '',
+  kind        text not null default 'sorted' check (kind in ('sorted','manual')),
+  sort_order  int  not null default 0,
+  created_at  timestamptz not null default now(),
+  unique (org_id, key)
 );
-create index if not exists lead_packs_org_idx on public.lead_packs (org_id, status, created_at desc);
-create index if not exists lead_packs_rep_idx on public.lead_packs (assigned_to, status);
+create index if not exists lead_groups_org_idx on public.lead_groups (org_id, sort_order);
+alter table public.lead_groups enable row level security;
+
+create table if not exists public.lead_packs (
+  id          uuid primary key default gen_random_uuid(),
+  org_id      uuid not null references public.organizations(id) on delete cascade,
+  batch       text not null default '',
+  seq         int  not null default 1,
+  label       text not null,
+  size        int  not null default 0,
+  created_by  uuid,
+  created_at  timestamptz not null default now()
+);
+create index if not exists lead_packs_org_idx on public.lead_packs (org_id, created_at desc);
 alter table public.lead_packs enable row level security;
 
--- Membership. `on delete set null` so deleting a pack releases its leads rather
--- than cascading into lead deletion — losing the paperwork must never lose the
--- homeowners.
-alter table public.leads add column if not exists pack_id uuid
-  references public.lead_packs (id) on delete set null;
-create index if not exists leads_pack_idx on public.leads (pack_id);
+alter table public.leads
+  add column if not exists lead_pack_id uuid references public.lead_packs(id) on delete set null;
+create index if not exists leads_lead_pack_idx
+  on public.leads (lead_pack_id) where lead_pack_id is not null;
+
+-- The five fixed keys are no longer the only legal values.
+alter table public.leads drop constraint if exists leads_lead_group_check;
+
+-- Seed every existing org with the legacy buckets so nothing an org already
+-- filed becomes an orphan key, and so a workspace that never opens the new
+-- admin screen behaves exactly as it did before.
+insert into public.lead_groups (org_id, key, label, description, kind, sort_order)
+select o.id, g.key, g.label, g.description, g.kind, g.sort_order
+from public.organizations o
+cross join (values
+  ('fresno',     'Fresno',        'Fresno metro: Fresno, Clovis, Sanger, Selma and nearby Central Valley cities; ZIPs 936-937.', 'sorted', 0),
+  ('houston',    'Houston',       'Houston metro: Houston, Sugar Land, Pearland, Katy, Spring, The Woodlands; ZIPs 770-775.',    'sorted', 1),
+  ('dallas',     'Dallas',        'Dallas/Fort Worth metro: Dallas, Plano, Irving, Garland, Richardson; ZIPs 750-753.',          'sorted', 2),
+  ('california', 'California',    'Any other California lead not in the Fresno metro.',                                          'sorted', 3),
+  ('manual',     'Manual Dialing','Leads a human files here on purpose to dial by hand.',                                        'manual', 4)
+) as g(key, label, description, kind, sort_order)
+on conflict (org_id, key) do nothing;
+
+-- RLS. Enabling RLS with NO policies denies everything to the session client,
+-- which would have made every custom group invisible (listLeadGroups would fall
+-- back to the legacy five and an admin's new group would simply never appear).
+-- Members read their org's groups and packs; supervisors write them. Writes also
+-- go through the service-role client after an application permission check, so
+-- these are the second lock, not the only one.
+drop policy if exists "lead_groups read" on public.lead_groups;
+create policy "lead_groups read" on public.lead_groups for select using (
+  app_is_superadmin() or (app_is_active() and app_is_org_member(org_id))
+);
+drop policy if exists "lead_groups write" on public.lead_groups;
+create policy "lead_groups write" on public.lead_groups for all
+  using (app_is_superadmin() or (app_is_active() and app_is_org_supervisor(org_id)))
+  with check (app_is_superadmin() or (app_is_active() and app_is_org_supervisor(org_id)));
+
+drop policy if exists "lead_packs read" on public.lead_packs;
+create policy "lead_packs read" on public.lead_packs for select using (
+  app_is_superadmin() or (app_is_active() and app_is_org_member(org_id))
+);
+drop policy if exists "lead_packs write" on public.lead_packs;
+create policy "lead_packs write" on public.lead_packs for all
+  using (app_is_superadmin() or (app_is_active() and app_is_org_supervisor(org_id)))
+  with check (app_is_superadmin() or (app_is_active() and app_is_org_supervisor(org_id)));
+
+-- ═════════════════════════════════════════════════════════════════════════════
+-- PART: RLS READ LOCKDOWN (P0.4)
+--
+-- Placed at the END so every helper function (app_is_org_member, app_active_org,
+-- app_is_superadmin) already exists. The original "orgs read"/"companies read"
+-- policies above used `using (auth.uid() is not null)`, which let ANY signed-in
+-- user read EVERY tenant's row via the public anon key — leaking each org's
+-- join_code, caller IDs, AI system prompt, notification emails and billing.
+-- These tightened policies override them (drop + recreate). Kept in sync with
+-- supabase/rls-lockdown.sql.
+-- ═════════════════════════════════════════════════════════════════════════════
+
+-- Onboarding directory of joinable orgs — only non-sensitive columns. SECURITY
+-- DEFINER so it works under the tightened organizations policy below.
+create or replace function public.app_list_joinable_orgs()
+returns table (id uuid, name text, industry text, slug text, require_approval boolean)
+language sql stable security definer set search_path = public as $$
+  select id, name, industry, slug, coalesce(require_approval, true)
+  from public.organizations
+  where status = 'active' and coalesce(allow_join, true) = true
+  order by name asc;
+$$;
+grant execute on function public.app_list_joinable_orgs() to anon, authenticated;
+
+-- Organizations: your active org (covers the member-row-less resilience bridge),
+-- orgs you're an active member of (the Hub), or superadmin.
+drop policy if exists "orgs read" on public.organizations;
+create policy "orgs read" on public.organizations for select using (
+  public.app_is_superadmin()
+  or id = public.app_active_org()
+  or public.app_is_org_member(id)
+);
+
+-- Companies: members of the company's org (or your active org) only.
+drop policy if exists "companies read" on public.companies;
+create policy "companies read" on public.companies for select using (
+  public.app_is_superadmin()
+  or org_id = public.app_active_org()
+  or public.app_is_org_member(org_id)
+);
+
+-- Leads read/update: scope the shared-pool branch to the caller's ACTIVE org, so
+-- a dual-org member can't reach the OTHER org's leads while active in one.
+drop policy if exists "leads read" on public.leads;
+create policy "leads read" on public.leads for select using (
+  public.app_is_superadmin() or (public.app_is_active() and (
+    (owner_id = auth.uid() and (org_id is null or org_id = public.app_active_org()))
+    or (org_id is not null and org_id = public.app_active_org() and public.app_is_org_member(org_id)))));
+
+drop policy if exists "leads update" on public.leads;
+create policy "leads update" on public.leads for update
+  using (public.app_is_superadmin() or (public.app_is_active() and (
+    (owner_id = auth.uid() and (org_id is null or org_id = public.app_active_org()))
+    or (org_id is not null and org_id = public.app_active_org() and public.app_is_org_member(org_id)))))
+  with check (public.app_is_superadmin() or (public.app_is_active() and (
+    (owner_id = auth.uid() and (org_id is null or org_id = public.app_active_org()))
+    or (org_id is not null and org_id = public.app_active_org() and public.app_is_org_member(org_id)))));
+
+-- ═════════════════════════════════════════════════════════════════════════════
+-- PART: DO-NOT-CALL / SUPPRESSION (P1). Kept in sync with supabase/dnc.sql.
+-- Phone-number-level suppression per org, written on every do_not_call
+-- disposition (and inbound SMS STOP) and scrubbed at every dial path + on import.
+-- ═════════════════════════════════════════════════════════════════════════════
+create table if not exists public.dnc_numbers (
+  id uuid primary key default gen_random_uuid(),
+  org_id uuid not null references public.organizations (id) on delete cascade,
+  phone_digits text not null,
+  reason text,
+  source text,
+  created_by uuid,
+  created_at timestamptz not null default now(),
+  unique (org_id, phone_digits)
+);
+create index if not exists dnc_numbers_org_phone_idx
+  on public.dnc_numbers (org_id, phone_digits);
+
+alter table public.dnc_numbers enable row level security;
+drop policy if exists "dnc read" on public.dnc_numbers;
+create policy "dnc read" on public.dnc_numbers for select using (
+  public.app_is_superadmin() or (public.app_is_active() and public.app_is_org_member(org_id))
+);
+
+-- ═════════════════════════════════════════════════════════════════════════════
+-- PART: ATOMIC NOTIFICATION CLAIM (P3). Kept in sync with supabase/outbox-claim.sql.
+-- Claims a batch of due notifications under FOR UPDATE SKIP LOCKED so the two
+-- per-minute crons can't send the same appointment email twice; reclaims rows
+-- stuck in 'sending' >5min (a crashed drain). Service-role only.
+-- ═════════════════════════════════════════════════════════════════════════════
+create or replace function public.app_claim_notifications(p_limit int)
+returns setof public.notification_outbox
+language sql volatile security definer set search_path = public as $$
+  update public.notification_outbox o
+  set status = 'sending', updated_at = now()
+  from (
+    select id
+    from public.notification_outbox
+    where (status = 'pending' and next_attempt_at <= now())
+       or (status = 'sending' and updated_at < now() - interval '5 minutes')
+    order by next_attempt_at asc
+    limit greatest(p_limit, 0)
+    for update skip locked
+  ) picked
+  where o.id = picked.id
+  returning o.*;
+$$;
+
+revoke all on function public.app_claim_notifications(int) from public, anon, authenticated;
+grant execute on function public.app_claim_notifications(int) to service_role;
+
+-- ═════════════════════════════════════════════════════════════════════════════
+-- Server-side leads page (P4.PAGINATE)
+--
+-- One round trip for the Leads tab: a filtered, upload-ordered page of rows
+-- plus the filtered total, scope-wide KPI aggregates, and smart-list counts.
+-- Lives in SQL because the supervisor scope is a two-source union (org pool +
+-- the caller's pre-org rows) that PostgREST filter strings cannot paginate,
+-- and because phone search / smart lists need digit-stripping regexes.
+-- SERVICE-ROLE ONLY: trusts p_user/p_org/p_supervisor with no auth.uid()
+-- check — the app computes them first (same trust model as app_upsert_presence).
+-- ═════════════════════════════════════════════════════════════════════════════
+
+create index if not exists leads_org_created_idx   on public.leads (org_id, created_at, id);
+create index if not exists leads_owner_created_idx on public.leads (owner_id, created_at, id);
+
+-- The pre-sort 12-arg signature must be dropped first: CREATE OR REPLACE with
+-- extra parameters would OVERLOAD the function rather than replace it, and two
+-- candidates make PostgREST's rpc() resolution ambiguous when defaults are used.
+drop function if exists public.app_leads_page(uuid, uuid, boolean, text, text, text, text, uuid, boolean, text, integer, integer);
+
+create or replace function public.app_leads_page(
+  p_org        uuid,
+  p_user       uuid,
+  p_supervisor boolean,
+  p_q          text    default null,
+  p_status     text    default null,
+  p_group      text    default null,   -- group key; '__misc__' = ungrouped
+  p_campaign   text    default null,   -- campaign id; '__none__' = unassigned
+  p_uploader   uuid    default null,
+  p_mine       boolean default false,
+  p_smart      text    default null,   -- smart-list id (src/lib/leads/smart-lists.ts)
+  p_offset     integer default 0,
+  p_limit      integer default 50,
+  p_sort       text    default null,   -- whitelisted sort key; anything else = upload order
+  p_dir        text    default 'asc'
+) returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_limit  int  := least(greatest(coalesce(p_limit, 50), 1), 200);
+  v_offset int  := greatest(coalesce(p_offset, 0), 0);
+  -- STRICT sort whitelist — p_sort arrives from a URL param and this function
+  -- trusts its callers, so anything unrecognized silently falls back to upload
+  -- order. The key is only ever matched in CASE arms below, never interpolated.
+  -- Mirrored in JS by filterLeadsPage (src/lib/db/leads.ts) — keep in lockstep.
+  v_sort   text := case when p_sort in
+    ('name', 'city', 'state', 'status', 'utility_bill', 'solar_payment',
+     'ai_score', 'last_contacted_at', 'created_at')
+    then p_sort else null end;
+  v_desc   boolean := lower(coalesce(p_dir, 'asc')) = 'desc';
+  -- Escape LIKE wildcards in the user's text; separate digits variant for phone.
+  v_q      text := nullif(replace(replace(replace(btrim(coalesce(p_q, '')), '\', '\\'), '%', '\%'), '_', '\_'), '');
+  v_digits text := nullif(regexp_replace(coalesce(p_q, ''), '\D', '', 'g'), '');
+  v_rows   jsonb;
+  v_total  bigint;
+  v_stats  jsonb;
+begin
+  -- 1-2 digit fragments match everyone — ignore (mirrors the old client rule).
+  if v_digits is not null and length(v_digits) < 3 then
+    v_digits := null;
+  end if;
+
+  with scope as (
+    select l.*, coalesce(m.name, '') as owner_name
+    from public.leads l
+    left join public.organization_members m
+      on m.org_id = l.org_id and m.user_id = l.owner_id and m.status = 'active'
+    where case
+      when p_supervisor
+        then (l.org_id = p_org or (l.owner_id = p_user and l.org_id is null))
+      else (
+        (l.owner_id = p_user or l.assigned_rep_id = p_user::text)
+        and (p_org is null or l.org_id = p_org)
+      )
+    end
+  ),
+  filtered as (
+    select * from scope
+    where (p_status is null or status = p_status)
+      and (p_group is null
+           or (case when p_group = '__misc__' then lead_group is null
+                    else lead_group = p_group end))
+      and (p_campaign is null
+           or (case when p_campaign = '__none__' then coalesce(campaign_id, '') = ''
+                    else campaign_id = p_campaign end))
+      and (p_uploader is null or owner_id = p_uploader)
+      and (not p_mine or owner_id = p_user or assigned_rep_id = p_user::text)
+      and (p_smart is null or case p_smart
+        when 'high_bill'       then coalesce(utility_bill, 0) >= 200
+        when 'big_load'        then (has_ev or has_pool or has_battery or multiple_systems)
+        when 'fresh'           then (status = 'new' and last_contacted_at is null)
+        when 'going_cold'      then (status in ('new', 'no_answer', 'callback')
+                                     and last_contacted_at is not null
+                                     and last_contacted_at < now() - interval '14 days')
+        -- Mirrors isValidPhone(): 10 digits, or 11 starting with 1.
+        when 'no_phone'        then not (
+                                     length(regexp_replace(coalesce(phone, ''), '\D', '', 'g')) = 10
+                                     or (length(regexp_replace(coalesce(phone, ''), '\D', '', 'g')) = 11
+                                         and regexp_replace(coalesce(phone, ''), '\D', '', 'g') like '1%'))
+        when 'missing_address' then (coalesce(btrim(address), '') = '' and coalesce(btrim(city), '') = '')
+        else true end)
+      and (v_q is null or (
+        (first_name || ' ' || last_name) ilike ('%' || v_q || '%')
+        or city ilike ('%' || v_q || '%')
+        or utility_provider ilike ('%' || v_q || '%')
+        or (v_digits is not null
+            and regexp_replace(coalesce(phone, ''), '\D', '', 'g') like ('%' || v_digits || '%'))
+      ))
+  ),
+  -- The total is computed INDEPENDENTLY of pagination: taking max(count(*)
+  -- over ()) inside the LIMIT/OFFSET subquery reported total=0 whenever the
+  -- offset landed past the last matching row (stale ?page=N links, deleting
+  -- the last row of the last page), making the whole book look empty.
+  total as (
+    select count(*) as n from filtered
+  ),
+  -- One window, six CASE lanes (text / numeric / time × asc / desc): only the
+  -- lane matching the active sort+direction produces values; every other lane
+  -- is all-null and a no-op. Nulls sort LAST in every lane (missing scores and
+  -- never-contacted rows go to the bottom regardless of direction), and
+  -- (created_at, id) always closes the ORDER BY so ties — and therefore pages —
+  -- stay stable. With v_sort null that closing pair IS the default: upload
+  -- order, the deliberate product default (see ORDERING in src/lib/db/leads.ts).
+  page as (
+    select s.row_json, s.rn
+    from (
+      select
+        to_jsonb(f.*) as row_json,
+        row_number() over (order by
+          case when not v_desc then case v_sort
+            when 'name'   then lower(coalesce(f.last_name, '') || ' ' || coalesce(f.first_name, ''))
+            when 'city'   then lower(coalesce(f.city, ''))
+            when 'state'  then lower(coalesce(f.state, ''))
+            when 'status' then f.status
+          end end asc nulls last,
+          case when v_desc then case v_sort
+            when 'name'   then lower(coalesce(f.last_name, '') || ' ' || coalesce(f.first_name, ''))
+            when 'city'   then lower(coalesce(f.city, ''))
+            when 'state'  then lower(coalesce(f.state, ''))
+            when 'status' then f.status
+          end end desc nulls last,
+          case when not v_desc then case v_sort
+            when 'utility_bill'  then f.utility_bill
+            when 'solar_payment' then f.solar_payment
+            when 'ai_score'      then f.ai_score::numeric
+          end end asc nulls last,
+          case when v_desc then case v_sort
+            when 'utility_bill'  then f.utility_bill
+            when 'solar_payment' then f.solar_payment
+            when 'ai_score'      then f.ai_score::numeric
+          end end desc nulls last,
+          case when not v_desc then case v_sort
+            when 'last_contacted_at' then f.last_contacted_at
+            when 'created_at'        then f.created_at
+          end end asc nulls last,
+          case when v_desc then case v_sort
+            when 'last_contacted_at' then f.last_contacted_at
+            when 'created_at'        then f.created_at
+          end end desc nulls last,
+          f.created_at asc, f.id asc
+        ) as rn
+      from filtered f
+    ) s
+    order by s.rn
+    limit v_limit offset v_offset
+  )
+  select
+    coalesce((select jsonb_agg(row_json order by rn) from page), '[]'::jsonb),
+    (select n from total)
+  into v_rows, v_total;
+
+  -- Scope-wide aggregates, deliberately UNfiltered: the KPI tiles and the
+  -- smart-list chips describe the whole book, not the current filter.
+  select jsonb_build_object(
+    'total',        count(*),
+    'qualified',    count(*) filter (where status in ('qualified', 'appointment')),
+    'appointments', count(*) filter (where status = 'appointment'),
+    'avgScore',     coalesce(round(avg(ai_score)), 0),
+    'smart', jsonb_build_object(
+      'high_bill',       count(*) filter (where coalesce(utility_bill, 0) >= 200),
+      'big_load',        count(*) filter (where has_ev or has_pool or has_battery or multiple_systems),
+      'fresh',           count(*) filter (where status = 'new' and last_contacted_at is null),
+      'going_cold',      count(*) filter (where status in ('new', 'no_answer', 'callback')
+                                          and last_contacted_at is not null
+                                          and last_contacted_at < now() - interval '14 days'),
+      'no_phone',        count(*) filter (where not (
+                           length(regexp_replace(coalesce(phone, ''), '\D', '', 'g')) = 10
+                           or (length(regexp_replace(coalesce(phone, ''), '\D', '', 'g')) = 11
+                               and regexp_replace(coalesce(phone, ''), '\D', '', 'g') like '1%'))),
+      'missing_address', count(*) filter (where coalesce(btrim(address), '') = '' and coalesce(btrim(city), '') = '')
+    )
+  )
+  into v_stats
+  from public.leads l
+  where case
+    when p_supervisor
+      then (l.org_id = p_org or (l.owner_id = p_user and l.org_id is null))
+    else (
+      (l.owner_id = p_user or l.assigned_rep_id = p_user::text)
+      and (p_org is null or l.org_id = p_org)
+    )
+  end;
+
+  return jsonb_build_object('rows', v_rows, 'total', v_total, 'stats', v_stats);
+end;
+$$;
+
+grant execute on function public.app_leads_page(uuid, uuid, boolean, text, text, text, text, uuid, boolean, text, integer, integer, text, text) to service_role;
+-- CREATE FUNCTION grants PUBLIC execute by default; this function trusts its
+-- p_* scope params, so it must only be reachable via the service-role client.
+revoke execute on function public.app_leads_page(uuid, uuid, boolean, text, text, text, text, uuid, boolean, text, integer, integer, text, text) from public;
+revoke execute on function public.app_leads_page(uuid, uuid, boolean, text, text, text, text, uuid, boolean, text, integer, integer, text, text) from anon;
+revoke execute on function public.app_leads_page(uuid, uuid, boolean, text, text, text, text, uuid, boolean, text, integer, integer, text, text) from authenticated;
+
+-- ═════════════════════════════════════════════════════════════════════════════
+-- Persisted call transcripts (P5.TRANSCRIPT)
+--
+-- The ElevenLabs webhook received the full turn array, fed it once into
+-- analyzeConversation, and threw it away — so the call dashboard re-fetched
+-- the transcript from the ElevenLabs API on every poll (even for long-ended
+-- calls) and no other AI surface could ever see it.
+-- Shape: [{ "role": "agent"|"user", "message": text, "secs": number|null }]
+-- ═════════════════════════════════════════════════════════════════════════════
+alter table public.ai_conversations
+  add column if not exists transcript jsonb;
+
+-- ═════════════════════════════════════════════════════════════════════════════
+-- Campaign script A/B testing (P5.SCRIPTAB)
+--
+-- Campaigns gain two script slots; every human call record notes which variant
+-- the rep was reading, so the campaign detail page can split performance by
+-- script. A campaign with only script_a set runs single-script (no test).
+-- ═════════════════════════════════════════════════════════════════════════════
+alter table public.campaigns
+  add column if not exists script_a text not null default '',
+  add column if not exists script_b text not null default '';
+alter table public.call_records
+  add column if not exists script_variant text
+  check (script_variant is null or script_variant in ('a', 'b'));
+
+-- ═════════════════════════════════════════════════════════════════════════════
+-- Custom lead fields (P6.FIELDS — the generic-dialer epic)
+--
+-- The fixed solar-era columns stay as typed "core slots" (templates relabel or
+-- hide them); every other CSV column lands here, keyed by a normalized
+-- snake_case version of its header, with values stored as the type the
+-- importer detected (string | number | boolean).
+-- ═════════════════════════════════════════════════════════════════════════════
+alter table public.leads
+  add column if not exists custom_fields jsonb not null default '{}'::jsonb;
+
+-- ═════════════════════════════════════════════════════════════════════════════
+-- Atomic custom-fields patch (P6 review fix)
+--
+-- The JS read-modify-write in updateLead loses keys when two requests patch
+-- DIFFERENT keys on the same lead nearly concurrently (qualify-panel flushes
+-- from two tabs, a rep + a manager editing). jsonb || and - are atomic within
+-- the UPDATE. SERVICE-ROLE ONLY: the app authorizes (canActOn) before calling.
+-- ═════════════════════════════════════════════════════════════════════════════
+create or replace function public.app_patch_lead_custom_fields(
+  p_lead   uuid,
+  p_set    jsonb   default '{}'::jsonb,
+  p_delete text[]  default '{}'::text[]
+) returns void
+language sql volatile
+security definer
+set search_path = public
+as $$
+  update public.leads
+  set custom_fields =
+    (coalesce(custom_fields, '{}'::jsonb) || coalesce(p_set, '{}'::jsonb))
+    - coalesce(p_delete, '{}'::text[])
+  where id = p_lead;
+$$;
+
+grant execute on function public.app_patch_lead_custom_fields(uuid, jsonb, text[]) to service_role;
+revoke execute on function public.app_patch_lead_custom_fields(uuid, jsonb, text[]) from public;
+revoke execute on function public.app_patch_lead_custom_fields(uuid, jsonb, text[]) from anon;
+revoke execute on function public.app_patch_lead_custom_fields(uuid, jsonb, text[]) from authenticated;
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- PART 18 — LEAD PACK ASSIGNMENT  (idempotent; safe to re-run)
+--
+-- PART 17 cuts an upload into numbered packs; this hands one to a rep.
+--
+-- The pack was always the unit a manager wants to deal out ("Marcus takes packs
+-- 1-5"), but nothing recorded WHO holds one — assignment lived only on the
+-- individual leads, so there was no way to ask "what is Marcus holding?" or to
+-- take a pack back when he went on leave.
+--
+-- Assignment is recorded on the pack AND mirrored onto its leads'
+-- assigned_rep_id (which is what the dial queue actually reads). The pack row
+-- is the paperwork; the lead stamps are what route the work.
+-- ─────────────────────────────────────────────────────────────────────────────
+alter table public.lead_packs add column if not exists assigned_to  uuid references auth.users (id) on delete set null;
+alter table public.lead_packs add column if not exists assigned_by  uuid references auth.users (id) on delete set null;
+alter table public.lead_packs add column if not exists assigned_at  timestamptz;
+create index if not exists lead_packs_assigned_idx on public.lead_packs (assigned_to);

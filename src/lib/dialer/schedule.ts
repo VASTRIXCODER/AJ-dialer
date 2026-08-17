@@ -96,18 +96,31 @@ export function zonedDayKey(date: Date, timezone: string): string {
   return dayKeyFmt(timezone).format(date);
 }
 
-/** Is `now` inside an enabled day + hour window for this automation config? */
-export function isAutoDialActive(
+/**
+ * Is `now` inside an enabled day + hour window, evaluated in `timezone`? Split out
+ * from isAutoDialActive so the auto-dialer can check each LEAD's own timezone
+ * (TCPA governs the called party's local time) rather than only the org's.
+ */
+export function isWithinCallingWindow(
   now: Date,
   a: AutomationSettings | null | undefined,
+  timezone: string,
 ): boolean {
   if (!a?.enabled) return false;
   if (!Array.isArray(a.windows) || a.windows.length === 0) return false;
-  const { day, hour } = zonedDayHour(now, a.timezone);
+  const { day, hour } = zonedDayHour(now, timezone);
   if (Array.isArray(a.days) && a.days.length && !a.days.includes(day)) return false;
   return a.windows.some(
     (w) => Number.isFinite(w.start) && Number.isFinite(w.end) && hour >= w.start && hour < w.end,
   );
+}
+
+/** Is `now` inside an enabled day + hour window in the ORG's timezone? */
+export function isAutoDialActive(
+  now: Date,
+  a: AutomationSettings | null | undefined,
+): boolean {
+  return isWithinCallingWindow(now, a, a?.timezone ?? "America/Chicago");
 }
 
 const fmtHour = (h: number): string => {

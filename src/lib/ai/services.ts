@@ -1,8 +1,14 @@
 import "server-only";
 
+import { templateProfile } from "@/lib/org/templates";
 import type { CallOutcome, Lead, MetricSummary } from "@/lib/types";
 import { currentDateContext } from "./appointment";
 import { generateJSON, runAI } from "./claude";
+import {
+  defaultAIContext,
+  leadSchemaEntries,
+  type OrgAIContext,
+} from "./org-context";
 import {
   simulateBriefing,
   simulateConversationAnalysis,
@@ -52,40 +58,54 @@ function obj(
 }
 
 /**
- * The system prompt is org-vertical-aware: solar orgs get the solar-resolution
- * framing; every other vertical gets a generic sales-dialer framing so the
- * model never invents solar-specific content for leads that don't have any.
+ * The system prompt is org-vertical-aware. The solar template keeps the exact
+ * solar-resolution framing; every other vertical gets the generic sales-dialer
+ * framing (so the model never invents solar-specific content), enriched with
+ * the template's blurb and the org's own noun for a contact.
  */
-function systemPrompt(isSolar: boolean): string {
-  return isSolar
-    ? "You are the embedded intelligence layer of AIATWORK, a solar resolution dialer. " +
-        "Solar reps call homeowners who already have solar but still overpay their utility, " +
-        "qualify them, and book no-cost account reviews. You are precise, commercially sharp, " +
-        "and never invent facts beyond the data provided. Always respond with a single JSON " +
-        "object that matches the requested schema — no prose, no markdown."
-    : "You are the embedded intelligence layer of AIATWORK, an outbound sales resolution " +
-        "dialer. Reps call leads, qualify them, and book appointments or account reviews. " +
-        "You are precise, commercially sharp, and never invent facts beyond the data " +
-        "provided — never assume or mention solar, utility bills, or energy costs unless " +
-        "they're explicitly present in the lead data. Always respond with a single JSON " +
-        "object that matches the requested schema — no prose, no markdown.";
+function systemPrompt(ctx: OrgAIContext): string {
+  if (ctx.isSolar) {
+    return (
+      "You are the embedded intelligence layer of AIATWORK, a solar resolution dialer. " +
+      "Solar reps call homeowners who already have solar but still overpay their utility, " +
+      "qualify them, and book no-cost account reviews. You are precise, commercially sharp, " +
+      "and never invent facts beyond the data provided. Always respond with a single JSON " +
+      "object that matches the requested schema — no prose, no markdown."
+    );
+  }
+  const p = templateProfile(ctx.template);
+  const vertical =
+    ctx.template === "general"
+      ? ""
+      : ` This organization runs ${p.label.toLowerCase()} outreach — ` +
+        `${p.blurb.replace(/\.\s*$/, "")} — and calls its contacts "${ctx.leadNounPlural}".`;
+  return (
+    "You are the embedded intelligence layer of AIATWORK, an outbound sales resolution " +
+    `dialer. Reps call ${ctx.leadNounPlural}, qualify them, and book appointments or account reviews.` +
+    vertical +
+    " You are precise, commercially sharp, and never invent facts beyond the data " +
+    "provided — never assume or mention solar, utility bills, or energy costs unless " +
+    "they're explicitly present in the lead data. Always respond with a single JSON " +
+    "object that matches the requested schema — no prose, no markdown."
+  );
 }
 
-function leadContext(lead: Lead): string {
+/**
+ * Serialize a lead for a prompt: identity + the org's field schema (the org's
+ * own labels, typed values, schema'd custom fields). Fields the org's template
+ * hides never appear, so a non-solar prompt carries no solar vocabulary.
+ */
+function leadContext(lead: Lead, ctx: OrgAIContext): string {
+  const fields: Record<string, string | number | boolean | null> = {};
+  for (const e of leadSchemaEntries(lead, ctx)) fields[e.label] = e.value;
   return JSON.stringify({
     name: `${lead.firstName} ${lead.lastName}`,
     city: lead.city,
     state: lead.state,
-    utilityProvider: lead.utilityProvider,
-    solarProvider: lead.solarProvider,
-    monthlyUtilityBill: lead.utilityBill ?? null,
-    monthlySolarPayment: lead.solarPayment ?? null,
-    hasEV: lead.hasEV,
-    hasPool: lead.hasPool,
-    hasBattery: lead.hasBattery,
     status: lead.status,
     aiScore: lead.aiScore ?? null,
     notes: lead.notes ?? null,
+    fields,
   });
 }
 
@@ -93,15 +113,17 @@ function leadContext(lead: Lead): string {
 export function getLeadBriefing(
   lead: Lead,
   isSolar = true,
+  ctx?: OrgAIContext,
 ): Promise<AIResult<LeadBriefing>> {
+  const c = ctx ?? defaultAIContext(isSolar);
   return runAI(
     () =>
       generateJSON<LeadBriefing>({
-        system: systemPrompt(isSolar),
+        system: systemPrompt(c),
         prompt:
-          "Produce an executive briefing for this homeowner before the rep dials. " +
+          `Produce an executive briefing for this ${c.leadNoun} before the rep dials. ` +
           "Scores are 0-100; estimatedValue is annual USD opportunity. Be specific to the data.\n\n" +
-          `Lead: ${leadContext(lead)}`,
+          `Lead: ${leadContext(lead, c)}`,
         schemaName: "lead_briefing",
         effort: "medium",
         schema: obj({
@@ -122,7 +144,7 @@ export function getLeadBriefing(
           confidence: num,
         }),
       }),
-    () => simulateBriefing(lead),
+    () => simulateBriefing(lead, c),
   );
 }
 
@@ -130,16 +152,30 @@ export function getLeadBriefing(
 export function getCallCopilot(
   lead: Lead,
   isSolar = true,
+  /**
+   * The conversation SO FAR ("role: message" lines). With it the copilot's
+   * stage/signals describe the actual call; without it the model can only
+   * reason from CRM fields, and the prompt says so instead of pretending.
+   */
+  transcript?: string,
+  ctx?: OrgAIContext,
 ): Promise<AIResult<CallCopilot>> {
+  const c = ctx ?? defaultAIContext(isSolar);
   return runAI(
     () =>
       generateJSON<CallCopilot>({
-        system: systemPrompt(isSolar),
+        system: systemPrompt(c),
         prompt:
-          "The rep is mid-call with this homeowner. Act as a real-time sales copilot: " +
+          `The rep is mid-call with this ${c.leadNoun}. Act as a real-time sales copilot: ` +
           "track the stage, recommend the single next best question, surface live signals, " +
-          "give one objection handler and one coaching tip, and list missing qualification info.\n\n" +
-          `Lead: ${leadContext(lead)}`,
+          "give one objection handler and one coaching tip, and list missing qualification info.\n" +
+          (transcript
+            ? "Base the stage and every signal on the live transcript below — what was " +
+              "ACTUALLY said — not on assumptions about how such calls usually go.\n"
+            : "No transcript is available: derive guidance from the lead data alone and " +
+              "keep signals limited to what that data supports.\n") +
+          `\nLead: ${leadContext(lead, c)}` +
+          (transcript ? `\n\nLive transcript so far:\n${transcript.slice(0, 6000)}` : ""),
         schemaName: "call_copilot",
         effort: "low",
         schema: obj({
@@ -157,26 +193,55 @@ export function getCallCopilot(
           coachingTip: str,
         }),
       }),
-    () => simulateCopilot(lead),
+    () => simulateCopilot(lead, c),
   );
 }
 
 // ── Post-call documentation ──────────────────────────────────────────────────
+export interface CallEvidence {
+  /** "role: message" transcript lines, when the channel produced one. */
+  transcript?: string;
+  /** The rep's in-call notes — the real evidence a manual call leaves behind. */
+  notes?: string;
+  durationSec?: number;
+}
+
 export function getCallSummary(
   lead: Lead,
   outcome?: CallOutcome,
   isSolar = true,
+  /**
+   * What actually happened on the call. Without evidence the old prompt made
+   * the model write confident "documentation" for a call it never saw; now it
+   * is told exactly what it has and to keep anything beyond that minimal.
+   */
+  evidence?: CallEvidence,
+  ctx?: OrgAIContext,
 ): Promise<AIResult<CallSummary>> {
+  const c = ctx ?? defaultAIContext(isSolar);
+  const evidenceBlock = [
+    evidence?.durationSec != null ? `Call duration: ${evidence.durationSec}s.` : "",
+    evidence?.notes?.trim() ? `Rep's in-call notes:\n${evidence.notes.trim().slice(0, 2000)}` : "",
+    evidence?.transcript?.trim()
+      ? `Transcript:\n${evidence.transcript.trim().slice(0, 8000)}`
+      : "",
+  ]
+    .filter(Boolean)
+    .join("\n\n");
   return runAI(
     () =>
       generateJSON<CallSummary>({
-        system: systemPrompt(isSolar),
+        system: systemPrompt(c),
         prompt:
           "Write structured documentation for the call that just ended. " +
           `${outcome ? `The rep dispositioned it as "${outcome}". ` : ""}` +
+          "Base every statement on the evidence provided (disposition, duration, notes, " +
+          "transcript). Where the evidence is thin, keep the documentation short and " +
+          "factual — never invent quotes, objections, or events that are not in it. " +
           "recommendedOutcome must be one of: appointment_booked, callback_scheduled, qualified, " +
           "not_interested, no_answer, voicemail, wrong_number, do_not_call.\n\n" +
-          `Lead: ${leadContext(lead)}`,
+          `Lead: ${leadContext(lead, c)}` +
+          (evidenceBlock ? `\n\n${evidenceBlock}` : "\n\nNo call evidence was captured beyond the disposition."),
         schemaName: "call_summary",
         effort: "low",
         schema: obj({
@@ -204,38 +269,44 @@ export function getCallSummary(
           confidence: num,
         }),
       }),
-    () => simulateSummary(lead, outcome),
+    () => simulateSummary(lead, outcome, c),
   );
 }
 
-// ── Natural-language lead search ─────────────────────────────────────────────
+// ── Natural-language lead search (stage 2: rerank retrieved candidates) ─────
 export function getSemanticSearch(
   query: string,
   leads: Lead[],
   isSolar = true,
+  ctx?: OrgAIContext,
 ): Promise<AIResult<SemanticSearch>> {
-  const compact = leads.slice(0, 80).map((l) => ({
-    id: l.id,
-    name: `${l.firstName} ${l.lastName}`,
-    city: l.city,
-    state: l.state,
-    utility: l.utilityBill ?? null,
-    solar: l.solarPayment ?? null,
-    ev: l.hasEV,
-    pool: l.hasPool,
-    battery: l.hasBattery,
-    status: l.status,
-    provider: l.utilityProvider,
-  }));
+  const c = ctx ?? defaultAIContext(isSolar);
+  // Callers pass a pre-retrieved candidate set (searchLeadCandidates caps at
+  // 80); the slice stays as a safety ceiling on prompt size, not as the search.
+  const compact = leads.slice(0, 80).map((l) => {
+    const fields: Record<string, string | number | boolean> = {};
+    for (const e of leadSchemaEntries(l, c)) {
+      if (e.value != null) fields[e.label] = e.value;
+    }
+    return {
+      id: l.id,
+      name: `${l.firstName} ${l.lastName}`,
+      city: l.city,
+      state: l.state,
+      status: l.status,
+      ...fields,
+    };
+  });
   return runAI(
     () =>
       generateJSON<SemanticSearch>({
-        system: systemPrompt(isSolar),
+        system: systemPrompt(c),
         prompt:
-          "Interpret the user's natural-language query and return the matching homeowners " +
-          "from the provided list, best first (max 8). For each match give a short reason. " +
-          "Only return ids that exist in the list.\n\n" +
-          `Query: ${JSON.stringify(query)}\n\nLeads: ${JSON.stringify(compact)}`,
+          "You are RERANKING candidates already retrieved for the user's query — the list " +
+          "below is the candidate set, not the whole book. Interpret the query and return " +
+          `the ${c.leadNounPlural} that truly match it, best first (max 8). For each match give a ` +
+          "short reason. Only return ids that exist in the candidate list.\n\n" +
+          `Query: ${JSON.stringify(query)}\n\nCandidates: ${JSON.stringify(compact)}`,
         schemaName: "semantic_search",
         effort: "low",
         maxTokens: 1024,
@@ -247,23 +318,38 @@ export function getSemanticSearch(
           },
         }),
       }),
-    () => simulateSearch(query, leads),
+    () => simulateSearch(query, leads, c),
   );
 }
 
 // ── Conversation analysis (ElevenLabs transcript → disposition + data) ───────
+/**
+ * Turn a completed AI-call transcript into a disposition + extracted data.
+ *
+ * Vertical-aware: the system prompt and wording follow the org's context (it
+ * used to hardcode the solar framing for every tenant). The solar qualification
+ * extraction (utility bill / solar payment / EV / pool / battery) runs ONLY for
+ * solar-template orgs — those fields are solar's core slots, and the finalize
+ * pipeline writes them back onto the lead. Non-solar orgs get the same schema
+ * minus the qualification block, so `analysis.qualification` is undefined and
+ * nothing solar is ever written back to their leads (gated here, at the source).
+ */
 export function analyzeConversation(input: {
   transcript: string;
   lead?: Lead | null;
   /** Anchor for resolving "today"/"tomorrow"/weekday references in the call. */
   now?: Date;
-  /** Homeowner's IANA timezone, when known. */
+  /** Customer's IANA timezone, when known. */
   tz?: string;
+  /** The calling org's AI context; omitted → the historical solar default. */
+  ctx?: OrgAIContext;
 }): Promise<AIResult<ConversationAnalysis>> {
+  const c = input.ctx ?? defaultAIContext(true);
+  const NOUN = c.leadNoun.toUpperCase();
   const dc = currentDateContext(input.now ?? new Date(), input.tz);
   const dateLine =
     `IMPORTANT — today is ${dc.day}, ${dc.date} (local time ${dc.time}); ` +
-    `tomorrow is ${dc.tomorrowDay}, ${dc.tomorrowDate}. When the homeowner agrees to a time, ` +
+    `tomorrow is ${dc.tomorrowDay}, ${dc.tomorrowDate}. When the ${c.leadNoun} agrees to a time, ` +
     `resolve every relative reference ("today", "tonight", "tomorrow", a weekday name, "in two days") ` +
     `to the ACTUAL calendar date and put an absolute, unambiguous value in appointment.when, ` +
     `formatted like "${dc.tomorrowDate.replace(/, \d{4}$/, "")} at 6:00 PM". ` +
@@ -271,22 +357,22 @@ export function analyzeConversation(input: {
   return runAI(
     () =>
       generateJSON<ConversationAnalysis>({
-        system: systemPrompt(true),
+        system: systemPrompt(c),
         prompt:
           "Analyze this completed AI sales call transcript carefully — base every field on what was " +
           "actually said, never on assumptions.\n" +
-          "The transcript is labeled by speaker: lines starting with 'agent:' are the AI rep (Emily); " +
-          "lines starting with 'user:' (or any non-agent label) are the HOMEOWNER.\n" +
+          `The transcript is labeled by speaker: lines starting with 'agent:' are the AI rep; ` +
+          `lines starting with 'user:' (or any non-agent label) are the ${NOUN}.\n` +
           "CRITICAL disposition rules:\n" +
-          "- Judge the disposition from the HOMEOWNER's words, NOT the agent's. The agent routinely says " +
-          "'perfect', 'great', and 'you're all set' — those are her script, never evidence the homeowner " +
+          `- Judge the disposition from the ${NOUN}'s words, NOT the agent's. The agent routinely says ` +
+          "'perfect', 'great', and 'you're all set' — those are her script, never evidence the customer " +
           "declined or agreed.\n" +
-          "- appointment.requested = true ONLY if the homeowner accepted a SPECIFIC time (a weekday/date + " +
-          "time), or the agent confirmed a specific time and the homeowner did not object. Merely OFFERING " +
+          `- appointment.requested = true ONLY if the ${c.leadNoun} accepted a SPECIFIC time (a weekday/date + ` +
+          "time), or the agent confirmed a specific time and the customer did not object. Merely OFFERING " +
           "a time is not enough.\n" +
           "- If an appointment was booked, outcome MUST be 'appointment_booked' — never 'qualified' or " +
           "'not_interested'. These must agree.\n" +
-          "- Use 'not_interested' ONLY if the homeowner clearly refused the review. A homeowner who asks " +
+          `- Use 'not_interested' ONLY if the ${c.leadNoun} clearly refused the review. A ${c.leadNoun} who asks ` +
           "skeptical questions (\"is this a scam?\", \"who are you?\") but still books is 'appointment_booked', " +
           "not negative. Refusing to answer ONE qualifying question is not a decline.\n" +
           "- 'do_not_call' only if they asked to stop being called / be removed.\n" +
@@ -302,12 +388,14 @@ export function analyzeConversation(input: {
           "voicemail greeting invites leaving a message after a tone/beep with no question asked; a " +
           "screener asks a question expecting an answer. If the agent answered a screening question (gave " +
           "her name/reason) rather than delivering the scripted voicemail message, do NOT mark this " +
-          "'voicemail' just because the call ended without the homeowner speaking — treat it the same as " +
+          "'voicemail' just because the call ended without the customer speaking — treat it the same as " +
           "any other call that didn't connect to a live person (not a disposition on its own).\n" +
-          "Also extract sentiment, qualification data (USD/month; use 0 when not stated), the exact agreed " +
-          "time, and follow-ups.\n\n" +
+          (c.isSolar
+            ? "Also extract sentiment, qualification data (USD/month; use 0 when not stated), the exact agreed " +
+              "time, and follow-ups.\n\n"
+            : "Also extract sentiment, the exact agreed time, and follow-ups.\n\n") +
           `${dateLine}\n\n` +
-          (input.lead ? `Lead context: ${leadContext(input.lead)}\n\n` : "") +
+          (input.lead ? `Lead context: ${leadContext(input.lead, c)}\n\n` : "") +
           `Transcript:\n${input.transcript.slice(0, 8000)}`,
         schemaName: "conversation_analysis",
         effort: "medium",
@@ -317,13 +405,19 @@ export function analyzeConversation(input: {
           detailedSummary: str,
           outcome: OUTCOME_ENUM,
           sentiment: { type: "string", enum: ["positive", "neutral", "negative"] },
-          qualification: obj({
-            utilityBill: num,
-            solarPayment: num,
-            hasEV: { type: "boolean" },
-            hasPool: { type: "boolean" },
-            hasBattery: { type: "boolean" },
-          }),
+          // The solar qualification block is solar's core slots — extracted and
+          // written back to the lead ONLY for solar-template orgs.
+          ...(c.isSolar
+            ? {
+                qualification: obj({
+                  utilityBill: num,
+                  solarPayment: num,
+                  hasEV: { type: "boolean" },
+                  hasPool: { type: "boolean" },
+                  hasBattery: { type: "boolean" },
+                }),
+              }
+            : {}),
           appointment: obj({
             requested: { type: "boolean" },
             when: str,
@@ -333,7 +427,7 @@ export function analyzeConversation(input: {
           confidence: num,
         }),
       }),
-    () => simulateConversationAnalysis(input),
+    () => simulateConversationAnalysis({ ...input, ctx: c }),
   );
 }
 
@@ -341,16 +435,30 @@ export function analyzeConversation(input: {
 export function getExecutiveReport(
   metrics: MetricSummary,
   isSolar = true,
+  ctx?: OrgAIContext,
 ): Promise<AIResult<ExecutiveReport>> {
+  const c = ctx ?? defaultAIContext(isSolar);
+  // MetricSummary carries solar-era aggregates (energy spend, EV/pool/battery
+  // ownership). Serialize them only for solar orgs — for everyone else they're
+  // another vertical's numbers and would drag the narrative back to solar.
+  const serialized: Record<string, unknown> = { ...metrics };
+  if (!c.isSolar) {
+    delete serialized.avgUtilityBill;
+    delete serialized.avgSolarPayment;
+    delete serialized.avgTotalEnergyCost;
+    delete serialized.evOwnership;
+    delete serialized.poolOwnership;
+    delete serialized.batteryOwnership;
+  }
   return runAI(
     () =>
       generateJSON<ExecutiveReport>({
-        system: systemPrompt(isSolar),
+        system: systemPrompt(c),
         prompt:
           "Turn these floor metrics into an executive narrative for a sales manager: " +
           "explain what happened and why, surface trends, risks, and opportunities, and end " +
           "with prioritized recommendations.\n\n" +
-          `Metrics: ${JSON.stringify(metrics)}`,
+          `Metrics: ${JSON.stringify(serialized)}`,
         schemaName: "executive_report",
         effort: "medium",
         schema: obj({
@@ -369,6 +477,6 @@ export function getExecutiveReport(
           },
         }),
       }),
-    () => simulateReport(metrics),
+    () => simulateReport(metrics, c),
   );
 }

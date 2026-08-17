@@ -1,10 +1,16 @@
 import "server-only";
 
 import { reconcileOwnerActiveCalls } from "../ai-call-reconcile";
-import { statsForCampaign, type CampaignStats } from "../campaign-stats";
+import {
+  scriptTestForCampaign,
+  statsForCampaign,
+  type CampaignStats,
+  type ScriptTestStats,
+} from "../campaign-stats";
 import { createAdminClient, isAdminConfigured } from "../supabase/admin";
 import { isSupabaseConfigured } from "../supabase/config";
 import { createClient } from "../supabase/server";
+import type { CallOutcome, CampaignStatus } from "../types";
 import { formatAddress } from "../utils";
 import { apptScope } from "./appointments";
 import { canActOn, getScope } from "./scope";
@@ -28,6 +34,57 @@ const toFloatingLocal = (v: string): string => {
   return m ? `${m[1]}T${m[2]}` : v;
 };
 
+// ─────────────────────────────────────────────────────────────────────────────
+// PostgREST silently caps every un-ranged response at 1,000 rows — a plain
+// `.limit(5000)` therefore returns AT MOST 1,000, with no error. (Full story in
+// src/lib/db/leads.ts, "THE 1,000-ROW CEILING".) Anything here that promises
+// more than 1,000 rows must page explicitly with `.range()`.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** PostgREST's per-response ceiling. Pages are requested at exactly this size. */
+const PAGE = 1000;
+
+/**
+ * Read up to `max` rows, paging past the 1,000-row cap in `.range()` windows.
+ * `build()` must return a FRESH query builder each call (they aren't reusable).
+ */
+async function fetchPagedUpTo(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  build: () => any,
+  max: number,
+): Promise<Row[]> {
+  const out: Row[] = [];
+  for (let from = 0; from < max; from += PAGE) {
+    const size = Math.min(PAGE, max - from);
+    const { data, error } = await build().range(from, from + size - 1);
+    if (error) {
+      console.error("[pipeline] paged read failed:", error.message);
+      break;
+    }
+    const rows = (data ?? []) as Row[];
+    out.push(...rows);
+    if (rows.length < size) break; // short page ⇒ end of the result set
+  }
+  return out;
+}
+
+/**
+ * User-typed search text gets interpolated into PostgREST `.or()`/`.ilike`
+ * filter strings, where commas and parens are FILTER SYNTAX and `%`/`_` are
+ * LIKE wildcards. Strip anything that could break out of (or wildcard) the
+ * pattern rather than trying to escape it — names and phone fragments never
+ * legitimately contain these characters.
+ */
+function sanitizeFilterTerm(raw: string): string {
+  return raw
+    .replace(/[,()%_\\]/g, " ")
+    // eslint-disable-next-line no-control-regex
+    .replace(/[\u0000-\u001f\u007f]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 60);
+}
+
 /** owner_id → display name for an org (to attribute team rows). */
 async function memberNames(orgId: string): Promise<Map<string, string>> {
   try {
@@ -48,11 +105,17 @@ export interface CampaignRow {
   id: string;
   name: string;
   utilityProvider: string;
-  status: "active" | "paused" | "completed";
+  status: CampaignStatus;
   color: string;
   createdAt: string;
   ownerId: string | null;
+  /** Call script shown to reps in the dialer ("" = none). */
+  scriptA: string;
+  /** Second script — when BOTH are set, an A/B test splits leads between them. */
+  scriptB: string;
   stats: CampaignStats;
+  /** Per-variant performance over calls where a script was actually shown. */
+  scriptTest: ScriptTestStats;
 }
 
 type Result = { ok: boolean; error?: string };
@@ -71,25 +134,38 @@ export async function getCampaigns(): Promise<CampaignRow[]> {
     const reader = useOrg ? createAdminClient() : await createClient();
     const col = useOrg ? "org_id" : "owner_id";
     const val = useOrg ? (scope.orgId as string) : scope.userId;
-    const [cRes, lRes, callRes] = await Promise.all([
+    // The stats inputs MUST page: a bare .limit() above 1,000 is a no-op
+    // (PostgREST silently caps every un-ranged response at 1,000 rows — see
+    // the header comment), so campaign lead counts, connect rates, and the
+    // script A/B split were computed over an arbitrary 1,000-row sample of
+    // any real book. Ordered so pages are stable while paging.
+    const [cRes, leads, calls] = await Promise.all([
       reader
         .from("campaigns")
         .select("*")
         .eq(col, val)
         .order("created_at", { ascending: false })
         .limit(useOrg ? 2000 : 500),
-      reader.from("leads").select("campaign_id,status").eq(col, val).limit(useOrg ? 50000 : 5000),
-      reader
-        .from("call_records")
-        .select("campaign_id,outcome")
-        .eq(col, val)
-        .limit(useOrg ? 20000 : 2000),
+      fetchPagedUpTo(
+        () =>
+          reader
+            .from("leads")
+            .select("campaign_id,status")
+            .eq(col, val)
+            .order("id", { ascending: true }),
+        useOrg ? 50000 : 5000,
+      ),
+      fetchPagedUpTo(
+        () =>
+          reader
+            .from("call_records")
+            .select("campaign_id,outcome,script_variant")
+            .eq(col, val)
+            .order("id", { ascending: true }),
+        useOrg ? 20000 : 2000,
+      ),
     ]);
     if (cRes.error) console.error("[pipeline] getCampaigns campaigns query failed:", cRes.error.message);
-    if (lRes.error) console.error("[pipeline] getCampaigns leads query failed:", lRes.error.message);
-    if (callRes.error) console.error("[pipeline] getCampaigns call_records query failed:", callRes.error.message);
-    const leads = (lRes.data ?? []) as Row[];
-    const calls = (callRes.data ?? []) as Row[];
     return ((cRes.data ?? []) as Row[]).map((r) => ({
       id: s(r.id),
       name: s(r.name),
@@ -98,7 +174,10 @@ export async function getCampaigns(): Promise<CampaignRow[]> {
       color: s(r.color) || "#3B82F6",
       createdAt: s(r.created_at),
       ownerId: r.owner_id ? s(r.owner_id) : null,
+      scriptA: s(r.script_a),
+      scriptB: s(r.script_b),
       stats: statsForCampaign(s(r.id), leads, calls),
+      scriptTest: scriptTestForCampaign(s(r.id), calls),
     }));
   } catch (e) {
     console.error("[pipeline] getCampaigns failed:", e instanceof Error ? e.message : e);
@@ -115,6 +194,8 @@ export async function createCampaign(input: {
   name: string;
   utilityProvider?: string;
   color?: string;
+  scriptA?: string;
+  scriptB?: string;
 }): Promise<Result> {
   if (!isSupabaseConfigured()) return { ok: false, error: "Connect Supabase to create campaigns." };
   if (!isAdminConfigured()) return { ok: false, error: "Service role required to create campaigns." };
@@ -127,6 +208,8 @@ export async function createCampaign(input: {
       name: input.name,
       utility_provider: input.utilityProvider ?? "",
       color: input.color ?? "#3B82F6",
+      script_a: (input.scriptA ?? "").trim(),
+      script_b: (input.scriptB ?? "").trim(),
     });
     return error ? { ok: false, error: error.message } : { ok: true };
   } catch (e) {
@@ -155,12 +238,60 @@ async function authorizeCampaign(
 
 export async function setCampaignStatus(
   id: string,
-  status: "active" | "paused" | "completed",
+  status: CampaignStatus,
 ): Promise<Result> {
   if (!isSupabaseConfigured()) return { ok: false, error: "Not configured." };
   const auth = await authorizeCampaign(id);
   if ("error" in auth) return { ok: false, error: auth.error };
   const { error } = await auth.admin.from("campaigns").update({ status }).eq("id", id);
+  return error ? { ok: false, error: error.message } : { ok: true };
+}
+
+/** Runtime guard for statuses arriving over the API as arbitrary strings. */
+const CAMPAIGN_STATUSES: ReadonlySet<string> = new Set<CampaignStatus>([
+  "active",
+  "paused",
+  "completed",
+]);
+
+/**
+ * Sparse edit of a campaign's own fields — name, utility provider, color,
+ * status, scripts. Only the provided keys change; same authorization as
+ * setCampaignStatus (any member the campaign's owner/org scope admits).
+ */
+export async function updateCampaign(
+  id: string,
+  patch: {
+    name?: string;
+    utilityProvider?: string;
+    color?: string;
+    status?: CampaignStatus;
+    /** Trimmed on write; an empty string CLEARS the script (columns default ''). */
+    scriptA?: string;
+    scriptB?: string;
+  },
+): Promise<Result> {
+  if (!isSupabaseConfigured())
+    return { ok: false, error: "Connect Supabase to edit campaigns." };
+  const update: Record<string, string> = {};
+  if (patch.name !== undefined) {
+    const name = patch.name.trim();
+    if (!name) return { ok: false, error: "Name is required." };
+    update.name = name;
+  }
+  if (patch.utilityProvider !== undefined) update.utility_provider = patch.utilityProvider.trim();
+  if (patch.color !== undefined) update.color = patch.color;
+  if (patch.scriptA !== undefined) update.script_a = patch.scriptA.trim();
+  if (patch.scriptB !== undefined) update.script_b = patch.scriptB.trim();
+  if (patch.status !== undefined) {
+    if (!CAMPAIGN_STATUSES.has(patch.status))
+      return { ok: false, error: "Status must be active, paused, or completed." };
+    update.status = patch.status;
+  }
+  if (Object.keys(update).length === 0) return { ok: false, error: "Nothing to update." };
+  const auth = await authorizeCampaign(id);
+  if ("error" in auth) return { ok: false, error: auth.error };
+  const { error } = await auth.admin.from("campaigns").update(update).eq("id", id);
   return error ? { ok: false, error: error.message } : { ok: true };
 }
 
@@ -205,6 +336,68 @@ export async function assignLeadsToCampaign(
   if (!scope.supervisor && scope.orgId) q = q.eq("org_id", scope.orgId);
   const { error } = await q;
   return error ? { ok: false, error: error.message } : { ok: true };
+}
+
+/** One row of a campaign's recent call activity (the detail page's feed). */
+export interface CampaignCallRow {
+  id: string;
+  leadName: string;
+  /** null when the call never got a disposition (or an unknown legacy value). */
+  outcome: CallOutcome | null;
+  durationSec: number;
+  startedAt: string;
+}
+
+/**
+ * The latest calls placed against one campaign. Campaigns are org-shared, so
+ * reads go org-wide via the service-role client when available (org_id pinned
+ * in code), own-scoped otherwise — the same split as getCampaigns. Note
+ * campaign_id is TEXT on call_records while campaigns.id is a uuid; the string
+ * equality here matches how campaign-stats keys the same rows.
+ */
+export async function getCampaignRecentCalls(
+  campaignId: string,
+  limit = 10,
+): Promise<CampaignCallRow[]> {
+  if (!isSupabaseConfigured()) return [];
+  try {
+    const scope = await getScope();
+    if (!scope) return [];
+    // Org-wide is SUPERVISOR-only, like every sibling read (getBillsFine,
+    // getCallbacks): these are row-level call records (who said what, when),
+    // which RLS reserves for the row's owner or an org supervisor — a rep on
+    // the campaign page sees their own calls, not the whole floor's.
+    const useOrg = isAdminConfigured() && Boolean(scope.orgId) && scope.supervisor;
+    const reader = useOrg ? createAdminClient() : await createClient();
+    let q = reader
+      .from("call_records")
+      .select("id,lead_name,outcome,duration_sec,started_at")
+      .eq(useOrg ? "org_id" : "owner_id", useOrg ? (scope.orgId as string) : scope.userId)
+      .eq("campaign_id", campaignId);
+    // A rep's "own" scope must stay within their CURRENT org — never surface
+    // calls they happen to own from an org they've since left.
+    if (!useOrg && scope.orgId) q = q.eq("org_id", scope.orgId);
+    const { data, error } = await q
+      .order("started_at", { ascending: false })
+      .limit(Math.min(50, Math.max(1, Math.floor(limit))));
+    if (error) {
+      console.error("[pipeline] getCampaignRecentCalls failed:", error.message);
+      return [];
+    }
+    return ((data ?? []) as Row[]).map((r) => ({
+      id: s(r.id),
+      leadName: s(r.lead_name) || "Homeowner",
+      outcome: r.outcome ? (s(r.outcome) as CallOutcome) : null,
+      durationSec: Number(r.duration_sec ?? 0) || 0,
+      startedAt: s(r.started_at),
+    }));
+  } catch (e) {
+    console.error(
+      "[pipeline] getCampaignRecentCalls failed:",
+      e instanceof Error ? e.message : e,
+    );
+    return [];
+  }
 }
 
 // ── Appointments ─────────────────────────────────────────────────────────────
@@ -263,28 +456,32 @@ export async function getAppointments(): Promise<AppointmentRow[]> {
     // `scope.supervisor` check — but an override finally means something.
     const orgWide = scope.team && isAdminConfigured() && Boolean(scope.orgId);
     const reader = orgWide ? createAdminClient() : await createClient();
-    let query = reader
-      .from("appointments")
-      .select("*")
-      .eq(orgWide ? "org_id" : "owner_id", orgWide ? scope.orgId : scope.userId);
-    // A rep's "own" scope must stay within their CURRENT org — never surface
-    // appointments they happen to own from an org they've since left.
-    if (!orgWide && scope.orgId) query = query.eq("org_id", scope.orgId);
-    const { data, error } = await query
-      .order("created_at", { ascending: false })
-      .limit(orgWide ? 5000 : 500);
-    if (error) console.error("[pipeline] getAppointments query failed:", error.message);
-    const rows = (data ?? []) as Row[];
+    // The old `.limit(5000)` silently returned at most 1,000 (the PostgREST
+    // ceiling) — page explicitly so the advertised ceiling is real. The
+    // workspace needs the working set in memory for its calendar/bucket views.
+    const rows = await fetchPagedUpTo(() => {
+      let query = reader
+        .from("appointments")
+        .select("*")
+        .eq(orgWide ? "org_id" : "owner_id", orgWide ? scope.orgId : scope.userId);
+      // A rep's "own" scope must stay within their CURRENT org — never surface
+      // appointments they happen to own from an org they've since left.
+      if (!orgWide && scope.orgId) query = query.eq("org_id", scope.orgId);
+      // `id` tiebreaker keeps the page windows stable when created_at collides.
+      return query.order("created_at", { ascending: false }).order("id", { ascending: true });
+    }, orgWide ? 5000 : 500);
     const names = orgWide ? await memberNames(scope.orgId as string) : null;
 
     // Batch the leads' contact details for the review lane + the email context.
+    // Chunked: `.in()` lists ride in the request URL and responses cap at
+    // 1,000 rows, so one giant list would truncate (or fail) past that.
     const leadIds = [...new Set(rows.map((r) => r.lead_id).filter(Boolean).map(String))];
     const contacts = new Map<string, { phone: string; city: string; address: string }>();
-    if (leadIds.length) {
+    for (let i = 0; i < leadIds.length; i += 500) {
       const { data: ls } = await reader
         .from("leads")
         .select("id,phone,city,address,state,zip")
-        .in("id", leadIds);
+        .in("id", leadIds.slice(i, i + 500));
       for (const l of (ls ?? []) as Row[])
         contacts.set(s(l.id), {
           phone: s(l.phone),
@@ -386,42 +583,134 @@ export interface BillsFineRow {
   teamWide: boolean;
 }
 
-export async function getBillsFine(): Promise<BillsFineRow[]> {
-  if (!isSupabaseConfigured()) return [];
+export interface BillsFineResult {
+  /** One page of the (possibly searched) book. */
+  rows: BillsFineRow[];
+  /** Count of EVERY row the scope + search match — not just this page. */
+  total: number;
+  /** Full-book count of rows carrying both bill amounts (same scope + search). */
+  withBills: number;
+  /** Average combined monthly energy cost across `withBills` rows; null when none. */
+  avgEnergyCost: number | null;
+  /** Whether the viewer sees the whole org's book (drives the Team-wide badge). */
+  teamWide: boolean;
+}
+
+const BILLS_FINE_COLS =
+  "id,first_name,last_name,phone,address,utility_bill,solar_payment,utility_provider,last_contacted_at,created_at,owner_id";
+
+/** How many with-bill rows the average is computed over before it becomes a sample. */
+const BILLS_FINE_AVG_MAX = 5000;
+
+export async function getBillsFine(
+  opts: { page?: number; pageSize?: number; q?: string } = {},
+): Promise<BillsFineResult> {
+  const empty: BillsFineResult = {
+    rows: [],
+    total: 0,
+    withBills: 0,
+    avgEnergyCost: null,
+    teamWide: false,
+  };
+  if (!isSupabaseConfigured()) return empty;
   try {
     const scope = await getScope();
-    if (!scope) return [];
+    if (!scope) return empty;
     const orgWide = scope.supervisor && isAdminConfigured() && Boolean(scope.orgId);
     const reader = orgWide ? createAdminClient() : await createClient();
-    let query = reader
-      .from("leads")
-      .select("id,first_name,last_name,phone,address,utility_bill,solar_payment,utility_provider,last_contacted_at,created_at,owner_id")
-      .eq(orgWide ? "org_id" : "owner_id", orgWide ? scope.orgId : scope.userId)
-      .eq("status", "bills_fine");
-    // A rep's "own" scope must stay within their CURRENT org — never surface
-    // leads they happen to own from an org they've since left.
-    if (!orgWide && scope.orgId) query = query.eq("org_id", scope.orgId);
-    const { data, error } = await query
-      .order("last_contacted_at", { ascending: false })
-      .limit(orgWide ? 50000 : 5000);
-    if (error) console.error("[pipeline] getBillsFine query failed:", error.message);
+
+    const pageSize = Math.min(200, Math.max(1, Math.floor(opts.pageSize ?? 50)));
+    const page = Math.max(1, Math.floor(opts.page ?? 1));
+    const from = (page - 1) * pageSize;
+
+    const term = sanitizeFilterTerm(opts.q ?? "");
+    const digits = term.replace(/\D/g, "");
+
+    // Apply the SAME scope/status/search filters to every query below, so the
+    // counts describe exactly the book the list pages through. Builders aren't
+    // reusable — this decorates a fresh one each time.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const filtered = (base: any) => {
+      let q = base
+        .eq(orgWide ? "org_id" : "owner_id", orgWide ? scope.orgId : scope.userId)
+        .eq("status", "bills_fine");
+      // A rep's "own" scope must stay within their CURRENT org — never surface
+      // leads they happen to own from an org they've since left.
+      if (!orgWide && scope.orgId) q = q.eq("org_id", scope.orgId);
+      if (term) {
+        const ors = [`first_name.ilike.%${term}%`, `last_name.ilike.%${term}%`];
+        if (digits) ors.push(`phone.ilike.%${digits}%`);
+        q = q.or(ors.join(","));
+      }
+      return q;
+    };
+
+    const [pageRes, totalRes, withBillsRes] = await Promise.all([
+      filtered(reader.from("leads").select(BILLS_FINE_COLS))
+        .order("last_contacted_at", { ascending: false })
+        // `id` tiebreaker keeps page windows stable when timestamps collide.
+        .order("id", { ascending: true })
+        .range(from, from + pageSize - 1),
+      filtered(reader.from("leads").select("id", { count: "exact", head: true })),
+      filtered(reader.from("leads").select("id", { count: "exact", head: true }))
+        .gt("utility_bill", 0)
+        .gt("solar_payment", 0),
+    ]);
+    if (pageRes.error) console.error("[pipeline] getBillsFine query failed:", pageRes.error.message);
+    if (totalRes.error) console.error("[pipeline] getBillsFine count failed:", totalRes.error.message);
+
+    const rows = (pageRes.data ?? []) as Row[];
+    // If the count query failed, fall back to what this page proves exists so
+    // the UI never claims an empty book while showing rows.
+    const total = totalRes.count ?? from + rows.length;
+    const withBills = withBillsRes.count ?? 0;
+
+    // Average combined energy cost over the whole (filtered) book. There's no
+    // aggregate endpoint to lean on, so read just the two numeric columns in
+    // bounded pages — exact up to BILLS_FINE_AVG_MAX with-bill rows, a large
+    // deterministic sample beyond that.
+    let avgEnergyCost: number | null = null;
+    if (withBills > 0) {
+      const billRows = await fetchPagedUpTo(
+        () =>
+          filtered(reader.from("leads").select("utility_bill,solar_payment"))
+            .gt("utility_bill", 0)
+            .gt("solar_payment", 0)
+            .order("id", { ascending: true }),
+        BILLS_FINE_AVG_MAX,
+      );
+      if (billRows.length) {
+        const sum = billRows.reduce(
+          (acc, r) => acc + Number(r.utility_bill ?? 0) + Number(r.solar_payment ?? 0),
+          0,
+        );
+        avgEnergyCost = sum / billRows.length;
+      }
+    }
+
     const names = orgWide ? await memberNames(scope.orgId as string) : null;
-    return ((data ?? []) as Row[]).map((r) => ({
-      id: s(r.id),
-      leadName: `${s(r.first_name)} ${s(r.last_name)}`.trim() || "Homeowner",
-      phone: s(r.phone),
-      address: s(r.address),
-      utilityBill: r.utility_bill == null ? null : Number(r.utility_bill),
-      solarPayment: r.solar_payment == null ? null : Number(r.solar_payment),
-      utilityProvider: s(r.utility_provider),
-      lastContactedAt: r.last_contacted_at ? s(r.last_contacted_at) : null,
-      createdAt: s(r.created_at),
-      repName: names ? names.get(s(r.owner_id)) || "Rep" : undefined,
+    return {
+      rows: rows.map((r) => ({
+        id: s(r.id),
+        leadName: `${s(r.first_name)} ${s(r.last_name)}`.trim() || "Homeowner",
+        phone: s(r.phone),
+        address: s(r.address),
+        utilityBill: r.utility_bill == null ? null : Number(r.utility_bill),
+        solarPayment: r.solar_payment == null ? null : Number(r.solar_payment),
+        utilityProvider: s(r.utility_provider),
+        lastContactedAt: r.last_contacted_at ? s(r.last_contacted_at) : null,
+        createdAt: s(r.created_at),
+        repName: names ? names.get(s(r.owner_id)) || "Rep" : undefined,
+        teamWide: orgWide,
+      })),
+      total,
+      withBills,
+      avgEnergyCost,
       teamWide: orgWide,
-    }));
+    };
   } catch (e) {
     console.error("[pipeline] getBillsFine failed:", e instanceof Error ? e.message : e);
-    return [];
+    return empty;
   }
 }
 
@@ -439,41 +728,74 @@ export interface CallbackRow {
   teamWide: boolean;
 }
 
-export async function getCallbacks(): Promise<CallbackRow[]> {
-  if (!isSupabaseConfigured()) return [];
+export interface CallbacksResult {
+  /** Open callbacks only (completed/cancelled are excluded), soonest due first. */
+  rows: CallbackRow[];
+  /** Full-book count of completed callbacks — they never ride along as rows. */
+  completedCount: number;
+  /** Whether the viewer sees the whole org's callbacks. */
+  teamWide: boolean;
+}
+
+/** Open callbacks worth showing on the board — closed history stays in the DB. */
+const CALLBACKS_MAX = 500;
+
+export async function getCallbacks(): Promise<CallbacksResult> {
+  const empty: CallbacksResult = { rows: [], completedCount: 0, teamWide: false };
+  if (!isSupabaseConfigured()) return empty;
   try {
     const scope = await getScope();
-    if (!scope) return [];
+    if (!scope) return empty;
     // Finalize any stuck calls first so callback-dispositioned ones show up.
     await reconcileOwnerActiveCalls();
     const orgWide = scope.supervisor && isAdminConfigured() && Boolean(scope.orgId);
     const reader = orgWide ? createAdminClient() : await createClient();
-    let query = reader
-      .from("callbacks")
-      .select("*")
-      .eq(orgWide ? "org_id" : "owner_id", orgWide ? scope.orgId : scope.userId);
-    // A rep's "own" scope must stay within their CURRENT org — never surface
-    // callbacks they happen to own from an org they've since left.
-    if (!orgWide && scope.orgId) query = query.eq("org_id", scope.orgId);
-    const { data, error } = await query
-      .order("created_at", { ascending: false })
-      .limit(orgWide ? 5000 : 500);
-    if (error) console.error("[pipeline] getCallbacks query failed:", error.message);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const scoped = (base: any) => {
+      let q = base.eq(orgWide ? "org_id" : "owner_id", orgWide ? scope.orgId : scope.userId);
+      // A rep's "own" scope must stay within their CURRENT org — never surface
+      // callbacks they happen to own from an org they've since left.
+      if (!orgWide && scope.orgId) q = q.eq("org_id", scope.orgId);
+      return q;
+    };
+    // Closed rows accumulate forever — only OPEN work belongs on the board.
+    // Statuses in play: rows insert as "due" (records.ts) and the page's ⋯ menu
+    // writes "completed" | "cancelled" | "due" (dispositions.ts). Soonest due
+    // first so a bounded read can never crowd today's queue out with history;
+    // the Completed KPI comes from its own count so truncation can't skew it.
+    const [listRes, doneRes] = await Promise.all([
+      scoped(reader.from("callbacks").select("*"))
+        .not("status", "in", '("completed","cancelled")')
+        .order("due_at", { ascending: true, nullsFirst: false })
+        .order("created_at", { ascending: false })
+        .limit(CALLBACKS_MAX),
+      scoped(reader.from("callbacks").select("id", { count: "exact", head: true })).eq(
+        "status",
+        "completed",
+      ),
+    ]);
+    if (listRes.error) console.error("[pipeline] getCallbacks query failed:", listRes.error.message);
+    if (doneRes.error)
+      console.error("[pipeline] getCallbacks completed count failed:", doneRes.error.message);
     const names = orgWide ? await memberNames(scope.orgId as string) : null;
-    return (data ?? []).map((r: Row) => ({
-      id: s(r.id),
-      leadId: r.lead_id ? s(r.lead_id) : null,
-      leadName: s(r.lead_name) || "Homeowner",
-      phone: s(r.phone),
-      reason: s(r.reason),
-      status: s(r.status) || "due",
-      dueAt: r.due_at ? s(r.due_at) : null,
-      createdAt: s(r.created_at),
-      repName: names ? names.get(s(r.owner_id)) || "Rep" : undefined,
+    return {
+      rows: ((listRes.data ?? []) as Row[]).map((r) => ({
+        id: s(r.id),
+        leadId: r.lead_id ? s(r.lead_id) : null,
+        leadName: s(r.lead_name) || "Homeowner",
+        phone: s(r.phone),
+        reason: s(r.reason),
+        status: s(r.status) || "due",
+        dueAt: r.due_at ? s(r.due_at) : null,
+        createdAt: s(r.created_at),
+        repName: names ? names.get(s(r.owner_id)) || "Rep" : undefined,
+        teamWide: orgWide,
+      })),
+      completedCount: doneRes.count ?? 0,
       teamWide: orgWide,
-    }));
+    };
   } catch (e) {
     console.error("[pipeline] getCallbacks failed:", e instanceof Error ? e.message : e);
-    return [];
+    return empty;
   }
 }

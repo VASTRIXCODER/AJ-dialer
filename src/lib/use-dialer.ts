@@ -2,6 +2,11 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Call, Device } from "@twilio/voice-sdk";
+import {
+  type CallEvent,
+  decideCallEvent,
+  describeCallError,
+} from "./dialer/call-events";
 import type { AgentKey } from "./elevenlabs";
 import type { CallOutcome, Lead } from "./types";
 import { formatPhone, toE164 } from "./utils";
@@ -65,6 +70,14 @@ export interface DialerState {
    *  it. The call is NOT over — this rides out a transient blip instead of letting
    *  it read as a dead call the rep hangs up on. */
   reconnecting: boolean;
+  /**
+   * getUserMedia was refused, so this browser has no microphone to put into a
+   * call. The Twilio Device still REGISTERS fine without one — registration
+   * needs no audio — which is why the dialer used to sit there reading "Twilio
+   * Live" while every single dial rang a homeowner the rep could never speak
+   * to. Surfaced so manual dialing can be held back until it's fixed.
+   */
+  micBlocked: boolean;
   callsThisSession: number;
   connectsThisSession: number;
   /** Running dial total for the whole local day — persists across refresh/logout. */
@@ -241,7 +254,20 @@ export function useDialer(
    *  moving on. Two quick missed calls read as important and lift pickup. */
   doubleDial = false,
   doubleDialGapSec = 15,
+  /**
+   * The org's own ceiling on simultaneous HUMAN lines (Admin → Dialing → "Max
+   * lines"). Setting it to 1 turns off parallel dialing for the workspace: a
+   * team that only ever wants one homeowner on the line at a time no longer
+   * gets 2X/3X offered. Clamped to the platform maximum — an org can dial fewer
+   * lines than MAX_PARALLEL_HUMAN, never more, because a rep still can't hold
+   * more than a few answered calls without abandoning someone.
+   */
+  maxHumanLines = MAX_PARALLEL_HUMAN,
 ) {
+  const humanCeiling = Math.max(
+    1,
+    Math.min(MAX_PARALLEL_HUMAN, Math.floor(maxHumanLines) || MAX_PARALLEL_HUMAN),
+  );
   const [state, setState] = useState<DialerState>({
     status: "idle",
     lines: [],
@@ -252,10 +278,11 @@ export function useDialer(
     recording: true,
     autoDial: false,
     parallelCount: 1,
-    maxParallel: aiConfigured ? maxAiConcurrency : MAX_PARALLEL_HUMAN,
+    maxParallel: aiConfigured ? maxAiConcurrency : humanCeiling,
     lastOutcome: null,
     mode: "connecting",
     reconnecting: false,
+    micBlocked: false,
     callsThisSession: 0,
     connectsThisSession: 0,
     dialsToday: 0,
@@ -285,6 +312,10 @@ export function useDialer(
   const pendingRebuildRef = useRef(false);
   const tickRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // Watches the winning homeowner leg AFTER connect on a parallel dial. At 2x/3x
+  // the conference has endOnExit=false, so the customer hanging up does NOT end
+  // the rep's leg — without this the rep would sit on "live" talking to nobody.
+  const customerWatchRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const presenceTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const presenceSnapshotRef = useRef<{
     status: DialerStatus;
@@ -292,6 +323,8 @@ export function useDialer(
     aiActiveCount: number;
   }>({ status: "idle", lead: null, aiActiveCount: 0 });
   const identityRef = useRef<string>("agent");
+  /** Server-signed proof that `identityRef` was issued to us — renews it in place. */
+  const identityProofRef = useRef<string>("");
   const autoDialRef = useRef(false);
   const parallelRef = useRef(1);
   const modeRef = useRef<DialerMode>("connecting");
@@ -311,6 +344,22 @@ export function useDialer(
   useEffect(() => {
     maxAiRef.current = maxAiConcurrency;
   }, [maxAiConcurrency]);
+  // The org's human-line ceiling, mirrored so mode switches and clamps read the
+  // current value without re-creating the callbacks that use it.
+  const humanCeilingRef = useRef(humanCeiling);
+  useEffect(() => {
+    humanCeilingRef.current = humanCeiling;
+    // A ceiling that just dropped (an admin lowered "Max lines") must pull an
+    // already-selected count down with it, or the rep keeps dialing 3X on a
+    // workspace that has since been set to 1.
+    setState((s) => {
+      if (s.aiMode) return s;
+      const clamped = Math.min(s.parallelCount, humanCeiling);
+      if (s.parallelCount === clamped && s.maxParallel === humanCeiling) return s;
+      parallelRef.current = clamped;
+      return { ...s, parallelCount: clamped, maxParallel: humanCeiling };
+    });
+  }, [humanCeiling]);
   // ── AI double-dial (double-tap) ────────────────────────────────────────────
   const doubleDialRef = useRef(doubleDial);
   const doubleDialGapMsRef = useRef(Math.max(5, doubleDialGapSec) * 1000);
@@ -335,6 +384,41 @@ export function useDialer(
   const sessionGenRef = useRef(0);
   // Whether manual PSTN dialing is possible (a Twilio caller ID is configured).
   const canDialOutRef = useRef(true);
+  /** Mirrors state.micBlocked for the dial path, which reads it synchronously. */
+  const micOkRef = useRef(true);
+  /**
+   * The outbound homeowner leg(s) of the attempt in flight, held here so that
+   * EVERY teardown path can hang them up — not just the two that happened to
+   * remember to. Cleared in connectLine(): once a homeowner is bridged this is
+   * a live conversation, and releasing it would drop the rep mid-sentence.
+   */
+  const activeLegsRef = useRef<{
+    sids: string[];
+    dialed: { leadId: string; phone: string }[];
+  }>({ sids: [], dialed: [] });
+  /**
+   * A dial is between "pressed Start" and "joined or failed". Without this, a
+   * rep mashing Start placed one real outbound call per click — 9 in 8 seconds
+   * in production, on a workspace whose Max lines is 1.
+   */
+  const dialInFlightRef = useRef(false);
+  /**
+   * True once a homeowner is actually bridged to the rep on the current attempt.
+   *
+   * The difference between "the call ended" and "the call never happened" is not
+   * cosmetic: one deserves the disposition screen, the other is a failure the rep
+   * needs told about. Without this they were the same code path, so a rep whose
+   * own leg Twilio dropped mid-ring got a wrap-up form for a conversation that
+   * never occurred.
+   */
+  const bridgedRef = useRef(false);
+  /**
+   * Set immediately before WE hang the rep's leg up on purpose — the End call
+   * button, a no-answer, the 3-minute timeout. The `disconnect` event can't tell
+   * "we ended this" from "Twilio killed our leg" on its own, and treating the
+   * second as the first is what dressed a failed dial up as a completed call.
+   */
+  const intentionalEndRef = useRef(false);
   // Daily dial counter — ref is the source of truth (seeded from localStorage),
   // mirrored to state.dialsToday for display. userIdRef keys the storage per rep.
   const dialsTodayRef = useRef(0);
@@ -369,6 +453,78 @@ export function useDialer(
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ action, id, ...extra }),
       }).catch(() => {});
+    },
+    [],
+  );
+
+  /**
+   * Hang up outbound legs we placed but can no longer bridge the rep into.
+   * Fire-and-forget: the rep is already back at idle, and an abandoned call
+   * ringing a real person is worse than a failed cleanup request.
+   *
+   * Takes the numbers we dialed as well as the SIDs, because the failure this
+   * exists for includes "the response carrying the SIDs never arrived" — and in
+   * that case the numbers are the only handle we have on calls that are, right
+   * now, ringing somebody's house.
+   */
+  const releaseLegs = useCallback(
+    (sids: string[], dialed: { leadId: string; phone: string }[] = []) => {
+      if (!sids.length && !dialed.length) return;
+      fetch("/api/twilio/release", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ sids, leads: dialed }),
+        keepalive: true,
+      }).catch(() => {});
+    },
+    [],
+  );
+
+  /**
+   * Hang up the outbound leg(s) of an attempt that never reached the rep.
+   *
+   * connectLine() clears the ref, so once a homeowner is actually bridged this
+   * is a no-op and a live conversation can never be cut. Everywhere else, a
+   * teardown means nobody is coming — and the leg has to go rather than ring
+   * a real person into an empty conference.
+   */
+  const releaseActiveLegs = useCallback(() => {
+    const { sids, dialed } = activeLegsRef.current;
+    activeLegsRef.current = { sids: [], dialed: [] };
+    if (sids.length || dialed.length) releaseLegs(sids, dialed);
+  }, [releaseLegs]);
+
+  /**
+   * Ask Twilio which of the numbers we just dialed are actually in flight.
+   *
+   * The counterpart to releaseLegs: same problem (we lost the SIDs), opposite
+   * resolution (finish the call rather than abandon it). Returns an empty list
+   * on any failure, so the caller falls through to its normal "nothing was
+   * dialed" handling and never invents a call that doesn't exist.
+   */
+  const recoverPlacedLegs = useCallback(
+    async (
+      dialed: { leadId: string; phone: string }[],
+    ): Promise<{ leadId: string; sid: string }[]> => {
+      if (!dialed.length) return [];
+      try {
+        const res = await fetch("/api/twilio/legs", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ leads: dialed }),
+        });
+        if (!res.ok) return [];
+        const json = (await res.json().catch(() => ({}))) as {
+          calls?: { leadId?: string; sid?: string }[];
+        };
+        return (json.calls ?? [])
+          .filter((c): c is { leadId: string; sid: string } =>
+            Boolean(c?.sid && c?.leadId),
+          )
+          .map((c) => ({ leadId: c.leadId, sid: c.sid }));
+      } catch {
+        return [];
+      }
     },
     [],
   );
@@ -425,6 +581,8 @@ export function useDialer(
   const stopPoll = useCallback(() => {
     if (pollRef.current) clearInterval(pollRef.current);
     pollRef.current = null;
+    if (customerWatchRef.current) clearInterval(customerWatchRef.current);
+    customerWatchRef.current = null;
   }, []);
 
   const stopAITimer = useCallback(() => {
@@ -432,13 +590,30 @@ export function useDialer(
     aiTimerRef.current = null;
   }, []);
 
-  // Fetch a fresh short-lived Voice access token from the server.
-  const fetchVoiceToken = useCallback(async () => {
+  /**
+   * Fetch a Voice access token from the server.
+   *
+   * `identity` MUST be passed when REFRESHING the token of a live Device. Twilio
+   * requires a renewed token to carry the same identity — hand `updateToken()` a
+   * token minted for a different one and the Device re-registers as a different
+   * client, which is registration churn at best and a dropped call at worst.
+   * The idle health check runs every 25 s, so without this the browser was
+   * silently changing Twilio identity all day long.
+   */
+  const fetchVoiceToken = useCallback(async (renew = false) => {
     try {
-      const res = await fetch("/api/twilio/token", { cache: "no-store" });
+      // Renewals ask to keep the current identity, proving it was issued to us.
+      const id = identityRef.current;
+      const proof = identityProofRef.current;
+      const url =
+        renew && id && proof
+          ? `/api/twilio/token?identity=${encodeURIComponent(id)}&proof=${encodeURIComponent(proof)}`
+          : "/api/twilio/token";
+      const res = await fetch(url, { cache: "no-store" });
       return (await res.json()) as {
         token?: string;
         identity?: string;
+        identityProof?: string;
         mode: string;
         canDialOut?: boolean;
       };
@@ -446,6 +621,23 @@ export function useDialer(
       return null;
     }
   }, []);
+
+  /**
+   * Record the identity the server actually issued.
+   *
+   * Deliberately separate from fetching, and only ever called AFTER the caller's
+   * staleness check: a superseded setup that wrote these refs would leave the
+   * LIVE device renewing under an identity that isn't its own — which is exactly
+   * the identity switch this whole mechanism exists to prevent.
+   */
+  const adoptIdentity = useCallback(
+    (data: { identity?: string; identityProof?: string } | null) => {
+      if (!data?.identity) return;
+      identityRef.current = data.identity;
+      identityProofRef.current = data.identityProof ?? "";
+    },
+    [],
+  );
 
   // ── Initialize (or re-initialize) the Twilio device ───────────────────────
   // Tokens are short-lived (1h). Without renewal the device silently goes dead
@@ -474,16 +666,29 @@ export function useDialer(
       patch({ mode: "offline" });
       return;
     }
+    // This setup is still the current one, so this identity is now OUR identity —
+    // every later renewal renews it in place rather than picking up a new one.
+    adoptIdentity(data);
 
     // Request mic permission BEFORE creating the Device. Browsers (Safari most
     // strictly) block audio silently when permission is first asked mid-call;
     // doing it now, during setup, surfaces the prompt at a sane moment. We
     // release the stream immediately — the SDK re-acquires it per call.
+    //
+    // The outcome is RECORDED, not swallowed. Registration succeeds without a
+    // microphone, so the old "register anyway; connect() will surface a real
+    // error" left the dialer reading "Twilio Live" on a browser that could not
+    // possibly hold a conversation — and connect()'s error was then discarded
+    // by the Call error handler. Every dial rang a real homeowner into silence.
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       stream.getTracks().forEach((t) => t.stop());
-    } catch {
-      /* denied / no mic — register anyway; connect() will surface a real error */
+      micOkRef.current = true;
+      patch({ micBlocked: false });
+    } catch (err) {
+      micOkRef.current = false;
+      patch({ micBlocked: true });
+      console.error("[dialer] microphone unavailable — manual dialing held back:", err);
     }
     if (deviceGenRef.current !== gen) return;
 
@@ -500,11 +705,13 @@ export function useDialer(
       // Renew the token ~30s before it lapses so the device stays live all day.
       device.on("tokenWillExpire", async () => {
         if (deviceGenRef.current !== gen) return;
-        const fresh = await fetchVoiceToken();
+        // Renew in place — same identity. See fetchVoiceToken.
+        const fresh = await fetchVoiceToken(true);
         if (deviceGenRef.current !== gen) return;
         if (fresh?.token) {
           try {
             device.updateToken(fresh.token);
+            adoptIdentity(fresh);
           } catch {
             /* updateToken can throw if the device is mid-teardown */
           }
@@ -563,7 +770,6 @@ export function useDialer(
         return;
       }
       deviceRef.current = device;
-      identityRef.current = data.identity ?? "agent";
       canDialOutRef.current = data.canDialOut !== false;
       modeRef.current = "live";
       patch({ mode: "live" });
@@ -572,7 +778,7 @@ export function useDialer(
       modeRef.current = "offline";
       patch({ mode: "offline" });
     }
-  }, [fetchVoiceToken, patch]);
+  }, [adoptIdentity, fetchVoiceToken, patch]);
 
   // Stable indirection so lifecycle handlers can re-invoke the latest setup.
   const setupDeviceRef = useRef(setupDevice);
@@ -590,7 +796,13 @@ export function useDialer(
   // "offline" until a manual reload: the rep returning to a backgrounded tab, the
   // network coming back, and a periodic health check. Never disturbs a live call.
   const ensureRegistered = useCallback(async () => {
-    if (!enabled || callRef.current) return;
+    // Never while a call is up — and never while a dial is IN FLIGHT either.
+    // `callRef.current` isn't set until device.connect() resolves, so this check
+    // used to leave a window, a second or so wide, in which the health check
+    // could tear the Device down between "the homeowner's phone is ringing" and
+    // "the rep joins the conference" — the rep's leg dying with the call already
+    // on the wire.
+    if (!enabled || callRef.current || dialInFlightRef.current) return;
     const device = deviceRef.current;
     if (!device || String(device.state) !== "registered") {
       await setupDeviceRef.current?.();
@@ -598,14 +810,21 @@ export function useDialer(
     }
     // Registered, but a token can lapse while the tab is frozen (a throttled timer
     // never fires tokenWillExpire) — refresh so the next dial isn't rejected on a
-    // stale token.
+    // stale token. Reuse the CURRENT identity: a refresh must not change who this
+    // Device is (see fetchVoiceToken).
     try {
-      const fresh = await fetchVoiceToken();
-      if (fresh?.token) device.updateToken(fresh.token);
+      const fresh = await fetchVoiceToken(true);
+      // Re-check: a dial may have started while that request was in flight, and
+      // updating the token is not worth risking the leg it's about to place.
+      if (callRef.current || dialInFlightRef.current) return;
+      if (fresh?.token) {
+        device.updateToken(fresh.token);
+        adoptIdentity(fresh);
+      }
     } catch {
       /* the tokenWillExpire event + the re-register branch above are backstops */
     }
-  }, [enabled, fetchVoiceToken]);
+  }, [adoptIdentity, enabled, fetchVoiceToken]);
 
   useEffect(() => {
     // Only build the Twilio device once the dialer is actually in use. Flips
@@ -767,6 +986,34 @@ export function useDialer(
   );
 
   /**
+   * Keep the queue cursor pointing INSIDE the current queue, wrapping back to
+   * the top when it has fallen off the end. Returns the usable cursor.
+   *
+   * The cursor routinely outlives the list it was set against: an AI pass parks
+   * it at exactly `queue.length` when it runs out of leads, `loadLeads()` can
+   * hand back a shorter list than last time, and the group / campaign / "my
+   * leads" filters narrow the queue underneath it. Nothing used to bring it back
+   * in range, and `nextLeads()` slices from it without wrapping — so a stale
+   * cursor made "Start session" find NOTHING to dial and bail out instantly.
+   * That is the "I press start, it never dials, and it drops straight back to
+   * idle" report: the lead panel still showed a lead (it indexes with a modulo
+   * the engine itself never applied), so the queue looked perfectly fine.
+   */
+  const normalizeCursor = useCallback(() => {
+    if (queueIndexRef.current >= queue.length || queueIndexRef.current < 0) {
+      queueIndexRef.current = 0;
+      setState((s) => (s.queueIndex === 0 ? s : { ...s, queueIndex: 0 }));
+    }
+    return queueIndexRef.current;
+  }, [queue.length]);
+
+  // Re-anchor whenever the loaded queue changes size, so the cursor can never be
+  // left stranded past the end of a freshly-loaded or freshly-filtered list.
+  useEffect(() => {
+    normalizeCursor();
+  }, [normalizeCursor]);
+
+  /**
    * The next `count` leads. Does NOT wrap WITHIN a batch.
    *
    * This used to index `queue[(i + n) % queue.length]`, so a 2-lead queue dialed
@@ -777,15 +1024,21 @@ export function useDialer(
    */
   const nextLeads = useCallback(
     (count: number) => {
-      const start = queueIndexRef.current;
+      if (!queue.length) return [];
+      const start = normalizeCursor();
       return queue.slice(start, start + count);
     },
-    [queue],
+    [normalizeCursor, queue],
   );
 
   const connectLine = useCallback(
     (lead: Lead) => {
       stopPoll();
+      // Bridged. From here the outbound leg IS the conversation, so drop it from
+      // the release list — every later teardown must leave it alone.
+      activeLegsRef.current = { sids: [], dialed: [] };
+      dialInFlightRef.current = false;
+      bridgedRef.current = true;
       postHuman("connect");
       setState((s) => ({
         ...s,
@@ -804,6 +1057,32 @@ export function useDialer(
     [postHuman, startTick, stopPoll],
   );
 
+  // A parallel (2x/3x) dial rings several homeowners but only the WINNER gets a
+  // rep disposition. Without this the losing legs get NO call_record at all, so
+  // dial counts and connect-rate are wrong by up to Nx, there is no per-attempt
+  // trail (a TCPA exposure), and the auto-dialer silently re-rings them. File a
+  // best-effort no_answer record for every non-winning line. `keepLeadId` is the
+  // one the rep will disposition themselves (the winner, or the focus lead on a
+  // no-answer batch), so it's skipped here.
+  const recordNonWinners = useCallback((dialedLeads: Lead[], keepLeadId: string) => {
+    if (dialedLeads.length < 2) return;
+    for (const l of dialedLeads) {
+      if (!l.id || l.id === keepLeadId) continue;
+      void fetch("/api/calls", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          leadId: l.id,
+          leadName: `${l.firstName} ${l.lastName}`.trim(),
+          phone: l.phone,
+          durationSec: 0,
+          outcome: "no_answer",
+        }),
+        keepalive: true,
+      }).catch(() => {});
+    }
+  }, []);
+
   // A token-expiry error that arrived mid-call deferred its device rebuild so it
   // wouldn't drop the call. The call is over now — honor it, so the device
   // recovers instead of quietly running on a stale/expired token.
@@ -813,60 +1092,145 @@ export function useDialer(
     void setupDeviceRef.current?.();
   }, []);
 
-  const resetToIdle = useCallback(() => {
-    stopTick();
-    stopPoll();
-    clearHumanPresence();
-    callRef.current = null;
-    patch({ status: "idle", lines: [], connectedLead: null, durationSec: 0, reconnecting: false });
-    consumePendingRebuild();
-  }, [clearHumanPresence, consumePendingRebuild, patch, stopTick, stopPoll]);
+  /**
+   * Tear the call down and go back to idle.
+   *
+   * `reason` is not optional politeness — this is the path the Twilio Call's
+   * error/cancel/reject events land on, and it used to reset the UI in total
+   * silence. The rep pressed Start, the screen flashed and came back, and
+   * nothing anywhere said why. Callers that know why MUST say so.
+   *
+   * It also releases the outbound leg. Reaching idle means the rep is not on
+   * this call and never will be, so anything still ringing is a homeowner
+   * picking up to silence.
+   */
+  const resetToIdle = useCallback(
+    (reason?: string) => {
+      stopTick();
+      stopPoll();
+      clearHumanPresence();
+      releaseActiveLegs();
+      dialInFlightRef.current = false;
+      bridgedRef.current = false;
+      intentionalEndRef.current = false;
+      // Detach FIRST, then hang up: the disconnect below can re-enter these
+      // handlers, and a null ref is what makes them recognise the event as
+      // belonging to a call the dialer has already finished with.
+      const call = callRef.current;
+      callRef.current = null;
+      try {
+        // Reaching idle means the rep is not on this call and never will be, so
+        // a leg still open here is a rep silently connected to nothing.
+        if (call && call.status() !== "closed") call.disconnect();
+      } catch {
+        /* already torn down */
+      }
+      patch({
+        status: "idle",
+        lines: [],
+        connectedLead: null,
+        durationSec: 0,
+        reconnecting: false,
+        ...(reason ? { error: reason } : {}),
+      });
+      consumePendingRebuild();
+    },
+    [clearHumanPresence, consumePendingRebuild, patch, releaseActiveLegs, stopTick, stopPoll],
+  );
 
   const endCall = useCallback(() => {
     stopTick();
     stopPoll();
     clearHumanPresence();
+    // If this ends before anyone was bridged, the homeowner leg is still out
+    // there ringing. connectLine() empties the ref, so a real conversation
+    // ending here releases nothing.
+    releaseActiveLegs();
+    dialInFlightRef.current = false;
     const sid = callRef.current?.parameters?.CallSid ?? null;
+    // Detach BEFORE hanging up. `disconnect()` can fire the `disconnect` event
+    // re-entrantly, and with the ref already cleared that event is correctly
+    // read as coming from a call the dialer has finished with — instead of
+    // re-entering this function.
+    const call = callRef.current;
+    callRef.current = null;
     try {
-      callRef.current?.disconnect();
+      call?.disconnect();
     } catch {
       /* noop */
     }
-    callRef.current = null;
+    bridgedRef.current = false;
+    intentionalEndRef.current = false;
     patch({ status: "wrapup", callSid: sid, reconnecting: false });
     consumePendingRebuild();
-  }, [clearHumanPresence, consumePendingRebuild, patch, stopTick, stopPoll]);
+  }, [clearHumanPresence, consumePendingRebuild, patch, releaseActiveLegs, stopTick, stopPoll]);
 
   const attachCallHandlers = useCallback(
     (call: Call, onAccept?: () => void) => {
       callRef.current = call;
-      if (onAccept) call.on("accept", onAccept);
-      call.on("disconnect", () => endCall());
-      call.on("cancel", () => resetToIdle());
-      call.on("reject", () => resetToIdle());
-      call.on("error", () => {
-        // The SDK fires `error` for many conditions, not all of them fatal. When a
-        // call is genuinely ending it ALSO fires `disconnect` (→ endCall), which
-        // wraps up cleanly — so this handler tearing the call down too is at best
-        // redundant. On a RECOVERABLE error, though, resetting here abandons a call
-        // the customer is still on: the rep's screen drops to idle while they're
-        // actually still connected, which reads as "the call just cut off." Only
-        // reset when the call is truly closed; otherwise let `disconnect` decide.
+
+      /**
+       * THE fix for "it rings, then boots me back to Start session."
+       *
+       * A Twilio Call keeps emitting after it is over — a hang-up is routinely
+       * followed by trailing media/ICE `error`s, and `cancel` lands on an
+       * outgoing leg Twilio gave up on. These handlers are attached per Call and
+       * never detached, so before this every late event from a DEAD call ran
+       * against whatever the dialer was doing at that moment. Once `endCall()`
+       * had nulled `callRef.current`, the old guard (`if (callRef.current && …)`)
+       * fell straight through to a bare `resetToIdle()` — wiping the screen back
+       * to Start, saying nothing, seconds after the rep pressed the button.
+       *
+       * `decideCallEvent` (src/lib/dialer/call-events.ts) holds the rules and is
+       * asserted by `npm run verify:call-events`; this closure just supplies the
+       * live context and carries the verdict out.
+       */
+      const dispatch = (event: CallEvent, err?: unknown) => {
+        let callStatus = "closed";
         try {
-          if (callRef.current && callRef.current.status() !== "closed") return;
+          callStatus = String(call.status());
         } catch {
-          /* status() unavailable — fall through and reset */
+          /* status() unavailable on a torn-down call — treat as closed */
         }
-        resetToIdle();
+        const action = decideCallEvent(event, {
+          isCurrent: callRef.current === call,
+          bridged: bridgedRef.current,
+          intentional: intentionalEndRef.current,
+          callStatus,
+        });
+        if (action.type === "ignore") return;
+        if (action.type === "wrapup") {
+          endCall();
+          return;
+        }
+        // Never silent: `reason: null` means "the Twilio error IS the reason".
+        resetToIdle(action.reason ?? describeCallError(err));
+      };
+
+      if (onAccept) call.on("accept", onAccept);
+      call.on("disconnect", () => dispatch("disconnect"));
+      call.on("cancel", () => dispatch("cancel"));
+      call.on("reject", () => dispatch("reject"));
+      call.on("error", (err: unknown) => {
+        // Logged unconditionally, even when the verdict is "ignore" — the error
+        // code is the one piece of evidence that explains a failed dial, and the
+        // handler used to take no argument at all, dropping every one of them.
+        console.error("[dialer] call error", err);
+        dispatch("error", err);
       });
+
       // Transient media/signaling blip: the SDK is auto-recovering the SAME call
       // leg — it is NOT over. Ride it out (show "Reconnecting…") rather than let a
       // 2-second wobble read as a dropped call. If recovery ultimately fails the
       // SDK fires `disconnect`, which wraps up normally.
-      call.on("reconnecting", () => patch({ reconnecting: true }));
-      call.on("reconnected", () => patch({ reconnecting: false }));
+      call.on("reconnecting", () => {
+        if (callRef.current === call) patch({ reconnecting: true });
+      });
+      call.on("reconnected", () => {
+        if (callRef.current === call) patch({ reconnecting: false });
+      });
     },
-    [endCall, resetToIdle],
+    [endCall, patch, resetToIdle],
   );
 
   // ── Lead navigation (browse the queue without calling) ────────────────────
@@ -1143,11 +1507,17 @@ export function useDialer(
   const launchAIBatch = useCallback(async () => {
     await reapInflight();
     const gen = sessionGenRef.current;
+    // Only re-arm the pump while auto-dial is still on AND this is still the
+    // current session. stopAICampaign/endAISession clear autoDialRef (and end
+    // bumps the generation), so a batch already in flight when Stop was pressed
+    // re-checks this after its awaits and can no longer schedule the next tick —
+    // which is what used to keep dialing homeowners after the operator stopped.
+    const keepPumping = () => autoDialRef.current && sessionGenRef.current === gen;
     const slots = Math.max(0, parallelRef.current - inflightRef.current.size);
 
     // Every line is busy (or held for a pending re-ring) — come back when one frees.
     if (slots === 0) {
-      if (autoDialRef.current) {
+      if (keepPumping()) {
         aiTimerRef.current = setTimeout(() => void launchAIBatch(), AI_PUMP_MS);
       }
       return;
@@ -1159,7 +1529,7 @@ export function useDialer(
       // Out of NEW leads — but don't declare "done" while calls are live OR a
       // double-tap is still owed.
       if (inflightRef.current.size > 0 || redialsRef.current.size > 0) {
-        if (autoDialRef.current) {
+        if (keepPumping()) {
           aiTimerRef.current = setTimeout(() => void launchAIBatch(), AI_PUMP_MS);
         }
         return;
@@ -1179,7 +1549,7 @@ export function useDialer(
 
     // Keep pumping while auto-dial is on. The next tick re-checks free lines, so
     // this can't run away: if all N are still busy it launches nothing.
-    if (autoDialRef.current && aiCursorRef.current < queue.length) {
+    if (keepPumping() && aiCursorRef.current < queue.length) {
       aiTimerRef.current = setTimeout(() => void launchAIBatch(), AI_PUMP_MS);
     } else if (aiCursorRef.current >= queue.length) {
       // End of this pass. Wait for calls on the wire AND any owed re-rings before
@@ -1187,7 +1557,7 @@ export function useDialer(
       // next lap stacks on top of live calls.
       if (
         (inflightRef.current.size > 0 || redialsRef.current.size > 0) &&
-        autoDialRef.current
+        keepPumping()
       ) {
         aiTimerRef.current = setTimeout(() => void launchAIBatch(), AI_PUMP_MS);
         return;
@@ -1200,7 +1570,10 @@ export function useDialer(
   const startAISession = useCallback(() => {
     stopAITimer();
     sessionGenRef.current += 1;
-    aiCursorRef.current = queueIndexRef.current;
+    // Same stale-cursor trap as the manual path: a finished pass parks the
+    // cursor at queue.length, and starting from there gives the pump nothing to
+    // launch — the session would open and report "Campaign complete" on the spot.
+    aiCursorRef.current = normalizeCursor();
     // A fresh session starts with every line free. Carrying stale slots over
     // would make the pump believe the floor was busy and launch nothing.
     inflightRef.current.clear();
@@ -1216,7 +1589,7 @@ export function useDialer(
       error: null,
     }));
     void launchAIBatch();
-  }, [launchAIBatch, purgeRedials, stopAITimer]);
+  }, [launchAIBatch, normalizeCursor, purgeRedials, stopAITimer]);
 
   /** AI-dial an ad-hoc number with whatever the user knows about it. */
   const aiDialNumber = useCallback(
@@ -1291,10 +1664,35 @@ export function useDialer(
   // the conference muted — no media relay required.
   const startHumanCall = useCallback(
     async (override?: Lead[]) => {
-      if (modeRef.current !== "live" || !deviceRef.current) {
+      // One dial at a time. Each press of Start places a REAL outbound call, and
+      // when the rep's side then failed silently they pressed it again — nine
+      // times in eight seconds in production, on a workspace configured for a
+      // single line. Nine homeowners rang; nobody was there for any of them.
+      if (dialInFlightRef.current) return;
+
+      // Pin the Device now. The dial does real network work before it needs to
+      // join the conference, and setupDevice() (health check, token refresh,
+      // tab resume) can null deviceRef out underneath us in that window — which
+      // used to blow up on `deviceRef.current.connect(...)` several awaits later.
+      const device = deviceRef.current;
+      if (modeRef.current !== "live" || !device) {
         patch({
           error: "Twilio isn't connected. Add your credentials to place calls.",
           status: "idle",
+        });
+        return;
+      }
+
+      // No microphone, no call. The Device registers happily without one, so
+      // everything upstream of here looks healthy — but the rep cannot speak,
+      // and dialing anyway just rings a homeowner into silence. Refuse BEFORE
+      // placing the call rather than discovering it after the phone is ringing.
+      if (!micOkRef.current) {
+        patch({
+          error:
+            "Your microphone isn't available, so the call would ring the homeowner with no one on the line. Allow microphone access for this site, then press Reconnect.",
+          status: "idle",
+          micBlocked: true,
         });
         return;
       }
@@ -1309,7 +1707,26 @@ export function useDialer(
       }
 
       const leads = override ?? nextLeads(parallelRef.current);
-      if (!leads.length) return;
+      // Never fail silently here. This used to `return` with no state change and
+      // no message, so pressing "Start session" looked like the dialer had
+      // started and instantly quit — with nothing on screen explaining why.
+      if (!leads.length) {
+        patch({
+          error: queue.length
+            ? "Couldn't line up the next lead to dial. Reload your leads and try again."
+            : "No leads are loaded — press “Load leads” to build a session first.",
+          status: "idle",
+          lines: [],
+        });
+        return;
+      }
+
+      // Past every guard — this attempt is really going to put phones on the wire.
+      dialInFlightRef.current = true;
+      // Fresh attempt: nobody is bridged yet, and nothing we do from here is an
+      // intentional hang-up until we say so.
+      bridgedRef.current = false;
+      intentionalEndRef.current = false;
 
       const lines: DialLine[] = leads.map((lead) => ({
         id: `line-${lead.id}-${Date.now()}`,
@@ -1366,6 +1783,20 @@ export function useDialer(
         }),
       }).catch(() => {});
 
+      // Tracked outside the try so a failure to join the conference can still
+      // hang up whatever we already put on the wire (see the catch below).
+      let placedSids: string[] = [];
+      // What we asked Twilio to dial. This is the ONLY handle on those calls
+      // that can't be lost in transit, so every cleanup path falls back to it.
+      const dialed = leads.map((l) => ({ leadId: l.id, phone: l.phone }));
+      // Publish it immediately, so a teardown triggered from OUTSIDE this
+      // function — a Call error event, Cancel, the poll giving up — can hang the
+      // legs up too. Previously only the paths inside this try block could.
+      activeLegsRef.current = { sids: [], dialed };
+      // Flips once the dial request has come back, so the catch below can tell
+      // "we never got as far as Twilio" from "Twilio is dialing, our side broke".
+      let dialResponded = false;
+
       try {
         // Dial the homeowner(s) into the conference room via Twilio REST.
         const res = await fetch("/api/twilio/call", {
@@ -1374,60 +1805,77 @@ export function useDialer(
           body: JSON.stringify({
             room,
             agentIdentity: identityRef.current,
-            leads: leads.map((l) => ({ leadId: l.id, phone: l.phone })),
+            leads: dialed,
             excludedCallerIds: excludedCallerIdsRef.current.length
               ? excludedCallerIdsRef.current
               : undefined,
           }),
         });
-        if (!res.ok) {
-          clearHumanPresence();
-          const j = (await res.json().catch(() => ({}))) as { error?: string };
-          patch({
-            error: j.error ?? "Unable to start the call.",
-            status: "idle",
-            lines: [],
-          });
-          return;
-        }
-        const data = (await res.json().catch(() => ({}))) as {
+        dialResponded = true;
+
+        // Read the body ONCE, and never let a failure to read it decide whether
+        // a call happened. /api/twilio/call puts real phones on the wire and
+        // then reports the leg SIDs; those two facts travel separately, and the
+        // report has to survive a trip back through the CDN that the ringing
+        // phone does not. Conflating "I couldn't read the answer" with "nothing
+        // was dialed" is what dropped the rep back to idle — with an error
+        // blaming their Twilio credentials — while a homeowner's phone rang an
+        // empty conference that nobody would ever join, and nothing hung it up.
+        const raw = await res.text().catch(() => "");
+        let data: {
           calls?: { leadId: string; sid: string | null; error?: string | null }[];
           errors?: (string | null)[];
+          error?: string;
           callerIdInfo?: { callerId: string; pool: string[]; poolIndex: number; rotateEvery: number } | null;
-        };
-        const placed = (data.calls ?? []).map((c) => ({
-          leadId: c.leadId,
-          sid: c.sid,
-        }));
-        // Store caller ID info for the rotation indicator and hold/unhold.
-        if (data.callerIdInfo) {
-          patch({ callerIdInfo: data.callerIdInfo });
+        } = {};
+        try {
+          data = raw ? JSON.parse(raw) : {};
+        } catch {
+          /* unreadable — the recovery below decides what actually happened */
         }
-        const outboundSids = (data.calls ?? [])
-          .map((c) => c.sid)
-          .filter((s): s is string => Boolean(s));
-        if (outboundSids.length) {
-          patch({ outboundSids });
+
+        let placed = (data.calls ?? [])
+          .filter((c): c is { leadId: string; sid: string } => Boolean(c?.sid))
+          .map((c) => ({ leadId: c.leadId, sid: c.sid }));
+
+        // Nothing came back with a SID. Before calling that a failed dial, ask
+        // Twilio — it is the one party that can't be confused on this point.
+        if (!placed.length) {
+          placed = await recoverPlacedLegs(dialed);
         }
-        if (!placed.some((p) => p.sid)) {
+
+        if (!placed.length) {
           clearHumanPresence();
+          dialInFlightRef.current = false;
+          activeLegsRef.current = { sids: [], dialed: [] };
           // Surface the real Twilio rejection (e.g. unverified number on trial
           // account, invalid caller ID, geographic restriction, etc.) so the
           // team knows exactly what to fix rather than getting a generic message.
           const twilioMsg = (data.errors ?? []).filter(Boolean)[0];
-          const errorMsg = twilioMsg
-            ? `Call failed: ${twilioMsg}`
-            : "Couldn't place the call. Check your Twilio number and credentials.";
           patch({
-            error: errorMsg,
+            error: data.error
+              ? data.error
+              : twilioMsg
+                ? `Call failed: ${twilioMsg}`
+                : res.ok
+                  ? "Couldn't place the call. Check your Twilio number and credentials."
+                  : `The dialer service returned ${res.status}. Try again in a moment.`,
             status: "idle",
             lines: [],
           });
           return;
         }
 
+        // Store caller ID info for the rotation indicator and hold/unhold.
+        if (data.callerIdInfo) {
+          patch({ callerIdInfo: data.callerIdInfo });
+        }
+        placedSids = placed.map((p) => p.sid);
+        activeLegsRef.current = { sids: placedSids, dialed };
+        patch({ outboundSids: placedSids });
+
         // Join the rep's browser into the same room (and record the conference).
-        const call = await deviceRef.current.connect({
+        const call = await device.connect({
           params: { Conference: room, record: "true", MonitorId: humanId },
         });
 
@@ -1447,8 +1895,11 @@ export function useDialer(
           // Twilio response as no-answer so the rep isn't left waiting.
           if (++pollAttempts > 120) {
             stopPoll();
-            patch({ status: "idle", lines: [], error: "No answer — call timed out." });
+            intentionalEndRef.current = true;
             try { callRef.current?.disconnect(); } catch { /* noop */ }
+            // resetToIdle (not a bare patch) so the outbound leg is released too
+            // — three minutes in, an un-hung-up leg is a phone still ringing.
+            resetToIdle("No answer — the call timed out.");
             return;
           }
           try {
@@ -1463,14 +1914,50 @@ export function useDialer(
             };
             if (answeredLeadId) {
               const lead = leads.find((l) => l.id === answeredLeadId) ?? leads[0];
+              // File no_answer records for the homeowners dialed on the OTHER
+              // parallel lines — they don't get a rep disposition (P2.RECORDS).
+              recordNonWinners(leads, answeredLeadId);
               connectLine(lead); // connectLine stops the poll + starts the timer
+              // In parallel mode the conference has endOnExit=false, so the
+              // customer hanging up does NOT end the rep's leg and nothing else
+              // would tell us. Watch the winning leg and wrap up when it ends
+              // (P2.HANGUP) — the same outcome a single dial gets for free.
+              const winnerLeg = placed.find((p) => p.leadId === answeredLeadId);
+              if (leads.length > 1 && winnerLeg) {
+                customerWatchRef.current = setInterval(async () => {
+                  try {
+                    const w = await fetch("/api/twilio/answered", {
+                      method: "POST",
+                      headers: { "content-type": "application/json" },
+                      body: JSON.stringify({ legs: [winnerLeg] }),
+                    });
+                    const { done: gone } = (await w.json()) as { done?: boolean };
+                    // Only wrap up if we're still on THIS bridged call.
+                    if (gone && bridgedRef.current) endCall();
+                  } catch {
+                    /* transient read — keep watching */
+                  }
+                }, 4000);
+              }
             } else if (done) {
-              // Nobody answered — release the rep from the empty conference.
+              // Nobody answered — release the rep from the empty conference. File
+              // no_answer for the non-focus parallel lines (the rep dispositions
+              // the focus lead themselves).
+              recordNonWinners(leads, leads[0]?.id ?? "");
               stopPoll();
-              try {
-                callRef.current?.disconnect();
-              } catch {
-                /* the disconnect handler wraps up */
+              if (callRef.current) {
+                // Nobody home is an OUTCOME, not a failure — flag the hang-up as
+                // ours so the rep still gets the disposition screen.
+                intentionalEndRef.current = true;
+                try {
+                  callRef.current.disconnect();
+                } catch {
+                  /* the disconnect handler wraps up */
+                }
+              } else {
+                // The rep's leg is already gone, so no "disconnect" event is
+                // coming and nothing would ever move the UI off "Dialing".
+                resetToIdle("No answer.");
               }
             }
           } catch {
@@ -1478,13 +1965,36 @@ export function useDialer(
           }
         };
         pollRef.current = setInterval(pollAnswered, 1500);
-      } catch {
-        clearHumanPresence();
-        patch({ error: "Call failed to start.", status: "idle", lines: [] });
-        resetToIdle();
+      } catch (err) {
+        // device.connect() throws on a destroyed Device or when a Call is already
+        // active (see Device.connect in @twilio/voice-sdk), and the dial fetch
+        // throws on a dropped connection. All of them land here.
+        console.error("[dialer] start failed", err);
+        // resetToIdle releases the outbound leg(s) via activeLegsRef — which is
+        // populated even when we never learned the SIDs, so the homeowner is
+        // hung up either way.
+        resetToIdle(
+          dialResponded
+            ? describeCallError(err)
+            : "Lost the connection while starting the call. Any lines that were ringing have been hung up — press Start to try again.",
+        );
       }
     },
-    [attachCallHandlers, clearHumanPresence, connectLine, nextLeads, patch, recordDials, resetToIdle, stopPoll],
+    [
+      attachCallHandlers,
+      clearHumanPresence,
+      connectLine,
+      endCall,
+      nextLeads,
+      patch,
+      queue.length,
+      recordDials,
+      recordNonWinners,
+      recoverPlacedLegs,
+      releaseLegs,
+      resetToIdle,
+      stopPoll,
+    ],
   );
 
   // The Start button + auto-dial route through here, honoring the current mode.
@@ -1549,6 +2059,13 @@ export function useDialer(
   const selectOutcome = useCallback(
     (outcome: CallOutcome) => {
       clearHumanPresence();
+      // Dispositioning from wrap-up ends the attempt for good. If anything was
+      // still on the wire (a losing parallel leg, a leg that outlived the rep's
+      // side), it goes now. No-op once bridged — see connectLine.
+      releaseActiveLegs();
+      dialInFlightRef.current = false;
+      bridgedRef.current = false;
+      intentionalEndRef.current = false;
       const completingLap = isCompletingLap();
       patch({ lastOutcome: outcome, status: "idle", lines: [], connectedLead: null });
       advanceQueue();
@@ -1567,19 +2084,39 @@ export function useDialer(
         }
       }
     },
-    [advanceQueue, clearHumanPresence, isCompletingLap, patch, queue.length, startCall],
+    [
+      advanceQueue,
+      clearHumanPresence,
+      isCompletingLap,
+      patch,
+      queue.length,
+      releaseActiveLegs,
+      startCall,
+    ],
   );
 
   const skip = useCallback(() => {
     stopTick();
     stopPoll();
     clearHumanPresence();
+    // This is the "Cancel" button on the ringing screen as well as "Skip without
+    // disposition" on wrap-up. Cancelling a dial hung up only the REP's browser
+    // leg and left the homeowner's phone ringing an empty conference until it
+    // rang out. Release it. (No-op once a call is bridged — see connectLine.)
+    releaseActiveLegs();
+    dialInFlightRef.current = false;
+    bridgedRef.current = false;
+    intentionalEndRef.current = false;
+    // Detach before hanging up — skip() decides where the rep goes next (idle,
+    // or straight into the next auto-dial), so the `disconnect` this fires must
+    // not be handled at all.
+    const call = callRef.current;
+    callRef.current = null;
     try {
-      callRef.current?.disconnect();
+      call?.disconnect();
     } catch {
       /* noop */
     }
-    callRef.current = null;
     const completingLap = isCompletingLap();
     advanceQueue();
     if (autoDialRef.current && queue.length) {
@@ -1592,18 +2129,36 @@ export function useDialer(
     } else {
       patch({ status: "idle", lines: [], connectedLead: null, durationSec: 0 });
     }
-  }, [advanceQueue, clearHumanPresence, isCompletingLap, patch, queue.length, startCall, stopPoll, stopTick]);
+  }, [
+    advanceQueue,
+    clearHumanPresence,
+    isCompletingLap,
+    patch,
+    queue.length,
+    releaseActiveLegs,
+    startCall,
+    stopPoll,
+    stopTick,
+  ]);
 
   const launchNextAI = useCallback(() => {
+    // Clear any pending tick first (mirrors startAISession) so a manual "launch
+    // next" while a timer is already armed can't start a second pump lineage.
+    stopAITimer();
     void launchAIBatch();
-  }, [launchAIBatch]);
+  }, [launchAIBatch, stopAITimer]);
 
   const stopAICampaign = useCallback(() => {
+    // Clearing autoDialRef is what actually stops the pump: a launchAIBatch tick
+    // already in flight re-reads it after its awaits, so without this it would
+    // arm the next tick and keep dialing after Stop was pressed.
+    autoDialRef.current = false;
     stopAITimer();
     patch({ aiCampaign: "idle" });
   }, [patch, stopAITimer]);
 
   const endAISession = useCallback(() => {
+    autoDialRef.current = false;
     stopAITimer();
     sessionGenRef.current += 1;
     purgeRedials();
@@ -1675,7 +2230,7 @@ export function useDialer(
     () =>
       aiModeRef.current
         ? Math.max(1, Math.min(MAX_PARALLEL_AI, maxAiRef.current))
-        : MAX_PARALLEL_HUMAN,
+        : humanCeilingRef.current,
     [],
   );
 
@@ -1707,7 +2262,7 @@ export function useDialer(
       // homeowners would answer to nobody.
       const ceiling = next
         ? Math.max(1, Math.min(MAX_PARALLEL_AI, maxAiRef.current))
-        : MAX_PARALLEL_HUMAN;
+        : humanCeilingRef.current;
       parallelRef.current = Math.min(parallelRef.current, ceiling);
 
       patch({

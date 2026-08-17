@@ -14,7 +14,16 @@ export type UploadStatus = { type: "idle" | "working" | "done" | "error"; messag
  * don't touch the column at all, matching /api/leads/import's own
  * hasOwnProperty distinction between "omitted" and "explicitly null").
  */
-export function useCsvUpload(opts: { leadGroup?: LeadGroup | null; campaignId?: string | null } = {}) {
+export function useCsvUpload(
+  opts: {
+    leadGroup?: LeadGroup | null;
+    campaignId?: string | null;
+    /** Cut this import into numbered packs of roughly this many leads. 0 = off. */
+    packSize?: number;
+    /** What the packs are named after — normally the source file. */
+    packBatch?: string;
+  } = {},
+) {
   const router = useRouter();
   const [status, setStatus] = useState<UploadStatus>({ type: "idle" });
   // Set when /api/leads/import blocks on an uncertified campaign — the file's
@@ -31,6 +40,9 @@ export function useCsvUpload(opts: { leadGroup?: LeadGroup | null; campaignId?: 
         csv: text,
         ...(opts.campaignId ? { campaignId: opts.campaignId } : {}),
         ...(opts.leadGroup !== undefined ? { leadGroup: opts.leadGroup } : {}),
+        ...(opts.packSize && opts.packSize > 0
+          ? { packSize: opts.packSize, packBatch: opts.packBatch ?? "Upload" }
+          : {}),
       }),
     });
     const json = await res.json().catch(() => ({}));
@@ -53,13 +65,20 @@ export function useCsvUpload(opts: { leadGroup?: LeadGroup | null; campaignId?: 
     ].filter(Boolean);
     const skipNote = notes.length ? ` (${notes.join("; ")})` : "";
     const how = json.source === "ai" ? " — columns mapped by AI" : "";
+    const packNote =
+      typeof json.packs === "number" && json.packs > 0
+        ? ` · ${json.packs} pack${json.packs === 1 ? "" : "s"}`
+        : "";
     if (json.aiError) {
       setStatus({
         type: "error",
         message: `Imported ${json.inserted} leads, but AI column mapping didn't run: ${json.aiError}`,
       });
     } else {
-      setStatus({ type: "done", message: `Imported ${json.inserted} leads${skipNote}${how}.` });
+      setStatus({
+        type: "done",
+        message: `Imported ${json.inserted} leads${skipNote}${how}${packNote}.`,
+      });
     }
     router.refresh();
   }

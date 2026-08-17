@@ -1,4 +1,4 @@
-import type { CallOutcome, GeoLeadGroup } from "@/lib/types";
+import type { CallOutcome } from "@/lib/types";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Shared output shapes for the Claude-powered intelligence layer.
@@ -83,21 +83,18 @@ export interface ExecutiveReport {
   recommendations: ReportRecommendation[];
 }
 
-/** One lead's geography classification. `group: null` = "unsorted" — doesn't
- *  clearly belong to any of the 4 named regions. "manual" is not a member of
- *  GeoLeadGroup, so it is structurally impossible for the classifier to emit it. */
-export interface GeoClassifyOutcome {
-  tempId: string;
-  group: GeoLeadGroup | null;
-}
-
 /** Claude's structured read of a completed AI (ElevenLabs) conversation. */
 export interface ConversationAnalysis {
   summary: string;
   detailedSummary: string;
   outcome: CallOutcome;
   sentiment: "positive" | "neutral" | "negative";
-  qualification: {
+  /**
+   * The solar core slots extracted from the call — present ONLY for
+   * solar-template orgs. Non-solar analyses omit it entirely so the finalize
+   * pipeline (enrichLeadFromAI) never writes solar fields onto their leads.
+   */
+  qualification?: {
     utilityBill: number | null;
     solarPayment: number | null;
     hasEV: boolean;

@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
-import { insertCallRecord } from "@/lib/db/records";
+import { orgAIContext } from "@/lib/ai/org-context";
 import { getCallSummary } from "@/lib/ai/services";
+import { insertCallRecord } from "@/lib/db/records";
+import { getViewer } from "@/lib/org/membership";
 import { createClient } from "@/lib/supabase/server";
 import { isSupabaseConfigured } from "@/lib/supabase/config";
 import type { CallOutcome, Lead } from "@/lib/types";
@@ -31,7 +33,14 @@ export async function POST(req: Request) {
       durationMin?: number;
       location?: string;
     } | null;
+    /** Which campaign script (A/B) the rep was shown for this lead, if any. */
+    scriptVariant?: string;
   };
+
+  // Strict allowlist — the DB check constraint only admits null | 'a' | 'b',
+  // so anything else must collapse to null rather than fail the whole insert.
+  const scriptVariant =
+    body.scriptVariant === "a" || body.scriptVariant === "b" ? body.scriptVariant : null;
 
   const appt =
     body.outcome === "appointment_booked" && body.appointment
@@ -55,6 +64,7 @@ export async function POST(req: Request) {
     room: body.room ?? null,
     notes: body.notes,
     appointment: appt,
+    scriptVariant,
   });
 
   if (!recordId) {
@@ -98,7 +108,11 @@ export async function POST(req: Request) {
           createdAt: String(row.created_at ?? ""),
           timezone: String(row.timezone ?? ""),
         };
-        const result = await getCallSummary(lead, body.outcome!);
+        // Summarize with the org's actual vertical/vocabulary — the last
+        // remaining solar-default caller after P6.AIADAPT.
+        const viewer = await getViewer();
+        const ctx = orgAIContext(viewer.org);
+        const result = await getCallSummary(lead, body.outcome!, ctx.isSolar, undefined, ctx);
         if (result.data.executiveSummary) {
           await supabase
             .from("call_records")

@@ -238,27 +238,26 @@ export async function drainOutbox(
   const deadline = Date.now() + budgetMs;
   const admin = createAdminClient();
 
-  let due: Row[] = [];
+  let batch: Row[] = [];
   try {
-    const { data, error } = await admin
-      .from("notification_outbox")
-      .select("*")
-      .eq("status", "pending")
-      .lte("next_attempt_at", new Date().toISOString())
-      .order("next_attempt_at", { ascending: true })
-      .limit(limit + 1);
+    // ATOMICALLY claim the batch (flip due rows to 'sending' under FOR UPDATE
+    // SKIP LOCKED). The old plain SELECT let the two per-minute crons pick the
+    // same rows and send the same appointment email twice; now each caller gets
+    // a disjoint set. The RPC also reclaims rows stuck in 'sending' (a crashed
+    // drain), so nothing is stranded.
+    const { data, error } = await admin.rpc("app_claim_notifications", { p_limit: limit });
     if (error) {
-      console.error("[outbox] could not read the queue:", error.message);
+      console.error("[outbox] could not claim the queue:", error.message);
       return out;
     }
-    due = (data ?? []) as Row[];
+    batch = (data ?? []) as Row[];
   } catch (e) {
-    console.error("[outbox] queue read threw:", e instanceof Error ? e.message : e);
+    console.error("[outbox] queue claim threw:", e instanceof Error ? e.message : e);
     return out;
   }
 
-  out.remaining = due.length > limit;
-  const batch = due.slice(0, limit);
+  // A full batch almost certainly means there's more waiting for the next tick.
+  out.remaining = batch.length >= limit;
 
   const orgCache = new Map<string, OrgContext>();
   const nameCache = new Map<string, string>();
@@ -331,6 +330,9 @@ export async function drainOutbox(
       html: email.html,
       text: email.text,
       fromName: org.fromName || org.name || undefined,
+      // The outbox row id — if a send ever repeats (a crash after sending but
+      // before markSent), Resend dedupes on this key.
+      idempotencyKey: id,
     });
 
     if (sent.ok) {

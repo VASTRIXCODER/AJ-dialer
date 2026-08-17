@@ -1,3 +1,11 @@
+import {
+  detectFieldType,
+  normalizeFieldKey,
+  parseFieldValue,
+  RESERVED_FIELD_KEYS,
+  type LeadFieldDef,
+  type LeadFieldType,
+} from "./field-schema";
 import { isValidPhone, normalizePhone } from "../utils";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -21,6 +29,8 @@ export type ParsedLead = {
   utilityBill?: number;
   solarPayment?: number;
   notes?: string;
+  /** Typed spillover for CSV columns beyond the core slots (custom_fields jsonb). */
+  customFields?: Record<string, string | number | boolean>;
 };
 
 export type ParseResult = {
@@ -29,7 +39,13 @@ export type ParseResult = {
   noPhone: number;
   /** Whether any column mapped to a phone at all (catches bad delimiters). */
   sawPhoneColumn: boolean;
+  /** Typed defs for every unmapped column captured into customFields. */
+  discoveredFields: LeadFieldDef[];
 };
+
+/** Custom fields captured per import are capped so a 200-column broker export
+ *  can't balloon every lead row's jsonb (and the org's field schema). */
+export const MAX_CUSTOM_FIELDS = 30;
 
 /** Detect the most likely delimiter from the header line (comma/semicolon/tab/pipe). */
 export function detectDelimiter(firstLine: string): string {
@@ -92,7 +108,9 @@ export function digitCount(v: string): number {
   return v.replace(/\D/g, "").length;
 }
 
-type Field = keyof ParsedLead | "name" | "address2" | null;
+// customFields is excluded: no header maps to it directly — unmapped columns
+// are captured into it by key instead (see discoverCustomColumns).
+type Field = Exclude<keyof ParsedLead, "customFields"> | "name" | "address2" | null;
 
 /**
  * Map a column header to a lead field. Phone is checked FIRST and matches a wide
@@ -217,15 +235,78 @@ function sniffPhoneColumn(grid: string[][], header: Field[]): number {
   return best;
 }
 
+/** A column earmarked for customFields capture, with its detected type. */
+type CustomCapture = { col: number; key: string; label: string; type: LeadFieldType };
+
+/** Non-empty values of one column (data rows only), enough for type detection. */
+export function sampleColumn(grid: string[][], col: number, start = 1): string[] {
+  const samples: string[] = [];
+  for (let r = start; r < grid.length; r++) {
+    const v = (grid[r]?.[col] ?? "").trim();
+    if (!v) continue;
+    samples.push(v);
+    if (samples.length >= 200) break; // detectFieldType samples at most 200
+  }
+  return samples;
+}
+
+/**
+ * Earmark every column the header mapper DIDN'T claim for customFields capture:
+ * normalize its header to a snake_case key, detect its type from the column's
+ * values, and skip anything unusable — empty headers, keys that collide with an
+ * earlier column, and columns with no data at all. Capped at MAX_CUSTOM_FIELDS.
+ */
+function discoverCustomColumns(grid: string[][], header: Field[]): CustomCapture[] {
+  const captures: CustomCapture[] = [];
+  const seen = new Set<string>();
+  for (let c = 0; c < grid[0].length && captures.length < MAX_CUSTOM_FIELDS; c++) {
+    if (header[c]) continue; // an already-mapped core column
+    const label = (grid[0][c] ?? "").trim();
+    if (!label) continue; // headerless column — no key to store it under
+    const key = normalizeFieldKey(label);
+    if (!key || seen.has(key)) continue;
+    // Never capture reserved keys: the export's metadata tail (Status, AI
+    // Score, Created At…) would otherwise re-import as junk custom fields
+    // holding stale shadows of live columns.
+    if (RESERVED_FIELD_KEYS.has(key)) continue;
+    const samples = sampleColumn(grid, c);
+    if (!samples.length) continue; // entirely empty column — nothing to keep
+    seen.add(key);
+    captures.push({ col: c, key, label, type: detectFieldType(samples) });
+  }
+  return captures;
+}
+
+/** The LeadFieldDef a capture contributes to the org's schema. Visibility is
+ *  decided at persist time (see mergeDiscoveredLeadFields), not here. */
+export function captureToFieldDef(cap: {
+  key: string;
+  label: string;
+  type: LeadFieldType;
+}): LeadFieldDef {
+  return {
+    key: cap.key,
+    label: cap.label,
+    type: cap.type,
+    source: "custom",
+    showInTable: false,
+    showInQualify: false,
+  };
+}
+
 /** Deterministic header-based mapping (fast path for well-formed CSVs). */
 export function rowsToLeads(grid: string[][]): ParseResult {
-  if (grid.length < 2) return { leads: [], noPhone: 0, sawPhoneColumn: false };
+  if (grid.length < 2)
+    return { leads: [], noPhone: 0, sawPhoneColumn: false, discoveredFields: [] };
   const header = grid[0].map(mapHeader);
   if (!header.includes("phone")) {
     const sniffed = sniffPhoneColumn(grid, header);
     if (sniffed >= 0) header[sniffed] = "phone";
   }
   const sawPhoneColumn = header.includes("phone");
+  // Capture is decided AFTER phone sniffing so a data-detected phone column is
+  // never duplicated into customFields.
+  const captures = discoverCustomColumns(grid, header);
   const out: ParsedLead[] = [];
   let noPhone = 0;
   for (let r = 1; r < grid.length; r++) {
@@ -260,6 +341,13 @@ export function rowsToLeads(grid: string[][]): ParseResult {
     // Combine the full street address (line 1 + unit / line 2) so nothing is lost.
     const fullAddr = [addr1, addr2].filter(Boolean).join(", ");
     if (fullAddr) lead.address = fullAddr;
+    // Every unmapped column's cell lands in customFields, coerced to the
+    // column's detected type — nothing a CSV carries is silently dropped.
+    for (const cap of captures) {
+      const raw = (cells[cap.col] ?? "").trim();
+      if (!raw) continue;
+      (lead.customFields ??= {})[cap.key] = parseFieldValue(raw, cap.type);
+    }
     // Guarantee a dialable phone if one exists ANYWHERE in the row — covers
     // mis-mapped/missing phone columns and headerless broker exports.
     if (!isValidPhone(lead.phone)) {
@@ -273,7 +361,12 @@ export function rowsToLeads(grid: string[][]): ParseResult {
   }
   // We "saw" phones if a column mapped OR recovery found dialable numbers.
   const recoveredAny = out.some((l) => isValidPhone(l.phone));
-  return { leads: out, noPhone, sawPhoneColumn: sawPhoneColumn || recoveredAny };
+  return {
+    leads: out,
+    noPhone,
+    sawPhoneColumn: sawPhoneColumn || recoveredAny,
+    discoveredFields: captures.map(captureToFieldDef),
+  };
 }
 
 /**
@@ -286,4 +379,71 @@ export function isConfident(result: ParseResult): boolean {
   const named = result.leads.filter((l) => l.firstName || l.lastName).length;
   const dialable = result.leads.filter((l) => isValidPhone(l.phone)).length;
   return named / result.leads.length >= 0.5 && dialable / result.leads.length >= 0.5;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Discovered-field plumbing: validating field defs that arrive over the wire
+// (the sort-preview → `rows` re-import round trip) and merging new discoveries
+// into an org's saved schema. Pure, so both are unit-testable.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const FIELD_TYPES = new Set<LeadFieldType>([
+  "text", "number", "currency", "boolean", "date", "phone", "email", "url",
+]);
+
+/** How many custom fields may default to a table column (matches the table's
+ *  visible-custom-column cap, so settings stay coherent with what renders). */
+export const MAX_TABLE_CUSTOM_FIELDS = 4;
+
+/**
+ * Validate client-supplied discovered-field defs (the `rows` import path gets
+ * them as JSON from the sort-preview round trip — never trust them as-is).
+ * Keys are re-normalized, labels trimmed and bounded, unknown types dropped,
+ * source forced to "custom", and the per-import cap re-applied.
+ */
+export function sanitizeDiscoveredFields(raw: unknown): LeadFieldDef[] {
+  if (!Array.isArray(raw)) return [];
+  const out: LeadFieldDef[] = [];
+  const seen = new Set<string>();
+  for (const item of raw) {
+    if (out.length >= MAX_CUSTOM_FIELDS) break;
+    if (!item || typeof item !== "object") continue;
+    const f = item as Record<string, unknown>;
+    const key = String(f.key ?? "");
+    // REJECT (never silently rename) keys that aren't already normalized:
+    // renaming here would register the def under a different key than the one
+    // the round-tripped row values carry — a permanent def/value mismatch.
+    if (!key || key !== normalizeFieldKey(key) || seen.has(key)) continue;
+    if (RESERVED_FIELD_KEYS.has(key)) continue;
+    const type = String(f.type ?? "") as LeadFieldType;
+    if (!FIELD_TYPES.has(type)) continue;
+    const label = String(f.label ?? "").trim().slice(0, 80) || key;
+    seen.add(key);
+    out.push(captureToFieldDef({ key, label, type }));
+  }
+  return out;
+}
+
+/**
+ * Merge newly discovered fields into an org's saved schema. Existing defs are
+ * NEVER touched (an admin's relabel/retype always survives a re-import) and
+ * keys are never duplicated. New fields default to visible in the leads table
+ * until MAX_TABLE_CUSTOM_FIELDS custom columns are shown org-wide, and never
+ * default into the qualify panel.
+ */
+export function mergeDiscoveredLeadFields(
+  existing: LeadFieldDef[],
+  discovered: LeadFieldDef[],
+): { fields: LeadFieldDef[]; added: number } {
+  const known = new Set(existing.map((f) => f.key));
+  let visible = existing.filter((f) => f.source === "custom" && f.showInTable).length;
+  const added: LeadFieldDef[] = [];
+  for (const def of discovered) {
+    if (known.has(def.key)) continue; // never overwrite an existing def
+    known.add(def.key);
+    const showInTable = visible < MAX_TABLE_CUSTOM_FIELDS;
+    if (showInTable) visible++;
+    added.push({ ...def, source: "custom", showInTable, showInQualify: false });
+  }
+  return { fields: added.length ? [...existing, ...added] : existing, added: added.length };
 }

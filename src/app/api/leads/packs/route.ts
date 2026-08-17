@@ -1,11 +1,5 @@
 import { NextResponse } from "next/server";
-import {
-  MAX_PACK_SIZE,
-  countAvailable,
-  createLeadPack,
-  listLeadPacks,
-  type PackSource,
-} from "@/lib/db/lead-packs";
+import { assignPack, listAssignablePacks } from "@/lib/db/lead-pack-assign";
 import { getViewer } from "@/lib/org/membership";
 
 export const dynamic = "force-dynamic";
@@ -17,7 +11,7 @@ async function guard() {
   return viewer.permissions.includes("leads.import");
 }
 
-/** List the org's packs with live progress. */
+/** The org's packs, with who holds each one and how far through it they are. */
 export async function GET() {
   if (!(await guard())) {
     return NextResponse.json(
@@ -25,14 +19,10 @@ export async function GET() {
       { status: 403 },
     );
   }
-  return NextResponse.json({ packs: await listLeadPacks() });
+  return NextResponse.json({ packs: await listAssignablePacks() });
 }
 
-/**
- * POST — create a pack, or (with `preview: true`) just report how many leads the
- * filter currently matches, so the dialog can show "312 available" before
- * anyone commits to handing leads over.
- */
+/** Hand a pack to a rep, or send `repId: null` to take it back. */
 export async function POST(req: Request) {
   if (!(await guard())) {
     return NextResponse.json(
@@ -40,29 +30,13 @@ export async function POST(req: Request) {
       { status: 403 },
     );
   }
-
   const body = (await req.json().catch(() => ({}))) as {
-    name?: string;
-    repId?: string;
-    size?: number;
-    source?: PackSource;
-    preview?: boolean;
+    packId?: string;
+    repId?: string | null;
   };
-  const source: PackSource = {
-    leadGroup: body.source?.leadGroup ?? null,
-    campaignId: body.source?.campaignId ?? null,
-    onlyUnassigned: body.source?.onlyUnassigned !== false,
-  };
-
-  if (body.preview) {
-    return NextResponse.json({ available: await countAvailable(source) });
-  }
-
-  const result = await createLeadPack({
-    name: String(body.name ?? ""),
-    repId: String(body.repId ?? ""),
-    size: Math.min(Number(body.size) || 0, MAX_PACK_SIZE),
-    source,
-  });
+  const result = await assignPack(
+    String(body.packId ?? ""),
+    body.repId ? String(body.repId) : null,
+  );
   return NextResponse.json(result, { status: result.ok ? 200 : 400 });
 }

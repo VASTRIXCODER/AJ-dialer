@@ -1,6 +1,7 @@
 import {
   BarChart3,
   Battery,
+  Bot,
   CalendarRange,
   Car,
   Clock,
@@ -8,6 +9,7 @@ import {
   PhoneCall,
   Target,
   Users,
+  Wallet,
   Waves,
   Zap,
 } from "lucide-react";
@@ -32,8 +34,10 @@ import { SectionCard } from "@/components/shared/section-card";
 import { Badge } from "@/components/ui/badge";
 import { buttonVariants } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
+import { costBreakdown } from "@/lib/call-costs";
 import { getReportingData, getTeamLeaderboard } from "@/lib/db/metrics";
 import { getViewer } from "@/lib/org/membership";
+import { DEFAULT_COST_RATES } from "@/lib/org/settings";
 import { outcomeConfig } from "@/lib/status";
 import { cn, formatCurrency, formatDuration, formatNumber, formatPercent } from "@/lib/utils";
 
@@ -78,6 +82,14 @@ export default async function ReportsPage({
   // Manual-only orgs (e.g. Donny) have no AI calls, so drop the AI-vs-human
   // split and the AI executive report — every call here is a human call.
   const aiDialerEnabled = viewer.org?.settings.features.aiDialer !== false;
+
+  // Cost & usage: talk time × the org's per-minute rates (defaults apply when
+  // the org never configured any). channelStats is already scoped to the
+  // selected range, so the panel reacts to the range bar for free.
+  const rates = viewer.org?.settings.costRates ?? DEFAULT_COST_RATES;
+  const costs = costBreakdown(channelStats, rates);
+  const aiCost = costs.perChannel.find((c) => c.channel === "ai");
+  const humanCost = costs.perChannel.find((c) => c.channel === "human");
 
   // Date-range switch — period figures react to it; the 30-day trend and
   // today's hourly chart keep their own fixed windows regardless.
@@ -204,6 +216,62 @@ export default async function ReportsPage({
           </SectionCard>
         )}
       </div>
+
+      {/* Cost & usage — talk time × the org's per-minute rates, same range as
+          the KPIs above. Estimates by design (per-minute billing increments and
+          number fees are ignored); rates are editable in Admin → Organization
+          settings, so the panel says so instead of looking authoritative. */}
+      <SectionCard
+        title="Cost & usage"
+        description="Estimated call spend for the selected period, from talk time × your per-minute rates"
+      >
+        <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+          <MetricCard
+            label="Est. call spend"
+            value={formatCurrency(costs.totalCost)}
+            icon={Wallet}
+            accent="primary"
+          />
+          {aiDialerEnabled && aiCost && (
+            <MetricCard
+              label="AI agent"
+              value={formatCurrency(aiCost.cost)}
+              icon={Bot}
+              accent="accent"
+              sub={`${formatNumber(aiCost.minutes)} min · ${formatNumber(aiCost.calls)} calls`}
+            />
+          )}
+          {humanCost && (
+            <MetricCard
+              label="Human lines"
+              value={formatCurrency(humanCost.cost)}
+              icon={PhoneCall}
+              accent="warning"
+              sub={`${formatNumber(humanCost.minutes)} min · ${formatNumber(humanCost.calls)} calls`}
+            />
+          )}
+          <MetricCard
+            label="Cost per appointment"
+            value={
+              costs.costPerAppointment != null
+                ? formatCurrency(costs.costPerAppointment)
+                : "—"
+            }
+            icon={Target}
+            accent="success"
+            sub={
+              costs.appointments > 0
+                ? `${formatNumber(costs.appointments)} booked on calls`
+                : "none booked in this period"
+            }
+          />
+        </div>
+        <p className="mt-3 text-xs text-muted-foreground">
+          Estimates from talk time at {formatCurrency(rates.aiPerMinute)}/min (AI) and{" "}
+          {formatCurrency(rates.manualPerMinute)}/min (human) — adjust the rates in
+          Admin → Organization settings.
+        </p>
+      </SectionCard>
 
       {/* Trend + outcome mix */}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">

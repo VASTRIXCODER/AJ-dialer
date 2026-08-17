@@ -11,6 +11,7 @@ import {
   isTerminalLiveState,
   LIVE_STATES,
 } from "../types";
+import { addToDnc } from "./dnc";
 
 const UUID =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -124,6 +125,31 @@ async function routeDisposition(
       reason: input.summary || "Callback requested",
       status: "due",
     });
+  } else if (outcome === "do_not_call") {
+    // Suppress the NUMBER, not just this lead row: setting the row's status to
+    // do_not_call only stops THIS row, so the same homeowner on a re-import or a
+    // second campaign's row was fully dialable. Write the number to the org's
+    // suppression list so every dial path scrubs it forever, even if this lead
+    // row is later deleted. Resolve the org from the lead (the passed client is
+    // RLS-scoped for a rep, admin for the AI path — both can read the row's org).
+    let dncOrg: string | null = null;
+    if (leadId) {
+      const { data } = await client
+        .from("leads")
+        .select("org_id")
+        .eq("id", leadId)
+        .maybeSingle();
+      dncOrg = data?.org_id ? String(data.org_id) : null;
+    }
+    if (dncOrg && input.phone) {
+      await addToDnc({
+        orgId: dncOrg,
+        phone: input.phone,
+        reason: input.summary || "Marked do not call on a call",
+        source: input.source === "ai" ? "ai_disposition" : "rep_disposition",
+        createdBy: ownerId,
+      });
+    }
   }
 }
 
@@ -148,6 +174,8 @@ export async function insertCallRecord(input: {
    * up in the "later" bucket rather than on the calendar.
    */
   appointment?: AppointmentDraft | null;
+  /** Which campaign script (A/B) was shown on this call — null when none was. */
+  scriptVariant?: "a" | "b" | null;
 }): Promise<string | null> {
   if (!isSupabaseConfigured()) return null;
   try {
@@ -182,6 +210,7 @@ export async function insertCallRecord(input: {
       call_sid: input.callSid ?? null,
       room: input.room ?? null,
       campaign_id: campaignId,
+      script_variant: input.scriptVariant ?? null,
     }).select("id").maybeSingle();
     const recordId = (rec as { id?: string } | null)?.id ?? null;
 
@@ -285,7 +314,18 @@ export async function getConversationLeadRef(
   }
 }
 
-// ── AI conversation: seed at call placement (user session present) ───────────
+// ── AI conversation: seed at call placement ──────────────────────────────────
+// Interactive calls carry a rep session; the unattended cron does NOT. The old
+// code bailed when there was no session (`if (!user) return`), so EVERY
+// cron-placed AI call went unrecorded: no ai_conversations row, so the Twilio
+// status webhook found no ref and never hung up a no-answer (the agent monologued
+// to an empty conference on full credits), the reconciler couldn't see it, and
+// completeAIConversation returned early — yet the lead was already stamped
+// contacted, so it was burned with no disposition. Now the owner is resolved
+// session-first (rep attribution preserved) then falls back to an explicit
+// ownerId (the org owner for cron), and the row is written with the admin client
+// so it's created either way. owner_id is nullable, so even an owner-less org's
+// call is still recorded — enough for the no-answer hangup + reconciler to work.
 export async function seedAIConversation(input: {
   conversationId: string;
   callSid: string | null;
@@ -300,17 +340,29 @@ export async function seedAIConversation(input: {
    *  Carried onto the conversation so the appointment it books can be attributed
    *  to the agent that closed it. */
   agentKey?: string | null;
+  /** Fallback owner when there's no rep session (the org owner, for cron). */
+  ownerId?: string | null;
 }): Promise<void> {
-  if (!isSupabaseConfigured()) return;
+  if (!isSupabaseConfigured() || !isAdminConfigured()) return;
   try {
-    const supabase = await createClient();
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-    if (!user) return;
-    await supabase.from("ai_conversations").upsert({
+    // Prefer the signed-in rep (interactive path); fall back to the provided
+    // owner (cron). createClient()/getUser() returns a null user with no cookies
+    // rather than throwing, so this is safe from the session-less cron.
+    let ownerId = input.ownerId ?? null;
+    try {
+      const supabase = await createClient();
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (user?.id) ownerId = user.id;
+    } catch {
+      /* no session (cron) — keep the provided owner */
+    }
+
+    const admin = createAdminClient();
+    await admin.from("ai_conversations").upsert({
       conversation_id: input.conversationId,
-      owner_id: user.id,
+      owner_id: ownerId,
       lead_id: asUuid(input.leadId),
       lead_name: input.leadName,
       phone: input.phone,
@@ -427,6 +479,13 @@ export async function completeAIConversation(input: {
   appointment?: { when: string; iso?: string; notes: string } | null;
   /** "failed" for calls that never connected; defaults to "completed". */
   state?: "completed" | "failed";
+  /**
+   * The call's turn array, persisted with the conversation so the dashboard
+   * stops re-fetching ended calls from the ElevenLabs API and other AI
+   * surfaces can see what was actually said. Omitted/empty leaves any
+   * previously stored transcript untouched.
+   */
+  transcript?: { role: string; message: string; secs: number | null }[] | null;
 }): Promise<void> {
   if (!isAdminConfigured()) return;
   try {
@@ -467,6 +526,9 @@ export async function completeAIConversation(input: {
         duration_sec: input.durationSec ?? null,
         appointment: input.appointment ?? null,
         ended_at: new Date().toISOString(),
+        ...(input.transcript && input.transcript.length
+          ? { transcript: input.transcript }
+          : {}),
       })
       .eq("conversation_id", input.conversationId);
 
@@ -812,6 +874,8 @@ export interface AIConversationRow {
   /** They picked up. The live timer counts from here, not startedAt. */
   connectedAt: number | null;
   appointment: { when: string; notes: string } | null;
+  /** Stored turn array (null for calls finalized before persistence landed). */
+  transcript: { role: string; message: string; secs: number | null }[] | null;
 }
 
 export async function getAIConversation(
@@ -846,6 +910,9 @@ export async function getAIConversation(
         : null,
       appointment:
         (data.appointment as { when: string; notes: string } | null) ?? null,
+      transcript: Array.isArray(data.transcript)
+        ? (data.transcript as { role: string; message: string; secs: number | null }[])
+        : null,
     };
   } catch {
     return null;

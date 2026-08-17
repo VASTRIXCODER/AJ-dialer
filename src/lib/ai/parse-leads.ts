@@ -1,11 +1,21 @@
 import "server-only";
 
 import {
+  captureToFieldDef,
   looksLikePhone,
+  MAX_CUSTOM_FIELDS,
   recoverPhone,
+  sampleColumn,
   type ParsedLead,
   type ParseResult,
 } from "@/lib/leads/csv";
+import {
+  detectFieldType,
+  normalizeFieldKey,
+  parseFieldValue,
+  RESERVED_FIELD_KEYS,
+  type LeadFieldType,
+} from "@/lib/leads/field-schema";
 import { isValidPhone, normalizePhone } from "@/lib/utils";
 import { generateJSON, generateJSONLoose, isAIConfigured } from "./claude";
 
@@ -40,7 +50,8 @@ interface ColumnMapping {
   utilityBillCol: number;
   emailCols: number[];
   phoneCols: PhoneCol[];
-  /** Extra useful columns (gender, age, marital, net worth, …) for notes. */
+  /** Extra useful columns (gender, age, marital, net worth, …) — captured as
+   *  typed custom fields on every lead. */
   extras: { label: string; col: number }[];
 }
 
@@ -160,9 +171,38 @@ const cell = (row: string[], i: number) =>
 
 const isDnc = (v: string) => /do\s*not\s*call|dnc|opt(ed)?\s*out/i.test(v);
 
+/**
+ * Type the mapping's `extras` columns the same way the deterministic path types
+ * unmapped columns: normalize the AI's label to a snake_case key, detect the
+ * column's type from its values, drop empty/colliding/dataless columns, and cap
+ * at MAX_CUSTOM_FIELDS.
+ */
+function typedExtras(
+  grid: string[][],
+  m: ColumnMapping,
+  start: number,
+): { col: number; key: string; label: string; type: LeadFieldType }[] {
+  const captures: { col: number; key: string; label: string; type: LeadFieldType }[] = [];
+  const seen = new Set<string>();
+  for (const ex of m.extras ?? []) {
+    if (captures.length >= MAX_CUSTOM_FIELDS) break;
+    const label = (ex.label ?? "").trim();
+    if (!label || !Number.isInteger(ex.col) || ex.col < 0) continue;
+    const key = normalizeFieldKey(label);
+    if (!key || seen.has(key)) continue;
+    if (RESERVED_FIELD_KEYS.has(key)) continue; // never shadow live columns
+    const samples = sampleColumn(grid, ex.col, start);
+    if (!samples.length) continue;
+    seen.add(key);
+    captures.push({ col: ex.col, key, label, type: detectFieldType(samples) });
+  }
+  return captures;
+}
+
 /** Apply an inferred mapping to every data row. */
 function applyMapping(grid: string[][], m: ColumnMapping): ParseResult {
   const start = m.hasHeader ? 1 : 0;
+  const extras = typedExtras(grid, m, start);
   const out: ParsedLead[] = [];
   let noPhone = 0;
 
@@ -200,13 +240,14 @@ function applyMapping(grid: string[][], m: ColumnMapping): ParseResult {
 
     const emails = m.emailCols.map((i) => cell(row, i)).filter(Boolean);
 
-    // Everything else we can't store as a first-class column is preserved in
-    // notes so no information from the CSV is lost.
-    const noteParts: string[] = [];
-    for (const ex of m.extras) {
+    // Extra columns become TYPED custom fields (they used to be squashed into
+    // notes). Spare phones/emails and DNC flags stay in notes as before.
+    let customFields: Record<string, string | number | boolean> | undefined;
+    for (const ex of extras) {
       const v = cell(row, ex.col);
-      if (v) noteParts.push(`${ex.label}: ${v}`);
+      if (v) (customFields ??= {})[ex.key] = parseFieldValue(v, ex.type);
     }
+    const noteParts: string[] = [];
     const otherPhones = anyValid.filter((p) => p.e164 !== phone).map((p) => p.e164);
     if (otherPhones.length) noteParts.push(`Other numbers: ${otherPhones.join(", ")}`);
     if (emails.length > 1) noteParts.push(`Other emails: ${emails.slice(1).join(", ")}`);
@@ -234,13 +275,19 @@ function applyMapping(grid: string[][], m: ColumnMapping): ParseResult {
       notes: noteParts.join("; ") || undefined,
     };
     if (!Number.isNaN(bill) && bill > 0) lead.utilityBill = bill;
+    if (customFields) lead.customFields = customFields;
 
     if (!lead.phone && !firstName && !lastName) continue;
     if (!isValidPhone(lead.phone)) noPhone++;
     out.push(lead);
   }
 
-  return { leads: out, noPhone, sawPhoneColumn: m.phoneCols.length > 0 };
+  return {
+    leads: out,
+    noPhone,
+    sawPhoneColumn: m.phoneCols.length > 0,
+    discoveredFields: extras.map(captureToFieldDef),
+  };
 }
 
 /** True when Claude can be used to parse leads. */

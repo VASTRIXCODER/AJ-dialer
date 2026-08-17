@@ -1,10 +1,10 @@
 "use client";
 
-import { motion } from "framer-motion";
 import {
   BatteryCharging,
   Bot,
   Car,
+  CheckCircle2,
   ChevronLeft,
   ChevronRight,
   Loader2,
@@ -23,8 +23,14 @@ import { useEffect, useMemo, useState } from "react";
 import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Portal } from "@/components/ui/portal";
+import { Modal } from "@/components/ui/modal";
 import { Ring } from "@/components/ui/progress";
+import {
+  CORE_LEAD_FIELDS,
+  formatFieldValue,
+  leadFieldValue,
+  type LeadFieldDef,
+} from "@/lib/leads/field-schema";
 import type { Lead } from "@/lib/types";
 import { outcomeConfig } from "@/lib/status";
 import type { CallOutcome } from "@/lib/types";
@@ -32,7 +38,6 @@ import {
   cn,
   digitsOnly,
   formatAddress,
-  formatCurrency,
   formatDuration,
   formatPhone,
   initials,
@@ -51,7 +56,9 @@ export function LeadPanel({
   navDisabled = false,
   onLoadLeads,
   loadingLeads = false,
-  showSolarPayment = true,
+  fields,
+  showCallHistory = true,
+  showUpNext = true,
 }: {
   lead: Lead | null;
   upNext: Lead[];
@@ -65,8 +72,11 @@ export function LeadPanel({
   /** Pull the shared lead pool into the dialer on demand. */
   onLoadLeads?: () => void;
   loadingLeads?: boolean;
-  /** Show solar-specific fields (per-tenant — off for non-solar orgs). */
-  showSolarPayment?: boolean;
+  /** The org's resolved field schema — drives stat tiles, chips & rows. */
+  fields?: LeadFieldDef[];
+  /** Layout toggles (Admin → Dialer layout). */
+  showCallHistory?: boolean;
+  showUpNext?: boolean;
 }) {
   const [browseOpen, setBrowseOpen] = useState(false);
 
@@ -135,7 +145,12 @@ export function LeadPanel({
           </p>
         </div>
       ) : (
-        <LeadDetail lead={lead} upNext={upNext} showSolarPayment={showSolarPayment} />
+        <LeadDetail
+          lead={lead}
+          upNext={showUpNext ? upNext : []}
+          fields={fields ?? CORE_LEAD_FIELDS}
+          showCallHistory={showCallHistory}
+        />
       )}
 
       {browseOpen && (
@@ -153,27 +168,55 @@ export function LeadPanel({
   );
 }
 
+/** The solar-era chips keep their icons; other labels get a neutral check. */
+function chipIcon(label: string): typeof Car {
+  if (label === "EV") return Car;
+  if (label === "Pool") return Waves;
+  if (label === "Battery") return BatteryCharging;
+  return CheckCircle2;
+}
+
 function LeadDetail({
   lead,
   upNext,
-  showSolarPayment,
+  fields,
+  showCallHistory,
 }: {
   lead: Lead;
   upNext: Lead[];
-  showSolarPayment: boolean;
+  fields: LeadFieldDef[];
+  showCallHistory: boolean;
 }) {
   const name = `${lead.firstName} ${lead.lastName}`;
-  const flags = [
-    { on: lead.hasEV, icon: Car, label: "EV" },
-    { on: lead.hasPool, icon: Waves, label: "Pool" },
-    { on: lead.hasBattery, icon: BatteryCharging, label: "Battery" },
-  ].filter((f) => f.on);
+  // Stat tiles: the schema's first two money/number fields (solar: Utility
+  // bill + Solar payment, exactly the old pair). The "(…)" unit suffix is
+  // dropped — the tile is too small for it.
+  // Visibility matters: a template-hidden slot the admin's schema editor
+  // happened to pin (with both flags false) must NOT resurrect as a tile.
+  const tiles = fields
+    .filter(
+      (f) =>
+        (f.type === "currency" || f.type === "number") &&
+        (f.showInTable || f.showInQualify),
+    )
+    .slice(0, 2);
+  const tileLabel = (label: string) => label.replace(/\s*\(.*\)\s*$/, "");
+  // Flag chips: every boolean the schema actually surfaces that is true on
+  // this lead (multipleSystems stays invisible by default, as before).
+  const flags = fields.filter(
+    (f) =>
+      f.type === "boolean" &&
+      (f.showInTable || f.showInQualify) &&
+      leadFieldValue(lead, f) === true,
+  );
+  const providerDef = fields.find((f) => f.key === "utilityProvider");
+  const solarProviderDef = fields.find((f) => f.key === "solarProvider");
 
   return (
     <>
       <div className="border-b border-border p-5">
         <div className="flex items-start gap-3">
-          <Avatar initials={initials(name)} color={lead.assignedRepId ? "#3B82F6" : "#0EA5E9"} size="lg" />
+          <Avatar initials={initials(name)} tone={lead.assignedRepId ? "chart-1" : "chart-2"} size="lg" />
           <div className="min-w-0 flex-1">
             <h3 className="truncate text-lg font-bold leading-tight">{name}</h3>
             <p className="truncate text-sm text-muted-foreground tabular">
@@ -208,52 +251,52 @@ function LeadDetail({
               <span className="truncate">{lead.email}</span>
             </div>
           )}
-          {lead.utilityProvider && (
+          {providerDef && lead.utilityProvider && (
             <div className="flex items-center gap-2.5 text-muted-foreground">
               <Zap className="h-4 w-4 shrink-0" />
-              <span>{lead.utilityProvider}</span>
+              <span title={providerDef.label}>{lead.utilityProvider}</span>
             </div>
           )}
-          {showSolarPayment && lead.solarProvider && (
+          {solarProviderDef && lead.solarProvider && (
             <div className="flex items-center gap-2.5 text-muted-foreground">
               <Sun className="h-4 w-4 shrink-0" />
-              <span>{lead.solarProvider}</span>
+              <span title={solarProviderDef.label}>{lead.solarProvider}</span>
             </div>
           )}
         </div>
 
-        <div className={cn("mt-4 grid gap-2", showSolarPayment ? "grid-cols-2" : "grid-cols-1")}>
-          <div className="rounded-xl bg-muted px-3 py-2">
-            <p className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground">
-              Utility bill
-            </p>
-            <p className="text-base font-bold tabular">
-              {lead.utilityBill ? formatCurrency(lead.utilityBill) : "—"}
-            </p>
+        {tiles.length > 0 && (
+          <div className={cn("mt-4 grid gap-2", tiles.length > 1 ? "grid-cols-2" : "grid-cols-1")}>
+            {tiles.map((def) => {
+              const value = leadFieldValue(lead, def);
+              return (
+                <div key={def.key} className="rounded-xl bg-muted px-3 py-2">
+                  <p className="truncate text-[10px] font-bold uppercase tracking-wide text-muted-foreground">
+                    {tileLabel(def.label)}
+                  </p>
+                  <p className="text-base font-bold tabular">
+                    {value ? formatFieldValue(value, def.type) : "—"}
+                  </p>
+                </div>
+              );
+            })}
           </div>
-          {showSolarPayment && (
-            <div className="rounded-xl bg-muted px-3 py-2">
-              <p className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground">
-                Solar pmt
-              </p>
-              <p className="text-base font-bold tabular">
-                {lead.solarPayment ? formatCurrency(lead.solarPayment) : "—"}
-              </p>
-            </div>
-          )}
-        </div>
+        )}
 
         {flags.length > 0 && (
           <div className="mt-3 flex flex-wrap gap-1.5">
-            {flags.map((f) => (
-              <span
-                key={f.label}
-                className="inline-flex items-center gap-1 rounded-lg bg-accent-soft px-2 py-1 text-xs font-semibold text-accent"
-              >
-                <f.icon className="h-3.5 w-3.5" />
-                {f.label}
-              </span>
-            ))}
+            {flags.map((f) => {
+              const Icon = chipIcon(f.label);
+              return (
+                <span
+                  key={f.key}
+                  className="inline-flex items-center gap-1 rounded-lg bg-accent-soft px-2 py-1 text-xs font-semibold text-accent"
+                >
+                  <Icon className="h-3.5 w-3.5" />
+                  {f.label}
+                </span>
+              );
+            })}
           </div>
         )}
 
@@ -264,7 +307,7 @@ function LeadDetail({
         )}
       </div>
 
-      <CallHistory leadId={lead.id} />
+      {showCallHistory && <CallHistory leadId={lead.id} />}
 
       <div className={upNext.length ? "flex-1 p-5" : "hidden"}>
         <p className="mb-2.5 text-xs font-bold uppercase tracking-wide text-muted-foreground">
@@ -275,7 +318,7 @@ function LeadDetail({
             <li key={l.id} className="flex items-center gap-2.5">
               <Avatar
                 initials={initials(`${l.firstName} ${l.lastName}`)}
-                color="#94a3b8"
+                tone="muted"
                 size="xs"
               />
               <div className="min-w-0 flex-1">
@@ -385,7 +428,11 @@ function LeadBrowser({
     const needleDigits = digitsOnly(q);
     return queue.filter(
       (l) =>
-        `${l.firstName} ${l.lastName} ${l.city} ${l.state} ${l.phone} ${l.utilityProvider}`
+        // Custom-field values join the haystack, so a rep can find a lead by a
+        // policy number or job type their CSV carried — not just name/city.
+        `${l.firstName} ${l.lastName} ${l.city} ${l.state} ${l.phone} ${l.utilityProvider} ${Object.values(
+          l.customFields ?? {},
+        ).join(" ")}`
           .toLowerCase()
           .includes(needle) ||
         (needleDigits.length >= 3 && digitsOnly(l.phone).includes(needleDigits)),
@@ -418,97 +465,81 @@ function LeadBrowser({
   }, [results]);
 
   return (
-    <Portal>
-    <motion.div
-      className="fixed inset-0 z-[100] flex items-end justify-center sm:items-center sm:p-4"
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      exit={{ opacity: 0 }}
+    <Modal
+      onClose={onClose}
+      label="Search leads"
+      maxWidth="max-w-md"
+      panelClassName="max-h-[80vh] sm:max-h-[70vh]"
     >
-      <motion.div
-        className="absolute inset-0 bg-background/70 backdrop-blur-xl"
-        onClick={onClose}
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-      />
-      <motion.div
-        initial={{ opacity: 0, y: 20, scale: 0.98 }}
-        animate={{ opacity: 1, y: 0, scale: 1 }}
-        exit={{ opacity: 0, y: 16, scale: 0.98 }}
-        transition={{ type: "spring", stiffness: 320, damping: 30 }}
-        className="glass relative flex max-h-[80vh] w-full max-w-md flex-col overflow-hidden rounded-t-2xl border border-border/60 shadow-lift sm:max-h-[70vh] sm:rounded-2xl"
-      >
-        <div className="flex items-center gap-2 border-b border-border/60 px-4">
-          <Search className="h-4 w-4 shrink-0 text-muted-foreground" />
-          <input
-            autoFocus
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
-            placeholder="Search leads by name, city, phone…"
-            className="h-12 w-full bg-transparent text-sm outline-none placeholder:text-muted-foreground/70"
-          />
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="Close"
-            className="flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground hover:bg-muted"
-          >
-            <X className="h-4 w-4" />
-          </button>
-        </div>
-        <div className="overflow-y-auto p-2">
-          {households.length === 0 ? (
-            <p className="px-3 py-8 text-center text-sm text-muted-foreground">
-              No leads match “{q.trim()}”.
-            </p>
-          ) : (
-            households.slice(0, 200).map((group) => {
-              // Prefer the entry the dialer is already on, so picking the
-              // household keeps the rep on the number they're working.
-              const l = group.find((g) => g.id === currentId) ?? group[0];
-              const extra = group.length - 1;
-              return (
-                <button
-                  key={l.id}
-                  type="button"
-                  onClick={() => onPick(l.id)}
-                  className={`flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left transition-colors hover:bg-muted/60 ${
-                    group.some((g) => g.id === currentId) ? "bg-primary-soft" : ""
-                  }`}
-                >
-                  <Avatar
-                    initials={initials(`${l.firstName} ${l.lastName}`)}
-                    color="#0EA5E9"
-                    size="sm"
-                  />
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-semibold">
-                      {l.firstName} {l.lastName}
-                    </p>
-                    <p className="truncate text-xs text-muted-foreground tabular">
-                      {formatPhone(l.phone)} · {[l.city, l.state].filter(Boolean).join(", ")}
-                    </p>
-                  </div>
-                  {extra > 0 && (
-                    <span
-                      className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-[10px] font-bold text-muted-foreground"
-                      title={`${group.length} numbers on file for this household`}
-                    >
-                      +{extra} number{extra === 1 ? "" : "s"}
-                    </span>
-                  )}
-                  {l.aiScore != null && (
-                    <span className="shrink-0 text-xs font-bold text-muted-foreground tabular">
-                      {l.aiScore}
-                    </span>
-                  )}
-                </button>
-              );
-            })
-          )}
-        </div>
-      </motion.div>
-    </motion.div>
-    </Portal>
+      <div className="flex items-center gap-2 border-b border-border/60 px-4">
+        <Search className="h-4 w-4 shrink-0 text-muted-foreground" />
+        <input
+          autoFocus
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          placeholder="Search leads by name, city, phone…"
+          className="h-12 w-full bg-transparent text-sm outline-none placeholder:text-muted-foreground/70"
+        />
+        <button
+          type="button"
+          onClick={onClose}
+          aria-label="Close"
+          className="flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground hover:bg-muted"
+        >
+          <X className="h-4 w-4" />
+        </button>
+      </div>
+      <div className="overflow-y-auto p-2">
+        {households.length === 0 ? (
+          <p className="px-3 py-8 text-center text-sm text-muted-foreground">
+            No leads match “{q.trim()}”.
+          </p>
+        ) : (
+          households.slice(0, 200).map((group) => {
+            // Prefer the entry the dialer is already on, so picking the
+            // household keeps the rep on the number they're working.
+            const l = group.find((g) => g.id === currentId) ?? group[0];
+            const extra = group.length - 1;
+            return (
+              <button
+                key={l.id}
+                type="button"
+                onClick={() => onPick(l.id)}
+                className={`flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left transition-colors hover:bg-muted/60 ${
+                  group.some((g) => g.id === currentId) ? "bg-primary-soft" : ""
+                }`}
+              >
+                <Avatar
+                  initials={initials(`${l.firstName} ${l.lastName}`)}
+                  tone="chart-2"
+                  size="sm"
+                />
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-semibold">
+                    {l.firstName} {l.lastName}
+                  </p>
+                  <p className="truncate text-xs text-muted-foreground tabular">
+                    {formatPhone(l.phone)} · {[l.city, l.state].filter(Boolean).join(", ")}
+                  </p>
+                </div>
+                {extra > 0 && (
+                  <span
+                    className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-[10px] font-bold text-muted-foreground"
+                    title={`${group.length} numbers on file for this household`}
+                  >
+                    +{extra} number{extra === 1 ? "" : "s"}
+                  </span>
+                )}
+                {l.aiScore != null && (
+                  <span className="shrink-0 text-xs font-bold text-muted-foreground tabular">
+                    {l.aiScore}
+                  </span>
+                )}
+              </button>
+            );
+          })
+        )}
+      </div>
+    </Modal>
   );
 }

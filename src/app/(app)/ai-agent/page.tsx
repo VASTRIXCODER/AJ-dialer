@@ -3,10 +3,8 @@ import {
   BarChart3,
   Bot,
   Brain,
-  CalendarCheck,
   CheckCircle2,
   FileText,
-  GraduationCap,
   Headphones,
   Lightbulb,
   Lock,
@@ -22,7 +20,7 @@ import { PageContainer, PageHeader } from "@/components/shared/page-header";
 import { SectionCard } from "@/components/shared/section-card";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
-import { isAIConfigured } from "@/lib/ai/claude";
+import { isAIConfigured, pingAI } from "@/lib/ai/claude";
 import { isElevenLabsConfigured } from "@/lib/elevenlabs";
 import { getViewer } from "@/lib/org/membership";
 import { cn } from "@/lib/utils";
@@ -42,17 +40,21 @@ function capabilitiesFor(isSolar: boolean) {
   ];
 }
 
+// Every card here maps to a REAL implementation (a service in
+// src/lib/ai/services.ts + an /api/ai route, or the ai-call-finalize
+// pipeline). Two former cards — "Appointment Prep" and "Sales Coaching" —
+// were removed rather than left badging "Live" with nothing behind them
+// (P5.AICARDS); prep duplicated Lead Intelligence, coaching had no service
+// and no consuming surface. Don't add a card without shipping its service.
 const services: Array<{ icon: LucideIcon; name: string; desc: string }> = [
   { icon: Brain, name: "Lead Intelligence", desc: "Executive briefings, scores & probabilities the moment a lead opens." },
   { icon: Headphones, name: "Live Call Copilot", desc: "Real-time guidance, signals & next-best-questions mid-call." },
-  { icon: Activity, name: "Conversation Analysis", desc: "Tracks qualification, sentiment & buying signals live." },
+  { icon: Activity, name: "Conversation Analysis", desc: "Turns every AI call transcript into disposition, sentiment & qualification data." },
   { icon: FileText, name: "Auto Summaries", desc: "Multi-layer documentation written after every call." },
-  { icon: Workflow, name: "CRM Automation", desc: "Notes, dispositions, tags & follow-ups — hands-free." },
-  { icon: CalendarCheck, name: "Appointment Prep", desc: "Briefs reps with full context before every review." },
+  { icon: Workflow, name: "CRM Automation", desc: "AI calls auto-disposition, summarize & file appointments — hands-free." },
   { icon: Search, name: "Semantic Search", desc: "Natural-language search across the entire lead book." },
   { icon: BarChart3, name: "Executive Reporting", desc: "Narrative insight & prioritized actions for managers." },
-  { icon: GraduationCap, name: "Sales Coaching", desc: "Personalized coaching plans, unique to each rep." },
-  { icon: TrendingUp, name: "Predictive Analytics", desc: "Forecasts contact, conversion & no-show risk." },
+  { icon: TrendingUp, name: "Predictive Analytics", desc: "Contact, conversion & qualification probabilities on every briefing." },
 ];
 
 function tipsFor(isSolar: boolean) {
@@ -69,7 +71,12 @@ function tipsFor(isSolar: boolean) {
 
 export default async function AiAgentPage() {
   const viewer = await getViewer();
-  const aiLive = isAIConfigured();
+  // "Live" means Claude is ACTUALLY reachable and the model resolves — not merely
+  // that a key is present. Without this the badge said "live" even when the key
+  // was invalid or the model unavailable, while every surface silently served
+  // demo data. pingAI is a 16-token round-trip and never throws; skipped entirely
+  // when no key is configured (so demo mode makes no wasted call).
+  const aiLive = isAIConfigured() ? (await pingAI()).ok : false;
   const voiceLive = isElevenLabsConfigured();
   const isSolar = viewer.org?.dialerTemplate === "solar";
   const capabilities = capabilitiesFor(isSolar);
@@ -200,7 +207,7 @@ export default async function AiAgentPage() {
             {services.length} modules
           </Badge>
         </div>
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
           {services.map((s) => (
             <SpotlightCard key={s.name} className="p-4">
               <div className="flex items-start justify-between">

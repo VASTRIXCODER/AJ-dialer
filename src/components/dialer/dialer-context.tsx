@@ -1,9 +1,10 @@
 "use client";
 
 import { createContext, useContext, useEffect, useRef, useState } from "react";
-import type { AiLockReason } from "@/lib/org/settings";
+import type { LeadFieldDef } from "@/lib/leads/field-schema";
+import type { AiLockReason, DialerLayout } from "@/lib/org/settings";
 import type { Lead, LeadGroup } from "@/lib/types";
-import { useDialer } from "@/lib/use-dialer";
+import { MAX_PARALLEL_HUMAN, useDialer } from "@/lib/use-dialer";
 
 /** "all" = no filter, "unsorted" = leadGroup is null, else an exact LeadGroup. */
 export type GroupFilter = "all" | "unsorted" | LeadGroup;
@@ -33,6 +34,9 @@ export interface DialerConfig {
   dialScope: "org" | "own";
   /** The org's AI concurrency allowance (their voice plan's live-call limit). */
   maxAiConcurrency?: number;
+  /** The org's ceiling on simultaneous human lines (Admin → Dialing → Max lines).
+   *  1 means no parallel dialing at all for this workspace. */
+  maxHumanLines?: number;
   /** The effective caller-ID rotation pool — powers the dialer's caller-ID picker. */
   callerIdPool?: string[];
   /** Rotation cadence for the pool above (calls per number before advancing). */
@@ -44,11 +48,30 @@ export interface DialerConfig {
   qualifyShowSolarPayment?: boolean;
   /** Label for the third home-profile toggle in the qualification panel. */
   qualifyOtherLabel?: string;
-  /** Per-org display-label overrides for the lead-group "dropboxes" (display only). */
+  /** Effective dialer-page layout (default ⊕ template preset ⊕ org toggles). */
+  dialerLayout?: DialerLayout;
+  /** The org's resolved lead field schema — drives the lead panel's stat
+   *  tiles, flag chips and the lead-browser search haystack. */
+  leadFields?: LeadFieldDef[];
+  /** The fields the qualify panel renders, in order (already resolved and
+   *  filtered server-side — solar slots never reach a non-solar tenant). */
+  qualifyFields?: LeadFieldDef[];
+  /** Legacy per-org display-label overrides (still honored on top of labels). */
   leadGroupLabels?: Record<string, string>;
+  /** The org's own intake groups, in display order — drives the group filter. */
+  leadGroups?: { key: string; label: string }[];
 }
 
-type Campaign = { id: string; name: string };
+/** What the dialer knows about a campaign — enough to filter the queue and
+ *  show the assigned call script ("" / absent = no script). */
+export type DialerCampaign = {
+  id: string;
+  name: string;
+  scriptA?: string;
+  scriptB?: string;
+};
+
+type Campaign = DialerCampaign;
 
 interface DialerContextValue {
   dialer: ReturnType<typeof useDialer>;
@@ -158,6 +181,7 @@ export function DialerProvider({
     config.maxAiConcurrency ?? 10,
     config.doubleDial ?? false,
     config.doubleDialGapSec ?? 15,
+    config.maxHumanLines ?? MAX_PARALLEL_HUMAN,
   );
   const { state } = dialer;
 
@@ -215,8 +239,12 @@ export function DialerProvider({
 
   function activate(initialQueue?: Lead[], initialCampaigns?: Campaign[], initialCampaign?: string) {
     if (initialQueue && initialQueue.length && queue.length === 0) setQueue(initialQueue);
-    if (initialCampaigns && initialCampaigns.length && campaigns.length === 0)
-      setCampaigns(initialCampaigns);
+    // Campaigns REFRESH on every activation (each /dialer visit ships a fresh
+    // server-rendered list) — unlike the queue, replacing them can't disturb a
+    // live call, and holding the first visit's copy froze script A/B edits out
+    // of long-lived sessions: a rep kept reading (and attributing) script A for
+    // leads assigned to a B variant launched after their session began.
+    if (initialCampaigns && initialCampaigns.length) setCampaigns(initialCampaigns);
     if (
       initialCampaign &&
       !campaignFilter &&

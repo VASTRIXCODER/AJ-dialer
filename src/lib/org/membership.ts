@@ -15,6 +15,7 @@ import {
 import { createAdminClient, isAdminConfigured } from "../supabase/admin";
 import { isSupabaseConfigured } from "../supabase/config";
 import { createClient } from "../supabase/server";
+import { isRestConfigured, verifyNumbersOwnedByTwilio } from "../twilio";
 import { normalizePhone } from "../utils";
 import {
   type OrgBlueprint,
@@ -506,8 +507,23 @@ export async function listActiveOrgsWithSettings(): Promise<OrgFull[]> {
 export async function listJoinableOrgs(): Promise<
   { id: string; name: string; industry: string; slug: string; requireApproval: boolean }[]
 > {
+  const mapRow = (o: Row) => ({
+    id: String(o.id),
+    name: String(o.name ?? ""),
+    industry: String(o.industry ?? ""),
+    slug: String(o.slug ?? ""),
+    requireApproval: o.require_approval !== false,
+  });
   try {
     const supabase = await createClient();
+    // Prefer the SECURITY DEFINER directory function: it returns ONLY safe
+    // columns (no join_code / settings) and works under the members-only
+    // organizations read policy (see supabase/rls-lockdown.sql). Fall back to a
+    // direct table read when the function isn't present yet (pre-migration).
+    const { data: rpcData, error: rpcErr } = await supabase.rpc("app_list_joinable_orgs");
+    if (!rpcErr && Array.isArray(rpcData)) {
+      return (rpcData as Row[]).map(mapRow);
+    }
     const { data } = await supabase
       .from("organizations")
       .select("id,name,industry,slug,allow_join,require_approval,status")
@@ -515,13 +531,7 @@ export async function listJoinableOrgs(): Promise<
       .order("name", { ascending: true });
     return ((data ?? []) as Row[])
       .filter((o) => o.allow_join !== false)
-      .map((o) => ({
-        id: String(o.id),
-        name: String(o.name ?? ""),
-        industry: String(o.industry ?? ""),
-        slug: String(o.slug ?? ""),
-        requireApproval: o.require_approval !== false,
-      }));
+      .map(mapRow);
   } catch {
     return [];
   }
@@ -978,6 +988,31 @@ async function otherOrgsCallerIds(excludeOrgId: string): Promise<Set<string>> {
   }
 }
 
+/**
+ * Which org owns a given outbound number (its caller ID / rotation pool). Used to
+ * route an inbound SMS (e.g. a STOP) to the right org's suppression list. Returns
+ * null when no org claims the number (a shared platform number, or unconfigured).
+ */
+export async function orgIdForCallerId(number: string): Promise<string | null> {
+  if (!isAdminConfigured()) return null;
+  const target = normalizePhone(number);
+  if (!target) return null;
+  try {
+    const admin = createAdminClient();
+    const { data } = await admin.from("organizations").select("id, settings");
+    for (const row of (data ?? []) as Row[]) {
+      const s = mergeSettings((row as Row).settings);
+      const pool = [s.dialing.callerId, ...(s.dialing.callerIds ?? [])];
+      if (pool.some((n) => normalizePhone(String(n ?? "")) === target)) {
+        return String((row as Row).id);
+      }
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 export async function updateOrganizationSettings(patch: OrgUpdate): Promise<Result> {
   const auth = await authorize("org.edit");
   if (!auth.ok) return { ok: false, error: auth.error };
@@ -999,6 +1034,20 @@ export async function updateOrganizationSettings(patch: OrgUpdate): Promise<Resu
           ok: false,
           error: `${conflict} is already configured as a caller ID for another organization on this platform — each organization needs its own dedicated number(s).`,
         };
+      }
+      // Reject a number that isn't actually on the Twilio account — dialing from
+      // it fails (Twilio 21210), and on an AI call it silently falls back to the
+      // default number while the UI reports the rotated one. Skipped when Twilio
+      // REST isn't configured (nothing to check against).
+      if (isRestConfigured()) {
+        const { ok, missing } = await verifyNumbersOwnedByTwilio(candidates);
+        if (!ok) {
+          const one = missing.length === 1;
+          return {
+            ok: false,
+            error: `${missing.join(", ")} ${one ? "isn’t a Twilio number on this account" : "aren’t Twilio numbers on this account"} — dialing from ${one ? "it" : "them"} will fail. Add ${one ? "it" : "them"} in Twilio (or remove ${one ? "it" : "them"} from the pool) first.`,
+          };
+        }
       }
     }
   }

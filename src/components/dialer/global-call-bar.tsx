@@ -45,7 +45,7 @@ export function GlobalCallBar() {
     >
       <div className="glass flex items-center gap-3 rounded-2xl border border-border/60 px-3 py-2 shadow-lift">
         <span className="relative flex h-9 w-9 shrink-0 items-center justify-center">
-          <Avatar initials={initials(name)} color="#10B981" size="sm" />
+          <Avatar initials={initials(name)} tone="success" size="sm" />
           {live && (
             <span className="absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full border-2 border-card bg-success" />
           )}

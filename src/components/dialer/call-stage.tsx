@@ -116,10 +116,13 @@ export function CallStage({
   onStopAICampaign,
   onEndAISession,
   onReconnect,
+  wrapupNotes,
 }: {
   state: DialerState;
   focusLead: Lead | null;
   hasQueue: boolean;
+  /** The rep's in-call notes at wrap-up — evidence for the AI summary. */
+  wrapupNotes?: string;
   aiConfigured: boolean;
   manualEnabled?: boolean;
   aiEnabled?: boolean;
@@ -158,12 +161,24 @@ export function CallStage({
   // locked we still surface the option, just disabled with a reason.
   const aiUsable = aiConfigured && aiEnabled;
   const ai = state.aiMode && aiUsable;
-  const canCall = state.mode === "live";
+  // A registered Twilio Device is NOT the same as a usable one. Registration
+  // needs no microphone, so a rep whose mic is blocked saw "Twilio Live", a live
+  // Start button, and a homeowner rung into silence on every press. Manual
+  // dialing needs both.
+  const micBlocked = !ai && state.micBlocked;
+  const canCall = state.mode === "live" && !micBlocked;
   const canStart = ai ? hasQueue : canCall && Boolean(focusLead);
   const name = focusLead ? `${focusLead.firstName} ${focusLead.lastName}` : "No lead";
   // Show the AI/Manual selector whenever AI is configured, or either mode is
   // locked (so the lock — premium plan or rep role — is visible, not hidden).
-  const showModeBar = aiConfigured || !aiEnabled || !manualEnabled;
+  //
+  // EXCEPT when the whole workspace has AI switched off ("premium") and manual
+  // dialing works: there's no choice to present and no action the rep could
+  // take, so a disabled chip advertising AI is just an ad for something this
+  // org doesn't have. A "role" lock still shows — that one IS actionable
+  // ("ask your manager"), and so does a manual lock on an AI-only plan.
+  const aiOffForWorkspace = aiLockReason === "premium" && manualEnabled;
+  const showModeBar = !aiOffForWorkspace && (aiConfigured || !aiEnabled || !manualEnabled);
   const aiLockText =
     aiLockReason === "role"
       ? "The AI dialer is available to admins and managers."
@@ -171,11 +186,13 @@ export function CallStage({
 
   const modeBadge = ai
     ? { label: "AI agent ready", cls: "bg-accent-soft text-accent" }
-    : state.mode === "live"
-      ? { label: "Twilio Live", cls: "bg-success/10 text-success" }
-      : state.mode === "offline"
-        ? { label: "Twilio offline", cls: "bg-danger/10 text-danger" }
-        : { label: "Connecting…", cls: "bg-muted text-muted-foreground" };
+    : micBlocked
+      ? { label: "Mic blocked", cls: "bg-danger/10 text-danger" }
+      : state.mode === "live"
+        ? { label: "Twilio Live", cls: "bg-success/10 text-success" }
+        : state.mode === "offline"
+          ? { label: "Twilio offline", cls: "bg-danger/10 text-danger" }
+          : { label: "Connecting…", cls: "bg-muted text-muted-foreground" };
 
   return (
     <div className="flex h-full flex-col">
@@ -219,8 +236,9 @@ export function CallStage({
         <div className="flex items-center gap-2">
           {/* When the device drops (token lapse, network blip, Safari quirk) the
               rep gets a one-tap recovery instead of having to reload — reloading
-              didn't reliably fix it. */}
-          {state.mode === "offline" && (
+              didn't reliably fix it. A blocked mic gets the same tap: onReconnect
+              re-runs setupDevice, which re-requests microphone permission. */}
+          {(state.mode === "offline" || micBlocked) && (
             <button
               type="button"
               onClick={onReconnect}
@@ -391,31 +409,35 @@ export function CallStage({
 
               {hasQueue && (
                 <>
-                  <div className="w-full">
-                    <p className="mb-2 text-center text-xs font-bold uppercase tracking-wide text-muted-foreground">
-                      {ai ? "Calls at once" : "Parallel lines"}
-                      <span className="ml-1.5 font-medium normal-case tracking-normal opacity-60">
-                        max {state.maxParallel}
-                      </span>
-                    </p>
-                    <div className="grid grid-cols-5 gap-2">
-                      {parallelChoices(state.maxParallel).map((n) => (
-                        <button
-                          key={n}
-                          type="button"
-                          onClick={() => onSetParallel(n)}
-                          className={cn(
-                            "rounded-xl border py-2.5 text-sm font-bold transition-all active:scale-95",
-                            state.parallelCount === n
-                              ? "border-primary/60 bg-primary-soft text-primary shadow-[0_0_20px_-6px_hsl(var(--glow)/0.7)]"
-                              : "border-border/70 bg-surface/50 text-muted-foreground backdrop-blur hover:bg-muted",
-                          )}
-                        >
-                          {n}X
-                        </button>
-                      ))}
+                  {/* A ceiling of one line is not a choice — the org has turned
+                      parallel dialing off, so don't render a lone "1X" chip. */}
+                  {state.maxParallel > 1 && (
+                    <div className="w-full">
+                      <p className="mb-2 text-center text-xs font-bold uppercase tracking-wide text-muted-foreground">
+                        {ai ? "Calls at once" : "Parallel lines"}
+                        <span className="ml-1.5 font-medium normal-case tracking-normal opacity-60">
+                          max {state.maxParallel}
+                        </span>
+                      </p>
+                      <div className="grid grid-cols-5 gap-2">
+                        {parallelChoices(state.maxParallel).map((n) => (
+                          <button
+                            key={n}
+                            type="button"
+                            onClick={() => onSetParallel(n)}
+                            className={cn(
+                              "rounded-xl border py-2.5 text-sm font-bold transition-all active:scale-95",
+                              state.parallelCount === n
+                                ? "border-primary/60 bg-primary-soft text-primary shadow-[0_0_20px_-6px_hsl(var(--glow)/0.7)]"
+                                : "border-border/70 bg-surface/50 text-muted-foreground backdrop-blur hover:bg-muted",
+                            )}
+                          >
+                            {n}X
+                          </button>
+                        ))}
+                      </div>
                     </div>
-                  </div>
+                  )}
 
                   <label className="flex w-full cursor-pointer items-center justify-between rounded-xl border border-border/70 bg-surface/50 px-4 py-3 backdrop-blur">
                     <span className="flex items-center gap-2 text-sm font-medium">
@@ -443,6 +465,24 @@ export function CallStage({
                       each pass so anyone just dispositioned isn&apos;t called again.
                       {ai && " Keep this tab open; for calling with the tab closed, use Admin → Automated calling."}
                     </p>
+                  )}
+
+                  {/* Say WHY Start is unavailable. A dead button with no
+                      explanation is what "I click it and nothing happens" looks
+                      like from the rep's chair. */}
+                  {micBlocked && (
+                    <div className="w-full rounded-xl border border-danger/30 bg-danger/5 p-3">
+                      <p className="flex items-center gap-1.5 text-sm font-semibold text-danger">
+                        <MicOff className="h-4 w-4 shrink-0" />
+                        Microphone blocked
+                      </p>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        Twilio is connected, but this tab can&apos;t use your microphone — so a
+                        call would ring the homeowner with no one on the line. Allow microphone
+                        access for this site in your browser, then press{" "}
+                        <b className="text-foreground">Reconnect</b> above.
+                      </p>
+                    </div>
                   )}
 
                   <Button
@@ -586,7 +626,7 @@ export function CallStage({
                 <span className="absolute inset-0 animate-pulse-ring rounded-full" />
                 <Avatar
                   initials={initials(name)}
-                  color="#10B981"
+                  tone="success"
                   size="lg"
                   className="relative h-24 w-24 text-3xl ring-4 ring-success/30"
                 />
@@ -668,7 +708,11 @@ export function CallStage({
                   {name} · {formatDuration(state.durationSec)} talk time
                 </p>
               </div>
-              <AiCallSummary leadId={focusLead?.id ?? null} />
+              <AiCallSummary
+                leadId={focusLead?.id ?? null}
+                notes={wrapupNotes}
+                durationSec={state.durationSec}
+              />
               <OutcomeGrid onSelect={onOutcome} />
               <Button variant="ghost" className="gap-2 text-muted-foreground" onClick={onSkip}>
                 <SkipForward className="h-4 w-4" />

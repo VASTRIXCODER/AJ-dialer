@@ -351,7 +351,7 @@ function AccountsTab({
             const orgCompanies = companies.filter((c) => c.orgId === a.orgId);
             return (
               <div key={a.id} className="flex flex-wrap items-center gap-3 p-4">
-                <Avatar initials={initials(a.name)} color={a.disabled ? "#9ca3af" : "#ef4444"} size="sm" />
+                <Avatar initials={initials(a.name)} tone={a.disabled ? "muted" : "danger"} size="sm" />
                 <div className="min-w-0 flex-1">
                   <p className={cn("truncate text-sm font-semibold", a.disabled && "text-muted-foreground line-through")}>
                     {a.name}

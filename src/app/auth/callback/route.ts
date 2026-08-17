@@ -17,7 +17,10 @@ export const dynamic = "force-dynamic";
 export async function GET(request: Request) {
   const { searchParams, origin } = new URL(request.url);
   const code = searchParams.get("code");
-  const next = searchParams.get("next") ?? "/hub";
+  // Only allow a same-origin relative path. Without this, `?next=//evil.com` (or
+  // `?next=https://evil.com`) makes this an open redirect off the trusted domain.
+  const rawNext = searchParams.get("next") ?? "/hub";
+  const next = rawNext.startsWith("/") && !rawNext.startsWith("//") ? rawNext : "/hub";
   const tosAccepted = searchParams.get("tos") === "1";
 
   if (code && isSupabaseConfigured()) {

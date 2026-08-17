@@ -55,10 +55,17 @@ export async function POST(req: Request) {
     );
   }
 
+  // AUTH: connect/end previously ran with NO viewer check, so anyone who guessed a
+  // humanId could mark a call connected or yank a live call off every supervisor's
+  // monitor. Require a signed-in user for every action.
+  const viewer = await getViewer();
+  if (!viewer.user) {
+    return NextResponse.json({ error: "Sign in first." }, { status: 401 });
+  }
+
   if (action === "start") {
     // Attribute the call to the signed-in rep + their org so supervisors in the
     // same org can see and listen to it.
-    const viewer = await getViewer();
     await startHumanCall({
       id,
       leadName: leadName ?? "Manual call",

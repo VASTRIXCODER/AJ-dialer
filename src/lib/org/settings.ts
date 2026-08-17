@@ -8,6 +8,8 @@
 // `OrgBlueprint` is the full white-label spec the AI builder produces.
 // ─────────────────────────────────────────────────────────────────────────────
 
+import type { LeadFieldDef } from "../leads/field-schema";
+
 export type DispositionTone = "success" | "warning" | "danger" | "neutral";
 
 export interface OrgFeatures {
@@ -100,7 +102,48 @@ export interface QualifySettings {
   showSolarPayment: boolean;
   /** Label for the third home-profile toggle (default "Battery"). */
   otherToggleLabel: string;
+  /**
+   * Schema keys (see src/lib/leads/field-schema.ts) the qualify panel renders,
+   * in order — core slots by their camelCase key, custom fields by their
+   * snake_case key. Absent/empty = derive from the vertical template's
+   * `qualifyFields` preset, falling back to every schema field flagged
+   * `showInQualify`. Unknown keys are ignored at render time, so a field
+   * deleted from the schema never breaks the panel.
+   */
+  fields?: string[];
 }
+
+/**
+ * Which panels of the dialer page this workspace shows. All-on is today's
+ * dialer; vertical templates preset a shape (e.g. healthcare hides the live
+ * floor) and admins fine-tune from there. Stored PARTIAL by design: only keys
+ * an admin explicitly saved persist, so anything untouched keeps following the
+ * template preset — resolved in the (app) layout as
+ * DEFAULT ⊕ template preset ⊕ stored overrides.
+ */
+export interface DialerLayout {
+  /** Org-wide live floor strip (who's dialing right now, calls today). */
+  floor: boolean;
+  /** The "Booked" tab beside the dial queue. */
+  bookedTab: boolean;
+  /** Collapsible campaign-script card above the qualify panel. */
+  scriptCard: boolean;
+  /** AI lead briefing at the top of the qualify panel. */
+  aiBriefing: boolean;
+  /** Per-lead call history in the lead panel. */
+  callHistory: boolean;
+  /** "Up next in queue" preview in the lead panel. */
+  upNext: boolean;
+}
+
+export const DEFAULT_DIALER_LAYOUT: DialerLayout = {
+  floor: true,
+  bookedTab: true,
+  scriptCard: true,
+  aiBriefing: true,
+  callHistory: true,
+  upNext: true,
+};
 
 export interface OrgSettings {
   dialing: {
@@ -108,7 +151,21 @@ export interface OrgSettings {
     maxLines: number;
     ringTimeoutSec: number;
     recording: boolean;
+    /**
+     * Async answering-machine detection on manual/parallel outbound legs.
+     * Twilio's AsyncAmd never delays connecting a live human; when the verdict
+     * says machine, the leg is auto-dropped (or gets the voicemail drop below).
+     * Off by default: it adds per-minute AMD cost and changes floor behavior,
+     * so an admin has to opt in.
+     */
+    amd: boolean;
+    /** On AMD's end-of-greeting beep, speak `voicemailMessage` instead of hanging up. */
     voicemailDrop: boolean;
+    /**
+     * TTS text for the voicemail drop. Placeholders: {org}. Empty falls back
+     * to a neutral default at drop time.
+     */
+    voicemailMessage: string;
     retryAttempts: number;
     retryDelayMin: number;
     respectDnc: boolean;
@@ -180,9 +237,24 @@ export interface OrgSettings {
   dispositions: { label: string; tone: DispositionTone }[];
   /** Qualification-panel customization (solar field + third toggle label). */
   qualify: QualifySettings;
+  /**
+   * Dialer-page layout toggles. PARTIAL on purpose: only the keys an admin has
+   * explicitly saved live here — unset keys keep following the vertical
+   * template's preset (see DEFAULT_DIALER_LAYOUT and the (app) layout).
+   */
+  dialerLayout: Partial<DialerLayout>;
   notifications: NotificationSettings;
   features: OrgFeatures;
   billing: OrgBilling;
+  /** Per-minute call cost estimates — drives the Reports "Cost & usage" panel. */
+  costRates: CostRates;
+  /**
+   * The org's lead field schema: custom fields discovered from CSV imports plus
+   * any explicit overrides of the core slots. Empty = derive everything from the
+   * vertical template's defaults (see resolveLeadFields in
+   * src/lib/leads/field-schema.ts).
+   */
+  leadFields: LeadFieldDef[];
   /** Domain noun the dialer uses for a contact, e.g. "homeowner". */
   leadNoun: string;
   leadNounPlural: string;
@@ -231,13 +303,31 @@ export const DEFAULT_BILLING: OrgBilling = {
   note: "",
 };
 
+/**
+ * What a minute of talk time costs this org, in USD — ESTIMATES, editable in
+ * Admin → Organization settings. Defaults approximate common list pricing:
+ * AI calls carry the conversational-AI per-minute fee plus the carrier leg;
+ * human calls are just the carrier leg.
+ */
+export interface CostRates {
+  aiPerMinute: number;
+  manualPerMinute: number;
+}
+
+export const DEFAULT_COST_RATES: CostRates = {
+  aiPerMinute: 0.1,
+  manualPerMinute: 0.015,
+};
+
 export const DEFAULT_ORG_SETTINGS: OrgSettings = {
   dialing: {
     mode: "progressive",
     maxLines: 3,
     ringTimeoutSec: 25,
     recording: true,
+    amd: false,
     voicemailDrop: true,
+    voicemailMessage: "",
     retryAttempts: 3,
     retryDelayMin: 60,
     respectDnc: true,
@@ -293,9 +383,12 @@ export const DEFAULT_ORG_SETTINGS: OrgSettings = {
     { label: "No answer", tone: "neutral" },
   ],
   qualify: { ...DEFAULT_QUALIFY },
+  dialerLayout: {},
   notifications: { ...DEFAULT_NOTIFICATIONS },
   features: { ...DEFAULT_FEATURES },
   billing: { ...DEFAULT_BILLING },
+  costRates: { ...DEFAULT_COST_RATES },
+  leadFields: [],
   leadNoun: "lead",
   leadNounPlural: "leads",
   leadGroupLabels: {},
@@ -355,7 +448,21 @@ export function mergeSettings(raw: unknown): OrgSettings {
     dispositions: Array.isArray(s.dispositions)
       ? s.dispositions
       : DEFAULT_ORG_SETTINGS.dispositions,
-    qualify: { ...DEFAULT_QUALIFY, ...(s.qualify ?? {}) },
+    qualify: {
+      ...DEFAULT_QUALIFY,
+      ...(s.qualify ?? {}),
+      // Arrays replace wholesale, and anything that isn't an array is dropped
+      // (undefined = "derive from the template's preset").
+      fields: Array.isArray(s.qualify?.fields) ? s.qualify!.fields : undefined,
+    },
+    // Deliberately NOT back-filled with defaults: this section stays partial so
+    // the (app) layout can layer it over the vertical template's preset —
+    // back-filling `true` here would make every org look like it explicitly
+    // chose all-on and the presets would never apply.
+    dialerLayout:
+      s.dialerLayout && typeof s.dialerLayout === "object" && !Array.isArray(s.dialerLayout)
+        ? s.dialerLayout
+        : {},
     notifications: {
       ...DEFAULT_NOTIFICATIONS,
       ...(s.notifications ?? {}),
@@ -367,6 +474,10 @@ export function mergeSettings(raw: unknown): OrgSettings {
     },
     features: { ...DEFAULT_FEATURES, ...(s.features ?? {}) },
     billing: { ...DEFAULT_BILLING, ...(s.billing ?? {}) },
+    costRates: { ...DEFAULT_COST_RATES, ...(s.costRates ?? {}) },
+    // Arrays replace wholesale (like dispositions) — spread-merging would
+    // resurrect a field an admin just deleted.
+    leadFields: Array.isArray(s.leadFields) ? s.leadFields : [],
     leadNoun: s.leadNoun ?? DEFAULT_ORG_SETTINGS.leadNoun,
     leadNounPlural: s.leadNounPlural ?? DEFAULT_ORG_SETTINGS.leadNounPlural,
     leadGroupLabels:

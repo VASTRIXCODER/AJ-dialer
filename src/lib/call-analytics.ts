@@ -80,6 +80,8 @@ export interface ChannelRow {
   appointments: number;
   apptRate: number;
   avgTalkSec: number;
+  /** Sum of talk time across the channel — the basis for cost estimates. */
+  totalTalkSec: number;
 }
 
 function channelStat(channel: "ai" | "human", list: Row[]): ChannelRow {
@@ -95,6 +97,7 @@ function channelStat(channel: "ai" | "human", list: Row[]): ChannelRow {
     appointments: appts,
     apptRate: pct(appts, list.length),
     avgTalkSec: avg(durs),
+    totalTalkSec: durs.reduce((a, b) => a + b, 0),
   };
 }
 

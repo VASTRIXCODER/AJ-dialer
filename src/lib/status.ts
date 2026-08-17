@@ -1,4 +1,4 @@
-import type { AILiveState, CallOutcome, LeadStatus } from "./types";
+import type { AILiveState, CallOutcome, CampaignStatus, LeadStatus } from "./types";
 
 type Tone = "neutral" | "primary" | "accent" | "success" | "warning" | "danger";
 
@@ -42,6 +42,15 @@ export const leadStatusConfig: Record<LeadStatus, { label: string; tone: Tone }>
   no_answer: { label: "No answer", tone: "neutral" },
   bills_fine: { label: "Bills are fine", tone: "warning" },
   dnc: { label: "Do not call", tone: "danger" },
+};
+
+export const campaignStatusConfig: Record<
+  CampaignStatus,
+  { label: string; tone: Tone }
+> = {
+  active: { label: "Active", tone: "success" },
+  paused: { label: "Paused", tone: "warning" },
+  completed: { label: "Completed", tone: "neutral" },
 };
 
 export const repStatusConfig: Record<

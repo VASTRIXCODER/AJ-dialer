@@ -2,8 +2,10 @@ import "server-only";
 
 import { recordCallSuccess, recordProviderFailure } from "./ai-call-breaker";
 import { getAICall, updateAICall } from "./ai-call-store";
+import { orgLikeForConversation } from "./ai/agent-context";
 import { isAIConfigured } from "./ai/claude";
 import { readCall, resolveAppointment } from "./ai/appointment";
+import { orgAIContext } from "./ai/org-context";
 import { analyzeConversation } from "./ai/services";
 import { classifyNonConversation, type FailureKind } from "./call-disposition";
 import { getLeadById, getLeadByIdAdmin, getLeadByPhoneAdmin } from "./db/leads";
@@ -29,6 +31,9 @@ export interface Turn {
   speaker?: string;
   message?: string;
   text?: string;
+  /** Offset into the call, as ElevenLabs reports it (webhook + API shapes). */
+  time_in_call_secs?: number;
+  secs?: number | null;
 }
 
 export interface FinalizeResult {
@@ -138,11 +143,17 @@ export async function finalizeAIConversation(input: {
   if (connected) {
     const now = new Date();
     const tz = lead?.timezone || undefined;
+    // Analyze with the CALLING org's AI context — its vertical framing and
+    // vocabulary, not solar's. For non-solar orgs the analysis carries no solar
+    // qualification block, so nothing solar is ever written back to their lead
+    // below. Null (demo / unstamped conversation) keeps the solar default.
+    const orgLike = await orgLikeForConversation(conversationId);
     const { data: analysis, source } = await analyzeConversation({
       transcript,
       lead,
       now,
       tz,
+      ctx: orgAIContext(orgLike),
     });
     summary = analysis.summary;
     outcome = analysis.outcome;
@@ -290,6 +301,8 @@ export async function finalizeAIConversation(input: {
   });
 
   // Durable persistence (Supabase) — idempotent, attributed to the owner.
+  // The normalized turn array rides along so the dashboard can serve ended
+  // calls from the DB instead of re-hitting the ElevenLabs API forever.
   await completeAIConversation({
     conversationId,
     summary,
@@ -300,6 +313,18 @@ export async function finalizeAIConversation(input: {
     durationSec: input.durationSec,
     appointment,
     state: connected ? "completed" : "failed",
+    transcript: turns
+      .map((t) => ({
+        role: String(t.role ?? t.speaker ?? "agent"),
+        message: String(t.message ?? t.text ?? ""),
+        secs:
+          typeof t.secs === "number"
+            ? t.secs
+            : typeof t.time_in_call_secs === "number"
+              ? t.time_in_call_secs
+              : null,
+      }))
+      .filter((t) => t.message.trim().length > 0),
   });
 
   // Process the extracted data back onto the lead (bill, solar, EV/pool/battery,

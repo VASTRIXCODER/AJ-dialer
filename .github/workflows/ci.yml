@@ -1,0 +1,24 @@
+name: CI
+
+on:
+  push:
+    branches: [claude/wizardly-cerf-m8c620, main]
+  pull_request:
+
+jobs:
+  test-and-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      # Unit tests over the pure modules — the fast gate.
+      - run: npm run test
+      # Full type-check of every route. Must pass with no credentials (the
+      # app degrades to demo mode), so no secrets are configured here.
+      - run: npm run build
+        env:
+          NEXT_TELEMETRY_DISABLED: "1"

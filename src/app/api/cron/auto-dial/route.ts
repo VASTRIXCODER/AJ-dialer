@@ -2,8 +2,9 @@ import { NextResponse } from "next/server";
 import { breakerStatus } from "@/lib/ai-call-breaker";
 import { placeAiCallForLead } from "@/lib/ai-dialer";
 import { getAutoDialLeadsForOrg, touchLeadContacted } from "@/lib/db/leads";
+import { resolveLeadTimezone } from "@/lib/dialer/lead-timezone";
 import { nextDialSeq } from "@/lib/dialer/rotation-server";
-import { isAutoDialActive, zonedDayKey } from "@/lib/dialer/schedule";
+import { isWithinCallingWindow, zonedDayKey } from "@/lib/dialer/schedule";
 import { fetchQuota, isElevenLabsConfigured } from "@/lib/elevenlabs";
 import { listActiveOrgsWithSettings } from "@/lib/org/membership";
 import { getPublicBaseUrl } from "@/lib/twilio";
@@ -13,10 +14,11 @@ export const maxDuration = 60;
 
 /**
  * Unattended AI auto-dialer. A scheduler (Vercel Cron, or any external cron)
- * hits this every minute. For each active org whose automation window is open
- * right now (in the org's own timezone), it places up to `callsPerRun` AI calls
- * to the org's least-recently-contacted dialable leads, honoring a per-day cap
- * and a per-lead cooldown so the same person isn't dialed twice.
+ * hits this every minute. For each active org with automation enabled, it places
+ * up to `callsPerRun` AI calls to the org's least-recently-contacted dialable
+ * leads WHOSE OWN LOCAL TIME is inside the configured calling window (TCPA is
+ * evaluated per-lead, in the called party's timezone — not the org's), honoring a
+ * per-day cap and a per-lead cooldown so the same person isn't dialed twice.
  *
  * Security: requires `Authorization: Bearer $CRON_SECRET`. Vercel Cron sends
  * this automatically when the CRON_SECRET env var is set; external schedulers
@@ -76,7 +78,11 @@ async function runAutoDial(req: Request) {
 
   for (const org of orgs) {
     const a = org.settings.automation;
-    if (!isAutoDialActive(now, a)) continue;
+    // Master switch + a configured window. The window HOURS are now checked
+    // per-lead below (in each lead's own timezone), not once in the org's — TCPA
+    // governs the called party's local time, so a Central-time org must not dial a
+    // California lead at 6am PT just because it's 8am in the org's zone.
+    if (!a?.enabled || !Array.isArray(a.windows) || a.windows.length === 0) continue;
     // Respect the AI-agent feature flag (premium / plan gate).
     if (!org.settings.features.aiAgent) {
       results.push({ org: org.name, skipped: "aiAgent disabled" });
@@ -84,12 +90,27 @@ async function runAutoDial(req: Request) {
     }
 
     const dayKey = `auto:${org.id}:${zonedDayKey(now, a.timezone)}`;
-    const leads = await getAutoDialLeadsForOrg(org.id, {
+    // Fetch a CANDIDATE POOL (larger than callsPerRun) so that after dropping the
+    // leads whose local calling window is closed right now, there are still enough
+    // within-window leads to fill this tick. Oldest-contacted-first ordering could
+    // otherwise front-load the pool with leads in a closed zone and dial nothing.
+    const poolSize = Math.min(Math.max(a.callsPerRun * 10, 30), 200);
+    const candidates = await getAutoDialLeadsForOrg(org.id, {
       cooldownHours: a.cooldownHours,
-      limit: a.callsPerRun,
+      limit: poolSize,
     });
+    // Keep only leads whose OWN local time is inside the org's configured window.
+    const leads = candidates.filter((lead) =>
+      isWithinCallingWindow(now, a, resolveLeadTimezone(lead.phone, lead.timezone, a.timezone)),
+    );
     if (!leads.length) {
-      results.push({ org: org.name, placed: 0, note: "no eligible leads" });
+      results.push({
+        org: org.name,
+        placed: 0,
+        note: candidates.length
+          ? "no leads within their local calling window right now"
+          : "no eligible leads",
+      });
       continue;
     }
 

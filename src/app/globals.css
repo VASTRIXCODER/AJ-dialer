@@ -390,8 +390,13 @@
     *::before,
     *::after {
       animation-duration: 0.01ms !important;
+      /* Delay must go too: .page-reveal / .reveal-stagger use fill-mode: both
+         with staggered delays, so a lingering delay holds children at
+         opacity: 0 — invisible content instead of merely still content. */
+      animation-delay: 0s !important;
       animation-iteration-count: 1 !important;
       transition-duration: 0.01ms !important;
+      transition-delay: 0s !important;
       scroll-behavior: auto !important;
     }
   }

@@ -46,7 +46,7 @@ export function BookedLeadsPanel({ leads, loading }: { leads: BookedLead[]; load
         <div key={l.id} className="flex items-center gap-3 px-5 py-3">
           <Avatar
             initials={initials(`${l.firstName} ${l.lastName}`) || "—"}
-            color="#22C55E"
+            tone="success"
             size="sm"
           />
           <div className="min-w-0 flex-1">

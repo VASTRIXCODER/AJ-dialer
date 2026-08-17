@@ -17,7 +17,11 @@ export interface AnswerDecision {
   answeredLeadId: string | null;
   /** True once every leg has ended without anyone answering. */
   done: boolean;
-  /** SIDs of the still-ringing losing legs to hang up (parallel dial). */
+  /**
+   * SIDs of the non-winning legs to hang up (parallel dial): still-ringing losers
+   * AND any SECOND leg that also answered (double-answer). See the note in
+   * resolveAnswer for why releasing an answered leg is safe here.
+   */
   release: string[];
 }
 
@@ -27,8 +31,20 @@ export function resolveAnswer(statuses: LegStatus[]): AnswerDecision {
     return {
       answeredLeadId: winner.leadId,
       done: false,
+      // Release every OTHER active leg — still-ringing losers AND a second leg
+      // that ALSO answered in the same window (double-answer). The browser
+      // bridges the rep to THIS winner, so a second answered homeowner would
+      // otherwise sit in the same conference hearing the rep's pitch (a
+      // two-party-consent / privacy incident) with no way to remove just them.
+      // Safe here because this poll is the browser's own authority for which leg
+      // the rep is on — unlike the status webhook, which must never hang up an
+      // answered leg (the two can disagree on the winner).
       release: statuses
-        .filter((s) => s.sid !== winner.sid && RINGING.has(s.status))
+        .filter(
+          (s) =>
+            s.sid !== winner.sid &&
+            (RINGING.has(s.status) || s.status === "in-progress"),
+        )
         .map((s) => s.sid),
     };
   }

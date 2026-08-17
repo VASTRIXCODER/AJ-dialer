@@ -1,3 +1,6 @@
+import { getUser } from "@/lib/auth";
+import { isSupabaseConfigured } from "@/lib/supabase/config";
+import { createClient } from "@/lib/supabase/server";
 import { twilioConfig } from "@/lib/twilio";
 
 export const dynamic = "force-dynamic";
@@ -22,6 +25,25 @@ export async function GET(
   }
   if (!twilioConfig.accountSid || !twilioConfig.authToken) {
     return new Response("Twilio not configured", { status: 503 });
+  }
+
+  // AUTH: this route had NO auth — a leaked/guessed SID streamed another tenant's
+  // full call audio to anyone. Require a signed-in user, and confirm the recording
+  // belongs to a call in the viewer's org: the recording_url stored on the call
+  // record contains this SID, and the RLS-scoped read only sees the viewer's org's
+  // records. Demo mode (no Supabase) stays open. Cross-tenant IDOR closed.
+  if (isSupabaseConfigured()) {
+    const user = await getUser();
+    if (!user) return new Response("Unauthorized", { status: 401 });
+    const supabase = await createClient();
+    const { data } = await supabase
+      .from("call_records")
+      .select("id")
+      .ilike("recording_url", `%${sid}%`)
+      .limit(1);
+    if (!data || data.length === 0) {
+      return new Response("Not found", { status: 404 });
+    }
   }
 
   const url = `https://api.twilio.com/2010-04-01/Accounts/${twilioConfig.accountSid}/Recordings/${sid}.mp3`;

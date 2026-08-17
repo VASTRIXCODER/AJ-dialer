@@ -3,7 +3,9 @@
 // the dialer its vertical personality: terminology, default brand colors, the AI
 // agent's persona, suggested dispositions, and optional feature toggles.
 
-import type { DispositionTone, OrgFeatures } from "./settings";
+import type { CoreFieldOverrides } from "../leads/field-schema";
+import type { DialerLayout, DispositionTone, OrgFeatures, QualifySettings } from "./settings";
+import { isSolarVertical } from "./vertical";
 
 export interface TemplateProfile {
   value: string;
@@ -19,6 +21,25 @@ export interface TemplateProfile {
   dispositions: { label: string; tone: DispositionTone }[];
   /** Feature flags to flip off for this vertical (everything else stays on). */
   features?: Partial<OrgFeatures>;
+  /**
+   * Core-slot presentation for this vertical: relabels and hides applied over
+   * CORE_LEAD_FIELDS (see resolveLeadFields in src/lib/leads/field-schema.ts).
+   * The typed columns never change — insurance's "Current premium ($/mo)" is
+   * the same currency slot solar calls "Utility bill ($/mo)". Absent = solar's
+   * original labels (the solar template intentionally has no overrides).
+   */
+  fields?: CoreFieldOverrides;
+  /**
+   * Schema keys the dialer's qualify panel renders, in order. Absent = every
+   * schema field flagged showInQualify. Org settings.qualify.fields (when
+   * non-empty) win over this preset.
+   */
+  qualifyFields?: string[];
+  /**
+   * Dialer-page panels to flip OFF for this vertical (everything else stays
+   * on). Org settings.dialerLayout keys win over this preset.
+   */
+  dialerLayout?: Partial<DialerLayout>;
 }
 
 const D = (label: string, tone: DispositionTone) => ({ label, tone });
@@ -41,6 +62,16 @@ export const TEMPLATE_PROFILES: TemplateProfile[] = [
       D("Not interested", "danger"),
       D("No answer", "neutral"),
     ],
+    // Vertical-neutral: one "Monthly bill" money slot, generic profile chips.
+    // hasBattery → "Other" mirrors the pre-schema non-solar qualify toggle.
+    fields: {
+      labels: {
+        utilityBill: "Monthly bill ($/mo)",
+        utilityProvider: "Provider",
+        hasBattery: "Other",
+      },
+      hidden: ["solarPayment", "solarProvider"],
+    },
   },
   {
     value: "solar",
@@ -62,6 +93,9 @@ export const TEMPLATE_PROFILES: TemplateProfile[] = [
       D("Not interested", "danger"),
       D("No answer", "neutral"),
     ],
+    // No `fields` / `qualifyFields` / `dialerLayout` on purpose: solar IS the
+    // core schema's default presentation — the flagship tenant keeps today's
+    // dialer exactly.
   },
   {
     value: "insurance",
@@ -81,6 +115,19 @@ export const TEMPLATE_PROFILES: TemplateProfile[] = [
       D("Not interested", "danger"),
       D("No answer", "neutral"),
     ],
+    fields: {
+      labels: {
+        utilityBill: "Current premium ($/mo)",
+        utilityProvider: "Current carrier",
+        hasEV: "Multi-vehicle",
+        hasPool: "Homeowner",
+        hasBattery: "Bundle interest",
+      },
+      hidden: ["solarPayment", "solarProvider"],
+    },
+    // Carrier goes in the qualify flow — "who are you with today?" is the
+    // first quoting question.
+    qualifyFields: ["utilityBill", "utilityProvider", "hasEV", "hasPool", "hasBattery"],
   },
   {
     value: "real_estate",
@@ -99,6 +146,15 @@ export const TEMPLATE_PROFILES: TemplateProfile[] = [
       D("Not interested", "danger"),
       D("No answer", "neutral"),
     ],
+    fields: {
+      labels: {
+        utilityBill: "Current mortgage ($/mo)",
+        hasEV: "Pre-approved",
+        hasPool: "Pool",
+        hasBattery: "Owns home",
+      },
+      hidden: ["solarPayment", "solarProvider", "utilityProvider"],
+    },
   },
   {
     value: "home_services",
@@ -117,6 +173,16 @@ export const TEMPLATE_PROFILES: TemplateProfile[] = [
       D("Not interested", "danger"),
       D("No answer", "neutral"),
     ],
+    fields: {
+      labels: {
+        utilityBill: "Est. job value ($)",
+        utilityProvider: "Current provider",
+        hasEV: "Repeat customer",
+        hasPool: "Pool",
+        hasBattery: "Maintenance plan",
+      },
+      hidden: ["solarPayment", "solarProvider"],
+    },
   },
   {
     value: "healthcare",
@@ -136,6 +202,19 @@ export const TEMPLATE_PROFILES: TemplateProfile[] = [
       D("No answer", "neutral"),
     ],
     features: { campaigns: false, leaderboard: false },
+    // No money talk on a patient call; profile chips carry intake state.
+    fields: {
+      labels: {
+        hasEV: "Insurance on file",
+        hasPool: "New patient",
+        hasBattery: "Needs follow-up",
+      },
+      hidden: ["utilityBill", "solarPayment", "utilityProvider", "solarProvider"],
+    },
+    // Same privacy-minded posture as its leaderboard-off feature preset: no
+    // org-wide floor broadcasting who's being called; campaigns are off, so the
+    // script card is explicit-off too.
+    dialerLayout: { floor: false, scriptCard: false },
   },
   {
     value: "finance",
@@ -155,6 +234,17 @@ export const TEMPLATE_PROFILES: TemplateProfile[] = [
       D("Not interested", "danger"),
       D("No answer", "neutral"),
     ],
+    fields: {
+      labels: {
+        utilityBill: "Monthly debt payment ($/mo)",
+        utilityProvider: "Current lender",
+        hasEV: "Homeowner",
+        hasPool: "Retirement account",
+        hasBattery: "Self-employed",
+      },
+      hidden: ["solarPayment", "solarProvider"],
+    },
+    qualifyFields: ["utilityBill", "utilityProvider", "hasEV", "hasPool", "hasBattery"],
   },
   {
     value: "automotive",
@@ -174,6 +264,17 @@ export const TEMPLATE_PROFILES: TemplateProfile[] = [
       D("Not interested", "danger"),
       D("No answer", "neutral"),
     ],
+    fields: {
+      labels: {
+        utilityBill: "Current payment ($/mo)",
+        utilityProvider: "Current vehicle",
+        hasEV: "Has trade-in",
+        hasPool: "Lease ending",
+        hasBattery: "Service due",
+      },
+      hidden: ["solarPayment", "solarProvider"],
+    },
+    qualifyFields: ["utilityBill", "utilityProvider", "hasEV", "hasPool", "hasBattery"],
   },
   {
     value: "recruiting",
@@ -194,6 +295,17 @@ export const TEMPLATE_PROFILES: TemplateProfile[] = [
       D("No answer", "neutral"),
     ],
     features: { campaigns: false },
+    fields: {
+      labels: {
+        utilityBill: "Desired pay ($)",
+        hasEV: "Open to relocate",
+        hasPool: "Remote OK",
+        hasBattery: "Actively looking",
+      },
+      hidden: ["solarPayment", "solarProvider", "utilityProvider"],
+    },
+    // Campaigns are off for recruiting, so no campaign script card either.
+    dialerLayout: { scriptCard: false },
   },
   {
     value: "education",
@@ -212,6 +324,16 @@ export const TEMPLATE_PROFILES: TemplateProfile[] = [
       D("Not interested", "danger"),
       D("No answer", "neutral"),
     ],
+    fields: {
+      labels: {
+        utilityBill: "Tuition budget ($)",
+        utilityProvider: "Current school",
+        hasEV: "Financial aid",
+        hasPool: "Transfer credits",
+        hasBattery: "Parent contact",
+      },
+      hidden: ["solarPayment", "solarProvider"],
+    },
   },
 ];
 
@@ -232,6 +354,31 @@ export function templateProfile(value: string | undefined | null): TemplateProfi
   return (
     TEMPLATE_PROFILES.find((t) => t.value === value) ?? TEMPLATE_PROFILES[0]
   );
+}
+
+/**
+ * The stored settings that only make sense for SOLAR, resolved per vertical.
+ *
+ * `isSolarVertical` already hides solar wording at render time, but the stored
+ * settings were still seeded from the flagship solar tenant's shape: a fresh
+ * "General" / "Insurance" / "Recruiting" workspace started with the solar
+ * payment field switched on and the "Bills are fine" pipeline stage in its nav
+ * — a stage that only means anything when you're selling against a solar loan.
+ * New orgs now persist the shape their own vertical actually wants, so an admin
+ * never has to go turn solar off by hand.
+ */
+export function verticalDefaults(template: string | undefined | null): {
+  qualify: QualifySettings;
+  features: Partial<OrgFeatures>;
+} {
+  const isSolar = isSolarVertical(template);
+  return {
+    qualify: {
+      showSolarPayment: isSolar,
+      otherToggleLabel: isSolar ? "Battery" : "Other",
+    },
+    features: isSolar ? {} : { billsFine: false },
+  };
 }
 
 export function templateLabel(value: string): string {

@@ -3,10 +3,12 @@
 import {
   AlertTriangle,
   CalendarCheck2,
+  ChevronDown,
   ListFilter,
   Loader2,
   Phone,
   PhoneCall,
+  ScrollText,
   Settings,
   UserCheck,
   Users,
@@ -17,13 +19,23 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { Button, buttonVariants } from "@/components/ui/button";
+import {
+  isScriptTestRunning,
+  scriptTextForVariant,
+  scriptVariantForLead,
+} from "@/lib/campaign-scripts";
+import {
+  persistDisposition,
+  replayQueuedDispositions,
+} from "@/lib/dialer/disposition-queue";
+import { useVisiblePoll } from "@/lib/use-visible-poll";
 import { cn } from "@/lib/utils";
 import type { BookedLead } from "@/lib/db/leads";
 import type { CallOutcome, Lead } from "@/lib/types";
 import { BookAppointmentDialog, type BookedAppointment } from "./book-appointment-dialog";
 import { BookedLeadsPanel } from "./booked-leads-panel";
 import { CallStage } from "./call-stage";
-import { useDialerContext } from "./dialer-context";
+import { useDialerContext, type DialerCampaign } from "./dialer-context";
 import { DialerFloor } from "./dialer-floor";
 import { LeadPanel } from "./lead-panel";
 import { groupLabel, LoadLeadsDialog } from "./load-leads-dialog";
@@ -37,7 +49,7 @@ export function DialerClient({
   callbackName,
 }: {
   queue: Lead[];
-  campaigns?: { id: string; name: string }[];
+  campaigns?: DialerCampaign[];
   initialCampaign?: string;
   /** When set, auto-dial this number (from the Callbacks page "Call back" link). */
   callbackPhone?: string;
@@ -65,6 +77,12 @@ export function DialerClient({
   const { state } = dialer;
   const [showLoadDialog, setShowLoadDialog] = useState(false);
 
+  // Which dialer panels this workspace shows (template preset ⊕ admin toggles).
+  const layout = config.dialerLayout;
+  const showFloor = layout?.floor !== false;
+  const showBookedTab = layout?.bookedTab !== false;
+  const showScriptCard = layout?.scriptCard !== false;
+
   // ── Booked tab ────────────────────────────────────────────────────────────
   // Leads with an appointment already on the calendar. getDialQueue already
   // excludes them from the dial queue (status "appointment" isn't in DIALABLE),
@@ -73,27 +91,31 @@ export function DialerClient({
   const [tab, setTab] = useState<"queue" | "booked">("queue");
   const [bookedLeads, setBookedLeads] = useState<BookedLead[]>([]);
   const [bookedLoading, setBookedLoading] = useState(true);
+  const bookedAlive = useRef(true);
   useEffect(() => {
-    let alive = true;
-    const load = async () => {
+    bookedAlive.current = true;
+    return () => {
+      bookedAlive.current = false;
+    };
+  }, []);
+  // Display-only poll — paused while the tab is hidden. The dial engine's own
+  // intervals (use-dialer.ts) are untouched and keep running during calls.
+  // Skipped entirely when the Booked tab is laid out of this workspace.
+  useVisiblePoll(() => {
+    if (!showBookedTab) return;
+    void (async () => {
       try {
         const r = await fetch("/api/leads/booked", { cache: "no-store" });
         if (!r.ok) return;
         const j = (await r.json().catch(() => ({}))) as { leads?: BookedLead[] };
-        if (alive) setBookedLeads(Array.isArray(j.leads) ? j.leads : []);
+        if (bookedAlive.current) setBookedLeads(Array.isArray(j.leads) ? j.leads : []);
       } catch {
         /* transient — keep the last snapshot */
       } finally {
-        if (alive) setBookedLoading(false);
+        if (bookedAlive.current) setBookedLoading(false);
       }
-    };
-    void load();
-    const t = setInterval(load, 15000);
-    return () => {
-      alive = false;
-      clearInterval(t);
-    };
-  }, []);
+    })();
+  }, 15000);
 
   // How many of the currently-loaded leads this viewer personally uploaded —
   // powers the toggle's badge so a supervisor knows what to expect before
@@ -115,6 +137,10 @@ export function DialerClient({
     if (activatedRef.current) return;
     activatedRef.current = true;
     activate(initialQueue, campaigns, initialCampaign);
+    // The page no longer serializes the queue into the RSC payload (it ships
+    // ONCE as JSON via /api/leads/queue instead of twice) — so fetch it here,
+    // unless the provider still holds a queue from an earlier visit.
+    if (initialQueue.length === 0 && queue.length === 0) void loadLeads();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -122,6 +148,11 @@ export function DialerClient({
 
   // Track the rep's in-call notes so they can be saved with the disposition.
   const notesRef = useRef<string>("");
+  // The script variant (A/B) shown for the focus lead — same ref idiom as
+  // notesRef, so the disposition POST can carry it without re-binding
+  // fileOutcome on every render. Updated by an effect further down, once the
+  // focus lead + its campaign are resolved.
+  const scriptVariantRef = useRef<"a" | "b" | null>(null);
   const focusLeadId = (
     state.connectedLead ??
     state.lines[0]?.lead ??
@@ -136,6 +167,11 @@ export function DialerClient({
     // Reset notes to the lead's saved notes whenever the active lead changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [focusLeadId]);
+
+  // Flush any dispositions that failed to save on a previous (flaky) session.
+  useEffect(() => {
+    void replayQueuedDispositions();
+  }, []);
 
   // Auto-dial a callback number as soon as the Twilio device is live and idle.
   const callbackFiredRef = useRef(false);
@@ -160,6 +196,25 @@ export function DialerClient({
       )
     : [];
 
+  // ── Campaign script (A/B test) ─────────────────────────────────────────────
+  // Which script the focus lead's campaign assigns them. Deterministic per lead
+  // (hash of the id), so the same homeowner hears the same script on every
+  // attempt. No script on the campaign ⇒ nothing renders at all.
+  const focusCampaign = focusLead?.campaignId
+    ? campaignsForSelect.find((c) => c.id === focusLead.campaignId)
+    : undefined;
+  const focusScripts = focusCampaign
+    ? { scriptA: focusCampaign.scriptA ?? "", scriptB: focusCampaign.scriptB ?? "" }
+    : null;
+  const scriptVariant =
+    focusLead && focusScripts ? scriptVariantForLead(focusLead, focusScripts) : null;
+  const scriptText = focusScripts ? scriptTextForVariant(focusScripts, scriptVariant) : "";
+  const scriptTestRunning = focusScripts ? isScriptTestRunning(focusScripts) : false;
+  const [scriptOpen, setScriptOpen] = useState(true);
+  useEffect(() => {
+    scriptVariantRef.current = scriptVariant;
+  }, [scriptVariant]);
+
   // ── Disposition ────────────────────────────────────────────────────────────
   // "Appointment booked" pauses here to ask WHEN, because filing the disposition
   // is a one-way door: dialer.selectOutcome() advances the queue and, with
@@ -170,21 +225,23 @@ export function DialerClient({
   const fileOutcome = useCallback(
     (o: CallOutcome, lead: Lead | null, appointment?: BookedAppointment | null) => {
       if (lead) {
-        void fetch("/api/calls", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({
-            leadId: lead.id,
-            leadName: `${lead.firstName} ${lead.lastName}`,
-            phone: lead.phone,
-            durationSec: state.durationSec,
-            outcome: o,
-            callSid: state.callSid,
-            room: state.room,
-            notes: notesRef.current || undefined,
-            appointment: appointment ?? undefined,
-          }),
-        }).catch(() => {});
+        // Durable: on any network failure the disposition is queued in
+        // localStorage and replayed on the next load, instead of being silently
+        // dropped while the queue advances. Advance immediately for snappy UX.
+        void persistDisposition({
+          leadId: lead.id,
+          leadName: `${lead.firstName} ${lead.lastName}`,
+          phone: lead.phone,
+          durationSec: state.durationSec,
+          outcome: o,
+          callSid: state.callSid,
+          room: state.room,
+          notes: notesRef.current || undefined,
+          appointment: appointment ?? undefined,
+          // Which script (A/B) the rep was shown for this lead — powers the
+          // per-variant split on the campaign page. Absent when no script.
+          scriptVariant: scriptVariantRef.current ?? undefined,
+        });
       }
       dialer.selectOutcome(o);
     },
@@ -248,43 +305,46 @@ export function DialerClient({
 
       {/* Dial queue vs already-booked leads — booked leads are skipped by the
           queue automatically; this tab is where they're visible instead of
-          just vanishing on the next reload. */}
-      <div className="flex items-center gap-1.5 border-b border-border/60">
-        <button
-          type="button"
-          onClick={() => setTab("queue")}
-          className={cn(
-            "flex items-center gap-1.5 border-b-2 px-3 py-2 text-sm font-medium transition-colors",
-            tab === "queue"
-              ? "border-primary text-foreground"
-              : "border-transparent text-muted-foreground hover:text-foreground",
-          )}
-        >
-          <PhoneCall className="h-4 w-4" />
-          Dial queue
-        </button>
-        <button
-          type="button"
-          onClick={() => setTab("booked")}
-          className={cn(
-            "flex items-center gap-1.5 border-b-2 px-3 py-2 text-sm font-medium transition-colors",
-            tab === "booked"
-              ? "border-primary text-foreground"
-              : "border-transparent text-muted-foreground hover:text-foreground",
-          )}
-        >
-          <CalendarCheck2 className="h-4 w-4" />
-          Booked
-          <Badge tone={tab === "booked" ? "success" : "neutral"} className="ml-0.5">
-            {bookedLeads.length}
-          </Badge>
-        </button>
-      </div>
+          just vanishing on the next reload. A one-tab bar is pointless, so the
+          whole strip disappears when the layout drops the Booked tab. */}
+      {showBookedTab && (
+        <div className="flex items-center gap-1.5 border-b border-border/60">
+          <button
+            type="button"
+            onClick={() => setTab("queue")}
+            className={cn(
+              "flex items-center gap-1.5 border-b-2 px-3 py-2 text-sm font-medium transition-colors",
+              tab === "queue"
+                ? "border-primary text-foreground"
+                : "border-transparent text-muted-foreground hover:text-foreground",
+            )}
+          >
+            <PhoneCall className="h-4 w-4" />
+            Dial queue
+          </button>
+          <button
+            type="button"
+            onClick={() => setTab("booked")}
+            className={cn(
+              "flex items-center gap-1.5 border-b-2 px-3 py-2 text-sm font-medium transition-colors",
+              tab === "booked"
+                ? "border-primary text-foreground"
+                : "border-transparent text-muted-foreground hover:text-foreground",
+            )}
+          >
+            <CalendarCheck2 className="h-4 w-4" />
+            Booked
+            <Badge tone={tab === "booked" ? "success" : "neutral"} className="ml-0.5">
+              {bookedLeads.length}
+            </Badge>
+          </button>
+        </div>
+      )}
 
       {/* Shared live floor — who's dialing + calls today, org-wide */}
-      <DialerFloor />
+      {showFloor && <DialerFloor />}
 
-      {tab === "booked" ? (
+      {showBookedTab && tab === "booked" ? (
         <Card className="overflow-hidden">
           <BookedLeadsPanel leads={bookedLeads} loading={bookedLoading} />
         </Card>
@@ -323,7 +383,7 @@ export function DialerClient({
         )}
         {groupFilter !== "all" && (
           <Badge tone="primary" className="gap-1">
-            {groupLabel(groupFilter, config.leadGroupLabels)}
+            {groupLabel(groupFilter, config.leadGroupLabels, config.leadGroups)}
             <button
               type="button"
               onClick={() => setGroupFilter("all")}
@@ -403,7 +463,9 @@ export function DialerClient({
             navDisabled={state.status !== "idle"}
             onLoadLeads={loadLeads}
             loadingLeads={loadingLeads}
-            showSolarPayment={config.qualifyShowSolarPayment !== false}
+            fields={config.leadFields}
+            showCallHistory={layout?.callHistory !== false}
+            showUpNext={layout?.upNext !== false}
           />
         </Card>
 
@@ -412,6 +474,7 @@ export function DialerClient({
             state={state}
             focusLead={focusLead}
             hasQueue={queueForDialer.length > 0}
+            wrapupNotes={notesRef.current}
             aiConfigured={config.aiAgentConfigured}
             manualEnabled={config.manualEnabled}
             aiEnabled={config.aiEnabled}
@@ -453,12 +516,43 @@ export function DialerClient({
               Qualify the lead & capture the account review
             </p>
           </div>
+          {showScriptCard && scriptText.length > 0 && (
+            <div className="border-b border-border">
+              <button
+                type="button"
+                onClick={() => setScriptOpen((v) => !v)}
+                aria-expanded={scriptOpen}
+                className="flex w-full items-center gap-2 px-5 py-3 text-left transition-colors hover:bg-muted/50"
+              >
+                <ScrollText className="h-4 w-4 text-muted-foreground" />
+                <span className="text-sm font-semibold">Script</span>
+                {scriptTestRunning && scriptVariant && (
+                  <Badge tone={scriptVariant === "a" ? "primary" : "accent"}>
+                    Variant {scriptVariant.toUpperCase()}
+                  </Badge>
+                )}
+                <ChevronDown
+                  className={cn(
+                    "ml-auto h-4 w-4 text-muted-foreground transition-transform",
+                    scriptOpen && "rotate-180",
+                  )}
+                />
+              </button>
+              {scriptOpen && (
+                <div className="max-h-56 overflow-y-auto px-5 pb-4">
+                  <p className="whitespace-pre-wrap text-sm leading-relaxed text-muted-foreground">
+                    {scriptText}
+                  </p>
+                </div>
+              )}
+            </div>
+          )}
           <div className="p-5">
             <QualifyPanel
               key={focusLead?.id ?? "none"}
               lead={focusLead}
-              showSolarPayment={config.qualifyShowSolarPayment !== false}
-              otherLabel={config.qualifyOtherLabel || "Battery"}
+              fields={config.qualifyFields}
+              showAiBriefing={layout?.aiBriefing !== false}
               onNotesChange={(n) => {
                 notesRef.current = n;
               }}
@@ -499,6 +593,7 @@ export function DialerClient({
           onGroupFilterChange={setGroupFilter}
           onClose={() => setShowLoadDialog(false)}
           leadGroupLabels={config.leadGroupLabels}
+          leadGroups={config.leadGroups}
         />
       )}
     </div>

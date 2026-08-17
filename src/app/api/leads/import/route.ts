@@ -1,12 +1,64 @@
 import { NextResponse } from "next/server";
+import { dncKey, getDncDigits } from "@/lib/db/dnc";
 import { insertLeads, type LeadInput } from "@/lib/db/leads";
 import { hasCurrentCertification, normalizeCampaignId } from "@/lib/legal/campaign-cert";
-import type { ParsedLead } from "@/lib/leads/csv";
+import {
+  mergeDiscoveredLeadFields,
+  sanitizeDiscoveredFields,
+  type ParsedLead,
+} from "@/lib/leads/csv";
+import type { LeadFieldDef } from "@/lib/leads/field-schema";
 import { parseCsvToLeads } from "@/lib/leads/parse-request";
-import { LEAD_GROUPS, type LeadGroup } from "@/lib/types";
+import { isValidGroupKey } from "@/lib/db/lead-groups";
+import { createPacks, planPacks, pruneEmptyPacks, setPackSizes } from "@/lib/db/lead-packs";
+import type { LeadGroup } from "@/lib/types";
 import { getViewer } from "@/lib/org/membership";
+import { clientIp, rateLimit } from "@/lib/rate-limit";
+import { createAdminClient, isAdminConfigured } from "@/lib/supabase/admin";
 
 export const dynamic = "force-dynamic";
+
+/** Reject CSV payloads larger than this (bytes) before we ever parse them. */
+const MAX_CSV_BYTES = 2_000_000;
+
+/**
+ * Append NEW discovered custom fields to the org's settings.leadFields so the
+ * table / qualify / AI surfaces know each field's label and type. Read-merge-
+ * write with the admin client (importers are managers who may lack `org.edit`,
+ * so updateOrganizationSettings' authorize gate would wrongly reject them).
+ * Existing defs are never duplicated or overwritten (mergeDiscoveredLeadFields),
+ * and only the `leadFields` key of the settings blob is touched. Best-effort:
+ * the leads have already landed, so a settings hiccup must not fail the import.
+ */
+async function persistDiscoveredFields(
+  orgId: string | null | undefined,
+  discovered: LeadFieldDef[],
+): Promise<void> {
+  if (!orgId || !discovered.length || !isAdminConfigured()) return;
+  try {
+    const admin = createAdminClient();
+    const { data } = await admin
+      .from("organizations")
+      .select("settings")
+      .eq("id", orgId)
+      .maybeSingle();
+    const raw =
+      data?.settings && typeof data.settings === "object"
+        ? (data.settings as Record<string, unknown>)
+        : {};
+    const existing = Array.isArray(raw.leadFields)
+      ? (raw.leadFields as LeadFieldDef[])
+      : [];
+    const { fields, added } = mergeDiscoveredLeadFields(existing, discovered);
+    if (!added) return;
+    await admin
+      .from("organizations")
+      .update({ settings: { ...raw, leadFields: fields } })
+      .eq("id", orgId);
+  } catch {
+    // Non-fatal by design — the field VALUES are already on the leads.
+  }
+}
 
 /**
  * Import leads from a CSV.
@@ -28,19 +80,56 @@ export async function POST(req: Request) {
     );
   }
 
+  // Throttle imports: each one can trigger CSV parsing + a Claude column-mapping
+  // call, so a loop would be a CPU + token DoS. Generous for real use.
+  const rl = rateLimit(`import:${viewer.user?.id ?? clientIp(req)}`, 12, 60_000);
+  if (!rl.ok) {
+    return NextResponse.json(
+      { inserted: 0, error: "Too many imports in a row — wait a moment and try again." },
+      { status: 429, headers: { "Retry-After": String(rl.retryAfter) } },
+    );
+  }
+
   const body = (await req.json().catch(() => ({}))) as {
     csv?: string;
     rows?: LeadInput[];
+    /** Field defs for the rows' customFields (the sort-preview round trip
+     *  carries them so AI-sorted imports register their columns too). */
+    discoveredFields?: unknown;
     campaignId?: string | null;
     leadGroup?: LeadGroup | null;
+    /** Cut this import into numbered packs of roughly this many leads. */
+    packSize?: number | null;
+    /** Label the packs carry — normally the source file name. */
+    packBatch?: string | null;
   };
 
-  const hasGroup = Object.prototype.hasOwnProperty.call(body, "leadGroup");
-  if (hasGroup && body.leadGroup !== null && !LEAD_GROUPS.includes(body.leadGroup as LeadGroup)) {
+  // Reject an oversized CSV before parsing: parseCsvToLeads walks the whole string
+  // character by character and the AI fallback ships the grid to Claude, so the
+  // cap has to come BEFORE that work (the 5,000-row slice below happens after it).
+  if (typeof body.csv === "string" && body.csv.length > MAX_CSV_BYTES) {
     return NextResponse.json(
-      { inserted: 0, error: `Invalid leadGroup. Must be one of: ${LEAD_GROUPS.join(", ")}.` },
-      { status: 400 },
+      {
+        inserted: 0,
+        error:
+          "That file is too large to import at once. Split it into smaller CSVs " +
+          "(under ~2 MB each) and import them in batches.",
+      },
+      { status: 413 },
     );
+  }
+
+  const hasGroup = Object.prototype.hasOwnProperty.call(body, "leadGroup");
+  // Group keys are per-org now, so validity is "does THIS org have it" rather
+  // than membership of a global list.
+  if (hasGroup && body.leadGroup !== null) {
+    const ok = await isValidGroupKey(viewer.org?.id ?? null, body.leadGroup);
+    if (!ok) {
+      return NextResponse.json(
+        { inserted: 0, error: "That lead group doesn't exist in this workspace." },
+        { status: 400 },
+      );
+    }
   }
 
   // Compliance gate: a list can't be dialed until someone has certified this
@@ -67,6 +156,7 @@ export async function POST(req: Request) {
   let leads: ParsedLead[] | LeadInput[] = [];
   let source: "headers" | "ai" | "rows" = "rows";
   let aiError: string | null = null;
+  let discoveredFields: LeadFieldDef[] = [];
 
   if (typeof body.csv === "string" && body.csv.trim()) {
     const parsed = await parseCsvToLeads(body.csv);
@@ -76,8 +166,12 @@ export async function POST(req: Request) {
     leads = parsed.leads;
     source = parsed.source;
     aiError = parsed.aiError;
+    discoveredFields = parsed.discoveredFields;
   } else if (Array.isArray(body.rows)) {
     leads = body.rows;
+    // Client-held ParsedLead JSON (the sort-preview round trip) — its field
+    // defs arrive over the wire, so re-validate every one before trusting it.
+    discoveredFields = sanitizeDiscoveredFields(body.discoveredFields);
   }
 
   if (!leads.length) {
@@ -96,15 +190,75 @@ export async function POST(req: Request) {
   // group (if any). `hasGroup` distinguishes "leadGroup: null" (explicit
   // "unsorted") from the key being omitted entirely (legacy callers that never
   // mention groups, whose rows keep whatever lead_group they'd otherwise get).
-  const rows: LeadInput[] = leads.slice(0, 5000).map((r) => ({
+  // Scrub the org's Do-Not-Call list: a re-import must never resurrect a number a
+  // homeowner asked us to stop calling (import dedup only compares against
+  // existing lead ROWS, which may have been deleted).
+  const dncSet = await getDncDigits(viewer.org?.id ?? null);
+  const scrubbed = dncSet.size
+    ? leads.filter(
+        (r) => !dncSet.has(dncKey(String((r as { phone?: string }).phone ?? ""))),
+      )
+    : leads;
+  const dncSkipped = leads.length - scrubbed.length;
+  const capped = scrubbed.slice(0, 5000);
+
+  // ── Packs ────────────────────────────────────────────────────────────────
+  // Cut the batch into numbered slices so a big list can be dealt out a pack
+  // at a time. The pack rows are created up front (we need their ids to stamp
+  // each lead), then sized and pruned after the insert — dedupe and invalid
+  // rows mean the final counts aren't knowable until the write lands.
+  const packSize = Number(body.packSize) || 0;
+  const wantsPacks = packSize > 0 && Boolean(viewer.org?.id);
+  let packIds: string[] = [];
+  let assignedPackOf: (index: number) => string | null = () => null;
+
+  if (wantsPacks && viewer.org?.id) {
+    const { packCount, effectiveSize } = planPacks(capped.length, packSize);
+    const packs = await createPacks(viewer.org.id, {
+      batch: (body.packBatch || "Upload").toString(),
+      packCount,
+      createdBy: viewer.user?.id ?? null,
+    });
+    if (packs.length) {
+      packIds = packs.map((p) => p.id);
+      assignedPackOf = (i) => packs[Math.min(packs.length - 1, Math.floor(i / effectiveSize))].id;
+    }
+  }
+
+  const rows: LeadInput[] = capped.map((r, i) => ({
     ...r,
     ...(body.campaignId ? { campaignId: body.campaignId } : {}),
     ...(hasGroup ? { leadGroup: body.leadGroup } : {}),
+    ...(packIds.length ? { leadPackId: assignedPackOf(i) } : {}),
   }));
 
   const result = await insertLeads(rows);
+
+  // Register any newly discovered custom fields AFTER the rows land — an
+  // import that failed (or inserted nothing) must not grow the org's schema.
+  if (!result.error && result.inserted > 0) {
+    await persistDiscoveredFields(viewer.org?.id, discoveredFields);
+  }
+
+  if (packIds.length && viewer.org?.id) {
+    // Count what actually landed per pack rather than what we intended, then
+    // drop any pack that ended up empty (a fully-duplicate tail slice).
+    const counts = new Map<string, number>();
+    if (!result.error) {
+      rows.forEach((r) => {
+        const id = r.leadPackId;
+        if (id) counts.set(id, (counts.get(id) ?? 0) + 1);
+      });
+    }
+    await setPackSizes(
+      viewer.org.id,
+      packIds.map((id) => ({ id, size: counts.get(id) ?? 0 })),
+    );
+    await pruneEmptyPacks(viewer.org.id, packIds);
+  }
+
   return NextResponse.json(
-    { ...result, source, aiError },
+    { ...result, source, aiError, packs: packIds.length, dncSkipped },
     { status: result.error ? 400 : 200 },
   );
 }

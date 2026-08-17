@@ -1,11 +1,18 @@
 import "server-only";
 
 import { leads as fallbackLeads, getLeadById as fallbackById } from "../data";
+import {
+  hasStructuredPredicates,
+  leadMatchesParsedQuery,
+  parseLeadQuery,
+} from "../leads/search-heuristics";
+import { SMART_LISTS, countSmartLists, smartListById } from "../leads/smart-lists";
 import { createAdminClient, isAdminConfigured } from "../supabase/admin";
 import { isSupabaseConfigured } from "../supabase/config";
 import { createClient } from "../supabase/server";
 import type { Lead, LeadGroup, LeadStatus } from "../types";
 import { normalizePhone } from "../utils";
+import { getDncDigits, scrubDnc } from "./dnc";
 import { canActOn, getScope } from "./scope";
 
 // Account-scoped lead access. When Supabase is configured and the user is signed
@@ -83,6 +90,7 @@ export function rowToLead(r: Row): Lead {
     campaignId: (r.campaign_id as string) ?? "",
     assignedRepId: (r.assigned_rep_id as string) ?? undefined,
     leadGroup: (r.lead_group as LeadGroup) ?? undefined,
+    leadPackId: (r.lead_pack_id as string) ?? undefined,
     solarPayment: num(r.solar_payment),
     utilityBill: num(r.utility_bill),
     hasEV: Boolean(r.has_ev),
@@ -95,6 +103,10 @@ export function rowToLead(r: Row): Lead {
     lastContactedAt: (r.last_contacted_at as string) ?? undefined,
     createdAt: (r.created_at as string) ?? new Date().toISOString(),
     ownerId: (r.owner_id as string) ?? undefined,
+    customFields:
+      r.custom_fields && typeof r.custom_fields === "object"
+        ? (r.custom_fields as Record<string, string | number | boolean>)
+        : undefined,
   };
 }
 
@@ -210,6 +222,144 @@ export async function getLeads(): Promise<Lead[]> {
             ? -1
             : 1,
       );
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * PostgREST `.or()` filter strings are parsed on delimiters, and ilike values
+ * carry LIKE wildcards — strip everything that could break out of (or wildcard
+ * inside) `col.ilike.%token%` before interpolating a user-typed word.
+ */
+const sanitizeFilterToken = (t: string) => t.replace(/[,()%_\\]/g, "");
+
+/** Text columns the lexical stage matches lead-search tokens against. */
+const SEARCH_TEXT_COLUMNS = [
+  "first_name",
+  "last_name",
+  "city",
+  "state",
+  "utility_provider",
+  "solar_provider",
+  "notes",
+] as const;
+
+/**
+ * STAGE 1 of the AI lead search: retrieve a bounded candidate set for a
+ * natural-language query, so getSemanticSearch (stage 2) reranks ~80 relevant
+ * rows instead of the first 80 of the whole book in upload order.
+ *
+ * Scope is EXACTLY getLeads': rep → own uploads + assigned, pinned to their
+ * current org; supervisor → the org pool plus their own pre-org rows
+ * (org_id null). The query parse (src/lib/leads/search-heuristics.ts) drives up
+ * to two cheap queries — structured predicates (bill bounds, EV/pool/battery,
+ * status, never-called) and a lexical ilike OR over the text columns — whose
+ * results are UNIONED, never AND-required: a purely structured query
+ * ("homeowners overpaying with an EV") has almost no lexical surface, and a
+ * purely lexical one ("smiths in fresno") has no structure. A query that parses
+ * to neither returns the first `limit` leads in upload order, preserving the
+ * old first-N behavior. Demo and no-service-key deployments filter in JS with
+ * the same parse, so every mode agrees on what a query means.
+ */
+export async function searchLeadCandidates(query: string, limit = 80): Promise<Lead[]> {
+  const parsed = parseLeadQuery(query);
+  const jsFilter = (all: Lead[]) =>
+    all.filter((l) => leadMatchesParsedQuery(l, parsed)).slice(0, limit);
+
+  // Demo mode: the bundled sample book, same heuristics.
+  if (!isSupabaseConfigured()) return jsFilter(fallbackLeads);
+  // Degraded self-host mode (no service key): getLeads() already falls back to
+  // the rep-scoped RLS read for everyone, so filter that in JS — correct, just
+  // not cheap. Never crash without full credentials is documented policy.
+  if (!isAdminConfigured()) return jsFilter(await getLeads());
+
+  try {
+    const supabase = await createClient();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) return [];
+    const { data: prof } = await supabase
+      .from("profiles")
+      .select("org_id, role")
+      .eq("id", user.id)
+      .maybeSingle();
+    const orgId = prof?.org_id ? String(prof.org_id) : null;
+    const supervisor = Boolean(orgId) && isSupervisorRole(prof?.role);
+
+    // Fresh builder per query (PostgREST builders aren't reusable). Both
+    // branches mirror getLeads: multiple PostgREST filters AND together, so the
+    // scope .or() below combines with the per-stage predicates correctly.
+    const baseScope = () => {
+      if (supervisor) {
+        // Org pool + the supervisor's own pre-org rows (org_id null) — those
+        // must stay searchable, matching what the Leads tab shows them.
+        return createAdminClient()
+          .from("leads")
+          .select("*")
+          .or(`org_id.eq.${orgId},and(owner_id.eq.${user.id},org_id.is.null)`);
+      }
+      let q = supabase
+        .from("leads")
+        .select("*")
+        .or(`owner_id.eq.${user.id},assigned_rep_id.eq.${user.id}`);
+      if (orgId) q = q.eq("org_id", orgId);
+      return q;
+    };
+    // Upload order within each stage — same ordering contract as getLeads.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const finish = (q: any) =>
+      q
+        .order("created_at", { ascending: true })
+        .order("id", { ascending: true })
+        .limit(limit);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const run = async (q: any): Promise<Row[]> => {
+      const { data, error } = await q;
+      return error ? [] : ((data ?? []) as Row[]);
+    };
+
+    const stages: Promise<Row[]>[] = [];
+
+    if (hasStructuredPredicates(parsed)) {
+      let q = baseScope();
+      if (parsed.wantsEV) q = q.eq("has_ev", true);
+      if (parsed.wantsPool) q = q.eq("has_pool", true);
+      if (parsed.wantsBattery) q = q.eq("has_battery", true);
+      if (parsed.minBill !== null) q = q.gte("utility_bill", parsed.minBill);
+      if (parsed.maxBill !== null) q = q.lte("utility_bill", parsed.maxBill);
+      if (parsed.statuses.length) q = q.in("status", parsed.statuses);
+      if (parsed.neverCalled) q = q.is("last_contacted_at", null);
+      stages.push(run(finish(q)));
+    }
+
+    // Cap the token count so the request URL stays small; tokens are already
+    // plain [a-z0-9] words, sanitized again here as defense in depth.
+    const tokens = parsed.tokens
+      .map(sanitizeFilterToken)
+      .filter((t) => t.length >= 3)
+      .slice(0, 8);
+    if (tokens.length) {
+      const ors = tokens
+        .flatMap((t) => SEARCH_TEXT_COLUMNS.map((col) => `${col}.ilike.%${t}%`))
+        .join(",");
+      stages.push(run(finish(baseScope().or(ors))));
+    }
+
+    // Nothing parseable at all → first `limit` leads in upload order.
+    if (!stages.length) stages.push(run(finish(baseScope())));
+
+    const results = await Promise.all(stages);
+    const byId = new Map<string, Row>();
+    for (const rows of results) {
+      for (const r of rows) {
+        if (byId.size >= limit) break;
+        const id = String(r.id);
+        if (!byId.has(id)) byId.set(id, r);
+      }
+    }
+    return [...byId.values()].map(rowToLead);
   } catch {
     return [];
   }
@@ -543,6 +693,11 @@ export interface LeadPatch {
   multipleSystems?: boolean;
   /** null clears the field. */
   notes?: string | null;
+  /**
+   * Per-key merge onto leads.custom_fields — only the provided keys change;
+   * a null value deletes that key. Keys/values are validated at the API edge.
+   */
+  customFields?: Record<string, string | number | boolean | null>;
 }
 
 const LOCKED_STATUSES: LeadStatus[] = ["appointment", "callback"];
@@ -582,7 +737,7 @@ export async function updateLead(
     const reader = isAdminConfigured() ? createAdminClient() : await createClient();
     const { data: row } = await reader
       .from("leads")
-      .select("owner_id, org_id")
+      .select("owner_id, org_id, custom_fields")
       .eq("id", id)
       .maybeSingle();
     if (!row) return { ok: false, error: "Lead not found." };
@@ -615,6 +770,37 @@ export async function updateLead(
     if (patch.hasBattery !== undefined) fields.has_battery = patch.hasBattery;
     if (patch.multipleSystems !== undefined) fields.multiple_systems = patch.multipleSystems;
     if (patch.notes !== undefined) fields.notes = patch.notes || null;
+    if (patch.customFields && Object.keys(patch.customFields).length > 0) {
+      if (isAdminConfigured()) {
+        // ATOMIC per-key patch (app_patch_lead_custom_fields): jsonb || and -
+        // inside one UPDATE, so two nearly-concurrent requests patching
+        // DIFFERENT keys both survive — the JS read-modify-write below loses
+        // the first writer's keys. Authorization already happened (canActOn).
+        const sets: Record<string, string | number | boolean> = {};
+        const dels: string[] = [];
+        for (const [k, v] of Object.entries(patch.customFields)) {
+          if (v === null) dels.push(k);
+          else sets[k] = v;
+        }
+        await createAdminClient().rpc("app_patch_lead_custom_fields", {
+          p_lead: id,
+          p_set: sets,
+          p_delete: dels,
+        });
+      } else {
+        // Keyless self-host fallback: the RPC is service-role only, so degrade
+        // to the read-modify-write (single-writer assumption).
+        const existing =
+          r.custom_fields && typeof r.custom_fields === "object"
+            ? { ...(r.custom_fields as Record<string, string | number | boolean>) }
+            : {};
+        for (const [k, v] of Object.entries(patch.customFields)) {
+          if (v === null) delete existing[k];
+          else existing[k] = v;
+        }
+        fields.custom_fields = existing;
+      }
+    }
 
     if (Object.keys(fields).length === 0) return { ok: true };
 
@@ -752,6 +938,9 @@ export async function getDialQueue(): Promise<Lead[]> {
     const orgId = prof?.org_id ? String(prof.org_id) : null;
     const supervisor =
       Boolean(orgId) && isSupervisorRole(prof?.role) && isAdminConfigured();
+    // Suppression set for this org — scrubbed from the queue so a DNC number never
+    // appears in the manual dialer (matching the auto-dialer + placement scrubs).
+    const dnc = await getDncDigits(orgId);
 
     // PAGED. An un-ranged select stops at PostgREST's 1,000-row default without
     // any error, so this account's dial queue silently held 1,000 of its 15,136
@@ -771,7 +960,7 @@ export async function getDialQueue(): Promise<Lead[]> {
           .order("created_at", { ascending: true })
           .order("id", { ascending: true }),
       );
-      return dialable(rows.map((r) => rowToLead(r as Row)));
+      return scrubDnc(dialable(rows.map((r) => rowToLead(r as Row))), dnc);
     }
 
     // A rep's queue = leads they UPLOADED (owner_id) OR were ASSIGNED
@@ -788,7 +977,7 @@ export async function getDialQueue(): Promise<Lead[]> {
       if (orgId) q = q.eq("org_id", orgId);
       return q.order("created_at", { ascending: true }).order("id", { ascending: true });
     });
-    return dialable(rows.map((r) => rowToLead(r as Row)));
+    return scrubDnc(dialable(rows.map((r) => rowToLead(r as Row))), dnc);
   } catch {
     return [];
   }
@@ -927,11 +1116,16 @@ export async function getAutoDialLeadsForOrg(
       // Never dialed, or last dialed before the cooldown cutoff.
       .or(`last_contacted_at.is.null,last_contacted_at.lt.${cutoff}`)
       .order("last_contacted_at", { ascending: true, nullsFirst: true })
-      .limit(Math.max(1, opts.limit));
+      // Over-fetch a buffer so DNC scrubbing can't starve the batch below `limit`.
+      .limit(Math.max(1, opts.limit) + 25);
     if (error) return [];
-    return (data ?? [])
+    const eligible = (data ?? [])
       .map((r) => rowToLead(r as Row))
       .filter((l) => l.phone.replace(/\D/g, "").length >= 10);
+    // Never auto-dial a suppressed number (added via a do_not_call disposition,
+    // an SMS STOP, or a DNC import) even if its lead row is still a dialable status.
+    const dnc = await getDncDigits(orgId);
+    return scrubDnc(eligible, dnc).slice(0, Math.max(1, opts.limit));
   } catch {
     return [];
   }
@@ -993,6 +1187,313 @@ export async function getMyLeadsCount(): Promise<number> {
   }
 }
 
+// ── Server-paginated Leads tab ───────────────────────────────────────────────
+
+export const LEADS_PAGE_SIZE = 50;
+
+/**
+ * Server-side sort for the Leads tab. `key` must be one of the whitelist below —
+ * the SQL (app_leads_page) re-validates it in a CASE and silently falls back to
+ * upload order for anything else, so an invalid key can never reach an ORDER BY.
+ */
+export interface LeadsSort {
+  key: string;
+  dir: "asc" | "desc";
+}
+
+/**
+ * JS mirror of app_leads_page's sort whitelist — the demo/degraded-path twin of
+ * the SQL CASE arms. Keep the two in lockstep. Text keys coalesce to "" (like
+ * the SQL's coalesce), value keys return null for missing data (sorted last
+ * regardless of direction, like the SQL's NULLS LAST).
+ */
+const LEADS_SORT_VALUES: Record<string, (l: Lead) => string | number | null> = {
+  name: (l) => `${l.lastName ?? ""} ${l.firstName ?? ""}`.toLowerCase(),
+  city: (l) => (l.city ?? "").toLowerCase(),
+  state: (l) => (l.state ?? "").toLowerCase(),
+  status: (l) => l.status,
+  utility_bill: (l) => l.utilityBill ?? null,
+  solar_payment: (l) => l.solarPayment ?? null,
+  ai_score: (l) => l.aiScore ?? null,
+  last_contacted_at: (l) =>
+    l.lastContactedAt ? Date.parse(l.lastContactedAt) || null : null,
+  created_at: (l) => (l.createdAt ? Date.parse(l.createdAt) || null : null),
+};
+
+export interface LeadsPageParams {
+  /** 1-based. */
+  page: number;
+  pageSize?: number;
+  q?: string;
+  status?: LeadStatus;
+  /** Group key; "__misc__" selects ungrouped leads. */
+  group?: string;
+  /** Campaign id; "__none__" selects leads with no campaign. */
+  campaignId?: string;
+  uploaderId?: string;
+  /** Uploaded by or assigned to the viewer (the dialer's "my leads" set). */
+  mine?: boolean;
+  /** Smart-list id — see src/lib/leads/smart-lists.ts. */
+  smart?: string;
+  /** Whitelisted sort key + direction. Absent (or an unknown key) = upload
+   *  order (created_at, id) — the deliberate product default; see ORDERING. */
+  sort?: LeadsSort;
+}
+
+export interface LeadsPageStats {
+  total: number;
+  qualified: number;
+  appointments: number;
+  avgScore: number;
+}
+
+export interface LeadsPageResult {
+  leads: Lead[];
+  /** Rows matching the CURRENT filters — the pagination denominator. */
+  total: number;
+  /** Scope-wide aggregates, deliberately UNfiltered, for the KPI tiles. */
+  stats: LeadsPageStats;
+  /** Scope-wide smart-list counts, for the chips. */
+  smartCounts: Record<string, number>;
+  page: number;
+  pageSize: number;
+}
+
+function emptyLeadsPage(params: LeadsPageParams): LeadsPageResult {
+  const smartCounts: Record<string, number> = {};
+  for (const sl of SMART_LISTS) smartCounts[sl.id] = 0;
+  return {
+    leads: [],
+    total: 0,
+    stats: { total: 0, qualified: 0, appointments: 0, avgScore: 0 },
+    smartCounts,
+    page: Math.max(params.page, 1),
+    pageSize: Math.min(Math.max(params.pageSize ?? LEADS_PAGE_SIZE, 1), 200),
+  };
+}
+
+/**
+ * Pure JS twin of the app_leads_page SQL — used in demo mode and as the
+ * degraded path when no service key exists (the RPC is service-role only).
+ * Must stay in lockstep with the SQL's filter semantics.
+ */
+function filterLeadsPage(
+  all: Lead[],
+  params: LeadsPageParams,
+  meId: string | null,
+): LeadsPageResult {
+  const pageSize = Math.min(Math.max(params.pageSize ?? LEADS_PAGE_SIZE, 1), 200);
+  const page = Math.max(params.page, 1);
+  const q = (params.q ?? "").trim().toLowerCase();
+  const qDigits = (params.q ?? "").replace(/\D/g, "");
+  const digits = qDigits.length >= 3 ? qDigits : "";
+  const smart = params.smart ? smartListById(params.smart) : undefined;
+
+  const filtered = all.filter((l) => {
+    if (params.status && l.status !== params.status) return false;
+    if (
+      params.group &&
+      (params.group === "__misc__" ? Boolean(l.leadGroup) : l.leadGroup !== params.group)
+    )
+      return false;
+    if (
+      params.campaignId &&
+      (params.campaignId === "__none__"
+        ? Boolean(l.campaignId)
+        : l.campaignId !== params.campaignId)
+    )
+      return false;
+    if (params.uploaderId && l.ownerId !== params.uploaderId) return false;
+    if (params.mine && meId && !(l.ownerId === meId || l.assignedRepId === meId))
+      return false;
+    if (smart && !smart.match(l)) return false;
+    if (q) {
+      const hit =
+        `${l.firstName} ${l.lastName}`.toLowerCase().includes(q) ||
+        l.city.toLowerCase().includes(q) ||
+        l.utilityProvider.toLowerCase().includes(q) ||
+        (digits !== "" && l.phone.replace(/\D/g, "").includes(digits));
+      if (!hit) return false;
+    }
+    return true;
+  });
+
+  // Mirror of the SQL's sort lanes: whitelist via LEADS_SORT_VALUES (unknown
+  // keys leave upload order untouched), nulls last regardless of direction.
+  // Array.prototype.sort is stable, so the input's upload order stands in for
+  // the SQL's (created_at, id) tiebreaker.
+  const sortValue = params.sort ? LEADS_SORT_VALUES[params.sort.key] : undefined;
+  const ordered = sortValue
+    ? [...filtered].sort((a, b) => {
+        const va = sortValue(a);
+        const vb = sortValue(b);
+        if (va === null && vb === null) return 0;
+        if (va === null) return 1;
+        if (vb === null) return -1;
+        const cmp =
+          typeof va === "string" && typeof vb === "string"
+            ? va.localeCompare(vb)
+            : va < vb
+              ? -1
+              : va > vb
+                ? 1
+                : 0;
+        return params.sort!.dir === "desc" ? -cmp : cmp;
+      })
+    : filtered;
+
+  return {
+    leads: ordered.slice((page - 1) * pageSize, page * pageSize),
+    total: filtered.length,
+    stats: {
+      total: all.length,
+      qualified: all.filter((l) => l.status === "qualified" || l.status === "appointment")
+        .length,
+      appointments: all.filter((l) => l.status === "appointment").length,
+      avgScore: all.length
+        ? Math.round(all.reduce((a, l) => a + (l.aiScore ?? 0), 0) / all.length)
+        : 0,
+    },
+    smartCounts: countSmartLists(all),
+    page,
+    pageSize,
+  };
+}
+
+/**
+ * One page of the viewer's leads plus everything the Leads tab needs around it
+ * (filtered total, scope-wide KPIs, smart-list counts) — in a single round
+ * trip via the app_leads_page RPC. Same scope split as getLeads (rep → own +
+ * assigned; supervisor → org pool + own pre-org rows), same upload ordering
+ * (created_at, id) unless a whitelisted `sort` is given, evaluated in SQL so
+ * 100k-lead books stop being serialized into the RSC payload.
+ */
+export async function getLeadsPage(params: LeadsPageParams): Promise<LeadsPageResult> {
+  if (!isSupabaseConfigured()) return filterLeadsPage(fallbackLeads, params, null);
+  try {
+    const supabase = await createClient();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) return emptyLeadsPage(params);
+
+    // The RPC is revoked from `authenticated` (it trusts its scope params), so
+    // without a service key fall back to the RLS full fetch + JS paging — the
+    // degraded self-host mode, correct just not cheap.
+    if (!isAdminConfigured()) {
+      return filterLeadsPage(await getLeads(), params, user.id);
+    }
+
+    const { data: prof } = await supabase
+      .from("profiles")
+      .select("org_id, role")
+      .eq("id", user.id)
+      .maybeSingle();
+    const orgId = prof?.org_id ? String(prof.org_id) : null;
+    const supervisor = Boolean(orgId) && isSupervisorRole(prof?.role);
+
+    const pageSize = Math.min(Math.max(params.pageSize ?? LEADS_PAGE_SIZE, 1), 200);
+    const page = Math.max(params.page, 1);
+    const admin = createAdminClient();
+    const { data, error } = await admin.rpc("app_leads_page", {
+      p_org: orgId,
+      p_user: user.id,
+      p_supervisor: supervisor,
+      p_q: params.q?.trim() || null,
+      p_status: params.status ?? null,
+      p_group: params.group ?? null,
+      p_campaign: params.campaignId ?? null,
+      p_uploader: params.uploaderId ?? null,
+      p_mine: Boolean(params.mine),
+      p_smart: params.smart ?? null,
+      p_offset: (page - 1) * pageSize,
+      p_limit: pageSize,
+      p_sort: params.sort?.key ?? null,
+      p_dir: params.sort?.dir ?? "asc",
+    });
+    if (error || !data) {
+      // NEVER render a populated book as empty because the RPC failed — a
+      // schema-drift deploy (old function signature, missing column) or a
+      // transient error degrades to the RLS full fetch + JS twin instead.
+      return filterLeadsPage(await getLeads(), params, user.id);
+    }
+
+    const payload = data as {
+      rows?: Row[];
+      total?: number;
+      stats?: Partial<LeadsPageStats> & { smart?: Record<string, number> };
+    };
+    const leads = (payload.rows ?? []).map((r) => ({
+      ...rowToLead(r),
+      ownerName: String(r.owner_name ?? ""),
+    }));
+    const smartCounts: Record<string, number> = {};
+    for (const sl of SMART_LISTS) {
+      smartCounts[sl.id] = Number(payload.stats?.smart?.[sl.id] ?? 0);
+    }
+    return {
+      leads,
+      total: Number(payload.total ?? 0),
+      stats: {
+        total: Number(payload.stats?.total ?? 0),
+        qualified: Number(payload.stats?.qualified ?? 0),
+        appointments: Number(payload.stats?.appointments ?? 0),
+        avgScore: Number(payload.stats?.avgScore ?? 0),
+      },
+      smartCounts,
+      page,
+      pageSize,
+    };
+  } catch {
+    return emptyLeadsPage(params);
+  }
+}
+
+/**
+ * Head-count of the viewer's dial queue (same scope + status filter as
+ * getDialQueue) for the dialer's header badge, so the page stops serializing
+ * the entire queue into the RSC payload just to render a number. Slightly
+ * generous — the 10-digit-phone check and DNC scrub happen at load time in the
+ * client, which refetches the real queue anyway.
+ */
+export async function getDialQueueCount(): Promise<number> {
+  if (!isSupabaseConfigured())
+    return fallbackLeads.filter((l) => DIALABLE.includes(l.status)).length;
+  try {
+    const supabase = await createClient();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) return 0;
+    const { data: prof } = await supabase
+      .from("profiles")
+      .select("org_id, role")
+      .eq("id", user.id)
+      .maybeSingle();
+    const orgId = prof?.org_id ? String(prof.org_id) : null;
+    const supervisor =
+      Boolean(orgId) && isSupervisorRole(prof?.role) && isAdminConfigured();
+    if (supervisor) {
+      const { count } = await createAdminClient()
+        .from("leads")
+        .select("id", { count: "exact", head: true })
+        .eq("org_id", orgId as string)
+        .in("status", DIALABLE);
+      return count ?? 0;
+    }
+    let q = supabase
+      .from("leads")
+      .select("id", { count: "exact", head: true })
+      .or(`owner_id.eq.${user.id},assigned_rep_id.eq.${user.id}`)
+      .in("status", DIALABLE);
+    if (orgId) q = q.eq("org_id", orgId);
+    const { count } = await q;
+    return count ?? 0;
+  } catch {
+    return 0;
+  }
+}
+
 export interface LeadInput {
   firstName: string;
   lastName: string;
@@ -1008,10 +1509,14 @@ export interface LeadInput {
   utilityBill?: number;
   solarPayment?: number;
   campaignId?: string;
-  /** Fixed intake group. Explicit `null` stamps "unsorted" (distinct from
+  /** Org group key. Explicit `null` stamps "Miscellaneous" (distinct from
    *  omitting the key, which leaves any existing lead_group untouched). */
   leadGroup?: LeadGroup | null;
+  /** Pack (numbered slice of an upload) this row belongs to. */
+  leadPackId?: string | null;
   notes?: string;
+  /** Typed spillover for CSV columns beyond the core slots (custom_fields jsonb). */
+  customFields?: Record<string, string | number | boolean>;
 }
 
 /**
@@ -1070,7 +1575,9 @@ export async function insertLeads(
             solar_payment: r.solarPayment ?? null,
             campaign_id: r.campaignId ?? null,
             lead_group: r.leadGroup ?? null,
+            lead_pack_id: r.leadPackId ?? null,
             notes: r.notes || null,
+            custom_fields: r.customFields ?? {},
           },
         };
       });
@@ -1117,9 +1624,16 @@ export async function insertLeads(
       created_at: new Date(base + i).toISOString(),
     }));
 
-    const { error, count } = await supabase
+    let { error, count } = await supabase
       .from("leads")
       .insert(stamped, { count: "exact" });
+    if (error && /custom_fields/i.test(error.message)) {
+      // Schema drift (DB not yet migrated with the custom_fields column):
+      // rather than failing the whole import, retry without the spillover so
+      // the core lead data still lands.
+      const bare = stamped.map(({ custom_fields: _cf, ...rest }) => rest);
+      ({ error, count } = await supabase.from("leads").insert(bare, { count: "exact" }));
+    }
     if (error) return { inserted: 0, invalidPhone, duplicates, error: error.message };
     return { inserted: count ?? payload.length, invalidPhone, duplicates };
   } catch (e) {

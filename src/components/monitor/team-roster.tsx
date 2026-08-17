@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { ROLE_LABEL, type OrgRole } from "@/lib/permissions";
 import type { PresenceStatus } from "@/lib/types";
+import { useVisiblePoll } from "@/lib/use-visible-poll";
 import { cn, formatDuration, formatPhone, initials } from "@/lib/utils";
 
 type TeamMember = {
@@ -33,44 +34,23 @@ const STATUS_META: Record<
   ai: { label: "AI dialing", tone: "primary", dot: true },
 };
 
-// A small fixed palette, deterministically assigned by user id — matches the
-// avatarColor look used elsewhere (leaderboard, sample data) without needing
-// the roster API to carry a stored color.
-const PALETTE = [
-  "#3B82F6",
-  "#0EA5E9",
-  "#8B5CF6",
-  "#10B981",
-  "#EC4899",
-  "#F59E0B",
-  "#06B6D4",
-  "#EF4444",
-];
-function colorForId(id: string): string {
-  let hash = 0;
-  for (let i = 0; i < id.length; i++) hash = (hash * 31 + id.charCodeAt(i)) >>> 0;
-  return PALETTE[hash % PALETTE.length];
-}
-
 export function TeamRoster() {
   const [team, setTeam] = useState<TeamMember[]>([]);
   const [loading, setLoading] = useState(true);
   const [now, setNow] = useState(() => Date.now());
 
+  // Paused while the tab is hidden; refreshes immediately on return.
+  useVisiblePoll(() => {
+    fetch("/api/team/presence", { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : { team: [] }))
+      .then((j) => setTeam(j.team ?? []))
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, 5000);
+
   useEffect(() => {
-    const load = () =>
-      fetch("/api/team/presence", { cache: "no-store" })
-        .then((r) => (r.ok ? r.json() : { team: [] }))
-        .then((j) => setTeam(j.team ?? []))
-        .catch(() => {})
-        .finally(() => setLoading(false));
-    load();
-    const poll = setInterval(load, 5000);
     const tick = setInterval(() => setNow(Date.now()), 1000);
-    return () => {
-      clearInterval(poll);
-      clearInterval(tick);
-    };
+    return () => clearInterval(tick);
   }, []);
 
   const activeCount = team.filter((m) => m.status !== "idle").length;
@@ -120,7 +100,7 @@ export function TeamRoster() {
               return (
                 <div key={m.userId} className="flex items-center gap-3 p-4">
                   <span className="relative shrink-0">
-                    <Avatar initials={initials(m.name)} color={colorForId(m.userId)} size="md" />
+                    <Avatar initials={initials(m.name)} seed={m.userId} size="md" />
                     <span
                       className={cn(
                         "absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full border-2 border-card",

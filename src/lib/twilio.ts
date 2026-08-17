@@ -1,6 +1,7 @@
 import "server-only";
 
 import crypto from "node:crypto";
+import { normalizePhone } from "./utils";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Server-side Twilio configuration.
@@ -113,6 +114,79 @@ export function getPublicBaseUrl(req?: Request): string | null {
 }
 
 /**
+ * Verify an inbound Twilio webhook's `X-Twilio-Signature`. Twilio HMAC-SHA1s the
+ * EXACT callback URL we configured (built by getPublicBaseUrl at placement time)
+ * plus the sorted POST params, keyed on the account auth token. We reconstruct
+ * the URL from the same origins getPublicBaseUrl would produce and accept if ANY
+ * candidate validates — so a proxy hop (Cloudflare → Vercel) that rewrites the
+ * host can't cause a false reject and silently drop real callbacks.
+ *
+ * Returns true (skips) when there's no auth token (demo / unconfigured) or when
+ * TWILIO_SKIP_SIGNATURE=true is set — an emergency valve in case a specific
+ * edge/proxy setup makes reconstruction diverge in production.
+ */
+export async function verifyTwilioSignature(
+  req: Request,
+  params: Record<string, string>,
+): Promise<boolean> {
+  const token = twilioConfig.authToken;
+  if (!token) return true;
+  if (process.env.TWILIO_SKIP_SIGNATURE === "true") return true;
+
+  const signature = req.headers.get("x-twilio-signature");
+  if (!signature) return false;
+
+  let pathname = "";
+  let search = "";
+  try {
+    const u = new URL(req.url);
+    pathname = u.pathname;
+    search = u.search;
+  } catch {
+    return false;
+  }
+
+  const bases = new Set<string>();
+  const pinned = getPublicBaseUrl(req);
+  if (pinned) bases.add(pinned);
+  const proto = req.headers.get("x-forwarded-proto") ?? "https";
+  const host = req.headers.get("x-forwarded-host") ?? req.headers.get("host");
+  if (host) bases.add(`${proto}://${host}`);
+  try {
+    bases.add(new URL(req.url).origin);
+  } catch {
+    /* ignore */
+  }
+
+  const twilioSdk = (await import("twilio")).default;
+  for (const base of bases) {
+    try {
+      if (twilioSdk.validateRequest(token, signature, `${base}${pathname}${search}`, params)) {
+        return true;
+      }
+    } catch {
+      /* try the next candidate origin */
+    }
+  }
+  return false;
+}
+
+/**
+ * Read a Twilio webhook's url-encoded form body into a plain object AND verify
+ * its signature in one pass — the request body can only be consumed once, so the
+ * two have to happen together. Returns the params on a valid signature, or null
+ * when the signature is missing/invalid (the caller should then reject).
+ */
+export async function readVerifiedTwilioForm(
+  req: Request,
+): Promise<Record<string, string> | null> {
+  const form = await req.formData();
+  const params: Record<string, string> = {};
+  for (const [k, v] of form.entries()) params[k] = typeof v === "string" ? v : "";
+  return (await verifyTwilioSignature(req, params)) ? params : null;
+}
+
+/**
  * Mint a Voice access token scoped to a TwiML app for inbound (browser) calls and
  * outbound dialing. Returns null in demo mode.
  */
@@ -155,6 +229,33 @@ export async function getRestClient() {
 }
 
 /**
+ * Check which of `numbers` are actually owned by this Twilio account. Used to
+ * validate a caller-ID pool at save time: a number that isn't on the account
+ * fails outright on a manual dial (Twilio 21210) and, on an AI call, silently
+ * falls back to the default number while the UI still reports the rotated one.
+ * Returns ok:true (can't verify → don't block) when there's no REST client or on
+ * a Twilio error, so a transient hiccup never blocks a legitimate save.
+ */
+export async function verifyNumbersOwnedByTwilio(
+  numbers: string[],
+): Promise<{ ok: boolean; missing: string[] }> {
+  const want = numbers.map((n) => normalizePhone(n)).filter(Boolean);
+  if (!want.length) return { ok: true, missing: [] };
+  const client = await getRestClient();
+  if (!client) return { ok: true, missing: [] };
+  try {
+    const owned = await client.incomingPhoneNumbers.list({ limit: 1000 });
+    const ownedSet = new Set(
+      owned.map((n) => normalizePhone(String(n.phoneNumber ?? ""))).filter(Boolean),
+    );
+    const missing = want.filter((n) => !ownedSet.has(n));
+    return { ok: missing.length === 0, missing };
+  } catch {
+    return { ok: true, missing: [] };
+  }
+}
+
+/**
  * Point a Twilio number's inbound Voice webhook at the app. A number left on
  * Twilio's demo webhook (or any stale URL) can't be used for dialing correctly —
  * see docs/CALLER_ID_DELIVERABILITY.md "config fixes".
@@ -166,6 +267,20 @@ export async function setNumberVoiceWebhook(phoneNumber: string, voiceUrl: strin
   const match = matches[0];
   if (!match) throw new Error(`Twilio number ${phoneNumber} not found on this account`);
   await client.incomingPhoneNumbers(match.sid).update({ voiceUrl, voiceMethod: "POST" });
+}
+
+/**
+ * Point a Twilio number's inbound Messaging webhook at the app, so an inbound SMS
+ * (a STOP opt-out) is delivered to /api/twilio/sms instead of 404ing at whatever
+ * stale URL the number was left on (see error.txt / docs/CALLER_ID_DELIVERABILITY).
+ */
+export async function setNumberSmsWebhook(phoneNumber: string, smsUrl: string): Promise<void> {
+  const client = await getRestClient();
+  if (!client) throw new Error("Twilio REST client not configured");
+  const matches = await client.incomingPhoneNumbers.list({ phoneNumber, limit: 1 });
+  const match = matches[0];
+  if (!match) throw new Error(`Twilio number ${phoneNumber} not found on this account`);
+  await client.incomingPhoneNumbers(match.sid).update({ smsUrl, smsMethod: "POST" });
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -201,6 +316,52 @@ export function verifyMonitorToken(room: string, token: string): boolean {
   const expected = crypto
     .createHmac("sha256", secret)
     .update(`${room}.${exp}`)
+    .digest("hex");
+  try {
+    return crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expected));
+  } catch {
+    return false;
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Voice SDK identity continuity.
+//
+// A Voice access token is short-lived, but the IDENTITY it carries must not
+// change across renewals: Twilio's Device.updateToken() renews the token for the
+// registered client, so a token minted for a different identity re-registers the
+// browser as somebody else. Renewal therefore has to be able to say "keep the
+// identity I already have" — and that claim has to be one the client can't
+// forge, or one rep could register a second Device under another rep's identity
+// (two Devices sharing an identity is precisely the collision that lets one
+// rep's signalling disrupt another's live call).
+//
+// So the token route signs each identity it mints and the client hands the
+// signature back on renewal. Same HMAC-on-the-auth-token scheme as above.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Sign an `${exp}.${sig}` proof that WE issued `identity`. */
+export function signIdentity(identity: string, ttlSec = 86_400): string {
+  const secret = twilioConfig.authToken;
+  if (!secret) return "";
+  const exp = Math.floor(Date.now() / 1000) + ttlSec;
+  const sig = crypto
+    .createHmac("sha256", secret)
+    .update(`id.${identity}.${exp}`)
+    .digest("hex");
+  return `${exp}.${sig}`;
+}
+
+/** True when `proof` is an unexpired signature this server issued for `identity`. */
+export function verifyIdentity(identity: string, proof: string): boolean {
+  const secret = twilioConfig.authToken;
+  if (!secret || !identity) return false;
+  const [exp, sig] = (proof || "").split(".");
+  if (!exp || !sig) return false;
+  if (Number(exp) * 1000 < Date.now()) return false;
+  const expected = crypto
+    .createHmac("sha256", secret)
+    .update(`id.${identity}.${exp}`)
     .digest("hex");
   try {
     return crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expected));

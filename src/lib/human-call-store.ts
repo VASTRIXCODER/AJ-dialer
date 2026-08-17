@@ -273,13 +273,20 @@ export async function listActiveHumanCallsForOrg(
       // connected call gets the full 30 minutes, but one that never connected is
       // retired after 90s, because it CANNOT still be ringing. Fire-and-forget;
       // never blocks the read.
-      admin.from(TABLE).delete().lt("started_at", connectedCutoff).then(
+      //
+      // SCOPED to THIS org — the delete used to omit org_id, so any supervisor
+      // opening their own monitor swept EVERY org's stale rows (an unscoped
+      // cross-tenant write). Each org's rows are tidied when one of its own
+      // members reads the monitor; the read's cutoff + isStale filter keep stale
+      // rows off every monitor in the meantime anyway.
+      admin.from(TABLE).delete().eq("org_id", orgId).lt("started_at", connectedCutoff).then(
         () => {},
         () => {},
       );
       admin
         .from(TABLE)
         .delete()
+        .eq("org_id", orgId)
         .in("state", ["calling", "ringing"])
         .lt("started_at", ringCutoff)
         .then(

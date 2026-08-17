@@ -4,6 +4,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import { AlertTriangle, Bell, CalendarCheck, PhoneIncoming, Sparkles } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useVisiblePoll } from "@/lib/use-visible-poll";
 import { cn, relativeTime } from "@/lib/utils";
 
 type Notif = {
@@ -41,10 +42,9 @@ export function NotificationsBell() {
 
   useEffect(() => {
     setSeen(Number(localStorage.getItem(SEEN_KEY) ?? 0));
-    load();
-    const poll = setInterval(load, 30000);
-    return () => clearInterval(poll);
-  }, [load]);
+  }, []);
+  // Paused while the tab is hidden; refreshes immediately on return.
+  useVisiblePoll(load, 30000);
 
   // Close on outside click / Escape.
   useEffect(() => {

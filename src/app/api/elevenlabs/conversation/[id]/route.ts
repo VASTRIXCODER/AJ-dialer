@@ -119,10 +119,11 @@ export async function GET(
   // warm instance handled it), fall back to the RLS-scoped DB read, which
   // returns null for any conversation outside the viewer's active org.
   const authStore = getAICall(conversationId);
+  let db = authStore ? null : await getAIConversation(conversationId);
   if (authStore) {
     if (authStore.orgId !== orgId)
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-  } else if (!(await getAIConversation(conversationId))) {
+  } else if (!db) {
     // Neither in this instance's memory nor visible under RLS to this org.
     // The only legitimate reason is a call so fresh nothing has persisted it
     // anywhere yet — but that race is indistinguishable from "belongs to a
@@ -130,6 +131,14 @@ export async function GET(
     // fall through to the unscoped live ElevenLabs read below.
     return NextResponse.json({ error: "Conversation not found" }, { status: 404 });
   }
+
+  // An ended call whose transcript is already persisted needs nothing from the
+  // ElevenLabs API — the dashboard used to re-fetch every ended call from
+  // ElevenLabs on every 10s poll, forever. (Calls finalized before transcript
+  // persistence landed have no stored turns and still take the live path.)
+  const servedFromStore = Boolean(
+    db && isTerminal(db.state) && db.transcript && db.transcript.length > 0,
+  );
 
   // ── Live ElevenLabs read (best-effort; a still-ringing call may 404) ────────
   let rawTurns: Turn[] = [];
@@ -142,7 +151,7 @@ export async function GET(
   let terminationReason = "";
   let liveStatusRaw = "";
 
-  if (isElevenLabsConfigured()) {
+  if (isElevenLabsConfigured() && !servedFromStore) {
     try {
       const convo = (await getConversation(conversationId)) as Record<
         string,
@@ -171,7 +180,14 @@ export async function GET(
   }
 
   let store = getAICall(conversationId);
-  let db = await getAIConversation(conversationId);
+  db = db ?? (await getAIConversation(conversationId));
+
+  // Prefer the persisted turns whenever the live read produced none — an ended
+  // call served from the store, a transient ElevenLabs failure, or a replay
+  // long after the provider expired the conversation.
+  if (transcript.length === 0 && db?.transcript?.length) {
+    transcript = db.transcript;
+  }
 
   // ── Finalize a watched call that just reached a terminal state (once) ───────
   const alreadyFinal = isTerminal(store?.state) || isTerminal(db?.state);

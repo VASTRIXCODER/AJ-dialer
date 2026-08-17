@@ -12,8 +12,13 @@ import type { AIResult, AISource } from "./types";
 // demo mode and never crashes without a key.
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** Always the latest, most capable Claude model. */
-export const AI_MODEL = "claude-opus-4-8";
+/**
+ * The Claude model every AI surface uses. Overridable via the AI_MODEL env var so
+ * the model can be changed or corrected without a code deploy (e.g. to roll
+ * forward to a newer model, or roll back if one is unavailable) — the honest
+ * health check (pingAI → /api/ai/health) shows immediately whether it resolves.
+ */
+export const AI_MODEL = process.env.AI_MODEL || "claude-opus-4-8";
 
 /** True when Claude can be reached for live intelligence. */
 export function isAIConfigured() {

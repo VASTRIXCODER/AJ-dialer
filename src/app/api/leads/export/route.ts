@@ -1,5 +1,11 @@
 import { getLeads } from "@/lib/db/leads";
+import {
+  leadFieldValue,
+  resolveLeadFields,
+  type LeadFieldDef,
+} from "@/lib/leads/field-schema";
 import { getViewer } from "@/lib/org/membership";
+import type { Lead } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
@@ -32,7 +38,9 @@ const bool = (v: unknown) => (v ? "Yes" : "No");
 // The trailing metadata columns intentionally map to nothing and are ignored on
 // re-import. Note "Uploaded By" rather than "Owner" — mapHeader() reads "owner"
 // as the homeowner's NAME, which would overwrite first/last name on re-import.
-const COLUMNS: { header: string; value: (l: Awaited<ReturnType<typeof getLeads>>[number]) => unknown }[] = [
+type Column = { header: string; value: (l: Lead) => unknown };
+
+const COLUMNS: Column[] = [
   { header: "First Name", value: (l) => l.firstName },
   { header: "Last Name", value: (l) => l.lastName },
   { header: "Phone", value: (l) => l.phone },
@@ -64,6 +72,27 @@ const slug = (s: string) =>
   s.toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40);
 
 /**
+ * One export column per CUSTOM field in the org's resolved schema, appended
+ * after the fixed columns (whose headers already cover every core slot). The
+ * header is the def's label; values are emitted in re-importable form —
+ * booleans as Yes/No (detected back to boolean), numbers raw — so the file
+ * round-trips through /api/leads/import with the same keys and types (the defs
+ * already exist in settings.leadFields, which a re-import never overwrites).
+ */
+function customColumns(defs: LeadFieldDef[]): Column[] {
+  return defs
+    .filter((d) => d.source === "custom")
+    .map((def) => ({
+      header: def.label,
+      value: (l: Lead) => {
+        const v = leadFieldValue(l, def);
+        if (v == null) return "";
+        return typeof v === "boolean" ? (v ? "Yes" : "No") : v;
+      },
+    }));
+}
+
+/**
  * Download every lead the viewer can see as a CSV.
  *
  * Scope is getLeads()' scope — a rep gets their own uploads + assignments, a
@@ -87,9 +116,18 @@ export async function GET() {
 
   const leads = await getLeads();
 
+  // Schema-driven tail: the org's custom fields (discovered by imports or added
+  // in Admin) export as columns after the fixed set. resolveLeadFields already
+  // handles the empty-settings case, and custom defs come only from settings,
+  // so no template overrides are needed here.
+  const columns = [
+    ...COLUMNS,
+    ...customColumns(resolveLeadFields(viewer.org?.settings?.leadFields)),
+  ];
+
   const lines = [
-    COLUMNS.map((c) => csvCell(c.header)).join(","),
-    ...leads.map((l) => COLUMNS.map((c) => csvCell(c.value(l))).join(",")),
+    columns.map((c) => csvCell(c.header)).join(","),
+    ...leads.map((l) => columns.map((c) => csvCell(c.value(l))).join(",")),
   ];
   // CRLF + a UTF-8 BOM so Excel opens accented names and °/€ correctly instead
   // of mojibake, which is the single most common complaint about CSV exports.

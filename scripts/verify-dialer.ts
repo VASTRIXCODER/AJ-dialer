@@ -139,8 +139,57 @@ check(
   `got [${slice.join(", ")}]`,
 );
 
-// ── 3. DNC can never be dialed ───────────────────────────────────────────────
-console.log("\n3. Do-not-call leads can never enter a session\n");
+// ── 3. A stale cursor must not silently kill the session ─────────────────────
+console.log("\n3. Starting a session with a cursor past the end must still dial\n");
+
+/**
+ * The cursor outlives the list it was set against — a finished AI pass parks it
+ * at exactly queue.length, and a refetched or filtered queue can be shorter than
+ * the one the cursor was walking. `nextLeads()` slices from it, so an unclamped
+ * cursor returned an EMPTY batch and startHumanCall() bailed out with no call
+ * and no message: "I press Start and nothing happens."
+ */
+function nextLeadsOld(queue: number[], cursor: number, count: number) {
+  return queue.slice(cursor, cursor + count);
+}
+function nextLeadsNew(queue: number[], cursor: number, count: number) {
+  if (!queue.length) return [];
+  const start = cursor >= queue.length || cursor < 0 ? 0 : cursor;
+  return queue.slice(start, start + count);
+}
+
+const liveQueue = [1, 2, 3, 4, 5];
+// Cursor left AT the end by a completed pass, and BEYOND it by a shrunken refetch.
+for (const [label, cursor] of [
+  ["parked at the end by a finished AI pass", liveQueue.length],
+  ["past the end after the queue was refetched shorter", liveQueue.length + 12],
+] as const) {
+  const before = nextLeadsOld(liveQueue, cursor, 3);
+  const after = nextLeadsNew(liveQueue, cursor, 3);
+  console.log(
+    `  cursor ${label}:  OLD returned ${before.length} leads  ·  NEW returns ${after.length}`,
+  );
+  check(`a session starts with a cursor ${label}`, after.length > 0, `got ${after.length} leads`);
+  check(
+    `the old code genuinely dialed nothing (${label})`,
+    before.length === 0,
+    `old returned ${before.length}`,
+  );
+}
+// An empty queue still yields nothing — the caller surfaces "load leads first".
+check(
+  "an empty queue still returns no leads (no phantom dial)",
+  nextLeadsNew([], 0, 3).length === 0,
+);
+// A healthy mid-list cursor is untouched.
+check(
+  "a valid cursor is left exactly where it was",
+  nextLeadsNew(liveQueue, 2, 2).join(",") === "3,4",
+  `got [${nextLeadsNew(liveQueue, 2, 2).join(", ")}]`,
+);
+
+// ── 4. DNC can never be dialed ───────────────────────────────────────────────
+console.log("\n4. Do-not-call leads can never enter a session\n");
 
 const sneaky = sanitizeSegments(["new", "dnc", "callback"]);
 check("dnc is stripped server-side", !sneaky.includes("dnc"), `got [${sneaky.join(", ")}]`);
