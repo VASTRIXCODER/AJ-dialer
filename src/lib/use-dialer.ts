@@ -1663,7 +1663,7 @@ export function useDialer(
   // joins the same room. This is what lets a supervisor live-listen by joining
   // the conference muted — no media relay required.
   const startHumanCall = useCallback(
-    async (override?: Lead[]) => {
+    async (override?: Lead[], opts?: { pinnedCallerId?: string }) => {
       // One dial at a time. Each press of Start places a REAL outbound call, and
       // when the rep's side then failed silently they pressed it again — nine
       // times in eight seconds in production, on a workspace configured for a
@@ -1809,6 +1809,7 @@ export function useDialer(
             excludedCallerIds: excludedCallerIdsRef.current.length
               ? excludedCallerIdsRef.current
               : undefined,
+            pinnedCallerId: opts?.pinnedCallerId,
           }),
         });
         dialResponded = true;
@@ -2141,6 +2142,56 @@ export function useDialer(
     stopTick,
   ]);
 
+  /**
+   * Re-attempt `lead` right now instead of moving on to whatever the queue has
+   * next — the manual-dialing counterpart to the AI's automatic double-dial.
+   * Many Do Not Disturb setups let a call through when it repeats within a few
+   * minutes, and a rep watching the wrap-up screen is in the best position to
+   * judge "that felt like DND, not a real no-answer" and act on it immediately
+   * rather than wait for this lead to cycle back around the queue.
+   *
+   * Pins the SAME caller ID the just-ended attempt used (see pinnedCallerId on
+   * nextCallerIdWithInfo) — a repeat call from a DIFFERENT number isn't
+   * recognizable to the homeowner's phone as a repeat, which would defeat the
+   * whole point.
+   *
+   * Files NO disposition, matching skip(): the wrap-up screen is still up
+   * because the rep hasn't judged this attempt, and redialing doesn't answer
+   * that judgment either. `lead` keeps whatever status it already has, so
+   * it's exactly as eligible for the ordinary queue/auto-dial afterward as it
+   * was before this button was pressed.
+   */
+  const redial = useCallback(
+    (lead: Lead) => {
+      stopTick();
+      stopPoll();
+      clearHumanPresence();
+      releaseActiveLegs();
+      dialInFlightRef.current = false;
+      bridgedRef.current = false;
+      intentionalEndRef.current = false;
+      const call = callRef.current;
+      callRef.current = null;
+      try {
+        call?.disconnect();
+      } catch {
+        /* noop */
+      }
+      const pinnedCallerId = state.callerIdInfo?.callerId || undefined;
+      patch({ status: "idle", lines: [], connectedLead: null, durationSec: 0 });
+      void startHumanCall([lead], { pinnedCallerId });
+    },
+    [
+      clearHumanPresence,
+      patch,
+      releaseActiveLegs,
+      startHumanCall,
+      state.callerIdInfo,
+      stopPoll,
+      stopTick,
+    ],
+  );
+
   const launchNextAI = useCallback(() => {
     // Clear any pending tick first (mirrors startAISession) so a manual "launch
     // next" while a timer is already armed can't start a second pump lineage.
@@ -2314,6 +2365,7 @@ export function useDialer(
     endCall,
     selectOutcome,
     skip,
+    redial,
     toggleMute,
     toggleHold,
     toggleRecording,

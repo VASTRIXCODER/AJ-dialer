@@ -53,6 +53,10 @@ export async function POST(req: Request) {
     agentIdentity?: string;
     /** Numbers the rep toggled off in the dialer's caller-ID picker (optional). */
     excludedCallerIds?: string[];
+    /** A manual "Dial again" redial: reuse this exact caller ID instead of
+     *  rotating, so a repeat call is recognizably the same number. Ignored
+     *  (falls back to normal rotation) if it isn't an eligible pool member. */
+    pinnedCallerId?: string;
   };
 
   const room = body.room?.trim();
@@ -156,7 +160,13 @@ export async function POST(req: Request) {
         // picker — if that leaves just one number, every leg in this batch uses
         // it. Pass the homeowner's number so local presence can match its area
         // code among the still-eligible numbers.
-        const info = await nextCallerIdWithInfo(repKey, orgSettings, leg.to, body.excludedCallerIds);
+        const info = await nextCallerIdWithInfo(
+          repKey,
+          orgSettings,
+          leg.to,
+          body.excludedCallerIds,
+          body.pinnedCallerId,
+        );
         if (i === 0) poolInfo = info;
         const from = info.callerId || twilioConfig.callerId;
         const call = await client.calls.create({

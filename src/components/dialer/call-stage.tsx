@@ -104,6 +104,7 @@ export function CallStage({
   onAiDialNumber,
   onEnd,
   onSkip,
+  onRedial,
   onOutcome,
   onToggleMute,
   onToggleHold,
@@ -141,6 +142,9 @@ export function CallStage({
   onAiDialNumber: (phone: string, known: KnownInfo) => void;
   onEnd: () => void;
   onSkip: () => void;
+  /** Re-dial the lead on the wrap-up screen right now, same caller ID, no
+   *  disposition filed — see the button's inline comment for why. */
+  onRedial: () => void;
   onOutcome: (o: CallOutcome) => void;
   onToggleMute: () => void;
   onToggleHold: () => void;
@@ -234,6 +238,40 @@ export function CallStage({
           />
         </div>
         <div className="flex items-center gap-2">
+          {/* Pause auto-dial mid-session. AI mode already has this — the "Stop
+              auto-dial" / "Call next" pair in AiSession below — so this is
+              manual-mode only, and only while a call is actually in flight
+              (dialing/live/wrapup). Toggling it off doesn't touch the CURRENT
+              call; it only stops the next one from auto-starting once this one
+              ends. Turning it back on before this call ends un-pauses in place
+              — selectOutcome()/skip() re-check autoDial when they run. Once the
+              call fully ends while paused, status returns to "idle" and the
+              rep lands on the ordinary "Ready to dial" screen, toggle already
+              off — that IS the resume UI, so no separate one is needed here. */}
+          {!ai && state.status !== "idle" && (
+            <button
+              type="button"
+              onClick={() => onSetAutoDial(!state.autoDial)}
+              className={cn(
+                "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-semibold transition-colors active:scale-95",
+                state.autoDial
+                  ? "border-border bg-surface text-foreground hover:bg-muted"
+                  : "border-warning/40 bg-warning/10 text-warning hover:bg-warning/15",
+              )}
+              title={
+                state.autoDial
+                  ? "Stop auto-dialing after this call — you'll land back on the Start screen instead of moving to the next lead."
+                  : "Auto-dial is paused — the next call won't start on its own. Tap to un-pause."
+              }
+            >
+              {state.autoDial ? (
+                <Pause className="h-3 w-3" />
+              ) : (
+                <Play className="h-3 w-3" />
+              )}
+              {state.autoDial ? "Pause auto-dial" : "Auto-dial paused"}
+            </button>
+          )}
           {/* When the device drops (token lapse, network blip, Safari quirk) the
               rep gets a one-tap recovery instead of having to reload — reloading
               didn't reliably fix it. A blocked mic gets the same tap: onReconnect
@@ -714,10 +752,28 @@ export function CallStage({
                 durationSec={state.durationSec}
               />
               <OutcomeGrid onSelect={onOutcome} />
-              <Button variant="ghost" className="gap-2 text-muted-foreground" onClick={onSkip}>
-                <SkipForward className="h-4 w-4" />
-                Skip without disposition
-              </Button>
+              <div className="flex gap-2">
+                {/* Redial the SAME homeowner right now instead of waiting for
+                    them to cycle back through the queue. The stated use case is
+                    Do Not Disturb: a lot of DND setups let a second call through
+                    within a few minutes IF it looks like a repeat call — which is
+                    why this pins the same caller ID rather than letting normal
+                    rotation move on (see redial() in use-dialer.ts). Files no
+                    disposition, same as Skip — the rep hasn't judged this
+                    attempt, and redialing doesn't answer that judgment either. */}
+                <Button variant="outline" className="flex-1 gap-2" onClick={onRedial}>
+                  <RotateCcw className="h-4 w-4" />
+                  Dial again
+                </Button>
+                <Button
+                  variant="ghost"
+                  className="flex-1 gap-2 text-muted-foreground"
+                  onClick={onSkip}
+                >
+                  <SkipForward className="h-4 w-4" />
+                  Skip without disposition
+                </Button>
+              </div>
             </motion.div>
           )}
         </AnimatePresence>

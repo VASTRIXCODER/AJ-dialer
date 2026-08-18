@@ -490,6 +490,7 @@ export function DialerClient({
             onAiDialNumber={dialer.aiDialNumber}
             onEnd={dialer.endCall}
             onSkip={dialer.skip}
+            onRedial={() => focusLead && dialer.redial(focusLead)}
             onOutcome={onOutcome}
             onToggleMute={dialer.toggleMute}
             onToggleHold={dialer.toggleHold}

@@ -117,12 +117,23 @@ export interface CallerIdInfo {
  *   reflect the filtered (excluded numbers removed) pool actually used for
  *   this call, so the "rotating among N" display is accurate to the rep's
  *   current toggle choices, not the full org pool.
+ * @param pinnedCallerId Skip rotation and dial from this exact number instead
+ *   — for a manual "Dial again" redial, where the whole point is a homeowner
+ *   who silenced/missed the first call sees the SAME number calling back (many
+ *   Do Not Disturb setups let a repeat call through; a different number isn't
+ *   recognizable as a repeat). Falls through to normal rotation when the
+ *   number isn't (or is no longer) an eligible pool member — a rep toggling it
+ *   off between calls, or a pool edit, must never dial from a stale outside
+ *   number. Deliberately does NOT consume nextDialSeq(): a redial retries the
+ *   current attempt rather than advancing to the next one, so it must not
+ *   perturb the rotation cadence for every dial after it.
  */
 export async function nextCallerIdWithInfo(
   repKey: string | null | undefined,
   settings: OrgSettings | null | undefined,
   destNumber?: string | null,
   excludedCallerIds?: string[] | null,
+  pinnedCallerId?: string | null,
 ): Promise<CallerIdInfo> {
   const { pool: fullPool, rotateEvery } = resolveRotation(settings, {
     envPool: ENV_POOL,
@@ -134,6 +145,16 @@ export async function nextCallerIdWithInfo(
     return { callerId: "", pool: [], poolIndex: 0, rotateEvery: 1, localPresence: false };
   }
   const pool = filterExcluded(fullPool, excludedCallerIds);
+
+  if (pinnedCallerId && pool.includes(pinnedCallerId)) {
+    return {
+      callerId: pinnedCallerId,
+      pool,
+      poolIndex: Math.max(0, pool.indexOf(pinnedCallerId)),
+      rotateEvery,
+      localPresence: false,
+    };
+  }
 
   // Local presence wins when enabled and a same-area-code number exists.
   if (settings?.dialing?.localPresence && destNumber) {
