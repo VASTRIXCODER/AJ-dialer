@@ -7,6 +7,7 @@ import {
   parseLeadQuery,
 } from "../leads/search-heuristics";
 import { SMART_LISTS, countSmartLists, smartListById } from "../leads/smart-lists";
+import { countyForZip } from "../leads/zip-county";
 import { createAdminClient, isAdminConfigured } from "../supabase/admin";
 import { isSupabaseConfigured } from "../supabase/config";
 import { createClient } from "../supabase/server";
@@ -91,6 +92,7 @@ export function rowToLead(r: Row): Lead {
     assignedRepId: (r.assigned_rep_id as string) ?? undefined,
     leadGroup: (r.lead_group as LeadGroup) ?? undefined,
     leadPackId: (r.lead_pack_id as string) ?? undefined,
+    county: (r.county as string) || undefined,
     solarPayment: num(r.solar_payment),
     utilityBill: num(r.utility_bill),
     hasEV: Boolean(r.has_ev),
@@ -1228,6 +1230,10 @@ export interface LeadsPageParams {
   status?: LeadStatus;
   /** Group key; "__misc__" selects ungrouped leads. */
   group?: string;
+  /** "County|ST" composite (e.g. "Fresno|CA") — county names repeat across
+   *  states, so the pair is the real filter key. "__none__" selects leads with
+   *  no county on file. */
+  county?: string;
   /** Campaign id; "__none__" selects leads with no campaign. */
   campaignId?: string;
   uploaderId?: string;
@@ -1296,6 +1302,11 @@ function filterLeadsPage(
       (params.group === "__misc__" ? Boolean(l.leadGroup) : l.leadGroup !== params.group)
     )
       return false;
+    if (params.county) {
+      const key = l.county ? `${l.county}|${l.state}` : "";
+      if (params.county === "__none__" ? Boolean(l.county) : key !== params.county)
+        return false;
+    }
     if (
       params.campaignId &&
       (params.campaignId === "__none__"
@@ -1402,6 +1413,7 @@ export async function getLeadsPage(params: LeadsPageParams): Promise<LeadsPageRe
       p_q: params.q?.trim() || null,
       p_status: params.status ?? null,
       p_group: params.group ?? null,
+      p_county: params.county ?? null,
       p_campaign: params.campaignId ?? null,
       p_uploader: params.uploaderId ?? null,
       p_mine: Boolean(params.mine),
@@ -1446,6 +1458,118 @@ export async function getLeadsPage(params: LeadsPageParams): Promise<LeadsPageRe
     };
   } catch {
     return emptyLeadsPage(params);
+  }
+}
+
+export interface CountyOption {
+  county: string;
+  state: string;
+}
+
+/**
+ * Distinct (county, state) pairs in the viewer's scope, for the Leads filter
+ * dropdown. A plain DISTINCT read, not a count — the filtered table's own "N
+ * leads" total already answers "how many", so this only needs to name which
+ * counties exist, not how big each one is.
+ *
+ * Paged and narrow-selected (two text columns) rather than routed through
+ * app_leads_page: that RPC returns one PAGE of full lead rows for the current
+ * filter, not distinct values scope-wide, and a 50k-row book of two columns is
+ * still cheap to page through and dedupe in JS — a Postgres DISTINCT would
+ * need its own RPC for a feature this small. Same scope split as getLeads:
+ * rep → own uploads + assigned; supervisor → org pool + own pre-org rows.
+ */
+export async function listDistinctCounties(): Promise<CountyOption[]> {
+  if (!isSupabaseConfigured()) return [];
+  try {
+    const supabase = await createClient();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) return [];
+    const { data: prof } = await supabase
+      .from("profiles")
+      .select("org_id, role")
+      .eq("id", user.id)
+      .maybeSingle();
+    const orgId = prof?.org_id ? String(prof.org_id) : null;
+    const supervisor =
+      Boolean(orgId) && isSupervisorRole(prof?.role) && isAdminConfigured();
+
+    const seen = new Map<string, CountyOption>();
+    const collect = (rows: Row[]) => {
+      for (const r of rows) {
+        const county = String(r.county ?? "").trim();
+        const state = String(r.state ?? "").trim();
+        if (!county) continue;
+        seen.set(`${county}|${state}`, { county, state });
+      }
+    };
+
+    if (!supervisor) {
+      const rows = await fetchAllPaged(() => {
+        let q = supabase
+          .from("leads")
+          .select("county,state")
+          .or(`owner_id.eq.${user.id},assigned_rep_id.eq.${user.id}`)
+          .not("county", "is", null);
+        if (orgId) q = q.eq("org_id", orgId);
+        return q;
+      });
+      collect(rows);
+    } else {
+      const admin = createAdminClient();
+      const [orgRows, ownRows] = await Promise.all([
+        fetchAllPaged(() =>
+          admin
+            .from("leads")
+            .select("county,state")
+            .eq("org_id", orgId as string)
+            .not("county", "is", null),
+        ),
+        fetchAllPaged(() =>
+          admin
+            .from("leads")
+            .select("county,state")
+            .eq("owner_id", user.id)
+            .is("org_id", null)
+            .not("county", "is", null),
+        ),
+      ]);
+      collect(orgRows);
+      collect(ownRows);
+    }
+
+    return [...seen.values()].sort(
+      (a, b) => a.county.localeCompare(b.county) || a.state.localeCompare(b.state),
+    );
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * How many of the org's leads have a ZIP on file but no county yet — the
+ * number shown next to the "Backfill counties" button under Edit groups, and
+ * what decides whether that button has anything to do. Same org-scoped HEAD
+ * count as listLeadGroupsWithCounts' miscCount (plain RLS client, not admin —
+ * this only needs a number). Matches POST /api/leads/backfill-county's read
+ * scope exactly (`county is null`, `zip is not null`, this org) so the count
+ * shown here never disagrees with what a click actually processes.
+ */
+export async function getMissingCountyCount(orgId: string | null): Promise<number> {
+  if (!orgId || !isSupabaseConfigured()) return 0;
+  try {
+    const supabase = await createClient();
+    const { count } = await supabase
+      .from("leads")
+      .select("id", { count: "exact", head: true })
+      .eq("org_id", orgId)
+      .is("county", null)
+      .not("zip", "is", null);
+    return count ?? 0;
+  } catch {
+    return 0;
   }
 }
 
@@ -1514,6 +1638,10 @@ export interface LeadInput {
   leadGroup?: LeadGroup | null;
   /** Pack (numbered slice of an upload) this row belongs to. */
   leadPackId?: string | null;
+  /** Explicit county override. Omitted = computed from `zip` at insert time
+   *  (see countyForZip in lib/leads/zip-county.ts); explicit `null` skips that
+   *  and stores no county even if the ZIP would otherwise resolve one. */
+  county?: string | null;
   notes?: string;
   /** Typed spillover for CSV columns beyond the core slots (custom_fields jsonb). */
   customFields?: Record<string, string | number | boolean>;
@@ -1576,6 +1704,11 @@ export async function insertLeads(
             campaign_id: r.campaignId ?? null,
             lead_group: r.leadGroup ?? null,
             lead_pack_id: r.leadPackId ?? null,
+            // Omitted (undefined) -> computed from the ZIP; explicit null ->
+            // stored as no county even if the ZIP would resolve one; a caller
+            // that already knows the county (none do yet) can pass it directly.
+            county:
+              r.county !== undefined ? r.county : (countyForZip(r.zip)?.county ?? null),
             notes: r.notes || null,
             custom_fields: r.customFields ?? {},
           },

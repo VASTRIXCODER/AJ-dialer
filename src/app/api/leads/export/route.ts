@@ -57,6 +57,10 @@ const COLUMNS: Column[] = [
   // ── metadata (not re-imported) ──
   { header: "Status", value: (l) => l.status },
   { header: "Lead Group", value: (l) => l.leadGroup ?? "" },
+  // Derived from Zip at import time (src/lib/leads/zip-county.ts) — not a
+  // re-import source column, same as Lead Group/AI Score above; mapHeader()
+  // has no "county" mapping so this is safely ignored if the file comes back.
+  { header: "County", value: (l) => l.county ?? "" },
   { header: "Has EV", value: (l) => bool(l.hasEV) },
   { header: "Has Pool", value: (l) => bool(l.hasPool) },
   { header: "Has Battery", value: (l) => bool(l.hasBattery) },

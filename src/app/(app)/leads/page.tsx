@@ -7,7 +7,12 @@ import { EmptyState } from "@/components/shared/empty-state";
 import { PageContainer, PageHeader } from "@/components/shared/page-header";
 import { buttonVariants } from "@/components/ui/button";
 import { CalendarCheck, Sparkles, Zap } from "lucide-react";
-import { getLeadsPage, type LeadsSort } from "@/lib/db/leads";
+import {
+  getLeadsPage,
+  getMissingCountyCount,
+  listDistinctCounties,
+  type LeadsSort,
+} from "@/lib/db/leads";
 import { getCampaigns } from "@/lib/db/pipeline";
 import { listLeadGroupsWithCounts } from "@/lib/db/lead-groups";
 import { resolveLeadFields, type CoreFieldOverrides } from "@/lib/leads/field-schema";
@@ -70,6 +75,7 @@ export default async function LeadsPage({
     status,
     smart: sp.smart || undefined,
     group: sp.group || undefined,
+    county: sp.county || undefined,
     campaignId: sp.campaign || undefined,
     uploaderId,
     mine: sp.mine === "1",
@@ -79,10 +85,11 @@ export default async function LeadsPage({
   };
   const pageNum = Math.max(1, Number.parseInt(sp.page ?? "1", 10) || 1);
 
-  let [pageData, campaigns, viewer] = await Promise.all([
+  let [pageData, campaigns, viewer, counties] = await Promise.all([
     getLeadsPage({ page: pageNum, ...filters, sort }),
     getCampaigns(),
     getViewer(),
+    listDistinctCounties(),
   ]);
   // Out-of-range page (stale bookmark, or the last row of the last page was
   // just deleted and router.refresh() kept ?page=N): clamp to the real last
@@ -96,9 +103,12 @@ export default async function LeadsPage({
   const { leads, total, stats, smartCounts, page, pageSize } = pageData;
   // The org's own intake groups (+ how many leads sit in each, and in the
   // Miscellaneous catch-all) drive both the upload tiles and the group filter.
-  const { groups: leadGroups, miscCount } = await listLeadGroupsWithCounts(
-    viewer.org?.id ?? null,
-  );
+  // missingCountyCount rides alongside it — both are org-scoped HEAD counts
+  // that only Edit groups needs, gated behind the same canManage check.
+  const [{ groups: leadGroups, miscCount }, missingCountyCount] = await Promise.all([
+    listLeadGroupsWithCounts(viewer.org?.id ?? null),
+    getMissingCountyCount(viewer.org?.id ?? null),
+  ]);
   // Lead management (delete / reassign) is for managers+ (leads.import). Pull the
   // org's members so a supervisor can reassign leads between accounts.
   const canManage = viewer.permissions.includes("leads.import");
@@ -149,7 +159,12 @@ export default async function LeadsPage({
     return (
       <PageContainer>
         {header}
-        <GroupUploadGrid canImport={canManage} groups={leadGroups} miscCount={miscCount} />
+        <GroupUploadGrid
+          canImport={canManage}
+          groups={leadGroups}
+          miscCount={miscCount}
+          missingCountyCount={missingCountyCount}
+        />
         <EmptyState
           icon={Users}
           title="No leads yet"
@@ -166,7 +181,12 @@ export default async function LeadsPage({
   return (
     <PageContainer>
       {header}
-      <GroupUploadGrid canImport={canManage} groups={leadGroups} miscCount={miscCount} />
+      <GroupUploadGrid
+        canImport={canManage}
+        groups={leadGroups}
+        miscCount={miscCount}
+        missingCountyCount={missingCountyCount}
+      />
       {canManage && <LeadPacksPanel members={members} />}
 
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
@@ -193,6 +213,7 @@ export default async function LeadsPage({
         members={members}
         labelOverrides={groupLabels}
         orgGroups={leadGroups.map((g) => ({ key: g.key, label: g.label }))}
+        orgCounties={counties}
         fields={fields}
         // Both signals, one prop: a non-solar vertical drops the solar fields
         // outright, and a solar org can still switch them off per-tenant.

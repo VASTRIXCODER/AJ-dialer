@@ -1606,6 +1606,11 @@ create index if not exists leads_owner_created_idx on public.leads (owner_id, cr
 -- extra parameters would OVERLOAD the function rather than replace it, and two
 -- candidates make PostgREST's rpc() resolution ambiguous when defaults are used.
 drop function if exists public.app_leads_page(uuid, uuid, boolean, text, text, text, text, uuid, boolean, text, integer, integer);
+-- Dropped again for the same reason as above: adding p_county changes the
+-- parameter list, and `create or replace` cannot alter one in place — without
+-- this, the old 14-arg version would linger as a second overload and a
+-- named-parameter RPC call could no longer resolve to a single candidate.
+drop function if exists public.app_leads_page(uuid, uuid, boolean, text, text, text, text, uuid, boolean, text, integer, integer, text, text);
 
 create or replace function public.app_leads_page(
   p_org        uuid,
@@ -1614,6 +1619,7 @@ create or replace function public.app_leads_page(
   p_q          text    default null,
   p_status     text    default null,
   p_group      text    default null,   -- group key; '__misc__' = ungrouped
+  p_county     text    default null,   -- 'County|ST' composite; '__none__' = no county on file
   p_campaign   text    default null,   -- campaign id; '__none__' = unassigned
   p_uploader   uuid    default null,
   p_mine       boolean default false,
@@ -1671,6 +1677,9 @@ begin
       and (p_group is null
            or (case when p_group = '__misc__' then lead_group is null
                     else lead_group = p_group end))
+      and (p_county is null
+           or (case when p_county = '__none__' then county is null
+                    else coalesce(county || '|' || state, '') = p_county end))
       and (p_campaign is null
            or (case when p_campaign = '__none__' then coalesce(campaign_id, '') = ''
                     else campaign_id = p_campaign end))
@@ -1796,12 +1805,12 @@ begin
 end;
 $$;
 
-grant execute on function public.app_leads_page(uuid, uuid, boolean, text, text, text, text, uuid, boolean, text, integer, integer, text, text) to service_role;
+grant execute on function public.app_leads_page(uuid, uuid, boolean, text, text, text, text, uuid, boolean, text, integer, integer, text, text, text) to service_role;
 -- CREATE FUNCTION grants PUBLIC execute by default; this function trusts its
 -- p_* scope params, so it must only be reachable via the service-role client.
-revoke execute on function public.app_leads_page(uuid, uuid, boolean, text, text, text, text, uuid, boolean, text, integer, integer, text, text) from public;
-revoke execute on function public.app_leads_page(uuid, uuid, boolean, text, text, text, text, uuid, boolean, text, integer, integer, text, text) from anon;
-revoke execute on function public.app_leads_page(uuid, uuid, boolean, text, text, text, text, uuid, boolean, text, integer, integer, text, text) from authenticated;
+revoke execute on function public.app_leads_page(uuid, uuid, boolean, text, text, text, text, uuid, boolean, text, integer, integer, text, text, text) from public;
+revoke execute on function public.app_leads_page(uuid, uuid, boolean, text, text, text, text, uuid, boolean, text, integer, integer, text, text, text) from anon;
+revoke execute on function public.app_leads_page(uuid, uuid, boolean, text, text, text, text, uuid, boolean, text, integer, integer, text, text, text) from authenticated;
 
 -- ═════════════════════════════════════════════════════════════════════════════
 -- Persisted call transcripts (P5.TRANSCRIPT)
@@ -1887,3 +1896,21 @@ alter table public.lead_packs add column if not exists assigned_to  uuid referen
 alter table public.lead_packs add column if not exists assigned_by  uuid references auth.users (id) on delete set null;
 alter table public.lead_packs add column if not exists assigned_at  timestamptz;
 create index if not exists lead_packs_assigned_idx on public.lead_packs (assigned_to);
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- PART 19 — LEAD COUNTY  (idempotent; safe to re-run)
+--
+-- `county` is a plain geographic fact about a lead's address, computed
+-- deterministically from its ZIP at insert time (see
+-- src/lib/leads/zip-county.ts) — NOT an org-defined bucket like lead_groups,
+-- and deliberately not folded into that table: lead_groups is capped at 40
+-- curated, admin-described buckets meant for AI classification, and a
+-- nationwide book can easily span more than 40 counties. County is filtered
+-- independently, alongside lead_group, not instead of it.
+--
+-- Existing rows are backfilled from the app (POST /api/leads/backfill-county,
+-- managers+), not here — a bulk UPDATE across every org's full history has no
+-- place in a migration that's meant to be safe to re-run blind.
+-- ─────────────────────────────────────────────────────────────────────────────
+alter table public.leads add column if not exists county text;
+create index if not exists leads_org_county_idx on public.leads (org_id, county) where county is not null;

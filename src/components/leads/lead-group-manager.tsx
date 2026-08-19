@@ -5,6 +5,7 @@ import {
   Check,
   Inbox,
   Loader2,
+  MapPin,
   Plus,
   Sparkles,
   Trash2,
@@ -34,9 +35,13 @@ import { cn } from "@/lib/utils";
 export function LeadGroupManager({
   initialGroups,
   initialMiscCount,
+  initialMissingCountyCount,
 }: {
   initialGroups: LeadGroupWithCount[];
   initialMiscCount: number;
+  /** Leads with a ZIP but no county yet (see getMissingCountyCount) — drives
+   *  the "Backfill counties" control below. */
+  initialMissingCountyCount: number;
 }) {
   const router = useRouter();
   const [groups, setGroups] = useState<LeadGroupWithCount[]>(initialGroups);
@@ -53,6 +58,13 @@ export function LeadGroupManager({
   // "Sort more" — works through the Miscellaneous backlog N at a time.
   const [sorting, setSorting] = useState(false);
   const [sortMsg, setSortMsg] = useState<string | null>(null);
+
+  // "Backfill counties" — a plain deterministic ZIP lookup (no AI, no token
+  // budget — see src/lib/leads/zip-county.ts), so unlike Sort more this runs
+  // one large batch per click instead of working a queue in small steps.
+  const [missingCountyCount, setMissingCountyCount] = useState(initialMissingCountyCount);
+  const [backfilling, setBackfilling] = useState(false);
+  const [backfillMsg, setBackfillMsg] = useState<string | null>(null);
 
   async function create() {
     if (!newLabel.trim()) return;
@@ -152,6 +164,36 @@ export function LeadGroupManager({
       setSortMsg("Couldn't reach the server.");
     } finally {
       setSorting(false);
+    }
+  }
+
+  async function backfillCounty() {
+    setBackfilling(true);
+    setBackfillMsg(null);
+    try {
+      const res = await fetch("/api/leads/backfill-county", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ limit: 10000 }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok || json.error) {
+        setBackfillMsg(json.error ?? "Couldn't backfill counties.");
+        return;
+      }
+      setMissingCountyCount(json.remaining ?? 0);
+      setBackfillMsg(
+        json.checked === 0
+          ? "Every lead with a ZIP already has a county."
+          : `Filed ${json.updated} of ${json.checked}${
+              json.unmatched ? ` (${json.unmatched} ZIP${json.unmatched === 1 ? "" : "s"} not recognized)` : ""
+            } — ${json.remaining} left.`,
+      );
+      router.refresh();
+    } catch {
+      setBackfillMsg("Couldn't reach the server.");
+    } finally {
+      setBackfilling(false);
     }
   }
 
@@ -276,6 +318,39 @@ export function LeadGroupManager({
           </span>
         </div>
         {sortMsg && <p className="mt-2 text-xs text-muted-foreground">{sortMsg}</p>}
+      </div>
+
+      {/* County is a plain geographic fact computed from ZIP at import time —
+          not an AI classification, so there's no ongoing queue to work like
+          Miscellaneous. This only ever matters once per org: leads imported
+          before this feature shipped, or with a since-corrected ZIP. */}
+      <div className="rounded-xl border border-border/70 bg-muted/20 p-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <MapPin className="h-4 w-4 shrink-0 text-muted-foreground" />
+          <span className="text-sm font-semibold">Counties</span>
+          {missingCountyCount > 0 && (
+            <Badge tone="warning">{missingCountyCount.toLocaleString()}</Badge>
+          )}
+          <span className="text-xs text-muted-foreground">
+            {missingCountyCount > 0
+              ? "Leads with a ZIP but no county on file yet"
+              : "Every lead with a ZIP has a county on file"}
+          </span>
+          <button
+            type="button"
+            onClick={() => void backfillCounty()}
+            disabled={backfilling || missingCountyCount === 0}
+            className="ml-auto flex items-center gap-1 rounded-lg border border-border bg-background/60 px-2 py-1 text-[11px] font-semibold transition-colors hover:bg-muted disabled:opacity-50"
+          >
+            {backfilling ? (
+              <Loader2 className="h-3 w-3 animate-spin" />
+            ) : (
+              <MapPin className="h-3 w-3" />
+            )}
+            Backfill counties
+          </button>
+        </div>
+        {backfillMsg && <p className="mt-2 text-xs text-muted-foreground">{backfillMsg}</p>}
       </div>
 
       <div className="rounded-xl border border-dashed border-border p-3">

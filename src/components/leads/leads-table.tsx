@@ -52,6 +52,8 @@ export interface LeadsTableFilters {
   smart?: string;
   /** Group key; "__misc__" = ungrouped. */
   group?: string;
+  /** "County|ST" composite (e.g. "Fresno|CA"); "__none__" = no county on file. */
+  county?: string;
   /** Campaign id; "__none__" = unassigned. */
   campaignId?: string;
   uploaderId?: string;
@@ -88,6 +90,12 @@ const CORE_FIELD_SORTS: Record<string, string> = {
   utilityBill: "utility_bill",
   solarPayment: "solar_payment",
 };
+
+/** "Fresno" + "CA" -> "Fresno County, CA". Falls back gracefully when state is
+ *  missing (shouldn't happen — county is only ever set alongside state — but
+ *  cheap to guard) so the dropdown never renders a trailing ", ". */
+const formatCountyLabel = (county: string, state: string) =>
+  state ? `${county} County, ${state}` : `${county} County`;
 
 /** Boolean core slots keep their signature icons; other booleans get a badge. */
 const FLAG_ICONS: Record<string, typeof Car> = {
@@ -158,6 +166,7 @@ export function LeadsTable({
   members = [],
   labelOverrides,
   orgGroups = [],
+  orgCounties = [],
   fields = CORE_LEAD_FIELDS,
   showSolarPayment = true,
 }: {
@@ -184,6 +193,9 @@ export function LeadsTable({
   /** The org's own intake groups. Empty falls back to whatever the loaded leads
    *  carry, so the filter is never empty just because the list didn't load. */
   orgGroups?: { key: string; label: string }[];
+  /** Distinct (county, state) pairs across the viewer's scope — see
+   *  listDistinctCounties. Drives the county filter; empty just hides it. */
+  orgCounties?: { county: string; state: string }[];
   /** The org's resolved lead-field schema (resolveLeadFields) — drives which
    *  data columns render. Defaults to the solar-era core slots. */
   fields?: LeadFieldDef[];
@@ -203,6 +215,7 @@ export function LeadsTable({
       if (next.status) sp.set("status", next.status);
       if (next.smart) sp.set("smart", next.smart);
       if (next.group) sp.set("group", next.group);
+      if (next.county) sp.set("county", next.county);
       if (next.campaignId) sp.set("campaign", next.campaignId);
       if (next.uploaderId) sp.set("uploader", next.uploaderId);
       if (next.mine) sp.set("mine", "1");
@@ -305,6 +318,24 @@ export function LeadsTable({
     (key: string) => groupOptions.find((g) => g.key === key)?.label ?? key,
     [groupOptions],
   );
+
+  // County options = the scope-wide distinct list from the server, plus (same
+  // reasoning as groupOptions) any county a currently-loaded lead carries that
+  // isn't in it — orgCounties is computed from a separate query and could in
+  // principle lag a lead that was just imported this second.
+  const countyOptions = useMemo(() => {
+    const seen = new Map<string, string>();
+    for (const c of orgCounties) {
+      seen.set(`${c.county}|${c.state}`, formatCountyLabel(c.county, c.state));
+    }
+    for (const l of leads) {
+      if (l.county) {
+        const key = `${l.county}|${l.state}`;
+        if (!seen.has(key)) seen.set(key, formatCountyLabel(l.county, l.state));
+      }
+    }
+    return [...seen].map(([key, label]) => ({ key, label }));
+  }, [orgCounties, leads]);
 
   // The search input is the one filter kept in local state — for keystroke
   // responsiveness — and debounced into the URL, where the server reads it.
@@ -769,6 +800,31 @@ export function LeadsTable({
               ))}
             </select>
           )}
+          {(countyOptions.length > 0 || filters.county) && (
+            <select
+              value={filters.county === "__none__" ? "unsorted" : (filters.county ?? "all")}
+              onChange={(e) =>
+                applyFilters({
+                  county:
+                    e.target.value === "all"
+                      ? undefined
+                      : e.target.value === "unsorted"
+                        ? "__none__"
+                        : e.target.value,
+                })
+              }
+              aria-label="Filter by county"
+              className="h-9 rounded-lg border border-border bg-background/60 px-2.5 text-sm font-medium focus-visible:border-primary/50 focus-visible:outline-none"
+            >
+              <option value="all">All counties</option>
+              <option value="unsorted">No county on file</option>
+              {countyOptions.map((c) => (
+                <option key={c.key} value={c.key}>
+                  {c.label}
+                </option>
+              ))}
+            </select>
+          )}
           {FILTERS.map((f) => {
             const active = (filters.status ?? "all") === f.value;
             return (
@@ -1082,6 +1138,7 @@ export function LeadsTable({
                         ) : (
                           <p>—</p>
                         )}
+                        {l.county && <p className="truncate text-xs">{l.county} County</p>}
                         {(l.utilityProvider || (showSolarPayment && l.solarProvider)) && (
                           <p className="truncate text-xs">
                             {[l.utilityProvider, showSolarPayment ? l.solarProvider : null]

@@ -299,10 +299,14 @@ export function GroupUploadGrid({
   canImport,
   groups,
   miscCount,
+  missingCountyCount,
 }: {
   canImport: boolean;
   groups: LeadGroupWithCount[];
   miscCount: number;
+  /** Leads with a ZIP but no county yet — passed straight through to the
+   *  "Backfill counties" control in Edit groups (see LeadGroupManager). */
+  missingCountyCount: number;
 }) {
   const [open, setOpen] = useState(false);
   const [managing, setManaging] = useState(false);
@@ -375,7 +379,11 @@ export function GroupUploadGrid({
 
           {managing ? (
             <div className="p-5">
-              <LeadGroupManager initialGroups={groups} initialMiscCount={miscCount} />
+              <LeadGroupManager
+                initialGroups={groups}
+                initialMiscCount={miscCount}
+                initialMissingCountyCount={missingCountyCount}
+              />
             </div>
           ) : (
             <div className="grid grid-cols-2 gap-3 p-5 sm:grid-cols-3 lg:grid-cols-6">

@@ -128,6 +128,15 @@ export interface Lead {
   /** Pack this lead was dealt into — a numbered slice of one upload. Absent =
    *  not packed. Orthogonal to leadGroup: a lead can carry both. */
   leadPackId?: string;
+  /**
+   * Bare county name (e.g. "Fresno", never "Fresno County") computed
+   * deterministically from `zip` at import time — see lib/leads/zip-county.ts.
+   * Absent means either no ZIP was on file or the ZIP isn't in that lookup's
+   * coverage, not "not in the US." Pair with `state` to disambiguate — several
+   * county names repeat across states. Orthogonal to leadGroup: county is a
+   * geographic fact, leadGroup is whatever bucket the org chose to sort into.
+   */
+  county?: string;
   /** Monthly solar loan / lease payment in USD */
   solarPayment?: number;
   /** Monthly utility bill in USD */
