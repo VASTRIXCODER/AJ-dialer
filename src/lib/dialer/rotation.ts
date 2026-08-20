@@ -1,4 +1,5 @@
 import type { OrgSettings } from "../org/settings";
+import type { OrgRole } from "../permissions";
 import { normalizePhone } from "../utils";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -171,4 +172,112 @@ export function filterExcluded(
   const set = new Set(normPool(excluded));
   const kept = pool.filter((n) => !set.has(n));
   return kept.length ? kept : pool;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Per-rep caller-ID assignment.
+//
+// The pool above is still org-wide (one admin-edited list). This layer answers
+// a narrower question: given the person actually placing THIS call, which part
+// of that pool are they allowed to dial from? Owner/admin/manager are always
+// unrestricted — the same owner/admin/manager-vs-rep split already used to
+// scope which LEADS a rep can dial (see dialScope in (app)/layout.tsx).
+// Reps are restricted to their assigned numbers, ONLY on the manual power
+// dialer — AI calls and the org's shared rotation elsewhere are unaffected by
+// an assignment; this module doesn't know about those call paths at all.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Max caller IDs an admin may pin to one rep. "1-2" is the product ask; the
+ *  cap is enforced here (pure, shared by the server mutation and its tests)
+ *  rather than only in the mutation, so a UI checkbox list can import the
+ *  same number instead of hardcoding a second copy of it. */
+export const MAX_CALLER_IDS_PER_REP: number = 2;
+
+/**
+ * The pool a specific member may actually dial from.
+ *
+ * - owner/admin/manager (or an unknown/missing role — fail OPEN to unrestricted
+ *   rather than silently locking someone out on a role lookup that came back
+ *   empty): the full pool, unrestricted.
+ * - rep with assigned numbers: the pool filtered down to the INTERSECTION with
+ *   their assignment, in pool order — so an admin's rotation-pool edits (order,
+ *   removals) still govern how an assigned rep's numbers cycle. A rep whose
+ *   assignment no longer overlaps the live pool at all (every assigned number
+ *   was removed from the pool since) falls back to the full pool rather than
+ *   being silently unable to dial — a stale assignment must never be able to
+ *   block someone from working leads.
+ * - rep with no assignment yet: the full pool. Assignment is opt-in per rep;
+ *   nobody is blocked from dialing just because an admin hasn't gotten to them.
+ */
+export function restrictToAssignedNumbers(
+  pool: string[],
+  role: OrgRole | null | undefined,
+  assigned: string[] | null | undefined,
+): string[] {
+  // Anything other than the literal "rep" is unrestricted — that includes a
+  // missing/null role, not just owner/admin/manager, so a role lookup that
+  // came back empty fails OPEN rather than accidentally restricting someone
+  // whose role this function couldn't determine.
+  if (role !== "rep") return pool;
+  const assignedSet = new Set(normPool(assigned));
+  if (!assignedSet.size) return pool;
+  const restricted = pool.filter((n) => assignedSet.has(n));
+  return restricted.length ? restricted : pool;
+}
+
+/** One rep's newly-planned assignment: which numbers, and their id for the
+ *  caller to map back onto a member row. */
+export interface PlannedCallerIdAssignment {
+  memberId: string;
+  callerIds: string[];
+}
+
+/**
+ * Deal the org's pool out to its reps, "1-2 numbers" each, round by round —
+ * every rep gets a 1st number before anyone gets a 2nd, so the numbers land
+ * as evenly as possible instead of filling the first rep to the cap before
+ * touching the second. Reps are dealt to IN THE ORDER GIVEN (callers pass
+ * them oldest-first, matching listMembers), and dealing never overwrites a
+ * rep's EXISTING assignment — a rep who already holds a number keeps it
+ * counted against their cap, so re-running this after a partial manual
+ * assignment tops reps up rather than reshuffling everyone.
+ *
+ * More reps than numbers: the tail of the rep list gets nothing (they fall
+ * back to the full pool at call time — see restrictToAssignedNumbers — so
+ * this never blocks anyone from dialing, it just leaves them unassigned).
+ * More numbers than 2×reps: the leftover numbers are simply never assigned;
+ * they stay reachable to owner/admin/manager via the unrestricted pool.
+ *
+ * Pure — no I/O, no randomness — so the actual round-robin can be unit tested
+ * without a database; the caller (autoAssignCallerIds) does the reads/writes.
+ */
+export function planAutoAssignCallerIds(
+  pool: string[],
+  reps: { memberId: string; existing: string[] }[],
+): PlannedCallerIdAssignment[] {
+  const uniquePool = [...new Set(normPool(pool))];
+  const taken = new Set(reps.flatMap((r) => normPool(r.existing)));
+  const available = uniquePool.filter((n) => !taken.has(n));
+
+  const result = new Map<string, string[]>(
+    reps.map((r) => [r.memberId, normPool(r.existing)]),
+  );
+
+  let i = 0;
+  // Round-robin over available numbers: one pass per "round" fills every rep's
+  // Nth slot before any rep gets an (N+1)th, up to the cap.
+  outer: while (i < available.length) {
+    let dealtThisRound = false;
+    for (const r of reps) {
+      if (i >= available.length) break outer;
+      const have = result.get(r.memberId)!;
+      if (have.length >= MAX_CALLER_IDS_PER_REP) continue;
+      have.push(available[i]);
+      i++;
+      dealtThisRound = true;
+    }
+    if (!dealtThisRound) break; // every rep already at cap; stop even if numbers remain
+  }
+
+  return reps.map((r) => ({ memberId: r.memberId, callerIds: result.get(r.memberId)! }));
 }

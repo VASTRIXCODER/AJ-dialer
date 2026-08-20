@@ -4,6 +4,7 @@ import { cache } from "react";
 import type { User } from "@supabase/supabase-js";
 import { getUser } from "../auth";
 import { writeAudit } from "../db/app-control";
+import { MAX_CALLER_IDS_PER_REP, planAutoAssignCallerIds } from "../dialer/rotation";
 import {
   type OrgRole,
   type Permission,
@@ -75,6 +76,12 @@ export interface Member {
   name: string;
   role: OrgRole;
   permissions: Record<string, boolean>;
+  /** Caller IDs pinned to this member — power-dialer only (see
+   *  restrictToAssignedNumbers in lib/dialer/rotation.ts). Only meaningful for
+   *  a "rep": owner/admin/manager always dial the org's full pool regardless
+   *  of anything stored here. Empty = unassigned (falls back to the full pool
+   *  at call time, so nobody is blocked from dialing). */
+  callerIds: string[];
   status: MemberStatus;
   requestedAt: string;
   decidedAt: string | null;
@@ -90,6 +97,9 @@ export interface Viewer {
   role: OrgRole | null;
   permissions: Permission[];
   membershipStatus: "active" | "pending" | "none";
+  /** This viewer's own assigned power-dialer caller IDs (Member.callerIds).
+   *  Only meaningful when role is "rep" — see restrictToAssignedNumbers. */
+  callerIds: string[];
 }
 
 type Row = Record<string, unknown>;
@@ -141,6 +151,7 @@ function mapMember(m: Row): Member {
     name: String(m.name ?? ""),
     role: isOrgRole(role) ? role : "rep",
     permissions: (m.permissions as Record<string, boolean>) ?? {},
+    callerIds: Array.isArray(m.caller_ids) ? m.caller_ids.map(String) : [],
     status: (String(m.status ?? "pending") as MemberStatus),
     requestedAt: String(m.requested_at ?? ""),
     decidedAt: m.decided_at ? String(m.decided_at) : null,
@@ -192,6 +203,7 @@ export const getViewer = cache(async (): Promise<Viewer> => {
       role: "owner",
       permissions: effectivePermissions("owner"),
       membershipStatus: "active",
+      callerIds: [],
     };
   }
 
@@ -206,6 +218,7 @@ export const getViewer = cache(async (): Promise<Viewer> => {
       role: null,
       permissions: [],
       membershipStatus: "none",
+      callerIds: [],
     };
   }
 
@@ -226,6 +239,7 @@ export const getViewer = cache(async (): Promise<Viewer> => {
       role: null,
       permissions: [],
       membershipStatus: pending ? "pending" : "none",
+      callerIds: [],
     };
   }
 
@@ -239,6 +253,7 @@ export const getViewer = cache(async (): Promise<Viewer> => {
     role: membership.role,
     permissions: effectivePermissions(membership.role, membership.permissions),
     membershipStatus: "active",
+    callerIds: membership.callerIds,
   };
 });
 
@@ -297,6 +312,7 @@ export const getActiveMembership = cache(async (userId: string): Promise<Member 
       name: String(prof?.full_name ?? ""),
       role,
       permissions: {},
+      callerIds: [],
       status: "active",
       requestedAt: "",
       decidedAt: null,
@@ -335,6 +351,7 @@ export async function getMyMemberships(
         name: "",
         role: "rep",
         permissions: {},
+        callerIds: [],
         status: "active",
         requestedAt: "",
         decidedAt: null,
@@ -837,6 +854,152 @@ export async function setMemberPermissions(
     .update({ permissions })
     .eq("id", memberId);
   return error ? { ok: false, error: error.message } : { ok: true };
+}
+
+/**
+ * Pin 1-2 specific caller IDs to a rep for the manual power dialer (see
+ * restrictToAssignedNumbers in lib/dialer/rotation.ts). Numbers must already
+ * be in the org's own rotation pool — this assigns FROM the pool, it doesn't
+ * add new numbers to it, so a typo here can never dial from an unowned
+ * number the way a raw text field could.
+ *
+ * Same gate as setMemberRole (members.role): whoever may change a teammate's
+ * role may also decide which of the org's numbers they dial from.
+ */
+export async function setMemberCallerIds(
+  memberId: string,
+  callerIds: string[],
+): Promise<Result> {
+  const auth = await authorize("members.role");
+  if (!auth.ok) return { ok: false, error: auth.error };
+  const admin = createAdminClient();
+  const target = await loadMember(admin, memberId);
+  if (!target || target.orgId !== auth.actor.orgId)
+    return { ok: false, error: "Member not found." };
+  if (target.role === "owner")
+    return { ok: false, error: "The owner already has unrestricted access." };
+  if (!strictlyAbove(auth.actor, target))
+    return { ok: false, error: "You can’t manage someone at or above your role." };
+
+  const normalized = [
+    ...new Set(callerIds.map((n) => normalizePhone(String(n ?? ""))).filter(Boolean)),
+  ] as string[];
+  if (normalized.length > MAX_CALLER_IDS_PER_REP) {
+    return {
+      ok: false,
+      error: `A rep can hold at most ${MAX_CALLER_IDS_PER_REP} caller IDs.`,
+    };
+  }
+
+  // Every number must already be in THIS org's own pool — assignment routes
+  // an existing number to a rep, it never introduces a new one. Prevents a
+  // typo (or a stale/foreign number) from ever becoming a rep's caller ID.
+  if (normalized.length) {
+    const org = await getOrgById(auth.actor.orgId);
+    const pool = new Set(
+      [org?.settings.dialing.callerId, ...(org?.settings.dialing.callerIds ?? [])]
+        .map((n) => normalizePhone(String(n ?? "")))
+        .filter(Boolean),
+    );
+    const foreign = normalized.find((n) => !pool.has(n));
+    if (foreign) {
+      return {
+        ok: false,
+        error: `${foreign} isn’t in this organization’s caller ID pool — add it there first (Admin → Organization → Dialing).`,
+      };
+    }
+  }
+
+  const { error } = await admin
+    .from("organization_members")
+    .update({ caller_ids: normalized })
+    .eq("id", memberId);
+  if (error) return { ok: false, error: error.message };
+  await writeAudit({
+    action: "member.caller_ids",
+    actorId: auth.actor.userId,
+    targetId: target.userId,
+    targetKind: "member",
+    orgId: target.orgId,
+    detail: { callerIds: normalized },
+  });
+  return { ok: true };
+}
+
+/**
+ * One-click "deal the pool out to the reps" — see planAutoAssignCallerIds for
+ * the actual round-robin. Only touches ACTIVE members whose role is "rep":
+ * owner/admin/manager are never assigned (they always dial the full pool, so
+ * an assignment on their row would just be inert data), and a pending member
+ * isn't dialing anything yet. Existing assignments are topped up, not
+ * reshuffled — re-running this after a manual tweak fills gaps rather than
+ * undoing the manual choice.
+ */
+export async function autoAssignCallerIds(): Promise<
+  Result & { assigned?: Record<string, string[]>; unassignedReps?: number }
+> {
+  const auth = await authorize("members.role");
+  if (!auth.ok) return { ok: false, error: auth.error };
+
+  const org = await getOrgById(auth.actor.orgId);
+  const pool = [
+    ...new Set(
+      (org?.settings.dialing.callerIds ?? [])
+        .map((n) => normalizePhone(String(n ?? "")))
+        .filter((n): n is string => Boolean(n)),
+    ),
+  ];
+  if (!pool.length) {
+    return {
+      ok: false,
+      error: "Add numbers to the org's caller ID rotation pool first (Admin → Organization → Dialing).",
+    };
+  }
+
+  const members = await listMembers(auth.actor.orgId);
+  // Oldest-first (listMembers' own order) so re-running this is deterministic
+  // and the first reps hired are the first to get a second number.
+  const reps = members.filter((m) => m.status === "active" && m.role === "rep");
+  if (!reps.length) return { ok: false, error: "No active reps to assign numbers to." };
+
+  const planned = planAutoAssignCallerIds(
+    pool,
+    reps.map((r) => ({ memberId: r.id, existing: r.callerIds })),
+  );
+
+  const admin = createAdminClient();
+  const assigned: Record<string, string[]> = {};
+  let changed = 0;
+  await Promise.all(
+    planned.map(async (p) => {
+      const rep = reps.find((r) => r.id === p.memberId)!;
+      assigned[p.memberId] = p.callerIds;
+      const same =
+        p.callerIds.length === rep.callerIds.length &&
+        p.callerIds.every((n, i) => n === rep.callerIds[i]);
+      if (same) return; // nothing to write — this rep was already topped up
+      changed++;
+      await admin
+        .from("organization_members")
+        .update({ caller_ids: p.callerIds })
+        .eq("id", p.memberId);
+    }),
+  );
+  if (changed) {
+    await writeAudit({
+      action: "member.caller_ids.auto_assign",
+      actorId: auth.actor.userId,
+      targetKind: "org",
+      orgId: auth.actor.orgId,
+      detail: { assigned, poolSize: pool.length, repCount: reps.length },
+    });
+  }
+
+  return {
+    ok: true,
+    assigned,
+    unassignedReps: planned.filter((p) => p.callerIds.length === 0).length,
+  };
 }
 
 export async function removeMember(memberId: string): Promise<Result> {

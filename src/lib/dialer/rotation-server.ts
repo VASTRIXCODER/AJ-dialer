@@ -1,6 +1,7 @@
 import "server-only";
 
 import type { OrgSettings } from "../org/settings";
+import type { OrgRole } from "../permissions";
 import { createAdminClient, isAdminConfigured } from "../supabase/admin";
 import { twilioConfig } from "../twilio";
 import {
@@ -9,6 +10,7 @@ import {
   localPresenceMatches,
   poolOffsetForKey,
   resolveRotation,
+  restrictToAssignedNumbers,
 } from "./rotation";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -68,19 +70,31 @@ export async function nextDialSeq(
  *   and rotation both — an excluded number is never dialed from, even as a
  *   local-presence match. Excluding every pool number falls back to the full
  *   pool (see filterExcluded) rather than failing to dial.
+ * @param role  the caller's org role. Omitted (as every AI-call and inbound-leg
+ *   caller here does) = unrestricted, matching pre-assignment behavior exactly.
+ *   Only the manual power-dialer route passes this — per-rep assignment was a
+ *   power-dialer-specific ask; AI calls and the shared rotation elsewhere
+ *   intentionally still draw from the org's whole pool.
+ * @param assignedCallerIds  the numbers pinned to this rep (Member.callerIds),
+ *   applied via restrictToAssignedNumbers BEFORE excludedCallerIds — assignment
+ *   is the hard boundary of what a rep may ever dial from; exclusion is their
+ *   own opt-out layered on top of that, never a way to reach outside it.
  */
 export async function nextCallerId(
   repKey: string | null | undefined,
   settings: OrgSettings | null | undefined,
   destNumber?: string | null,
   excludedCallerIds?: string[] | null,
+  role?: OrgRole | null,
+  assignedCallerIds?: string[] | null,
 ): Promise<string> {
-  const { pool: fullPool, rotateEvery } = resolveRotation(settings, {
+  const { pool: orgPool, rotateEvery } = resolveRotation(settings, {
     envPool: ENV_POOL,
     envRotateEvery: ENV_ROTATE_EVERY,
     envSingle: twilioConfig.callerId,
     platformPriority: PLATFORM_POOL_LOCKED,
   });
+  const fullPool = restrictToAssignedNumbers(orgPool, role, assignedCallerIds);
   if (!fullPool.length) return "";
   const pool = filterExcluded(fullPool, excludedCallerIds);
 
@@ -127,6 +141,10 @@ export interface CallerIdInfo {
  *   number. Deliberately does NOT consume nextDialSeq(): a redial retries the
  *   current attempt rather than advancing to the next one, so it must not
  *   perturb the rotation cadence for every dial after it.
+ * @param role  see nextCallerId. Omitted = unrestricted (AI/inbound callers).
+ * @param assignedCallerIds  see nextCallerId — applied before excludedCallerIds
+ *   and before pinnedCallerId is checked, so a rep can never redial-pin a
+ *   number outside their own assignment either.
  */
 export async function nextCallerIdWithInfo(
   repKey: string | null | undefined,
@@ -134,13 +152,16 @@ export async function nextCallerIdWithInfo(
   destNumber?: string | null,
   excludedCallerIds?: string[] | null,
   pinnedCallerId?: string | null,
+  role?: OrgRole | null,
+  assignedCallerIds?: string[] | null,
 ): Promise<CallerIdInfo> {
-  const { pool: fullPool, rotateEvery } = resolveRotation(settings, {
+  const { pool: orgPool, rotateEvery } = resolveRotation(settings, {
     envPool: ENV_POOL,
     envRotateEvery: ENV_ROTATE_EVERY,
     envSingle: twilioConfig.callerId,
     platformPriority: PLATFORM_POOL_LOCKED,
   });
+  const fullPool = restrictToAssignedNumbers(orgPool, role, assignedCallerIds);
   if (!fullPool.length) {
     return { callerId: "", pool: [], poolIndex: 0, rotateEvery: 1, localPresence: false };
   }

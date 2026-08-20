@@ -1967,3 +1967,22 @@ create index if not exists leads_org_county_idx on public.leads (org_id, county)
 create index if not exists leads_org_city_lower_idx
   on public.leads (org_id, lower(btrim(city)))
   where coalesce(btrim(city), '') <> '';
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- PART 20 — PER-REP CALLER-ID ASSIGNMENT  (idempotent; safe to re-run)
+--
+-- Until now the caller-ID rotation pool (organizations.settings.dialing.
+-- callerIds) was purely org-wide: every rep cycled through every number. This
+-- lets an admin pin 1-2 specific numbers to a specific rep — that rep's power
+-- dialer then rotates ONLY among their assigned numbers, while owner/admin/
+-- manager keep unrestricted access to the whole pool (see restrictToAssigned-
+-- Numbers in src/lib/dialer/rotation.ts, and the role check there — an
+-- assignment on a non-rep row is simply never consulted).
+--
+-- A plain text[] on the membership row, not a join table: it mirrors the
+-- existing dialing.callerIds array-in-settings pattern, needs no referential
+-- integrity beyond "is a member of this org" (already enforced by the row
+-- it lives on), and every read of it is already keyed by member id.
+-- ─────────────────────────────────────────────────────────────────────────────
+alter table public.organization_members
+  add column if not exists caller_ids text[] not null default '{}';

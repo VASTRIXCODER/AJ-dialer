@@ -7,6 +7,7 @@ import { isAIConfigured } from "@/lib/ai/claude";
 import { getAppSettings, isAccountDisabled } from "@/lib/db/app-control";
 import { listLeadGroups } from "@/lib/db/lead-groups";
 import { getPlatformPool } from "@/lib/dialer/rotation-server";
+import { restrictToAssignedNumbers } from "@/lib/dialer/rotation";
 import { agentLabels, isElevenLabsConfigured, isSecondAgentConfigured } from "@/lib/elevenlabs";
 import { resolveLeadFields, type LeadFieldDef } from "@/lib/leads/field-schema";
 import { getViewer } from "@/lib/org/membership";
@@ -85,8 +86,17 @@ export default async function AppGroupLayout({
   // The effective caller-ID pool (org settings, or the platform-locked env pool
   // when TWILIO_CALLER_IDS is set) — lets the dialer's caller-ID picker offer
   // exactly the numbers nextCallerId*() will actually validate an override against.
-  const { pool: callerIdPool, rotateEvery: callerIdRotateEvery } = getPlatformPool(
+  const { pool: orgCallerIdPool, rotateEvery: callerIdRotateEvery } = getPlatformPool(
     viewer.org?.settings ?? null,
+  );
+  // Narrowed to a rep's own assignment (same call the power-dialer route makes
+  // server-side) so the picker never OFFERS a number a rep isn't actually
+  // allowed to dial from. owner/admin/manager see the org's whole pool, same
+  // as today — this is a no-op for them regardless of anything assigned.
+  const callerIdPool = restrictToAssignedNumbers(
+    orgCallerIdPool,
+    viewer.role,
+    viewer.callerIds,
   );
   // The org's intake groups drive the dialer's group filter. Labels only — the
   // dialer never needs the AI rule text.

@@ -12,11 +12,13 @@ import {
   KeyRound,
   Loader2,
   Mail,
+  PhoneCall,
   Plug,
   Plus,
   Settings2,
   Shield,
   ShieldCheck,
+  Shuffle,
   Trash2,
   UserCheck,
   Users,
@@ -33,6 +35,7 @@ import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { MAX_CALLER_IDS_PER_REP } from "@/lib/dialer/rotation";
 import type { Member, OrgCompany, OrgFull } from "@/lib/org/membership";
 import {
   PERMISSIONS,
@@ -43,7 +46,7 @@ import {
   assignableRoles,
   can,
 } from "@/lib/permissions";
-import { cn, initials, relativeTime } from "@/lib/utils";
+import { cn, formatPhone, initials, relativeTime } from "@/lib/utils";
 
 type Tab = "members" | "organization" | "notifications" | "companies" | "activity" | "data";
 
@@ -207,6 +210,44 @@ function MembersTab({
   const canRemove = permissions.includes("members.remove");
   // Roles a manager may assign on approval (always includes Rep; never owner).
   const approveChoices = assignableRoles(role);
+
+  // The org's own rotation pool — what a rep's caller-ID picker (below) may
+  // choose FROM, and what "Auto-assign" deals out. Owner/admin/manager always
+  // dial this whole pool regardless of any assignment, so it's only shown on
+  // rep rows.
+  const orgPool = [
+    ...new Set(
+      [org.settings.dialing.callerId, ...(org.settings.dialing.callerIds ?? [])].filter(
+        Boolean,
+      ),
+    ),
+  ];
+  const [autoAssigning, setAutoAssigning] = useState(false);
+  const [autoAssignMsg, setAutoAssignMsg] = useState<string | null>(null);
+  async function autoAssign() {
+    setAutoAssigning(true);
+    setAutoAssignMsg(null);
+    setErr("");
+    try {
+      const res = await fetch("/api/org/members/auto-assign-caller-ids", { method: "POST" });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok || !j.ok) {
+        setAutoAssignMsg(j.error ?? "Couldn't auto-assign caller IDs.");
+        return;
+      }
+      const repCount = Object.keys(j.assigned ?? {}).length;
+      setAutoAssignMsg(
+        j.unassignedReps > 0
+          ? `Assigned numbers to ${repCount - j.unassignedReps} of ${repCount} reps — the pool ran out before reaching everyone.`
+          : `Assigned numbers to all ${repCount} reps.`,
+      );
+      router.refresh();
+    } catch {
+      setAutoAssignMsg("Network error.");
+    } finally {
+      setAutoAssigning(false);
+    }
+  }
   const [approveRole, setApproveRole] = useState<Record<string, OrgRole>>({});
 
   async function act(body: Record<string, unknown>, key: string) {
@@ -410,7 +451,40 @@ function MembersTab({
         title={`Members (${active.length})`}
         description="Everyone with access to this organization."
       >
-        <div className="space-y-2">
+        <div className="space-y-3">
+          {/* Per-rep caller-ID assignment — only worth showing once there's a
+              pool to assign FROM and reps who could hold a piece of it. */}
+          {canRole && orgPool.length > 0 && active.some((m) => m.role === "rep") && (
+            <div className="flex flex-wrap items-center gap-2 rounded-xl border border-border/70 bg-surface/40 p-3">
+              <PhoneCall className="h-4 w-4 shrink-0 text-muted-foreground" />
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-semibold">Caller-ID assignment</p>
+                <p className="text-xs text-muted-foreground">
+                  Give each rep 1-{MAX_CALLER_IDS_PER_REP} numbers from the pool ({orgPool.length}{" "}
+                  total) — they'll dial from only those on the power dialer. Owner, admin & manager
+                  always dial the full pool.
+                </p>
+              </div>
+              <Button
+                size="sm"
+                variant="outline"
+                className="gap-1.5"
+                disabled={autoAssigning}
+                onClick={autoAssign}
+                title="Deal the pool's numbers out to every active rep, topping up anyone already assigned"
+              >
+                {autoAssigning ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <Shuffle className="h-3.5 w-3.5" />
+                )}
+                Auto-assign to reps
+              </Button>
+              {autoAssignMsg && (
+                <p className="w-full text-xs text-muted-foreground">{autoAssignMsg}</p>
+              )}
+            </div>
+          )}
           {active.map((m) => (
             <MemberRow
               key={m.id}
@@ -420,8 +494,10 @@ function MembersTab({
               canRemove={canRemove}
               canTransfer={role === "owner"}
               busy={busy === m.id}
+              orgPool={orgPool}
               onRole={(r) => act({ id: m.id, action: "role", role: r }, m.id)}
               onPerms={(perms) => act({ id: m.id, action: "permissions", permissions: perms }, m.id)}
+              onCallerIds={(ids) => act({ id: m.id, action: "callerIds", callerIds: ids }, m.id)}
               onRemove={() => {
                 if (confirm(`Remove ${m.name || m.email} from ${org.name}?`))
                   act({ id: m.id, action: "remove" }, m.id);
@@ -449,8 +525,10 @@ function MemberRow({
   canRemove,
   canTransfer,
   busy,
+  orgPool,
   onRole,
   onPerms,
+  onCallerIds,
   onRemove,
   onTransfer,
 }: {
@@ -460,15 +538,23 @@ function MemberRow({
   canRemove: boolean;
   canTransfer: boolean;
   busy: boolean;
+  /** The org's rotation pool — options for this rep's caller-ID picker. */
+  orgPool: string[];
   onRole: (role: OrgRole) => void;
   onPerms: (perms: Record<string, boolean>) => void;
+  onCallerIds: (callerIds: string[]) => void;
   onRemove: () => void;
   onTransfer: () => void;
 }) {
   const [editing, setEditing] = useState(false);
+  const [editingCallerIds, setEditingCallerIds] = useState(false);
   // You can only manage members strictly below your own rank, and never the owner.
   const manageable = m.role !== "owner" && ROLE_RANK[actorRole] > ROLE_RANK[m.role];
   const roleChoices = assignableRoles(actorRole);
+  // Only reps are ever restricted by an assignment (restrictToAssignedNumbers)
+  // — owner/admin/manager always dial the full pool, so offering this picker
+  // on their row would set data nothing ever reads.
+  const showCallerIds = canRole && manageable && m.role === "rep" && orgPool.length > 0;
 
   return (
     <div className="rounded-xl border border-border">
@@ -481,6 +567,11 @@ function MemberRow({
         <Badge tone={roleTone[m.role]} className="capitalize">
           {ROLE_LABEL[m.role]}
         </Badge>
+        {showCallerIds && m.callerIds.length > 0 && (
+          <Badge tone="accent" title="Assigned caller ID(s) for the power dialer">
+            {m.callerIds.map((n) => formatPhone(n)).join(", ")}
+          </Badge>
+        )}
         {canRole && manageable ? (
           <select
             value={m.role}
@@ -506,6 +597,20 @@ function MemberRow({
             )}
           >
             <Shield className="h-4 w-4" />
+          </button>
+        )}
+        {showCallerIds && (
+          <button
+            type="button"
+            aria-label="Edit assigned caller IDs"
+            title="Assign this rep's power-dialer caller ID(s)"
+            onClick={() => setEditingCallerIds((v) => !v)}
+            className={cn(
+              "flex h-8 w-8 items-center justify-center rounded-lg border border-border text-muted-foreground transition-colors hover:bg-muted hover:text-foreground",
+              editingCallerIds && "bg-primary-soft text-primary",
+            )}
+          >
+            <PhoneCall className="h-4 w-4" />
           </button>
         )}
         {canTransfer && m.role !== "owner" && (
@@ -536,6 +641,73 @@ function MemberRow({
       {editing && (
         <PermissionsEditor member={m} onSave={(perms) => { onPerms(perms); setEditing(false); }} />
       )}
+      {editingCallerIds && (
+        <CallerIdsEditor
+          member={m}
+          orgPool={orgPool}
+          onSave={(ids) => { onCallerIds(ids); setEditingCallerIds(false); }}
+        />
+      )}
+    </div>
+  );
+}
+
+/** Pick 1-{MAX_CALLER_IDS_PER_REP} of the org's own pool numbers for this rep's
+ *  power dialer. Unlike PermissionsEditor (role-default ⊕ override), there's no
+ *  "default" here — an empty selection just means unassigned (full pool). */
+function CallerIdsEditor({
+  member,
+  orgPool,
+  onSave,
+}: {
+  member: Member;
+  orgPool: string[];
+  onSave: (callerIds: string[]) => void;
+}) {
+  const [selected, setSelected] = useState<string[]>(member.callerIds);
+  const atCap = selected.length >= MAX_CALLER_IDS_PER_REP;
+
+  return (
+    <div className="border-t border-border bg-muted/30 p-4">
+      <p className="mb-2 flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide text-muted-foreground">
+        <PhoneCall className="h-3.5 w-3.5" />
+        Power-dialer caller ID{MAX_CALLER_IDS_PER_REP === 1 ? "" : "s"} (up to{" "}
+        {MAX_CALLER_IDS_PER_REP})
+      </p>
+      <p className="mb-3 text-xs text-muted-foreground">
+        Left empty, this rep dials the org's whole pool like everyone else.
+      </p>
+      <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
+        {orgPool.map((n) => {
+          const on = selected.includes(n);
+          return (
+            <button
+              key={n}
+              type="button"
+              disabled={!on && atCap}
+              onClick={() =>
+                setSelected((s) => (on ? s.filter((x) => x !== n) : [...s, n]))
+              }
+              className={cn(
+                "flex items-center gap-2 rounded-lg border px-3 py-2 text-left text-xs font-medium tabular transition-colors disabled:cursor-not-allowed disabled:opacity-50",
+                on
+                  ? "border-primary/60 bg-primary-soft text-primary"
+                  : "border-border bg-background text-muted-foreground hover:text-foreground",
+              )}
+            >
+              {formatPhone(n)}
+            </button>
+          );
+        })}
+      </div>
+      <div className="mt-3 flex items-center justify-end gap-2">
+        <span className="mr-auto text-[11px] text-muted-foreground">
+          {selected.length} of {MAX_CALLER_IDS_PER_REP} selected
+        </span>
+        <Button size="sm" onClick={() => onSave(selected)}>
+          Save
+        </Button>
+      </div>
     </div>
   );
 }

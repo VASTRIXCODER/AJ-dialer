@@ -4,6 +4,7 @@ import {
   getViewer,
   listMembers,
   removeMember,
+  setMemberCallerIds,
   setMemberPermissions,
   setMemberRole,
   transferOwnership,
@@ -27,9 +28,10 @@ export async function GET() {
 export async function PATCH(req: Request) {
   const body = (await req.json().catch(() => ({}))) as {
     id?: string;
-    action?: "approve" | "reject" | "role" | "permissions" | "remove" | "transfer";
+    action?: "approve" | "reject" | "role" | "permissions" | "remove" | "transfer" | "callerIds";
     role?: string;
     permissions?: Record<string, boolean>;
+    callerIds?: string[];
   };
   if (!body.id || !body.action)
     return NextResponse.json({ ok: false, error: "id and action required." }, { status: 400 });
@@ -56,6 +58,11 @@ export async function PATCH(req: Request) {
       break;
     case "permissions":
       r = await setMemberPermissions(body.id, body.permissions ?? {});
+      break;
+    case "callerIds":
+      if (!Array.isArray(body.callerIds))
+        return NextResponse.json({ ok: false, error: "callerIds must be an array." }, { status: 400 });
+      r = await setMemberCallerIds(body.id, body.callerIds);
       break;
     case "remove":
       r = await removeMember(body.id);

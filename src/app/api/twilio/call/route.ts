@@ -166,6 +166,11 @@ export async function POST(req: Request) {
           leg.to,
           body.excludedCallerIds,
           body.pinnedCallerId,
+          // Per-rep caller-ID assignment applies HERE — the manual power
+          // dialer — and nowhere else (AI calls, inbound legs). See the
+          // param doc on nextCallerIdWithInfo.
+          viewer.role,
+          viewer.callerIds,
         );
         if (i === 0) poolInfo = info;
         const from = info.callerId || twilioConfig.callerId;
