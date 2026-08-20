@@ -54,6 +54,8 @@ export interface LeadsTableFilters {
   group?: string;
   /** "County|ST" composite (e.g. "Fresno|CA"); "__none__" = no county on file. */
   county?: string;
+  /** "City|ST" composite (e.g. "Fresno|CA"); "__none__" = no city on file. */
+  city?: string;
   /** Campaign id; "__none__" = unassigned. */
   campaignId?: string;
   uploaderId?: string;
@@ -167,6 +169,7 @@ export function LeadsTable({
   labelOverrides,
   orgGroups = [],
   orgCounties = [],
+  orgCities = [],
   fields = CORE_LEAD_FIELDS,
   showSolarPayment = true,
 }: {
@@ -194,8 +197,13 @@ export function LeadsTable({
    *  carry, so the filter is never empty just because the list didn't load. */
   orgGroups?: { key: string; label: string }[];
   /** Distinct (county, state) pairs across the viewer's scope — see
-   *  listDistinctCounties. Drives the county filter; empty just hides it. */
+   *  listPlaces. Drives the county filter; empty just hides it.
+   *  ALREADY IN UPLOAD ORDER: render as given, never re-sort. */
   orgCounties?: { county: string; state: string }[];
+  /** Distinct (city, state) pairs across the viewer's scope — see listPlaces.
+   *  ALREADY IN UPLOAD ORDER (first appearance in the book, not A-Z): render
+   *  as given, never re-sort. */
+  orgCities?: { city: string; state: string }[];
   /** The org's resolved lead-field schema (resolveLeadFields) — drives which
    *  data columns render. Defaults to the solar-era core slots. */
   fields?: LeadFieldDef[];
@@ -216,6 +224,7 @@ export function LeadsTable({
       if (next.smart) sp.set("smart", next.smart);
       if (next.group) sp.set("group", next.group);
       if (next.county) sp.set("county", next.county);
+      if (next.city) sp.set("city", next.city);
       if (next.campaignId) sp.set("campaign", next.campaignId);
       if (next.uploaderId) sp.set("uploader", next.uploaderId);
       if (next.mine) sp.set("mine", "1");
@@ -336,6 +345,25 @@ export function LeadsTable({
     }
     return [...seen].map(([key, label]) => ({ key, label }));
   }, [orgCounties, leads]);
+
+  // City options, same shape and same rule as counties — and deliberately NOT
+  // sorted here: orgCities already arrives in the order the book presents it
+  // (see listPlaces), and a .sort() at this layer would silently undo that.
+  // Keys are case-folded so one bucket survives "Fresno"/"fresno " spellings;
+  // the label keeps whichever spelling the book showed first.
+  const cityOptions = useMemo(() => {
+    const seen = new Map<string, string>();
+    const add = (city: string, state: string) => {
+      const c = (city ?? "").trim();
+      if (!c) return;
+      const s = (state ?? "").trim();
+      const key = `${c.toLowerCase()}|${s.toLowerCase()}`;
+      if (!seen.has(key)) seen.set(key, s ? `${c}, ${s}` : c);
+    };
+    for (const c of orgCities) add(c.city, c.state);
+    for (const l of leads) add(l.city, l.state);
+    return [...seen].map(([key, label]) => ({ key, label }));
+  }, [orgCities, leads]);
 
   // The search input is the one filter kept in local state — for keystroke
   // responsiveness — and debounced into the URL, where the server reads it.
@@ -819,6 +847,31 @@ export function LeadsTable({
               <option value="all">All counties</option>
               <option value="unsorted">No county on file</option>
               {countyOptions.map((c) => (
+                <option key={c.key} value={c.key}>
+                  {c.label}
+                </option>
+              ))}
+            </select>
+          )}
+          {(cityOptions.length > 0 || filters.city) && (
+            <select
+              value={filters.city === "__none__" ? "unsorted" : (filters.city ?? "all")}
+              onChange={(e) =>
+                applyFilters({
+                  city:
+                    e.target.value === "all"
+                      ? undefined
+                      : e.target.value === "unsorted"
+                        ? "__none__"
+                        : e.target.value,
+                })
+              }
+              aria-label="Filter by city"
+              className="h-9 rounded-lg border border-border bg-background/60 px-2.5 text-sm font-medium focus-visible:border-primary/50 focus-visible:outline-none"
+            >
+              <option value="all">All cities</option>
+              <option value="unsorted">No city on file</option>
+              {cityOptions.map((c) => (
                 <option key={c.key} value={c.key}>
                   {c.label}
                 </option>

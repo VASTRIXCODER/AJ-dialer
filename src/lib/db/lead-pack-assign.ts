@@ -174,13 +174,16 @@ export async function assignPack(
     if (repId) {
       const { data: member } = await admin
         .from("organization_members")
-        .select("user_id")
+        .select("user_id, status")
         .eq("org_id", scope.orgId)
         .eq("user_id", repId)
-        .eq("status", "active")
         .maybeSingle();
-      if (!member)
-        return { ok: false, error: "That person isn't an active member of your organization." };
+      if (!member) return { ok: false, error: "That person isn't in your organization." };
+      if (String((member as Row).status) !== "active")
+        return {
+          ok: false,
+          error: "That teammate is still pending approval — approve them in Admin first.",
+        };
     }
 
     // Routing first: if stamping the leads fails, the pack still reads as

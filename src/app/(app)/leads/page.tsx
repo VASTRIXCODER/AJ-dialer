@@ -10,7 +10,7 @@ import { CalendarCheck, Sparkles, Zap } from "lucide-react";
 import {
   getLeadsPage,
   getMissingCountyCount,
-  listDistinctCounties,
+  listPlaces,
   type LeadsSort,
 } from "@/lib/db/leads";
 import { getCampaigns } from "@/lib/db/pipeline";
@@ -76,6 +76,7 @@ export default async function LeadsPage({
     smart: sp.smart || undefined,
     group: sp.group || undefined,
     county: sp.county || undefined,
+    city: sp.city || undefined,
     campaignId: sp.campaign || undefined,
     uploaderId,
     mine: sp.mine === "1",
@@ -85,11 +86,11 @@ export default async function LeadsPage({
   };
   const pageNum = Math.max(1, Number.parseInt(sp.page ?? "1", 10) || 1);
 
-  let [pageData, campaigns, viewer, counties] = await Promise.all([
+  let [pageData, campaigns, viewer, places] = await Promise.all([
     getLeadsPage({ page: pageNum, ...filters, sort }),
     getCampaigns(),
     getViewer(),
-    listDistinctCounties(),
+    listPlaces(),
   ]);
   // Out-of-range page (stale bookmark, or the last row of the last page was
   // just deleted and router.refresh() kept ?page=N): clamp to the real last
@@ -115,9 +116,19 @@ export default async function LeadsPage({
   // Per-org "dropbox" label overrides (display only) — e.g. show "San Antonio"
   // where the underlying bucket key is still "fresno".
   const groupLabels = viewer.org?.settings.leadGroupLabels ?? {};
+  // ACTIVE members only. listMembers returns everyone who isn't 'removed' —
+  // which includes people still 'pending' approval — but every assignment path
+  // (assignLeadsToRep, reassignLeads, assignPack) requires an ACTIVE member and
+  // hard-fails otherwise. Offering a pending teammate in these dropdowns is how
+  // "rep assignments don't work" happened: the name was pickable, and the
+  // assignment came back "That person isn't a member of your organization."
+  // Filtered here rather than inside listMembers because Admin genuinely needs
+  // the pending rows — that screen is where they get approved.
   const members =
     canManage && viewer.org
-      ? (await listMembers(viewer.org.id)).map((m) => ({ id: m.userId, name: m.name }))
+      ? (await listMembers(viewer.org.id))
+          .filter((m) => m.status === "active")
+          .map((m) => ({ id: m.userId, name: m.name }))
       : [];
   const campaignList = campaigns
     .filter((c) => c.status !== "completed")
@@ -213,7 +224,8 @@ export default async function LeadsPage({
         members={members}
         labelOverrides={groupLabels}
         orgGroups={leadGroups.map((g) => ({ key: g.key, label: g.label }))}
-        orgCounties={counties}
+        orgCounties={places.counties}
+        orgCities={places.cities}
         fields={fields}
         // Both signals, one prop: a non-solar vertical drops the solar fields
         // outright, and a solar org can still switch them off per-tenant.

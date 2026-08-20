@@ -491,16 +491,21 @@ export async function reassignLeads(
       return { updated: 0, error: "Only supervisors can reassign leads." };
 
     const admin = createAdminClient();
-    // The target must be an active member of THIS org.
+    // The target must be an active member of THIS org. Read the STATUS rather
+    // than filtering on it, so a pending teammate gets told they need approving
+    // instead of the flatly wrong "isn't a member of your organization".
     const { data: member } = await admin
       .from("organization_members")
-      .select("user_id")
+      .select("user_id, status")
       .eq("org_id", orgId)
       .eq("user_id", toUserId)
-      .eq("status", "active")
       .maybeSingle();
-    if (!member)
-      return { updated: 0, error: "That person isn't a member of your organization." };
+    if (!member) return { updated: 0, error: "That person isn't in your organization." };
+    if (String((member as Row).status) !== "active")
+      return {
+        updated: 0,
+        error: "That teammate is still pending approval — approve them in Admin first.",
+      };
 
     let updated = 0;
     const CHUNK = 100;
@@ -555,17 +560,22 @@ export async function assignLeadsToRep(
       return { updated: 0, error: "Only supervisors can assign leads." };
 
     const admin = createAdminClient();
-    // A non-null target must be an active member of THIS org.
+    // A non-null target must be an active member of THIS org. Status is READ,
+    // not filtered on, so a still-pending teammate gets an error that names the
+    // actual fix rather than claiming they aren't in the org at all.
     if (toUserId) {
       const { data: member } = await admin
         .from("organization_members")
-        .select("user_id")
+        .select("user_id, status")
         .eq("org_id", orgId)
         .eq("user_id", toUserId)
-        .eq("status", "active")
         .maybeSingle();
-      if (!member)
-        return { updated: 0, error: "That person isn't a member of your organization." };
+      if (!member) return { updated: 0, error: "That person isn't in your organization." };
+      if (String((member as Row).status) !== "active")
+        return {
+          updated: 0,
+          error: "That teammate is still pending approval — approve them in Admin first.",
+        };
     }
 
     let updated = 0;
@@ -1222,6 +1232,33 @@ const LEADS_SORT_VALUES: Record<string, (l: Lead) => string | number | null> = {
   created_at: (l) => (l.createdAt ? Date.parse(l.createdAt) || null : null),
 };
 
+// ── City keys ────────────────────────────────────────────────────────────────
+// City is FREE TEXT off a customer CSV, so "Fresno", "fresno " and "FRESNO"
+// are three spellings of one place and must collapse into one bucket. Every
+// city comparison in this file — the filter, the distinct list, the pack
+// splitter — goes through these two helpers, and the SQL side mirrors them
+// with lower(btrim(...)). Changing one means changing all three.
+
+/** The lead's city as typed, trimmed. "" when there's none on file. */
+const cityOf = (l: Lead) => (l.city ?? "").trim();
+
+/**
+ * Fold a "City|ST" composite for comparison. EACH SIDE is trimmed, not just
+ * the whole string — a stored "Fresno " produces the key "Fresno |CA", and
+ * trimming only the outside would leave that inner space in place and match
+ * nothing. Exported so the lockstep with the SQL is testable, not just
+ * asserted in a comment.
+ */
+export const normalizeCityKey = (key: string) =>
+  key
+    .split("|")
+    .map((part) => part.trim().toLowerCase())
+    .join("|");
+
+/** A lead's own folded "city|st" key. "" when it has no city. */
+export const cityKey = (l: Lead) =>
+  cityOf(l) ? normalizeCityKey(`${cityOf(l)}|${(l.state ?? "").trim()}`) : "";
+
 export interface LeadsPageParams {
   /** 1-based. */
   page: number;
@@ -1234,6 +1271,10 @@ export interface LeadsPageParams {
    *  states, so the pair is the real filter key. "__none__" selects leads with
    *  no county on file. */
   county?: string;
+  /** "City|ST" composite (e.g. "Fresno|CA"), matched case- and
+   *  whitespace-insensitively because city is free text off a customer CSV.
+   *  "__none__" selects leads with no city on file. */
+  city?: string;
   /** Campaign id; "__none__" selects leads with no campaign. */
   campaignId?: string;
   uploaderId?: string;
@@ -1306,6 +1347,13 @@ function filterLeadsPage(
       const key = l.county ? `${l.county}|${l.state}` : "";
       if (params.county === "__none__" ? Boolean(l.county) : key !== params.county)
         return false;
+    }
+    if (params.city) {
+      // Case/whitespace-folded on both sides — the twin of the SQL's
+      // lower(btrim(...)) comparison. Keep the two in lockstep.
+      if (params.city === "__none__") {
+        if (cityOf(l)) return false;
+      } else if (cityKey(l) !== normalizeCityKey(params.city)) return false;
     }
     if (
       params.campaignId &&
@@ -1414,6 +1462,7 @@ export async function getLeadsPage(params: LeadsPageParams): Promise<LeadsPageRe
       p_status: params.status ?? null,
       p_group: params.group ?? null,
       p_county: params.county ?? null,
+      p_city: params.city ?? null,
       p_campaign: params.campaignId ?? null,
       p_uploader: params.uploaderId ?? null,
       p_mine: Boolean(params.mine),
@@ -1480,13 +1529,49 @@ export interface CountyOption {
  * rep → own uploads + assigned; supervisor → org pool + own pre-org rows.
  */
 export async function listDistinctCounties(): Promise<CountyOption[]> {
-  if (!isSupabaseConfigured()) return [];
+  return (await listPlaces()).counties;
+}
+
+export interface CityOption {
+  city: string;
+  state: string;
+}
+
+export interface PlaceOptions {
+  counties: CountyOption[];
+  cities: CityOption[];
+}
+
+/**
+ * Distinct counties AND cities in the viewer's scope, for the Leads filter
+ * dropdowns. ONE scan produces both: they read the same rows off the same
+ * table, so splitting them into two functions would page the whole book twice
+ * to answer one screen.
+ *
+ * ORDER IS UPLOAD ORDER — first appearance in the book, NOT alphabetical.
+ * A rep works a list the way it was handed to them, so the dropdown has to
+ * name the places in the order the file presented them: if the CSV opens with
+ * 400 Fresno rows and then moves to Bakersfield, Fresno is the first option.
+ * Sorting these A-Z reshuffled a deliberately-ordered list into a stranger's
+ * order, which is exactly the complaint that produced this comment. The rows
+ * are read `order by created_at, id` and deduped keeping FIRST occurrence,
+ * and insertLeads stamps a per-row created_at so rows inside one CSV keep
+ * their file order rather than sharing one batch timestamp.
+ *
+ * Paged and narrow-selected (three text columns) rather than routed through
+ * app_leads_page: that RPC returns one PAGE of full lead rows for the current
+ * filter, not distinct values scope-wide. Same scope split as getLeads:
+ * rep → own uploads + assigned; supervisor → org pool + own pre-org rows.
+ */
+export async function listPlaces(): Promise<PlaceOptions> {
+  const empty: PlaceOptions = { counties: [], cities: [] };
+  if (!isSupabaseConfigured()) return empty;
   try {
     const supabase = await createClient();
     const {
       data: { user },
     } = await supabase.auth.getUser();
-    if (!user) return [];
+    if (!user) return empty;
     const { data: prof } = await supabase
       .from("profiles")
       .select("org_id, role")
@@ -1496,55 +1581,63 @@ export async function listDistinctCounties(): Promise<CountyOption[]> {
     const supervisor =
       Boolean(orgId) && isSupervisorRole(prof?.role) && isAdminConfigured();
 
-    const seen = new Map<string, CountyOption>();
+    // Insertion-ordered Maps: first write wins the position, so deduping keeps
+    // each place at its FIRST appearance in upload order.
+    const counties = new Map<string, CountyOption>();
+    const cities = new Map<string, CityOption>();
     const collect = (rows: Row[]) => {
       for (const r of rows) {
-        const county = String(r.county ?? "").trim();
         const state = String(r.state ?? "").trim();
-        if (!county) continue;
-        seen.set(`${county}|${state}`, { county, state });
+        const county = String(r.county ?? "").trim();
+        if (county && !counties.has(`${county}|${state}`)) {
+          counties.set(`${county}|${state}`, { county, state });
+        }
+        const city = String(r.city ?? "").trim();
+        if (city) {
+          // Folded key so "Fresno"/"fresno " collapse; the FIRST spelling seen
+          // is the one displayed, matching how the book itself reads.
+          const key = normalizeCityKey(`${city}|${state}`);
+          if (!cities.has(key)) cities.set(key, { city, state });
+        }
       }
     };
+
+    const COLS = "county,city,state";
+    // Upload order, matching getLeads/getDialQueue's ORDERING contract.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const inOrder = (q: any) =>
+      q.order("created_at", { ascending: true }).order("id", { ascending: true });
 
     if (!supervisor) {
       const rows = await fetchAllPaged(() => {
         let q = supabase
           .from("leads")
-          .select("county,state")
-          .or(`owner_id.eq.${user.id},assigned_rep_id.eq.${user.id}`)
-          .not("county", "is", null);
+          .select(COLS)
+          .or(`owner_id.eq.${user.id},assigned_rep_id.eq.${user.id}`);
         if (orgId) q = q.eq("org_id", orgId);
-        return q;
+        return inOrder(q);
       });
       collect(rows);
     } else {
       const admin = createAdminClient();
-      const [orgRows, ownRows] = await Promise.all([
-        fetchAllPaged(() =>
-          admin
-            .from("leads")
-            .select("county,state")
-            .eq("org_id", orgId as string)
-            .not("county", "is", null),
+      // Sequential, not Promise.all: the org pool is the main book and its
+      // order must lead: a supervisor's own stray pre-org rows are a footnote
+      // and belong after it, not interleaved by whichever query returned first.
+      const orgRows = await fetchAllPaged(() =>
+        inOrder(admin.from("leads").select(COLS).eq("org_id", orgId as string)),
+      );
+      const ownRows = await fetchAllPaged(() =>
+        inOrder(
+          admin.from("leads").select(COLS).eq("owner_id", user.id).is("org_id", null),
         ),
-        fetchAllPaged(() =>
-          admin
-            .from("leads")
-            .select("county,state")
-            .eq("owner_id", user.id)
-            .is("org_id", null)
-            .not("county", "is", null),
-        ),
-      ]);
+      );
       collect(orgRows);
       collect(ownRows);
     }
 
-    return [...seen.values()].sort(
-      (a, b) => a.county.localeCompare(b.county) || a.state.localeCompare(b.state),
-    );
+    return { counties: [...counties.values()], cities: [...cities.values()] };
   } catch {
-    return [];
+    return empty;
   }
 }
 

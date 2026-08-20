@@ -32,6 +32,7 @@ function UploadTile({
   hint,
   manual,
   packSize,
+  packBy,
   packBatchFor,
 }: {
   groupKey: string | null;
@@ -39,6 +40,7 @@ function UploadTile({
   hint: string;
   manual?: boolean;
   packSize: number;
+  packBy: "sequence" | "city";
   packBatchFor: (file: string) => string;
 }) {
   const [batch, setBatch] = useState("Upload");
@@ -46,6 +48,7 @@ function UploadTile({
     leadGroup: groupKey,
     packSize,
     packBatch: batch,
+    packBy,
   });
   const inputRef = useRef<HTMLInputElement>(null);
   const [dragOver, setDragOver] = useState(false);
@@ -313,6 +316,7 @@ export function GroupUploadGrid({
   const [preview, setPreview] = useState<{ data: SortPreviewResponse; file: string } | null>(null);
   const [sortLimit, setSortLimit] = useState(2000);
   const [packSize, setPackSize] = useState(0);
+  const [packBy, setPackBy] = useState<"sequence" | "city">("sequence");
 
   if (!canImport) return null;
 
@@ -322,6 +326,7 @@ export function GroupUploadGrid({
         preview={preview.data}
         packSize={packSize}
         packBatch={preview.file}
+        packBy={packBy}
         onDone={() => setPreview(null)}
         onCancel={() => setPreview(null)}
       />
@@ -367,6 +372,45 @@ export function GroupUploadGrid({
               onChange={setPackSize}
               format={(n) => (n === 0 ? "No packs" : String(n))}
             />
+            {/* Only meaningful once packs are on — hidden otherwise rather than
+                shown disabled, so the row doesn't advertise a dead control. */}
+            {packSize > 0 && (
+              <div>
+                <p className="text-xs font-bold uppercase tracking-wide text-muted-foreground">
+                  Group packs by
+                </p>
+                <p className="mb-2 text-xs text-muted-foreground">
+                  Either way, rows keep the order of your file.
+                </p>
+                <div className="flex flex-wrap gap-1.5">
+                  {(
+                    [
+                      { v: "sequence", label: "File order" },
+                      { v: "city", label: "City" },
+                    ] as const
+                  ).map((o) => (
+                    <button
+                      key={o.v}
+                      type="button"
+                      onClick={() => setPackBy(o.v)}
+                      title={
+                        o.v === "city"
+                          ? "Each city gets its own pack, in the order your file introduces them"
+                          : "Straight slices down the file, in order"
+                      }
+                      className={cn(
+                        "rounded-lg px-2.5 py-1 text-xs font-semibold transition-colors",
+                        packBy === o.v
+                          ? "bg-primary text-white"
+                          : "bg-muted text-muted-foreground hover:text-foreground",
+                      )}
+                    >
+                      {o.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
             <button
               type="button"
               onClick={() => setManaging((m) => !m)}
@@ -395,6 +439,7 @@ export function GroupUploadGrid({
                   hint={g.description || `${g.leadCount.toLocaleString()} leads`}
                   manual={g.kind === "manual"}
                   packSize={packSize}
+                  packBy={packBy}
                   packBatchFor={(f) => f.replace(/\.csv$/i, "")}
                 />
               ))}
@@ -403,6 +448,7 @@ export function GroupUploadGrid({
                 label="Miscellaneous"
                 hint="Unsorted — file them later"
                 packSize={packSize}
+                packBy={packBy}
                 packBatchFor={(f) => f.replace(/\.csv$/i, "")}
               />
               <AutoSortTile

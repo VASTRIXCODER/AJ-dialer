@@ -64,6 +64,81 @@ export function planPacks(
   return { packCount: count, effectiveSize: size };
 }
 
+/** One planned pack: the label it should carry and which row indices land in it. */
+export interface PlannedPack {
+  label: string;
+  indices: number[];
+}
+
+/**
+ * Cut rows into packs GROUPED BY CITY, in the order the file presented them.
+ *
+ * ORDER IS THE WHOLE POINT. Cities come out in order of FIRST APPEARANCE in
+ * the upload — not alphabetically — and rows keep their file order inside each
+ * pack. A rep handed "Pack 1" gets the top of the file, not whatever city
+ * happens to start with "A". Sorting here would quietly rewrite a list the
+ * manager deliberately ordered.
+ *
+ * City is matched case- and whitespace-insensitively ("Fresno" / "fresno " are
+ * one city); the label uses the FIRST spelling the file used. Rows with no
+ * city at all collect in their own trailing bucket rather than being dropped.
+ *
+ * Pure and index-based so it can be unit-tested without a database, and so the
+ * caller keeps ownership of the actual lead objects.
+ */
+export function planCityPacks(
+  rows: { city?: string | null; state?: string | null }[],
+  packSize: number,
+  batch: string,
+): PlannedPack[] {
+  const size = Math.max(MIN_PACK_SIZE, Math.floor(packSize) || MIN_PACK_SIZE);
+  const order: string[] = [];
+  const byCity = new Map<string, number[]>();
+  const labelOf = new Map<string, string>();
+
+  rows.forEach((r, i) => {
+    const city = String(r.city ?? "").trim();
+    const state = String(r.state ?? "").trim();
+    const key = city ? `${city.toLowerCase()}|${state.toLowerCase()}` : "__none__";
+    if (!byCity.has(key)) {
+      byCity.set(key, []);
+      order.push(key); // first appearance fixes this city's position
+      labelOf.set(key, city ? (state ? `${city}, ${state}` : city) : "No city");
+    }
+    byCity.get(key)!.push(i);
+  });
+
+  const packs: PlannedPack[] = [];
+  for (const key of order) {
+    const idx = byCity.get(key) ?? [];
+    const cityLabel = labelOf.get(key) ?? "No city";
+    // A city small enough for one pack is named plainly ("Jan list · Fresno,
+    // CA") — "· Pack 1" with no Pack 2 anywhere reads like something's missing.
+    const count = Math.max(1, Math.ceil(idx.length / size));
+    for (let p = 0; p < count; p++) {
+      packs.push({
+        label:
+          count === 1
+            ? `${batch} · ${cityLabel}`
+            : `${batch} · ${cityLabel} · Pack ${p + 1}`,
+        indices: idx.slice(p * size, (p + 1) * size),
+      });
+    }
+  }
+
+  // A book of mostly-unique cities can plan more packs than the ceiling allows
+  // (5,000 one-lead towns ⇒ 5,000 packs). Keep the first MAX-1 exactly as
+  // planned and sweep every remaining row into one honest tail pack, so the cap
+  // costs granularity at the END of the file and never silently drops a lead.
+  if (packs.length > MAX_PACKS_PER_UPLOAD) {
+    const kept = packs.slice(0, MAX_PACKS_PER_UPLOAD - 1);
+    const rest = packs.slice(MAX_PACKS_PER_UPLOAD - 1).flatMap((p) => p.indices);
+    kept.push({ label: `${batch} · Remaining cities`, indices: rest });
+    return kept;
+  }
+  return packs;
+}
+
 export async function listLeadPacks(orgId: string | null, limit = 200): Promise<LeadPack[]> {
   if (!orgId) return [];
   try {
@@ -88,7 +163,15 @@ export async function listLeadPacks(orgId: string | null, limit = 200): Promise<
  */
 export async function createPacks(
   orgId: string,
-  opts: { batch: string; packCount: number; createdBy?: string | null },
+  opts: {
+    batch: string;
+    packCount: number;
+    createdBy?: string | null;
+    /** Explicit per-pack labels, e.g. ["Jan list · Fresno, CA · Pack 1", …].
+     *  Index i names pack seq i+1. Short/absent entries fall back to the
+     *  numbered default, so a caller can name some packs and not others. */
+    labels?: string[];
+  },
 ): Promise<LeadPack[]> {
   if (!isAdminConfigured() || opts.packCount <= 0) return [];
   const admin = createAdminClient();
@@ -97,12 +180,14 @@ export async function createPacks(
     org_id: orgId,
     batch,
     seq: i + 1,
-    label: `${batch} · Pack ${i + 1}`,
+    label: (opts.labels?.[i] || `${batch} · Pack ${i + 1}`).slice(0, 160),
     size: 0,
     created_by: opts.createdBy ?? null,
   }));
   const { data, error } = await admin.from("lead_packs").insert(rows).select("*");
   if (error || !data) return [];
+  // Re-sorted by seq: `insert ... select *` does not promise the rows come back
+  // in the order they went in, and seq IS the caller's intended pack order.
   return data.map(rowToPack).sort((a, b) => a.seq - b.seq);
 }
 

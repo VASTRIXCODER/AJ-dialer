@@ -22,6 +22,9 @@ export function useCsvUpload(
     packSize?: number;
     /** What the packs are named after — normally the source file. */
     packBatch?: string;
+    /** "sequence" slices the file in order; "city" gives each city its own
+     *  pack(s), cities in the order the file presents them. */
+    packBy?: "sequence" | "city";
   } = {},
 ) {
   const router = useRouter();
@@ -41,7 +44,11 @@ export function useCsvUpload(
         ...(opts.campaignId ? { campaignId: opts.campaignId } : {}),
         ...(opts.leadGroup !== undefined ? { leadGroup: opts.leadGroup } : {}),
         ...(opts.packSize && opts.packSize > 0
-          ? { packSize: opts.packSize, packBatch: opts.packBatch ?? "Upload" }
+          ? {
+              packSize: opts.packSize,
+              packBatch: opts.packBatch ?? "Upload",
+              packBy: opts.packBy ?? "sequence",
+            }
           : {}),
       }),
     });

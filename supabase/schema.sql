@@ -1602,15 +1602,27 @@ grant execute on function public.app_claim_notifications(int) to service_role;
 create index if not exists leads_org_created_idx   on public.leads (org_id, created_at, id);
 create index if not exists leads_owner_created_idx on public.leads (owner_id, created_at, id);
 
--- The pre-sort 12-arg signature must be dropped first: CREATE OR REPLACE with
--- extra parameters would OVERLOAD the function rather than replace it, and two
--- candidates make PostgREST's rpc() resolution ambiguous when defaults are used.
-drop function if exists public.app_leads_page(uuid, uuid, boolean, text, text, text, text, uuid, boolean, text, integer, integer);
--- Dropped again for the same reason as above: adding p_county changes the
--- parameter list, and `create or replace` cannot alter one in place — without
--- this, the old 14-arg version would linger as a second overload and a
--- named-parameter RPC call could no longer resolve to a single candidate.
-drop function if exists public.app_leads_page(uuid, uuid, boolean, text, text, text, text, uuid, boolean, text, integer, integer, text, text);
+-- Every existing overload must be dropped before the CREATE: adding a parameter
+-- OVERLOADS the function rather than replacing it, and two candidates make
+-- PostgREST's rpc() resolution ambiguous once defaults are in play.
+--
+-- Done by INTROSPECTION rather than by listing signatures literally. The
+-- literal-list version silently rotted every time a parameter was added — a
+-- signature written by hand drifted out of order from the real parameter list
+-- and the whole migration died on `42883: function ... does not exist`. This
+-- form cannot drift: it drops whatever is actually there, whatever its shape.
+do $$
+declare r record;
+begin
+  for r in
+    select p.oid::regprocedure as sig
+    from pg_proc p
+    join pg_namespace n on n.oid = p.pronamespace
+    where n.nspname = 'public' and p.proname = 'app_leads_page'
+  loop
+    execute format('drop function if exists %s', r.sig);
+  end loop;
+end $$;
 
 create or replace function public.app_leads_page(
   p_org        uuid,
@@ -1620,6 +1632,7 @@ create or replace function public.app_leads_page(
   p_status     text    default null,
   p_group      text    default null,   -- group key; '__misc__' = ungrouped
   p_county     text    default null,   -- 'County|ST' composite; '__none__' = no county on file
+  p_city       text    default null,   -- 'City|ST' composite;   '__none__' = no city on file
   p_campaign   text    default null,   -- campaign id; '__none__' = unassigned
   p_uploader   uuid    default null,
   p_mine       boolean default false,
@@ -1680,6 +1693,23 @@ begin
       and (p_county is null
            or (case when p_county = '__none__' then county is null
                     else coalesce(county || '|' || state, '') = p_county end))
+      -- City is compared case- and whitespace-insensitively: unlike county
+      -- (which this app derives itself from ZIP, so it is always spelled one
+      -- way) city is free text straight off a customer CSV, where "Fresno",
+      -- "fresno " and "FRESNO" are all the same place and must land in one
+      -- bucket. Mirrors cityKey()/filterLeadsPage in src/lib/db/leads.ts.
+      -- City and state are compared as two SEPARATE equalities rather than one
+      -- concatenated key, so `lower(btrim(city))` appears standalone and can
+      -- actually be served by leads_org_city_lower_idx — a concatenation would
+      -- have made that index dead weight. Each side is trimmed independently
+      -- (a stored "Fresno " yields the key "Fresno |CA", so trimming only the
+      -- outside of the composite would match nothing). Mirrors
+      -- normalizeCityKey() in src/lib/db/leads.ts — keep the two in lockstep.
+      and (p_city is null
+           or (case when p_city = '__none__' then coalesce(btrim(city), '') = ''
+                    else lower(btrim(city)) = lower(btrim(split_part(p_city, '|', 1)))
+                     and lower(btrim(coalesce(state, ''))) = lower(btrim(split_part(p_city, '|', 2)))
+                    end))
       and (p_campaign is null
            or (case when p_campaign = '__none__' then coalesce(campaign_id, '') = ''
                     else campaign_id = p_campaign end))
@@ -1805,12 +1835,27 @@ begin
 end;
 $$;
 
-grant execute on function public.app_leads_page(uuid, uuid, boolean, text, text, text, text, uuid, boolean, text, integer, integer, text, text, text) to service_role;
 -- CREATE FUNCTION grants PUBLIC execute by default; this function trusts its
--- p_* scope params, so it must only be reachable via the service-role client.
-revoke execute on function public.app_leads_page(uuid, uuid, boolean, text, text, text, text, uuid, boolean, text, integer, integer, text, text, text) from public;
-revoke execute on function public.app_leads_page(uuid, uuid, boolean, text, text, text, text, uuid, boolean, text, integer, integer, text, text, text) from anon;
-revoke execute on function public.app_leads_page(uuid, uuid, boolean, text, text, text, text, uuid, boolean, text, integer, integer, text, text, text) from authenticated;
+-- p_* scope params with no auth.uid() check, so it must only ever be reachable
+-- via the service-role client. Applied by introspection for the same reason the
+-- drop above is — a hand-written signature here drifts the moment a parameter
+-- is added, and a drifted GRANT fails the migration with 42883 (or, worse,
+-- silently leaves the function callable by `anon`).
+do $$
+declare r record;
+begin
+  for r in
+    select p.oid::regprocedure as sig
+    from pg_proc p
+    join pg_namespace n on n.oid = p.pronamespace
+    where n.nspname = 'public' and p.proname = 'app_leads_page'
+  loop
+    execute format('revoke execute on function %s from public', r.sig);
+    execute format('revoke execute on function %s from anon', r.sig);
+    execute format('revoke execute on function %s from authenticated', r.sig);
+    execute format('grant  execute on function %s to service_role', r.sig);
+  end loop;
+end $$;
 
 -- ═════════════════════════════════════════════════════════════════════════════
 -- Persisted call transcripts (P5.TRANSCRIPT)
@@ -1914,3 +1959,11 @@ create index if not exists lead_packs_assigned_idx on public.lead_packs (assigne
 -- ─────────────────────────────────────────────────────────────────────────────
 alter table public.leads add column if not exists county text;
 create index if not exists leads_org_county_idx on public.leads (org_id, county) where county is not null;
+
+-- City needs no column (it has always been on `leads`) — only an index, and a
+-- case-folded one, because the city filter compares lower(btrim(city)) so that
+-- "Fresno" / "fresno " / "FRESNO" off three different customer CSVs all match
+-- one bucket. A plain (org_id, city) index cannot serve that predicate.
+create index if not exists leads_org_city_lower_idx
+  on public.leads (org_id, lower(btrim(city)))
+  where coalesce(btrim(city), '') <> '';

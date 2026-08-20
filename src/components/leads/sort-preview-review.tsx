@@ -61,6 +61,7 @@ export function SortPreviewReview({
   preview,
   packSize,
   packBatch,
+  packBy,
   onDone,
   onCancel,
 }: {
@@ -68,6 +69,9 @@ export function SortPreviewReview({
   /** Cut each confirmed bucket into packs of this size. 0 = don't pack. */
   packSize?: number;
   packBatch?: string;
+  /** "sequence" slices each bucket in order; "city" gives each city its own
+   *  pack(s) within the bucket, cities in first-appearance order. */
+  packBy?: "sequence" | "city";
   onDone: () => void;
   onCancel: () => void;
 }) {
@@ -140,7 +144,11 @@ export function SortPreviewReview({
             ? { discoveredFields: preview.discoveredFields }
             : {}),
           ...(packSize && packSize > 0
-            ? { packSize, packBatch: `${packBatch ?? "Upload"} · ${labelOf.get(key) ?? key}` }
+            ? {
+                packSize,
+                packBatch: `${packBatch ?? "Upload"} · ${labelOf.get(key) ?? key}`,
+                packBy: packBy ?? "sequence",
+              }
             : {}),
         }),
       });

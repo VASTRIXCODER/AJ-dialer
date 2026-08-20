@@ -10,7 +10,13 @@ import {
 import type { LeadFieldDef } from "@/lib/leads/field-schema";
 import { parseCsvToLeads } from "@/lib/leads/parse-request";
 import { isValidGroupKey } from "@/lib/db/lead-groups";
-import { createPacks, planPacks, pruneEmptyPacks, setPackSizes } from "@/lib/db/lead-packs";
+import {
+  createPacks,
+  planCityPacks,
+  planPacks,
+  pruneEmptyPacks,
+  setPackSizes,
+} from "@/lib/db/lead-packs";
 import type { LeadGroup } from "@/lib/types";
 import { getViewer } from "@/lib/org/membership";
 import { clientIp, rateLimit } from "@/lib/rate-limit";
@@ -102,6 +108,10 @@ export async function POST(req: Request) {
     packSize?: number | null;
     /** Label the packs carry — normally the source file name. */
     packBatch?: string | null;
+    /** How to cut the packs. "sequence" (default) slices the file in order;
+     *  "city" gives each city its own pack(s), in the order the file presents
+     *  them. Either way rows keep their file order — see planCityPacks. */
+    packBy?: "sequence" | "city" | null;
   };
 
   // Reject an oversized CSV before parsing: parseCsvToLeads walks the whole string
@@ -209,19 +219,47 @@ export async function POST(req: Request) {
   // rows mean the final counts aren't knowable until the write lands.
   const packSize = Number(body.packSize) || 0;
   const wantsPacks = packSize > 0 && Boolean(viewer.org?.id);
+  const packBy = body.packBy === "city" ? "city" : "sequence";
   let packIds: string[] = [];
   let assignedPackOf: (index: number) => string | null = () => null;
 
   if (wantsPacks && viewer.org?.id) {
-    const { packCount, effectiveSize } = planPacks(capped.length, packSize);
-    const packs = await createPacks(viewer.org.id, {
-      batch: (body.packBatch || "Upload").toString(),
-      packCount,
-      createdBy: viewer.user?.id ?? null,
-    });
-    if (packs.length) {
-      packIds = packs.map((p) => p.id);
-      assignedPackOf = (i) => packs[Math.min(packs.length - 1, Math.floor(i / effectiveSize))].id;
+    const batch = (body.packBatch || "Upload").toString();
+    if (packBy === "city") {
+      // One pack per city (or several for a big city), cities in the order the
+      // file introduced them. planCityPacks owns that ordering; this only maps
+      // its planned row indices onto the pack ids the insert hands back.
+      const planned = planCityPacks(
+        capped as { city?: string | null; state?: string | null }[],
+        packSize,
+        batch,
+      );
+      const packs = await createPacks(viewer.org.id, {
+        batch,
+        packCount: planned.length,
+        createdBy: viewer.user?.id ?? null,
+        labels: planned.map((p) => p.label),
+      });
+      if (packs.length) {
+        packIds = packs.map((p) => p.id);
+        const packIdOfRow = new Map<number, string>();
+        planned.forEach((p, pi) => {
+          const id = packs[pi]?.id;
+          if (id) for (const rowIndex of p.indices) packIdOfRow.set(rowIndex, id);
+        });
+        assignedPackOf = (i) => packIdOfRow.get(i) ?? null;
+      }
+    } else {
+      const { packCount, effectiveSize } = planPacks(capped.length, packSize);
+      const packs = await createPacks(viewer.org.id, {
+        batch,
+        packCount,
+        createdBy: viewer.user?.id ?? null,
+      });
+      if (packs.length) {
+        packIds = packs.map((p) => p.id);
+        assignedPackOf = (i) => packs[Math.min(packs.length - 1, Math.floor(i / effectiveSize))].id;
+      }
     }
   }
 
