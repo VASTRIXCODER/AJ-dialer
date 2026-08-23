@@ -63,9 +63,15 @@ on. The code is ready the moment numbers are in the pool.
 > already assigned to a different org); `TWILIO_CALLER_ID` (the "920" number)
 > is the one number every org shares, used only when an org's own pool is
 > empty. Sunrun ("Sunrun AJ Dialer") and VICC ("Donny's Dialer") each have
-> their own 9/8-number dedicated pools, onboarded via
+> their own 11-number dedicated pools, onboarded via
 > `POST /api/superadmin/provision-numbers` (points each number's Twilio Voice
 > webhook at the app and imports it into ElevenLabs for AI calling).
+>
+> **VICC, 2026-08-23** — the whole pool was swapped for a fresh 11 (213/346/760/832)
+> and every per-rep caller-ID pin (`organization_members.caller_ids`) was cleared,
+> so all VICC members now rotate through the full shared pool. Assignment is still
+> available per rep in Admin → Team; it's just unused there by choice. Any new
+> number must be run through `provision-numbers` before it carries volume.
 
 ## Current number inventory & config gaps (as of 2026-07)
 
