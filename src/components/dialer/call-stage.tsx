@@ -11,6 +11,7 @@ import {
   Lock,
   Mic,
   MicOff,
+  NotebookPen,
   Pause,
   Phone,
   PhoneOff,
@@ -26,6 +27,7 @@ import { useState } from "react";
 import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
+import { Textarea } from "@/components/ui/input";
 import type { AiLockReason } from "@/lib/org/settings";
 import type { CallOutcome, Lead } from "@/lib/types";
 import type { AiLaunch, DialerState, KnownInfo } from "@/lib/use-dialer";
@@ -118,12 +120,15 @@ export function CallStage({
   onEndAISession,
   onReconnect,
   wrapupNotes,
+  onNotesChange,
 }: {
   state: DialerState;
   focusLead: Lead | null;
   hasQueue: boolean;
   /** The rep's in-call notes at wrap-up — evidence for the AI summary. */
   wrapupNotes?: string;
+  /** Edit those notes from the wrap-up screen — same note the qualify panel shows. */
+  onNotesChange?: (notes: string) => void;
   aiConfigured: boolean;
   manualEnabled?: boolean;
   aiEnabled?: boolean;
@@ -325,7 +330,7 @@ export function CallStage({
                         onClick={() => onSetAiMode(true)}
                         className={cn(
                           "flex items-center gap-1.5 rounded-lg px-4 py-1.5 text-sm font-semibold transition-colors",
-                          ai ? "bg-solar text-white shadow-soft" : "text-muted-foreground hover:text-foreground",
+                          ai ? "bg-brand text-white shadow-soft" : "text-muted-foreground hover:text-foreground",
                         )}
                       >
                         <Bot className="h-4 w-4" />
@@ -396,7 +401,7 @@ export function CallStage({
                           className={cn(
                             "flex items-center gap-1.5 rounded-lg px-4 py-1.5 text-sm font-semibold transition-colors",
                             active
-                              ? "bg-solar text-white shadow-soft"
+                              ? "bg-brand text-white shadow-soft"
                               : "text-muted-foreground hover:text-foreground",
                           )}
                         >
@@ -414,7 +419,7 @@ export function CallStage({
                 <div
                   className={cn(
                     "mx-auto mb-4 flex h-20 w-20 animate-float items-center justify-center rounded-3xl shadow-glow",
-                    ai ? "bg-solar" : "bg-solar",
+                    ai ? "bg-brand" : "bg-brand",
                   )}
                 >
                   {ai ? (
@@ -751,6 +756,36 @@ export function CallStage({
                 notes={wrapupNotes}
                 durationSec={state.durationSec}
               />
+
+              {/* Notes belong HERE, at the moment the rep is judging the call —
+                  they used to live only in the qualify panel two columns away,
+                  so the wrap-up screen asked for a disposition while the place
+                  to record why was somewhere else entirely. Same note either
+                  way: the value is owned by the dialer page. */}
+              {onNotesChange && (
+                <div>
+                  <label
+                    htmlFor="wrapup-notes"
+                    className="mb-1.5 flex items-center justify-between text-xs font-bold uppercase tracking-wide text-muted-foreground"
+                  >
+                    <span className="flex items-center gap-1.5">
+                      <NotebookPen className="h-3.5 w-3.5" />
+                      Notes
+                    </span>
+                    <span className="font-medium normal-case tracking-normal text-muted-foreground/70">
+                      Saved with the disposition
+                    </span>
+                  </label>
+                  <Textarea
+                    id="wrapup-notes"
+                    value={wrapupNotes ?? ""}
+                    onChange={(e) => onNotesChange(e.target.value)}
+                    placeholder="What happened, what they said, what to do next…"
+                    className="min-h-[72px]"
+                  />
+                </div>
+              )}
+
               <OutcomeGrid onSelect={onOutcome} />
               <div className="flex gap-2">
                 {/* Redial the SAME homeowner right now instead of waiting for
@@ -823,7 +858,7 @@ function AiSession({
       className="flex w-full max-w-sm flex-col gap-4"
     >
       <div className="text-center">
-        <div className="mx-auto mb-3 flex h-16 w-16 items-center justify-center rounded-2xl bg-solar shadow-glow">
+        <div className="mx-auto mb-3 flex h-16 w-16 items-center justify-center rounded-2xl bg-brand shadow-glow">
           <Bot className="h-8 w-8 text-white" />
         </div>
         <h2 className="text-lg font-bold">
@@ -842,7 +877,7 @@ function AiSession({
             key={`${c.leadId}-${i}`}
             className="flex items-center gap-3 rounded-xl border border-border/60 bg-surface/50 px-3 py-2"
           >
-            <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-solar/90 text-white">
+            <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-brand/90 text-white">
               <Bot className="h-3.5 w-3.5" />
             </span>
             <span className="min-w-0 flex-1">

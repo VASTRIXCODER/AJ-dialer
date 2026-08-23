@@ -11,6 +11,12 @@ export type AISource = "claude" | "demo";
 export interface AIResult<T> {
   data: T;
   source: AISource;
+  /**
+   * Why this fell back to the simulator, when it did. Present only on
+   * `source: "demo"` — so a screen can say "Claude is unreachable: …" instead of
+   * quietly showing invented numbers that look live.
+   */
+  error?: string;
 }
 
 /** A dynamic executive briefing generated the moment a lead is opened. */

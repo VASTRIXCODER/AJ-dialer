@@ -6,7 +6,10 @@ import {
   renderAppointmentEmail,
 } from "../email/templates/appointment";
 import { emailConfigProblem, isEmailConfigured, sendEmail } from "../email/resend";
+import { resolveLeadFields } from "../leads/field-schema";
 import { mergeSettings } from "../org/settings";
+import { templateProfile } from "../org/templates";
+import { DEFAULT_VOCABULARY, orgVocabulary } from "../org/vocabulary";
 import { createAdminClient, isAdminConfigured } from "../supabase/admin";
 import { MAX_ATTEMPTS, nextAttemptDelayMs } from "./backoff";
 
@@ -44,6 +47,13 @@ interface OrgContext {
   enabled: boolean;
   ccBookingRep: boolean;
   fromName: string;
+  /**
+   * The workspace's own words for the email body. Resolved here rather than at
+   * enqueue time so a template change or a terminology edit applies to rows
+   * already sitting in the outbox.
+   */
+  leadNoun: string;
+  moneyLabels: { primary?: string; secondary?: string };
 }
 
 /** Deployment-wide fallback for orgs that never opened Admin → Notifications. */
@@ -74,26 +84,50 @@ async function loadOrg(
     enabled: true,
     ccBookingRep: false,
     fromName: "",
+    leadNoun: DEFAULT_VOCABULARY.leadNoun,
+    moneyLabels: {},
   };
 
   if (orgId) {
     try {
       const { data } = await admin
         .from("organizations")
-        .select("name,settings")
+        .select("name,settings,dialer_template")
         .eq("id", orgId)
         .maybeSingle();
       if (data) {
-        const settings = mergeSettings((data as Row).settings);
+        const row = data as Row;
+        const settings = mergeSettings(row.settings);
         const n = settings.notifications;
+        const template = s(row.dialer_template) || null;
+        const fields = resolveLeadFields(
+          settings.leadFields,
+          templateProfile(template).fields,
+        );
+        const bare = (label?: string) =>
+          label ? label.replace(/\s*\([^)]*\)\s*$/, "").trim() || label : undefined;
         ctx = {
-          name: s((data as Row).name),
+          name: s(row.name),
           // The org's own list wins. The env var is only a fallback for a
           // workspace that has never configured one.
           emails: n.appointmentEmails.length ? n.appointmentEmails : envRecipients(),
           enabled: n.appointmentEmail !== false,
           ccBookingRep: Boolean(n.ccBookingRep),
           fromName: n.fromName || "",
+          leadNoun: orgVocabulary({
+            dialerTemplate: template,
+            settings: {
+              leadNoun: settings.leadNoun,
+              leadNounPlural: settings.leadNounPlural,
+            },
+          }).leadNoun,
+          // A hidden slot yields no label, and the template drops that row from
+          // the email entirely — an insurance booking must not carry a "Solar
+          // payment" line just because the column exists.
+          moneyLabels: {
+            primary: bare(fields.find((f) => f.key === "utilityBill" && f.showInTable !== false)?.label),
+            secondary: bare(fields.find((f) => f.key === "solarPayment" && f.showInQualify !== false)?.label),
+          },
         };
       }
     } catch {
@@ -318,7 +352,11 @@ export async function drainOutbox(
 
     const email = renderAppointmentEmail({
       kind,
-      payload,
+      payload: {
+        ...payload,
+        leadNoun: org.leadNoun,
+        moneyLabels: org.moneyLabels,
+      },
       repName,
       orgName: org.name,
       appUrl: appUrl(),
@@ -399,7 +437,8 @@ export async function listFailedNotifications(orgId: string | null): Promise<Fai
     return ((data ?? []) as Row[]).map((r) => ({
       id: s(r.id),
       kind: s(r.kind),
-      leadName: s((r.payload as AppointmentEmailPayload | null)?.leadName) || "Homeowner",
+      leadName:
+        s((r.payload as AppointmentEmailPayload | null)?.leadName) || "Unnamed contact",
       lastError: s(r.last_error),
       attempts: Number(r.attempts ?? 0),
       createdAt: s(r.created_at),

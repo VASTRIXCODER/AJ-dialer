@@ -4,6 +4,11 @@ import { MetricCard } from "@/components/dashboard/metric-card";
 import { RowActions } from "@/components/pipeline/row-actions";
 import { EmptyState } from "@/components/shared/empty-state";
 import { PageContainer, PageHeader } from "@/components/shared/page-header";
+import {
+  formatDayLabel,
+  formatTime,
+  parseFloating,
+} from "@/lib/appointments/time";
 import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { buttonVariants } from "@/components/ui/button";
@@ -31,9 +36,21 @@ const groups: Array<{
   { key: "upcoming", title: "Upcoming", tone: "accent", icon: CheckCircle2 },
 ];
 
+/**
+ * `callbacks.due_at` follows the same FLOATING wall-clock convention as
+ * `appointments.scheduled_at` (see src/lib/appointments/time.ts): the stored
+ * value is offset-less and must be parsed as local, never through
+ * `new Date(isoWithOffset)` — which would shift "call back at 5pm" by the
+ * viewer's UTC offset and drop it into the wrong triage bucket.
+ */
+function dueDate(c: CallbackRow): Date | null {
+  return parseFloating(c.dueAt);
+}
+
 function groupOf(c: CallbackRow): "overdue" | "due" | "upcoming" {
-  if (!c.dueAt) return "due";
-  const t = new Date(c.dueAt).getTime();
+  const d = dueDate(c);
+  if (!d) return "due";
+  const t = d.getTime();
   if (t < Date.now() - 60_000) return "overdue";
   if (t > Date.now() + 60_000) return "upcoming";
   return "due";
@@ -118,11 +135,23 @@ export default async function CallbacksPage() {
                           {cb.repName && <span> · {cb.repName}</span>}
                         </p>
                       </div>
-                      {cb.dueAt && (
-                        <span className="text-xs font-medium text-muted-foreground">
-                          {relativeTime(cb.dueAt)}
-                        </span>
-                      )}
+                      {(() => {
+                        const d = dueDate(cb);
+                        return d ? (
+                          <span
+                            className="text-xs font-medium text-muted-foreground"
+                            title={`${formatDayLabel(d)} at ${formatTime(d)}`}
+                          >
+                            {relativeTime(d.toISOString())}
+                          </span>
+                        ) : (
+                          // Honest: a callback with no agreed time is not "due
+                          // now", it just never got one.
+                          <span className="text-xs font-medium text-muted-foreground/70">
+                            No time set
+                          </span>
+                        );
+                      })()}
                       <RowActions kind="callback" id={cb.id} leadId={cb.leadId} statusOptions={CB_STATUS_OPTIONS} />
                     </div>
                     {cb.reason && (

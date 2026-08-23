@@ -23,18 +23,23 @@ import { Card } from "@/components/ui/card";
 import { isAIConfigured, pingAI } from "@/lib/ai/claude";
 import { isElevenLabsConfigured } from "@/lib/elevenlabs";
 import { getViewer } from "@/lib/org/membership";
+import { orgVocabulary, type OrgVocabulary } from "@/lib/org/vocabulary";
 import { cn } from "@/lib/utils";
 
 export const metadata = { title: "AI Command Center" };
 export const dynamic = "force-dynamic";
 
-function capabilitiesFor(isSolar: boolean) {
+// What the voice agent does, in the workspace's own words. This used to be a
+// solar list with a couple of `isSolar ?` swaps, so every other vertical was
+// told the agent "gathers billing & home information" and "books account-review
+// appointments" — neither of which is true of a recruiting or healthcare call.
+function capabilitiesFor(vocab: OrgVocabulary) {
   return [
-    "Places outbound qualification calls",
-    isSolar ? "Asks the solar resolution script" : "Asks the qualification script",
-    "Gathers billing & home information",
-    isSolar ? "Identifies utility-bill overpayment" : "Identifies buying signals",
-    "Books account-review appointments",
+    `Places outbound calls to your ${vocab.leadNounPlural}`,
+    "Asks your qualification script",
+    "Captures the fields you qualify on",
+    vocab.isSolar ? "Identifies utility-bill overpayment" : "Identifies buying signals",
+    `Books ${vocab.appointmentNounPlural}`,
     "Ends the call itself when finished",
     "Writes AI call summaries & lead scores",
   ];
@@ -57,15 +62,15 @@ const services: Array<{ icon: LucideIcon; name: string; desc: string }> = [
   { icon: TrendingUp, name: "Predictive Analytics", desc: "Contact, conversion & qualification probabilities on every briefing." },
 ];
 
-function tipsFor(isSolar: boolean) {
+function tipsFor(vocab: OrgVocabulary) {
   return [
     "“Brief me on today and tell me what to prioritize.”",
-    isSolar
-      ? "“Which leads have the highest overpayment signal?”"
-      : "“Which leads have the highest buying signal?”",
+    vocab.isSolar
+      ? `“Which ${vocab.leadNounPlural} have the highest overpayment signal?”`
+      : `“Which ${vocab.leadNounPlural} have the highest buying signal?”`,
     "“Walk me through starting a 3× AI calling session.”",
     "“What's my connect rate and how do I improve it?”",
-    "“Summarize my upcoming appointments and due callbacks.”",
+    `“Summarize my upcoming ${vocab.appointmentNounPlural} and due callbacks.”`,
   ];
 }
 
@@ -74,16 +79,15 @@ export default async function AiAgentPage() {
   // "Live" means Claude is ACTUALLY reachable and the model resolves — not merely
   // that a key is present. Without this the badge said "live" even when the key
   // was invalid or the model unavailable, while every surface silently served
-  // demo data. pingAI is a 16-token round-trip and never throws; skipped entirely
+  // demo data. pingAI is one tiny round-trip and never throws; skipped entirely
   // when no key is configured (so demo mode makes no wasted call).
   const aiLive = isAIConfigured() ? (await pingAI()).ok : false;
   const voiceLive = isElevenLabsConfigured();
-  const isSolar = viewer.org?.dialerTemplate === "solar";
-  const capabilities = capabilitiesFor(isSolar);
-  const tips = tipsFor(isSolar);
-  const intelligenceLayerDesc = isSolar
-    ? "Your central AI assistant — it briefs you, oversees the floor, and powers the whole solar-resolution intelligence layer."
-    : "Your central AI assistant — it briefs you, oversees the floor, and powers the whole calling intelligence layer.";
+  const vocab = orgVocabulary(viewer.org);
+  const capabilities = capabilitiesFor(vocab);
+  const tips = tipsFor(vocab);
+  const intelligenceLayerDesc =
+    "Your central AI assistant — it briefs you, oversees the floor, and powers the whole calling intelligence layer.";
   const aiOrgEnabled =
     viewer.org?.settings?.features?.aiDialer !== false &&
     viewer.org?.settings?.features?.aiAgent !== false;

@@ -17,6 +17,36 @@ const UUID =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const asUuid = (v?: string | null) => (v && UUID.test(v) ? v : null);
 
+/**
+ * A turn array flattened to searchable plain text, stored alongside the call.
+ *
+ * The structured turns stay on `ai_conversations` and still render the chat
+ * bubbles; this is the copy the archive searches, snippets, and hands to
+ * "download transcript". Keeping it on `call_records` is what makes a transcript
+ * findable at all — before, the only way to read one was to already know which
+ * call to open.
+ */
+export function flattenTranscript(
+  turns: { role: string; message: string; secs?: number | null }[] | null | undefined,
+): string | null {
+  if (!Array.isArray(turns) || turns.length === 0) return null;
+  const text = turns
+    .map((t) => {
+      const who = t.role === "agent" ? "Agent" : "Contact";
+      // Internal newlines are collapsed so one turn is always one line. That
+      // keeps the round-trip lossless: the detail view splits this back into
+      // speaker bubbles, and a turn that spanned two lines would otherwise come
+      // back as an unattributed fragment.
+      const line = String(t.message ?? "")
+        .replace(/\s*\n+\s*/g, " ")
+        .trim();
+      return line ? `${who}: ${line}` : "";
+    })
+    .filter(Boolean)
+    .join("\n");
+  return text || null;
+}
+
 // outcome → lead status (shared by every disposition path).
 const OUTCOME_TO_STATUS: Record<CallOutcome, string> = {
   appointment_booked: "appointment",
@@ -29,6 +59,21 @@ const OUTCOME_TO_STATUS: Record<CallOutcome, string> = {
   wrong_number: "no_answer",
   do_not_call: "dnc",
 };
+
+/**
+  * What a disposition knows about the callback it promised.
+  *
+  * Until this existed, `callback_scheduled` wrote a row with no `due_at` at all,
+  * so every promised callback read as "due now" forever and the Callbacks page's
+  * overdue/due/upcoming triage sorted nothing.
+  */
+export interface CallbackDraft {
+  /** Floating wall-clock ("2026-06-23T18:00:00"). Absent = no time agreed. */
+  iso?: string;
+  /** Human label for the agreed time, e.g. "Tue, Jun 23 · 6:00 PM". */
+  when?: string;
+  reason?: string;
+}
 
 /** What a disposition knows about the appointment it booked. */
 export interface AppointmentDraft {
@@ -60,6 +105,7 @@ async function routeDisposition(
     outcome: CallOutcome;
     summary?: string;
     appointment?: AppointmentDraft | null;
+    callback?: CallbackDraft | null;
     source: "ai" | "rep";
     /** The call this disposition came from — links the appointment to its call. */
     callRecordId?: string | null;
@@ -117,12 +163,22 @@ async function routeDisposition(
       approved: input.source !== "ai",
     });
   } else if (outcome === "callback_scheduled") {
+    const cb = input.callback ?? null;
     await client.from("callbacks").insert({
       owner_id: ownerId,
       lead_id: leadId,
       lead_name: input.leadName,
       phone: input.phone,
-      reason: input.summary || "Callback requested",
+      // The rep's own words about the callback beat a generic summary; the
+      // agreed time is appended so the reason still reads correctly on a board
+      // that only shows a relative "in 3 hours".
+      reason:
+        [cb?.reason?.trim() || input.summary || "Callback requested", cb?.when]
+          .filter(Boolean)
+          .join(" · "),
+      // Null when no time was agreed — the honest representation, and what the
+      // Callbacks page already renders as "due now".
+      due_at: cb?.iso || null,
       status: "due",
     });
   } else if (outcome === "do_not_call") {
@@ -174,6 +230,8 @@ export async function insertCallRecord(input: {
    * up in the "later" bucket rather than on the calendar.
    */
   appointment?: AppointmentDraft | null;
+  /** The callback time the rep agreed, captured before the disposition is filed. */
+  callback?: CallbackDraft | null;
   /** Which campaign script (A/B) was shown on this call — null when none was. */
   scriptVariant?: "a" | "b" | null;
 }): Promise<string | null> {
@@ -211,6 +269,11 @@ export async function insertCallRecord(input: {
       room: input.room ?? null,
       campaign_id: campaignId,
       script_variant: input.scriptVariant ?? null,
+      // The rep's notes belong to THIS call. They are also mirrored onto the
+      // lead below (that's the lead's current note), but leads.notes is a single
+      // field every later call overwrites — so without this column the note from
+      // a call was gone the moment the next one was dispositioned.
+      notes: input.notes?.trim() || null,
     }).select("id").maybeSingle();
     const recordId = (rec as { id?: string } | null)?.id ?? null;
 
@@ -278,6 +341,7 @@ export async function insertCallRecord(input: {
       outcome: input.outcome,
       summary: input.summary,
       appointment: input.appointment ?? null,
+      callback: input.callback ?? null,
       callRecordId: recordId,
       source: input.channel === "ai" ? "ai" : "rep",
     });
@@ -477,6 +541,8 @@ export async function completeAIConversation(input: {
   sentiment: string;
   durationSec?: number;
   appointment?: { when: string; iso?: string; notes: string } | null;
+  /** The callback time resolved from the transcript, when one was agreed. */
+  callback?: CallbackDraft | null;
   /** "failed" for calls that never connected; defaults to "completed". */
   state?: "completed" | "failed";
   /**
@@ -532,6 +598,8 @@ export async function completeAIConversation(input: {
       })
       .eq("conversation_id", input.conversationId);
 
+    const transcriptText = flattenTranscript(input.transcript);
+
     const ownerId = existing?.owner_id as string | undefined;
     if (!ownerId) return;
 
@@ -577,6 +645,7 @@ export async function completeAIConversation(input: {
         summary: input.summary,
         sentiment: input.sentiment,
         campaign_id: campaignId,
+        transcript_text: flattenTranscript(input.transcript),
       });
     } else if (upgrading) {
       // Correct the previously-filed (e.g. no-answer) record with the real result.
@@ -589,6 +658,10 @@ export async function completeAIConversation(input: {
           summary: input.summary,
           sentiment: input.sentiment,
           duration_sec: input.durationSec ?? 0,
+          // The upgrade path is exactly the case where the transcript arrives
+          // LATE (a call filed as no-answer, corrected by the post-call webhook
+          // that carries the turns) — so this is the one that must not skip it.
+          ...(transcriptText ? { transcript_text: transcriptText } : {}),
         })
         .eq("id", existingRec.id);
     }
@@ -609,6 +682,7 @@ export async function completeAIConversation(input: {
       outcome: input.outcome,
       summary: input.summary,
       appointment: input.appointment ?? null,
+      callback: input.callback ?? null,
       source: "ai",
       agentKey: (existing?.agent_key as string) ?? null,
     });
@@ -943,8 +1017,12 @@ export async function applyManualDisposition(
 ): Promise<{ ok: boolean; error?: string }> {
   try {
     const { lead, outcome } = input;
+    // A nameless lead falls back to the number, which is at least actionable —
+    // this used to stamp the literal word "Homeowner" onto the call record and
+    // the calendar entry, in every vertical.
     const leadName =
-      `${lead.first_name ?? ""} ${lead.last_name ?? ""}`.trim() || "Homeowner";
+      `${lead.first_name ?? ""} ${lead.last_name ?? ""}`.trim() ||
+      (lead.phone ?? "").trim();
     await admin
       .from("leads")
       .update({

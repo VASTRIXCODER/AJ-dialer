@@ -29,6 +29,7 @@ import {
   useState,
   useTransition,
 } from "react";
+import { useVocabulary } from "@/components/layout/vocabulary";
 import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -211,6 +212,7 @@ export function LeadsTable({
   showSolarPayment?: boolean;
 }) {
   const router = useRouter();
+  const vocab = useVocabulary();
   const [isPending, startTransition] = useTransition();
 
   // Every filter lives in the URL — the server does the actual filtering, so
@@ -1099,7 +1101,7 @@ export function LeadsTable({
                     />
                   </th>
                 )}
-                <SortableTh label="Homeowner" sortKey="name" sort={activeSort} onToggle={toggleSort} />
+                <SortableTh label={vocab.LeadNoun} sortKey="name" sort={activeSort} onToggle={toggleSort} />
                 <SortableTh label="Location" sortKey="city" sort={activeSort} onToggle={toggleSort} />
                 <th className="px-4 py-3">Campaign</th>
                 {valueColumns.map((f) => {

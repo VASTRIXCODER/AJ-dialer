@@ -12,12 +12,16 @@ import { getAppointments } from "@/lib/db/pipeline";
 import { getUiPreferences } from "@/lib/db/team";
 import { listFailedNotifications } from "@/lib/notifications/outbox";
 import { getViewer, listMembers } from "@/lib/org/membership";
+import { orgVocabulary } from "@/lib/org/vocabulary";
 
 export const metadata = { title: "Appointments" };
 export const dynamic = "force-dynamic";
 
 export default async function AppointmentsPage() {
   const viewer = await getViewer();
+  // "Account reviews" is what a SOLAR team books. A recruiter books interviews,
+  // an agency books showings — the calendar should say so.
+  const vocab = orgVocabulary(viewer.org);
 
   // The nav already hides this, but a page must never trust the nav — a URL is
   // typed, bookmarked and shared. (The writes are gated independently, in
@@ -26,7 +30,10 @@ export default async function AppointmentsPage() {
   if (!viewer.permissions.includes("appointments.view")) {
     return (
       <PageContainer>
-        <PageHeader title="Appointments" description="Account reviews across your reps and the AI agent." />
+        <PageHeader
+          title="Appointments"
+          description={`${vocab.appointmentNounPlural.charAt(0).toUpperCase()}${vocab.appointmentNounPlural.slice(1)} across your reps and the AI agent.`}
+        />
         <EmptyState
           icon={Lock}
           title="You don't have access to the calendar"
@@ -66,12 +73,12 @@ export default async function AppointmentsPage() {
       <PageContainer>
         <PageHeader
           title="Appointments"
-          description="Account reviews scheduled across your reps and the AI agent."
+          description={`${vocab.appointmentNounPlural.charAt(0).toUpperCase()}${vocab.appointmentNounPlural.slice(1)} scheduled across your reps and the AI agent.`}
         />
         <EmptyState
           icon={CalendarCheck}
           title="No appointments scheduled"
-          description="Booked account reviews from your reps and the AI agent appear here automatically — on a real calendar you can drag, reschedule and plan around. AI proposals land in a review lane for you to approve first."
+          description={`Booked ${vocab.appointmentNounPlural} from your reps and the AI agent appear here automatically — on a real calendar you can drag, reschedule and plan around. AI proposals land in a review lane for you to approve first.`}
           action={{ label: "Open the dialer", href: "/dialer" }}
         />
       </PageContainer>

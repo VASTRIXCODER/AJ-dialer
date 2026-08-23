@@ -13,7 +13,7 @@ type Size = "sm" | "md" | "lg" | "icon";
 
 const variants: Record<Variant, string> = {
   primary:
-    "sheen bg-solar text-white shadow-soft ring-1 ring-inset ring-white/10 hover:shadow-glow hover:brightness-[1.06] active:brightness-95",
+    "sheen bg-brand text-white shadow-soft ring-1 ring-inset ring-white/10 hover:shadow-glow hover:brightness-[1.06] active:brightness-95",
   secondary: "sheen bg-foreground text-background hover:opacity-90 shadow-soft",
   outline:
     "border border-border/70 bg-surface/50 backdrop-blur-md text-foreground hover:border-border hover:bg-surface-muted/80",

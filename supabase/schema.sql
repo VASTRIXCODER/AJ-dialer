@@ -1986,3 +1986,80 @@ create index if not exists leads_org_city_lower_idx
 -- ─────────────────────────────────────────────────────────────────────────────
 alter table public.organization_members
   add column if not exists caller_ids text[] not null default '{}';
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- PART 21 — THE CALL ARCHIVE  (idempotent; safe to re-run)
+--
+-- Transcripts and recordings existed but were effectively unfindable. A
+-- transcript lived only on `ai_conversations.transcript` (jsonb), reachable
+-- solely by opening one call at a time from an unfiltered, unsearchable list on
+-- the Reports page; a rep who remembered "the guy who said he'd just renewed"
+-- had no way to get back to that call at all. Rep notes were written to
+-- `leads.notes` and overwrote each other, so the note from call #1 was gone by
+-- the end of call #2 and no call record carried what was said on it.
+--
+-- Two columns fix both:
+--
+--   transcript_text — the turn array flattened to plain text at finalize time.
+--     Deliberately DENORMALIZED from ai_conversations.transcript: the archive
+--     searches and snippets this column, while the detail view still renders the
+--     structured turns from the source of truth. One indexed text column beats
+--     scanning jsonb across a join on every keystroke.
+--
+--   notes — the rep's own notes, ATTACHED TO THE CALL. leads.notes remains the
+--     lead's current note (the dialer still writes it); this is the immutable
+--     per-call record that makes "Lead → Call → Disposition → Notes" an actual
+--     history rather than a single overwritten field.
+--
+-- pg_trgm powers the ILIKE '%…%' search. Without the GIN index every archive
+-- query is a sequential scan over the org's whole call history.
+-- ─────────────────────────────────────────────────────────────────────────────
+create extension if not exists pg_trgm;
+
+alter table public.call_records
+  add column if not exists transcript_text text,
+  add column if not exists notes           text;
+
+-- Search: name / phone / summary / notes / transcript, all ILIKE-substring.
+create index if not exists call_records_lead_name_trgm_idx
+  on public.call_records using gin (lead_name gin_trgm_ops);
+create index if not exists call_records_summary_trgm_idx
+  on public.call_records using gin (summary gin_trgm_ops);
+create index if not exists call_records_transcript_trgm_idx
+  on public.call_records using gin (transcript_text gin_trgm_ops);
+create index if not exists call_records_notes_trgm_idx
+  on public.call_records using gin (notes gin_trgm_ops);
+
+-- The archive's default ordering + org scope. The existing owner index serves a
+-- rep's own view; a supervisor's org-wide view had no index at all.
+create index if not exists call_records_org_started_idx
+  on public.call_records (org_id, started_at desc);
+
+-- "Has a recording" is a first-class filter, and a partial index keeps it cheap
+-- on books where most calls never connected.
+create index if not exists call_records_org_recording_idx
+  on public.call_records (org_id, started_at desc)
+  where recording_url is not null;
+
+-- Backfill transcripts for calls finalized before this column existed, so the
+-- archive is complete from day one rather than only forward-looking. Bounded
+-- and idempotent: only rows that are still null, and only where a conversation
+-- transcript actually exists.
+update public.call_records cr
+set transcript_text = sub.txt
+from (
+  select
+    c.conversation_id,
+    string_agg(
+      case when t->>'role' = 'agent' then 'Agent: ' else 'Contact: ' end ||
+        coalesce(t->>'message', ''),
+      E'\n' order by t_ord
+    ) as txt
+  from public.ai_conversations c
+  cross join lateral jsonb_array_elements(c.transcript) with ordinality as x(t, t_ord)
+  where jsonb_typeof(c.transcript) = 'array'
+  group by c.conversation_id
+) sub
+where cr.conversation_id = sub.conversation_id
+  and cr.transcript_text is null
+  and sub.txt is not null;

@@ -51,6 +51,13 @@ export interface AppointmentEmailPayload {
   utilityBill?: number | null;
   solarPayment?: number | null;
   utilityProvider?: string;
+  /**
+   * The workspace's own words, so the email doesn't tell a recruiting team that
+   * a "Homeowner" booked an "account review". Absent ⇒ neutral defaults, which
+   * is what a caller that predates this field gets.
+   */
+  leadNoun?: string;
+  moneyLabels?: { primary?: string; secondary?: string };
 }
 
 export interface RenderedEmail {
@@ -134,21 +141,30 @@ function fields(ctx: RenderContext): Field[] {
   const where = addressLine(p);
   if (where) out.push({ label: "Where", value: where });
 
-  out.push({ label: "Homeowner", value: p.leadName || "Homeowner" });
+  const noun = (p.leadNoun || "lead").trim() || "lead";
+  const Noun = noun.charAt(0).toUpperCase() + noun.slice(1);
+  out.push({ label: Noun, value: p.leadName || `Not recorded` });
   if (p.phone) out.push({ label: "Phone", value: formatPhone(p.phone) });
   if (p.email) out.push({ label: "Email", value: p.email });
 
+  // The two money slots, under the ORG's labels. "Utility bill" / "Solar
+  // payment" are one tenant's column names; the same typed columns are an
+  // insurance org's premium or a recruiter's desired pay.
+  const primaryMoney = p.moneyLabels?.primary?.trim() || "Monthly bill";
+  const secondaryMoney = p.moneyLabels?.secondary?.trim();
   if (typeof p.utilityBill === "number" && p.utilityBill > 0) {
     out.push({
-      label: "Utility bill",
+      label: primaryMoney,
       value: `${formatCurrency(p.utilityBill)}/mo${p.utilityProvider ? ` · ${p.utilityProvider}` : ""}`,
     });
   }
-  if (typeof p.solarPayment === "number" && p.solarPayment > 0) {
-    out.push({ label: "Solar payment", value: `${formatCurrency(p.solarPayment)}/mo` });
+  if (secondaryMoney && typeof p.solarPayment === "number" && p.solarPayment > 0) {
+    out.push({ label: secondaryMoney, value: `${formatCurrency(p.solarPayment)}/mo` });
   }
-  // The whole premise of the business: they're paying both. Say it plainly.
+  // When a workspace tracks BOTH money slots, the combined figure is the point
+  // of the call — say it plainly. Orgs that track one never see this row.
   if (
+    secondaryMoney &&
     typeof p.utilityBill === "number" &&
     typeof p.solarPayment === "number" &&
     p.utilityBill > 0 &&
@@ -178,7 +194,7 @@ function fields(ctx: RenderContext): Field[] {
 
 export function renderAppointmentEmail(ctx: RenderContext): RenderedEmail {
   const { kind, payload: p } = ctx;
-  const lead = p.leadName || "Homeowner";
+  const lead = p.leadName || `an unnamed ${(p.leadNoun || "lead").trim() || "lead"}`;
   const accent = ACCENTS[kind];
   const rows = fields(ctx);
   const link = ctx.appUrl ? `${ctx.appUrl.replace(/\/$/, "")}/appointments` : "";

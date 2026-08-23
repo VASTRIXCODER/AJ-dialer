@@ -37,7 +37,7 @@ export function LeaderboardPreview() {
     <div className="overflow-hidden rounded-3xl border border-border/80 bg-card/80 shadow-lift backdrop-blur-xl">
       <div className="flex items-center justify-between border-b border-border/70 px-5 py-3.5">
         <div className="flex items-center gap-2">
-          <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-solar text-white">
+          <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-brand text-white">
             <Crown className="h-3.5 w-3.5" />
           </span>
           <span className="text-sm font-semibold">Team Leaderboard</span>

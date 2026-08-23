@@ -1,3 +1,4 @@
+import { mediaResponse, rangeHeaders } from "@/lib/audio-proxy";
 import { getUser } from "@/lib/auth";
 import { isSupabaseConfigured } from "@/lib/supabase/config";
 import { createClient } from "@/lib/supabase/server";
@@ -16,7 +17,7 @@ const RECORDING_SID = /^RE[0-9a-f]{32}$/i;
  * ElevenLabs audio proxy used for AI calls.
  */
 export async function GET(
-  _req: Request,
+  req: Request,
   { params }: { params: Promise<{ sid: string }> },
 ) {
   const { sid } = await params;
@@ -52,16 +53,16 @@ export async function GET(
   ).toString("base64");
 
   try {
-    const res = await fetch(url, { headers: { Authorization: `Basic ${auth}` } });
+    // Forward the browser's Range so <audio> can seek. Twilio serves ranges;
+    // this proxy simply never asked for one, which is why a rep could play a
+    // recording but never skip to the part they needed.
+    const res = await fetch(url, {
+      headers: { Authorization: `Basic ${auth}`, ...rangeHeaders(req) },
+    });
     if (!res.ok || !res.body) {
       return new Response("Recording unavailable", { status: 502 });
     }
-    return new Response(res.body, {
-      headers: {
-        "content-type": res.headers.get("content-type") ?? "audio/mpeg",
-        "cache-control": "private, max-age=3600",
-      },
-    });
+    return mediaResponse(res);
   } catch {
     return new Response("Recording unavailable", { status: 502 });
   }

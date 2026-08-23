@@ -7,9 +7,12 @@ import {
   CheckCircle2,
   ChevronLeft,
   ChevronRight,
+  FileText,
+  Headphones,
   Loader2,
   Mail,
   MapPin,
+  NotebookPen,
   Phone,
   PhoneCall,
   Search,
@@ -20,6 +23,7 @@ import {
   Zap,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
+import { CallDetailModal } from "@/components/calls/call-detail-modal";
 import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -342,21 +346,30 @@ function LeadDetail({
   );
 }
 
-// ── Per-lead call history (prevents accidental double-dialing) ───────────────
+// ── Per-lead call history ────────────────────────────────────────────────────
+// Two jobs: stop a rep re-dialing someone who was spoken to yesterday, and be
+// the way BACK to that call. It used to be a dead list — you could see that a
+// call happened but had no route to its notes, transcript or recording, which is
+// exactly what you want at the moment you're about to dial the same person.
 interface HistoryCall {
   id: string;
   startedAt: string;
   durationSec: number;
-  outcome: string | null;
+  outcome: CallOutcome | null;
   channel: string;
+  hasNotes: boolean;
+  hasRecording: boolean;
+  hasTranscript: boolean;
 }
 
 function CallHistory({ leadId }: { leadId: string }) {
   const [calls, setCalls] = useState<HistoryCall[]>([]);
   const [loading, setLoading] = useState(true);
+  const [openId, setOpenId] = useState<string | null>(null);
 
   useEffect(() => {
     setLoading(true);
+    setOpenId(null);
     fetch(`/api/leads/history?leadId=${encodeURIComponent(leadId)}`)
       .then((r) => r.json())
       .then((j) => setCalls((j.calls ?? []) as HistoryCall[]))
@@ -372,36 +385,61 @@ function CallHistory({ leadId }: { leadId: string }) {
         <PhoneCall className="h-3.5 w-3.5" />
         Call history ({calls.length})
       </p>
-      <ul className="space-y-1.5">
+      <ul className="space-y-1">
         {calls.map((c) => {
-          const cfg = c.outcome ? outcomeConfig[c.outcome as CallOutcome] : null;
+          const cfg = c.outcome ? outcomeConfig[c.outcome] : null;
+          const hasDetail = c.hasNotes || c.hasRecording || c.hasTranscript;
           return (
-            <li key={c.id} className="flex items-center gap-2">
-              {c.channel === "ai" ? (
-                <Bot className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-              ) : (
-                <Phone className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-              )}
-              <span className="text-xs text-muted-foreground tabular">
-                {relativeTime(c.startedAt)}
-              </span>
-              {c.durationSec > 0 && (
+            <li key={c.id}>
+              <button
+                type="button"
+                onClick={() => setOpenId(c.id)}
+                title="Open this call — summary, notes, transcript and recording"
+                className="flex w-full items-center gap-2 rounded-lg px-1.5 py-1 text-left transition-colors hover:bg-muted/60"
+              >
+                {c.channel === "ai" ? (
+                  <Bot className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                ) : (
+                  <Phone className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                )}
                 <span className="text-xs text-muted-foreground tabular">
-                  {formatDuration(c.durationSec)}
+                  {relativeTime(c.startedAt)}
                 </span>
-              )}
-              {cfg && (
-                <Badge
-                  tone={cfg.tone === "success" ? "success" : cfg.tone === "danger" ? "danger" : cfg.tone === "warning" ? "warning" : "neutral"}
-                  className="ml-auto text-[10px] px-1.5 py-0.5"
-                >
-                  {cfg.label}
-                </Badge>
-              )}
+                {c.durationSec > 0 && (
+                  <span className="text-xs text-muted-foreground tabular">
+                    {formatDuration(c.durationSec)}
+                  </span>
+                )}
+                {/* What this call left behind, so the rep knows there's something
+                    worth opening before they open it. */}
+                {hasDetail && (
+                  <span className="flex items-center gap-1 text-muted-foreground/70">
+                    {c.hasRecording && <Headphones className="h-3 w-3" />}
+                    {c.hasTranscript && <FileText className="h-3 w-3" />}
+                    {c.hasNotes && <NotebookPen className="h-3 w-3" />}
+                  </span>
+                )}
+                {cfg && (
+                  <Badge
+                    tone={cfg.tone === "success" ? "success" : cfg.tone === "danger" ? "danger" : cfg.tone === "warning" ? "warning" : "neutral"}
+                    className="ml-auto text-[10px] px-1.5 py-0.5"
+                  >
+                    {cfg.label}
+                  </Badge>
+                )}
+              </button>
             </li>
           );
         })}
       </ul>
+
+      {openId && (
+        <CallDetailModal
+          key={openId}
+          callId={openId}
+          onClose={() => setOpenId(null)}
+        />
+      )}
     </div>
   );
 }

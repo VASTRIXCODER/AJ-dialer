@@ -137,6 +137,7 @@ export async function finalizeAIConversation(input: {
   let failureKind: FailureKind | null = null;
   let sentiment: "positive" | "neutral" | "negative";
   let appointment: { when: string; iso?: string; notes: string } | null = null;
+  let callback: { when: string; iso?: string; reason?: string } | null = null;
   let qualification: FinalizeResult["qualification"];
   let score: number | undefined;
 
@@ -222,6 +223,22 @@ export async function finalizeAIConversation(input: {
     // into the pipeline, or routeDisposition would file an appointment row for a
     // lead that isn't booked.
     if (outcome !== "appointment_booked") appointment = null;
+
+    // A callback the agent AGREED A TIME for should reach the Callbacks board
+    // with that time on it. Same resolver and the same bar as a booking — a
+    // concrete clock time AND an explicit date reference — so "call me sometime
+    // next week" still files with no due date rather than inventing one. Without
+    // this every AI-scheduled callback landed permanently in "Due now".
+    if (outcome === "callback_scheduled") {
+      const slot = resolveAppointment(transcript, now, tz);
+      if (slot.iso) {
+        callback = {
+          when: slot.when,
+          iso: slot.iso,
+          reason: analysis.appointment.notes || summary,
+        };
+      }
+    }
 
     // If the live analyzer SILENTLY fell back to the demo simulator (a thrown
     // Claude call — timeout, rate-limit, parse error), its "qualified" default is
@@ -312,6 +329,7 @@ export async function finalizeAIConversation(input: {
     sentiment,
     durationSec: input.durationSec,
     appointment,
+    callback,
     state: connected ? "completed" : "failed",
     transcript: turns
       .map((t) => ({

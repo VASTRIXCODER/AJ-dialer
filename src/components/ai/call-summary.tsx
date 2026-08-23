@@ -3,6 +3,7 @@
 import { motion } from "framer-motion";
 import { CheckCircle2, ListChecks, Sparkles } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { AiSourceBadge } from "@/components/ai/source-badge";
 import { Badge } from "@/components/ui/badge";
 import type { CallSummary } from "@/lib/ai/types";
 import { outcomeConfig } from "@/lib/status";
@@ -12,6 +13,7 @@ type State = {
   loading: boolean;
   data?: CallSummary;
   source?: "claude" | "demo";
+  sourceError?: string;
 };
 
 export function AiCallSummary({
@@ -43,8 +45,13 @@ export function AiCallSummary({
       signal: ctrl.signal,
     })
       .then((r) => r.json())
-      .then((j: { data: CallSummary; source: "claude" | "demo" }) =>
-        setState({ loading: false, data: j.data, source: j.source }),
+      .then((j: { data: CallSummary; source: "claude" | "demo"; error?: string }) =>
+        setState({
+          loading: false,
+          data: j.data,
+          source: j.source,
+          sourceError: j.error,
+        }),
       )
       .catch(() => {
         if (!ctrl.signal.aborted) setState({ loading: false });
@@ -62,16 +69,7 @@ export function AiCallSummary({
           {state.loading ? "Documenting this call…" : "AI wrote your notes"}
         </span>
         {state.source && !state.loading && (
-          <span
-            className={cn(
-              "rounded-full px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide",
-              state.source === "claude"
-                ? "bg-accent-soft text-accent"
-                : "bg-muted text-muted-foreground",
-            )}
-          >
-            {state.source === "claude" ? "Claude" : "Demo AI"}
-          </span>
+          <AiSourceBadge source={state.source} error={state.sourceError} />
         )}
       </div>
 

@@ -158,7 +158,7 @@ export function EditCampaignDialog({
               id="campaign-edit-script-a"
               value={scriptA}
               onChange={(e) => setScriptA(e.target.value)}
-              placeholder="Hi {first name}, this is … calling about your solar account review…"
+              placeholder="Hi {first name}, this is … calling about…"
             />
           </div>
           <div>

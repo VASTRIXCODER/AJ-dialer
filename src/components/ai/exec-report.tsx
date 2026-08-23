@@ -9,6 +9,7 @@ import {
   TrendingUp,
 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
+import { AiSourceBadge } from "@/components/ai/source-badge";
 import { SpotlightCard } from "@/components/motion";
 import { Badge } from "@/components/ui/badge";
 import type { ExecutiveReport } from "@/lib/ai/types";
@@ -52,14 +53,16 @@ export function AiExecReport() {
   const [loading, setLoading] = useState(true);
   const [report, setReport] = useState<ExecutiveReport | null>(null);
   const [source, setSource] = useState<"claude" | "demo" | null>(null);
+  const [sourceError, setSourceError] = useState<string | undefined>();
 
   const load = useCallback(() => {
     setLoading(true);
     fetch("/api/ai/report", { method: "POST" })
       .then((r) => r.json())
-      .then((j: { data: ExecutiveReport; source: "claude" | "demo" }) => {
+      .then((j: { data: ExecutiveReport; source: "claude" | "demo"; error?: string }) => {
         setReport(j.data);
         setSource(j.source);
+        setSourceError(j.error);
       })
       .catch(() => {})
       .finally(() => setLoading(false));
@@ -84,18 +87,7 @@ export function AiExecReport() {
           </div>
         </div>
         <div className="flex items-center gap-2">
-          {source && (
-            <span
-              className={cn(
-                "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide",
-                source === "claude"
-                  ? "bg-accent-soft text-accent"
-                  : "bg-muted text-muted-foreground",
-              )}
-            >
-              {source === "claude" ? "Claude" : "Demo AI"}
-            </span>
-          )}
+          {source && <AiSourceBadge source={source} error={sourceError} />}
           <button
             type="button"
             onClick={load}
@@ -128,7 +120,7 @@ export function AiExecReport() {
           className="mt-5 space-y-5"
         >
           <div>
-            <p className="text-lg font-bold tracking-tight text-gradient-solar">
+            <p className="text-lg font-bold tracking-tight text-gradient-brand">
               {report.headline}
             </p>
             <p className="mt-2 text-sm leading-relaxed text-muted-foreground">

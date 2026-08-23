@@ -6,6 +6,9 @@ import { Button } from "@/components/ui/button";
 import { Modal } from "@/components/ui/modal";
 import { useDialerContextOptional } from "./dialer-context";
 import type { KnownInfo } from "@/lib/use-dialer";
+
+/** The core slots this dialog can collect beyond name/address. */
+type KnownInfoField = "utilityProvider" | "solarProvider" | "utilityBill" | "solarPayment";
 import { formatPhone } from "@/lib/utils";
 
 /**
@@ -22,11 +25,21 @@ export function KnownInfoDialog({
   onSubmit: (info: KnownInfo) => void;
   onClose: () => void;
 }) {
-  // Solar-only fields disappear for non-solar tenants. qualifyShowSolarPayment
-  // already carries both signals (the org's vertical AND its qualify setting) —
-  // see the dialerConfig assembled in app/(app)/layout.tsx.
+  // The four data fields here are core schema slots, so render them from the
+  // org's OWN resolved schema rather than from four hardcoded solar labels with
+  // an `isSolar &&` around two of them. An insurance workspace now asks for
+  // "Current carrier" and "Current premium ($/mo)"; a workspace that hides a
+  // slot simply doesn't ask for it.
   const ctx = useDialerContextOptional();
-  const isSolar = ctx?.config.qualifyShowSolarPayment !== false;
+  const schema = ctx?.config.leadFields ?? [];
+  const extraFields = (
+    ["utilityProvider", "solarProvider", "utilityBill", "solarPayment"] as const
+  )
+    .map((key) => {
+      const def = schema.find((d) => d.key === key);
+      return def ? { key, label: def.label, money: def.type === "currency" } : null;
+    })
+    .filter((d): d is { key: KnownInfoField; label: string; money: boolean } => Boolean(d));
   const [f, setF] = useState<KnownInfo>({});
   const set = (k: keyof KnownInfo, v: string) =>
     setF((prev) => ({
@@ -46,7 +59,7 @@ export function KnownInfoDialog({
     <Modal onClose={onClose} label={`AI call · ${formatPhone(phone)}`}>
       <div className="flex items-start justify-between gap-3 border-b border-border/60 p-5">
             <div className="flex items-center gap-3">
-              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-solar text-white shadow-glow">
+              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-brand text-white shadow-glow">
                 <Bot className="h-5 w-5" />
               </span>
               <div>
@@ -89,26 +102,19 @@ export function KnownInfoDialog({
               <span className="text-xs font-medium text-muted-foreground">State</span>
               <input className={field} value={f.state ?? ""} onChange={(e) => set("state", e.target.value)} />
             </label>
-            <label className="space-y-1">
-              <span className="text-xs font-medium text-muted-foreground">Utility provider</span>
-              <input className={field} value={f.utilityProvider ?? ""} onChange={(e) => set("utilityProvider", e.target.value)} />
-            </label>
-            {isSolar && (
-              <label className="space-y-1">
-                <span className="text-xs font-medium text-muted-foreground">Solar provider</span>
-                <input className={field} value={f.solarProvider ?? ""} onChange={(e) => set("solarProvider", e.target.value)} />
+            {extraFields.map((d) => (
+              <label key={d.key} className="space-y-1">
+                <span className="text-xs font-medium text-muted-foreground">{d.label}</span>
+                <input
+                  className={field}
+                  {...(d.money
+                    ? { type: "number" as const, inputMode: "numeric" as const }
+                    : {})}
+                  value={f[d.key] ?? ""}
+                  onChange={(e) => set(d.key, e.target.value)}
+                />
               </label>
-            )}
-            <label className="space-y-1">
-              <span className="text-xs font-medium text-muted-foreground">Utility bill ($/mo)</span>
-              <input className={field} type="number" inputMode="numeric" value={f.utilityBill ?? ""} onChange={(e) => set("utilityBill", e.target.value)} />
-            </label>
-            {isSolar && (
-              <label className="space-y-1">
-                <span className="text-xs font-medium text-muted-foreground">Solar payment ($/mo)</span>
-                <input className={field} type="number" inputMode="numeric" value={f.solarPayment ?? ""} onChange={(e) => set("solarPayment", e.target.value)} />
-              </label>
-            )}
+            ))}
             <label className="col-span-2 space-y-1">
               <span className="text-xs font-medium text-muted-foreground">Notes for the agent</span>
               <textarea

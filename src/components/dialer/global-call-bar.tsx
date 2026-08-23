@@ -4,8 +4,9 @@ import { motion } from "framer-motion";
 import { ExternalLink, Mic, MicOff, PhoneOff, Radio } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useVocabulary } from "@/components/layout/vocabulary";
 import { Avatar } from "@/components/ui/avatar";
-import { cn, formatDuration, initials } from "@/lib/utils";
+import { cn, formatDuration, initials, leadDisplayName } from "@/lib/utils";
 import { useDialerContext } from "./dialer-context";
 
 /**
@@ -18,6 +19,7 @@ export function GlobalCallBar() {
   const { dialer } = useDialerContext();
   const { state } = dialer;
   const pathname = usePathname();
+  const vocab = useVocabulary();
 
   const inProgress =
     state.status === "dialing" || state.status === "live" || state.status === "wrapup";
@@ -25,7 +27,11 @@ export function GlobalCallBar() {
   if (!inProgress || pathname === "/dialer") return null;
 
   const lead = state.connectedLead ?? state.lines[0]?.lead ?? null;
-  const name = lead ? `${lead.firstName} ${lead.lastName}`.trim() || "Homeowner" : "Homeowner";
+  const name = leadDisplayName(
+    lead ? `${lead.firstName} ${lead.lastName}` : "",
+    lead?.phone,
+    vocab.leadNoun,
+  );
   const live = state.status === "live";
   const dialing = state.status === "dialing";
 

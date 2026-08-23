@@ -147,6 +147,27 @@ export function formatAddress(lead: {
   return [street, locality].filter(Boolean).join(street && locality ? ", " : "");
 }
 
+/**
+ * What to show where a contact's name goes when the row has none.
+ *
+ * Call rows arrive nameless more often than you'd think — a manual dial to a
+ * typed number, a callback, an import with a blank name column. Every screen
+ * used to print the literal word "Homeowner" there, which was both another
+ * industry's noun and less useful than the number the rep actually dialed.
+ */
+export function leadDisplayName(
+  name: string | null | undefined,
+  phone?: string | null,
+  /** The workspace's noun for a contact, e.g. "homeowner". */
+  noun = "lead",
+): string {
+  const trimmed = (name ?? "").trim();
+  if (trimmed) return trimmed;
+  const digits = digitsOnly(phone ?? "");
+  if (digits.length >= 10) return formatPhone(phone as string);
+  return `Unknown ${noun}`;
+}
+
 export function initials(name: string) {
   return name
     .split(" ")

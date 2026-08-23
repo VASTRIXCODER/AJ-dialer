@@ -2,6 +2,7 @@
 
 import { Lightbulb, Loader2, RefreshCw, Sparkles } from "lucide-react";
 import { useState } from "react";
+import { AiSourceBadge } from "@/components/ai/source-badge";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import type { CallCopilot } from "@/lib/ai/types";
@@ -30,7 +31,10 @@ export function CopilotPanel({
     loading: boolean;
     data?: CallCopilot;
     source?: "claude" | "demo";
+    /** A failure to FETCH guidance — shown in the panel's error banner. */
     error?: string;
+    /** Why the server used the simulator — shown on the source badge. */
+    sourceError?: string;
   }>({ loading: false });
 
   async function fetchGuidance() {
@@ -50,7 +54,9 @@ export function CopilotPanel({
         error?: string;
       };
       if (!res.ok || !j.data) throw new Error(j.error ?? "failed");
-      setState({ loading: false, data: j.data, source: j.source });
+      // j.error on a 200 is not a failure — it's why the SERVER fell back to the
+      // simulator, and it belongs on the badge rather than in the error banner.
+      setState({ loading: false, data: j.data, source: j.source, sourceError: j.error });
     } catch {
       setState((s) => ({
         ...s,
@@ -69,16 +75,7 @@ export function CopilotPanel({
         </span>
         <div className="flex items-center gap-2">
           {state.source && !state.loading && (
-            <span
-              className={cn(
-                "rounded-full px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide",
-                state.source === "claude"
-                  ? "bg-primary-soft text-primary"
-                  : "bg-muted text-muted-foreground",
-              )}
-            >
-              {state.source === "claude" ? "Claude" : "Demo AI"}
-            </span>
+            <AiSourceBadge source={state.source} error={state.sourceError} />
           )}
           <Button
             size="sm"

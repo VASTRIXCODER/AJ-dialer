@@ -209,7 +209,7 @@ export function AiLiveMonitor({
   if (!configured) {
     return (
       <Card className="flex flex-col items-start gap-3 p-4 sm:flex-row sm:items-center">
-        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-solar text-white shadow-glow">
+        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-brand text-white shadow-glow">
           <Bot className="h-5 w-5" />
         </span>
         <div className="flex-1">
@@ -335,7 +335,7 @@ export function AiLiveMonitor({
                       <span
                         className={cn(
                           "relative flex h-10 w-10 items-center justify-center rounded-xl text-white",
-                          ended ? "bg-muted-foreground/40" : "bg-solar shadow-glow",
+                          ended ? "bg-muted-foreground/40" : "bg-brand shadow-glow",
                         )}
                       >
                         <Bot className="h-5 w-5" />

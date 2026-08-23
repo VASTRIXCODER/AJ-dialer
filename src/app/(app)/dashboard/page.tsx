@@ -12,6 +12,7 @@ import {
 import Link from "next/link";
 import { HourlyBarChart, OutcomeDonut, TrendAreaChart } from "@/components/dashboard/charts";
 import { MetricCard } from "@/components/dashboard/metric-card";
+import { resolveFieldInsights } from "@/components/reports/field-insights";
 import { EmptyState } from "@/components/shared/empty-state";
 import { PageContainer, PageHeader } from "@/components/shared/page-header";
 import { SectionCard } from "@/components/shared/section-card";
@@ -20,7 +21,10 @@ import { Badge } from "@/components/ui/badge";
 import { buttonVariants } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { getReportingData, getTeamLeaderboard } from "@/lib/db/metrics";
+import { resolveLeadFields } from "@/lib/leads/field-schema";
 import { getViewer } from "@/lib/org/membership";
+import { templateProfile } from "@/lib/org/templates";
+import { orgVocabulary } from "@/lib/org/vocabulary";
 import { liveStateConfig } from "@/lib/status";
 import type { AILiveState } from "@/lib/types";
 import {
@@ -28,6 +32,7 @@ import {
   formatDuration,
   formatNumber,
   formatPercent,
+  leadDisplayName,
 } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
@@ -65,8 +70,18 @@ export default async function DashboardPage() {
     .slice(0, 5);
 
   const org = viewer.org;
-  const isSolar = org?.dialerTemplate === "solar";
+  const vocab = orgVocabulary(org);
   const floorName = org?.productName || org?.name || "your floor";
+  // The org's own field labels — this panel used to print one tenant's column
+  // names ("Avg utility bill", "Avg solar payment", "Battery storage") on every
+  // workspace's dashboard.
+  const fieldInsights = resolveFieldInsights(
+    resolveLeadFields(
+      org?.settings.leadFields,
+      templateProfile(org?.dialerTemplate).fields,
+    ),
+    metrics,
+  );
 
   const hasData =
     metrics.totalCalls > 0 || liveCalls.length > 0 || appointments.length > 0;
@@ -92,15 +107,27 @@ export default async function DashboardPage() {
     .filter((a) => a.status === "scheduled")
     .slice(0, 4);
 
-  const utilityInsights = [
-    { label: "Avg utility bill", value: formatCurrency(metrics.avgUtilityBill), pct: 58 },
-    { label: "Avg solar payment", value: formatCurrency(metrics.avgSolarPayment), pct: 42 },
-    { label: "EV ownership", value: formatPercent(metrics.evOwnership), pct: metrics.evOwnership },
-    { label: "Pool ownership", value: formatPercent(metrics.poolOwnership), pct: metrics.poolOwnership },
-    { label: "Battery storage", value: formatPercent(metrics.batteryOwnership), pct: metrics.batteryOwnership },
-  ];
+  // Book-wide field insights, in the org's own words. `pct` drives the bar: a
+  // share is already a percentage; a money figure has no natural denominator, so
+  // it renders as the fraction of the combined money total — which is what the
+  // old fixed 58/42 split was hand-waving at.
+  const insightMoneyTotal = fieldInsights
+    .filter((i) => i.kind === "money")
+    .reduce((sum, i) => sum + i.value, 0);
+  const bareLabel = (label: string) =>
+    label.replace(/\s*\([^)]*\)\s*$/, "").trim() || label;
+  const schemaInsights = fieldInsights.map((i) =>
+    i.kind === "money"
+      ? {
+          label: `Avg ${bareLabel(i.label).toLowerCase()}`,
+          value: formatCurrency(i.value),
+          pct: insightMoneyTotal > 0 ? Math.round((i.value / insightMoneyTotal) * 100) : 0,
+        }
+      : { label: bareLabel(i.label), value: formatPercent(i.value), pct: i.value },
+  );
 
-  // Generalized funnel insights for any (non-solar) organization.
+  // Funnel insights — the fallback for an org whose schema exposes none of the
+  // typed profile slots above.
   const pipelineInsights = [
     { label: "Connect rate", value: formatPercent(metrics.connectRate, 1), pct: metrics.connectRate },
     { label: "Appointment rate", value: formatPercent(metrics.appointmentRate, 1), pct: metrics.appointmentRate },
@@ -108,7 +135,7 @@ export default async function DashboardPage() {
     { label: "No-answer rate", value: formatPercent(metrics.noAnswerRate, 1), pct: metrics.noAnswerRate },
   ];
 
-  const insights = isSolar ? utilityInsights : pipelineInsights;
+  const insights = schemaInsights.length > 0 ? schemaInsights : pipelineInsights;
 
   return (
     <PageContainer>
@@ -200,8 +227,12 @@ export default async function DashboardPage() {
         </SectionCard>
 
         <SectionCard
-          title={isSolar ? "Utility insights" : "Pipeline insights"}
-          description={isSolar ? "Across qualified homeowners" : "Conversion · last 90 days"}
+          title={schemaInsights.length > 0 ? `${vocab.LeadNoun} insights` : "Pipeline insights"}
+          description={
+            schemaInsights.length > 0
+              ? `Across your ${vocab.leadNounPlural}`
+              : "Conversion · last 90 days"
+          }
           action={{ label: "Details", href: "/reports" }}
         >
           <div className="space-y-4">
@@ -233,14 +264,16 @@ export default async function DashboardPage() {
             <ul className="space-y-3">
               {liveCalls.slice(0, 5).map((call) => (
                 <li key={call.id} className="flex items-center gap-3">
-                  <span className="relative flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-solar text-white shadow-glow">
+                  <span className="relative flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-brand text-white shadow-glow">
                     <Bot className="h-4 w-4" />
                     {call.state === "in_progress" && (
                       <span className="absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full border-2 border-card bg-success" />
                     )}
                   </span>
                   <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-semibold">{call.leadName}</p>
+                    <p className="truncate text-sm font-semibold">
+                      {leadDisplayName(call.leadName, null, vocab.leadNoun)}
+                    </p>
                     <p className="truncate text-xs text-muted-foreground">
                       {call.city || "AI agent"}
                     </p>
@@ -256,7 +289,7 @@ export default async function DashboardPage() {
 
         <SectionCard
           title="Upcoming appointments"
-          description="Account reviews on the calendar"
+          description={`${vocab.appointmentNounPlural.charAt(0).toUpperCase()}${vocab.appointmentNounPlural.slice(1)} on the calendar`}
           action={{ label: "All", href: "/appointments" }}
         >
           {upcoming.length === 0 ? (
@@ -271,7 +304,9 @@ export default async function DashboardPage() {
                     <CalendarCheck className="h-4 w-4" />
                   </div>
                   <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-semibold">{apt.leadName}</p>
+                    <p className="truncate text-sm font-semibold">
+                      {leadDisplayName(apt.leadName, null, vocab.leadNoun)}
+                    </p>
                     <p className="truncate text-xs text-muted-foreground">{apt.whenLabel}</p>
                   </div>
                   {apt.source === "ai" && (

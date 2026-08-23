@@ -348,7 +348,10 @@ export function resolveAppointment(
     requested,
     when,
     iso,
-    notes: "Homeowner agreed to a no-cost account review.",
+    // Deliberately says only what the transcript supports. It used to assert
+    // "a no-cost account review", which is a solar product promise stamped onto
+    // every vertical's booking note.
+    notes: "Agreed to a time on the call.",
   };
 }
 

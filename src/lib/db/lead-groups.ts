@@ -1,6 +1,7 @@
 import "server-only";
 
 import { createAdminClient, isAdminConfigured } from "../supabase/admin";
+import { isSupabaseConfigured } from "../supabase/config";
 import { createClient } from "../supabase/server";
 import { LEAD_GROUPS, MANUAL_GROUP_KEY } from "../types";
 
@@ -69,11 +70,16 @@ export function slugifyGroupKey(label: string): string {
 }
 
 /**
- * The org's groups, in display order. Falls back to the legacy fixed five when
- * the table hasn't been seeded for this org yet (a brand-new org created between
- * deploys, or a database where PART 17 hasn't been run) — the dialer and the
- * leads table must never render an empty group list just because a migration
- * is pending.
+ * The org's groups, in display order. Falls back to the legacy fixed five only
+ * when the table can't be READ (a database where PART 17 hasn't been run) — the
+ * dialer and the leads table must never render an empty group list just because
+ * a migration is pending.
+ *
+ * A successful read that returns no rows is NOT that case: it's an org that
+ * genuinely has no groups, and it gets an empty list. Treating "zero rows" as
+ * "migration pending" meant every workspace created after the PART 17 backfill
+ * opened onto Fresno / Houston / Dallas / California — another tenant's
+ * California-and-Texas solar metros, un-deletable because no row backed them.
  */
 export async function listLeadGroups(orgId: string | null): Promise<LeadGroupDef[]> {
   if (!orgId) return legacyGroups();
@@ -84,7 +90,7 @@ export async function listLeadGroups(orgId: string | null): Promise<LeadGroupDef
       .select("*")
       .eq("org_id", orgId)
       .order("sort_order", { ascending: true });
-    if (error || !data?.length) return legacyGroups();
+    if (error || !data) return legacyGroups();
     return data.map(rowToGroup);
   } catch {
     return legacyGroups();
@@ -108,7 +114,13 @@ export async function listLeadGroupsWithCounts(
   orgId: string | null,
 ): Promise<{ groups: LeadGroupWithCount[]; miscCount: number }> {
   const groups = await listLeadGroups(orgId);
-  if (!orgId) return { groups: groups.map((g) => ({ ...g, leadCount: 0 })), miscCount: 0 };
+  // No org, or no database to count in. createClient() THROWS when Supabase is
+  // unconfigured, so without this guard every load of the leads page in a demo
+  // workspace threw inside the render and logged a Supabase stack trace — the
+  // page recovered, but the log said the product was broken when it wasn't.
+  if (!orgId || !isSupabaseConfigured()) {
+    return { groups: groups.map((g) => ({ ...g, leadCount: 0 })), miscCount: 0 };
+  }
 
   const supabase = await createClient();
 

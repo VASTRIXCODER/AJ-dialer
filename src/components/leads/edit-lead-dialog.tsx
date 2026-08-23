@@ -148,6 +148,33 @@ export function EditLeadDialog({
   // Every custom def gets an input here — including the ones the table's
   // 4-column cap keeps out of the list view; this dialog is where they live.
   const customDefs = useMemo(() => fields.filter((d) => d.source === "custom"), [fields]);
+  // The relabelable core slots this dialog edits, in schema order. A slot the
+  // org's vertical hides never appears; `showSolarPayment` remains the legacy
+  // per-tenant switch for the solar pair specifically.
+  const coreSlots = useMemo(
+    () =>
+      (["utilityProvider", "solarProvider", "utilityBill", "solarPayment"] as const)
+        .filter(
+          (key) =>
+            showSolarPayment ||
+            (key !== "solarProvider" && key !== "solarPayment"),
+        )
+        .map((key) => {
+          const def = fields.find((d) => d.key === key && d.source === "core");
+          if (!def) return null;
+          return { key, label: def.label, money: def.type === "currency" };
+        })
+        .filter(
+          (
+            d,
+          ): d is {
+            key: "utilityProvider" | "solarProvider" | "utilityBill" | "solarPayment";
+            label: string;
+            money: boolean;
+          } => Boolean(d),
+        ),
+    [fields, showSolarPayment],
+  );
   const initialCustom = useMemo(() => {
     const init: Record<string, string | boolean> = {};
     for (const def of customDefs) {
@@ -287,42 +314,22 @@ export function EditLeadDialog({
               <Input value={f.zip} onChange={(e) => set("zip", e.target.value)} />
             </div>
           </div>
-          <div>
-            <Label>Utility provider</Label>
-            <Input
-              value={f.utilityProvider}
-              onChange={(e) => set("utilityProvider", e.target.value)}
-            />
-          </div>
-          {showSolarPayment && (
-            <div>
-              <Label>Solar provider</Label>
+          {/* The four core data slots, under the ORG's own labels. These were
+              four hardcoded solar labels with `showSolarPayment &&` around two
+              of them, so an insurance workspace edited a "Utility bill" and a
+              recruiter had no way to see "Desired pay" here at all. */}
+          {coreSlots.map((d) => (
+            <div key={d.key}>
+              <Label>{d.label}</Label>
               <Input
-                value={f.solarProvider}
-                onChange={(e) => set("solarProvider", e.target.value)}
+                {...(d.money
+                  ? { type: "number" as const, inputMode: "decimal" as const }
+                  : {})}
+                value={f[d.key]}
+                onChange={(e) => set(d.key, e.target.value)}
               />
             </div>
-          )}
-          <div>
-            <Label>Utility bill ($/mo)</Label>
-            <Input
-              type="number"
-              inputMode="decimal"
-              value={f.utilityBill}
-              onChange={(e) => set("utilityBill", e.target.value)}
-            />
-          </div>
-          {showSolarPayment && (
-            <div>
-              <Label>Solar payment ($/mo)</Label>
-              <Input
-                type="number"
-                inputMode="decimal"
-                value={f.solarPayment}
-                onChange={(e) => set("solarPayment", e.target.value)}
-              />
-            </div>
-          )}
+          ))}
           <div className="col-span-2">
             <Label>Status</Label>
             {statusLocked ? (

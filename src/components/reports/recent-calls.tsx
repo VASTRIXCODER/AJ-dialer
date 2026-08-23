@@ -1,26 +1,25 @@
 "use client";
 
 import { Bot, PlayCircle, User } from "lucide-react";
-import { useRouter } from "next/navigation";
 import { useState } from "react";
-import { CallDashboard } from "@/components/monitor/call-dashboard";
-import { ManualCallDetail } from "@/components/reports/manual-call-detail";
+import { CallDetailModal } from "@/components/calls/call-detail-modal";
+import { useVocabulary } from "@/components/layout/vocabulary";
 import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import type { RecentCall } from "@/lib/db/metrics";
-import { outcomeConfig } from "@/lib/status";
-import { formatClock, formatDuration, initials } from "@/lib/utils";
+import { resolveOutcomeConfig } from "@/lib/status";
+import { formatClock, formatDuration, initials, leadDisplayName } from "@/lib/utils";
 
 /**
- * Recent-calls table where every row opens the full per-call breakdown: AI rows
- * open the AI dashboard (transcript, summary, recording, disposition); manual
- * rows open the human-call detail (summary, outcome, recording) — so both
- * channels get the same depth in Reports.
+ * Recent-calls table. Every row opens the SAME detail view regardless of
+ * channel — there used to be two (an AI dashboard with a transcript and a manual
+ * detail without one), so what you could see about a call depended on who placed
+ * it. One view means one answer to "where's the transcript?".
  */
 export function RecentCalls({ calls }: { calls: RecentCall[] }) {
-  const router = useRouter();
+  const vocab = useVocabulary();
+  const outcomes = resolveOutcomeConfig(vocab);
   const [openId, setOpenId] = useState<string | null>(null);
-  const [manualCall, setManualCall] = useState<RecentCall | null>(null);
 
   return (
     <>
@@ -29,7 +28,7 @@ export function RecentCalls({ calls }: { calls: RecentCall[] }) {
           <thead>
             <tr className="border-b border-border text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">
               <th className="px-5 py-3">Source</th>
-              <th className="px-5 py-3">Homeowner</th>
+              <th className="px-5 py-3">{vocab.LeadNoun}</th>
               <th className="px-5 py-3">Time</th>
               <th className="px-5 py-3 text-right">Duration</th>
               <th className="px-5 py-3">Outcome</th>
@@ -38,14 +37,9 @@ export function RecentCalls({ calls }: { calls: RecentCall[] }) {
           </thead>
           <tbody className="divide-y divide-border">
             {calls.map((rec) => {
-              const cfg = rec.outcome ? outcomeConfig[rec.outcome] : null;
+              const cfg = rec.outcome ? outcomes[rec.outcome] : null;
               const isAI = rec.channel === "ai";
-              // Every row is openable: AI → AI dashboard, manual → manual detail.
-              const openable = isAI ? Boolean(rec.conversationId) : true;
-              const open = () => {
-                if (isAI && rec.conversationId) setOpenId(rec.conversationId);
-                else if (!isAI) setManualCall(rec);
-              };
+              const open = () => setOpenId(rec.id);
               const recordingHref = !rec.hasRecording
                 ? null
                 : isAI && rec.conversationId
@@ -54,11 +48,8 @@ export function RecentCalls({ calls }: { calls: RecentCall[] }) {
               return (
                 <tr
                   key={rec.id}
-                  onClick={openable ? open : undefined}
-                  className={
-                    "transition-colors hover:bg-muted/40" +
-                    (openable ? " cursor-pointer" : "")
-                  }
+                  onClick={open}
+                  className="cursor-pointer transition-colors hover:bg-muted/40"
                 >
                   <td className="px-5 py-3">
                     <div className="flex items-center gap-2">
@@ -76,7 +67,9 @@ export function RecentCalls({ calls }: { calls: RecentCall[] }) {
                       )}
                     </div>
                   </td>
-                  <td className="px-5 py-3 text-muted-foreground">{rec.leadName}</td>
+                  <td className="px-5 py-3 text-muted-foreground">
+                    {leadDisplayName(rec.leadName, rec.phone, vocab.leadNoun)}
+                  </td>
                   <td className="px-5 py-3 text-muted-foreground tabular">
                     {formatClock(rec.startedAt)}
                   </td>
@@ -104,7 +97,7 @@ export function RecentCalls({ calls }: { calls: RecentCall[] }) {
                           Play
                         </a>
                       )}
-                      {openable && <span className="text-xs font-medium text-primary">View →</span>}
+                      <span className="text-xs font-medium text-primary">View →</span>
                     </div>
                   </td>
                 </tr>
@@ -115,16 +108,7 @@ export function RecentCalls({ calls }: { calls: RecentCall[] }) {
       </div>
 
       {openId && (
-        <CallDashboard
-          key={openId}
-          conversationId={openId}
-          onClose={() => setOpenId(null)}
-          onChanged={() => router.refresh()}
-        />
-      )}
-
-      {manualCall && (
-        <ManualCallDetail call={manualCall} onClose={() => setManualCall(null)} />
+        <CallDetailModal key={openId} callId={openId} onClose={() => setOpenId(null)} />
       )}
     </>
   );

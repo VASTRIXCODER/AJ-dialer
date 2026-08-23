@@ -25,12 +25,13 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { OutcomeGrid } from "@/components/dialer/outcome-grid";
+import { useVocabulary } from "@/components/layout/vocabulary";
 import { CopilotPanel } from "@/components/monitor/copilot-panel";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Modal } from "@/components/ui/modal";
 import { createPcmPlayer, type PcmPlayer } from "@/lib/pcm-player";
-import { liveStateConfig, outcomeConfig } from "@/lib/status";
+import { liveStateConfig, resolveOutcomeConfig } from "@/lib/status";
 import { type AILiveState, type CallOutcome, isTerminalLiveState } from "@/lib/types";
 import { cn, formatDuration, formatPhone } from "@/lib/utils";
 
@@ -92,6 +93,7 @@ export function CallDashboard({
   onClose: () => void;
   onChanged: () => void;
 }) {
+  const vocab = useVocabulary();
   const [detail, setDetail] = useState<CallDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<string | null>(null);
@@ -434,7 +436,7 @@ export function CallDashboard({
       const room = `to-${conversationId}-${Date.now().toString(36)}`
         .replace(/[^a-zA-Z0-9_-]/g, "")
         .slice(0, 100);
-      // Join the conference first so the homeowner is never left stranded.
+      // Join the conference first so the contact is never left stranded.
       const call = await device.connect({ params: { Conference: room } });
       taCallRef.current = call;
       call.on("disconnect", () => {
@@ -446,7 +448,7 @@ export function CallDashboard({
         setError("Call audio error.");
         setTakeover("idle");
       });
-      // Move the homeowner off the AI and into the conference with you.
+      // Move the contact off the AI and into the conference with you.
       const res = await fetch("/api/elevenlabs/intervene", {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -529,15 +531,17 @@ export function CallDashboard({
   const st = detail ? stateMeta[detail.state] : stateMeta.initiated;
   const sent = sentimentMeta[detail?.sentiment ?? "neutral"];
   const SentIcon = sent.icon;
-  const cfg = detail?.outcome ? outcomeConfig[detail.outcome] : null;
-  const firstName = (detail?.leadName ?? "").split(" ")[0] || "Homeowner";
+  const cfg = detail?.outcome ? resolveOutcomeConfig(vocab)[detail.outcome] : null;
+  // The bubble label for the OTHER side of the conversation. Their first name
+  // when we have it; otherwise this workspace's noun, not solar's.
+  const firstName = (detail?.leadName ?? "").split(" ")[0] || vocab.LeadNoun;
 
   return (
     <Modal onClose={onClose} label={detail?.leadName || "AI call"} maxWidth="max-w-3xl">
       {/* Header */}
       <div className="flex items-start justify-between gap-3 border-b border-border/60 p-5">
         <div className="flex min-w-0 items-center gap-3">
-          <span className="relative flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-solar text-white shadow-glow">
+          <span className="relative flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-brand text-white shadow-glow">
             <Bot className="h-5 w-5" />
             {live && (
               <span className="absolute -bottom-0.5 -right-0.5 h-3.5 w-3.5 rounded-full border-2 border-card bg-success" />
@@ -720,7 +724,7 @@ export function CallDashboard({
                         "max-w-[82%] rounded-2xl px-3.5 py-2 text-sm leading-relaxed",
                         isAgent
                           ? "rounded-bl-md bg-muted text-foreground"
-                          : "rounded-br-md bg-solar text-white",
+                          : "rounded-br-md bg-brand text-white",
                       )}
                     >
                       <p
@@ -779,7 +783,7 @@ export function CallDashboard({
                 <span className="relative inline-flex h-2 w-2 rounded-full bg-success" />
               </span>
               {takeover === "joining"
-                ? "Connecting you to the homeowner…"
+                ? `Connecting you to the ${vocab.leadNoun}…`
                 : "You're on the call — the AI has handed off to you"}
             </p>
             {takeover === "live" && (

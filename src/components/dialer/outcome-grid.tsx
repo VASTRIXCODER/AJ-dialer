@@ -13,8 +13,9 @@ import {
   XCircle,
   type LucideIcon,
 } from "lucide-react";
+import { useVocabulary } from "@/components/layout/vocabulary";
+import { resolveOutcomeOptions } from "@/lib/status";
 import type { CallOutcome } from "@/lib/types";
-import { outcomeOptions } from "@/lib/data";
 import { cn } from "@/lib/utils";
 
 const icons: Record<CallOutcome, LucideIcon> = {
@@ -41,9 +42,10 @@ export function OutcomeGrid({
 }: {
   onSelect: (outcome: CallOutcome) => void;
 }) {
+  const options = resolveOutcomeOptions(useVocabulary());
   return (
     <div className="grid grid-cols-2 gap-2.5">
-      {outcomeOptions.map((opt, i) => {
+      {options.map((opt, i) => {
         const Icon = icons[opt.value];
         return (
           <motion.button

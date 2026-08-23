@@ -24,7 +24,7 @@ export function Progress({
       )}
     >
       <motion.div
-        className={cn("relative h-full rounded-full bg-solar", barClassName)}
+        className={cn("relative h-full rounded-full bg-brand", barClassName)}
         initial={reduce ? false : { width: 0 }}
         whileInView={reduce ? undefined : { width: `${pct}%` }}
         viewport={{ once: true, margin: "0px 0px -8% 0px" }}

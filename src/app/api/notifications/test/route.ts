@@ -59,7 +59,7 @@ export async function POST() {
   const email = renderAppointmentEmail({
     kind: "appointment_set",
     payload: {
-      leadName: "Test Homeowner (this is a test)",
+      leadName: "Test contact (this is a test)",
       scheduledAt: floating,
       durationMin: 60,
       timezone: viewer.org?.timezone ?? "",

@@ -5,6 +5,7 @@ import {
   type LeadFieldDef,
 } from "@/lib/leads/field-schema";
 import { getViewer } from "@/lib/org/membership";
+import { templateProfile } from "@/lib/org/templates";
 import type { Lead } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -38,7 +39,20 @@ const bool = (v: unknown) => (v ? "Yes" : "No");
 // The trailing metadata columns intentionally map to nothing and are ignored on
 // re-import. Note "Uploaded By" rather than "Owner" — mapHeader() reads "owner"
 // as the homeowner's NAME, which would overwrite first/last name on re-import.
-type Column = { header: string; value: (l: Lead) => unknown };
+type Column = {
+  header: string;
+  value: (l: Lead) => unknown;
+  /**
+   * The core schema slot this column carries, when it has one. Columns whose
+   * slot the org's vertical HIDES are dropped from the file: a recruiting
+   * workspace's export shipped "Solar Provider" and "Solar Payment" columns
+   * that were empty in every single row.
+   *
+   * The header TEXT deliberately does not follow the org's label — it is the
+   * interchange key mapHeader() reads on re-import (see above), not UI copy.
+   */
+  slot?: string;
+};
 
 const COLUMNS: Column[] = [
   { header: "First Name", value: (l) => l.firstName },
@@ -49,10 +63,10 @@ const COLUMNS: Column[] = [
   { header: "City", value: (l) => l.city },
   { header: "State", value: (l) => l.state },
   { header: "Zip", value: (l) => l.zip },
-  { header: "Utility Provider", value: (l) => l.utilityProvider },
-  { header: "Solar Provider", value: (l) => l.solarProvider },
-  { header: "Utility Bill", value: (l) => l.utilityBill ?? "" },
-  { header: "Solar Payment", value: (l) => l.solarPayment ?? "" },
+  { header: "Utility Provider", value: (l) => l.utilityProvider, slot: "utilityProvider" },
+  { header: "Solar Provider", value: (l) => l.solarProvider, slot: "solarProvider" },
+  { header: "Utility Bill", value: (l) => l.utilityBill ?? "", slot: "utilityBill" },
+  { header: "Solar Payment", value: (l) => l.solarPayment ?? "", slot: "solarPayment" },
   { header: "Notes", value: (l) => l.notes ?? "" },
   // ── metadata (not re-imported) ──
   { header: "Status", value: (l) => l.status },
@@ -61,10 +75,10 @@ const COLUMNS: Column[] = [
   // re-import source column, same as Lead Group/AI Score above; mapHeader()
   // has no "county" mapping so this is safely ignored if the file comes back.
   { header: "County", value: (l) => l.county ?? "" },
-  { header: "Has EV", value: (l) => bool(l.hasEV) },
-  { header: "Has Pool", value: (l) => bool(l.hasPool) },
-  { header: "Has Battery", value: (l) => bool(l.hasBattery) },
-  { header: "Multiple Systems", value: (l) => bool(l.multipleSystems) },
+  { header: "Has EV", value: (l) => bool(l.hasEV), slot: "hasEV" },
+  { header: "Has Pool", value: (l) => bool(l.hasPool), slot: "hasPool" },
+  { header: "Has Battery", value: (l) => bool(l.hasBattery), slot: "hasBattery" },
+  { header: "Multiple Systems", value: (l) => bool(l.multipleSystems), slot: "multipleSystems" },
   { header: "AI Score", value: (l) => l.aiScore ?? "" },
   { header: "Timezone", value: (l) => l.timezone },
   { header: "Last Contacted", value: (l) => l.lastContactedAt ?? "" },
@@ -124,9 +138,30 @@ export async function GET() {
   // in Admin) export as columns after the fixed set. resolveLeadFields already
   // handles the empty-settings case, and custom defs come only from settings,
   // so no template overrides are needed here.
+  // The org's effective schema, template relabels/hides included — the same
+  // resolution the leads table and the dialer use.
+  const defs = resolveLeadFields(
+    viewer.org?.settings?.leadFields,
+    templateProfile(viewer.org?.dialerTemplate).fields,
+  );
+  // Which slots to drop comes from the template's HIDE list, not from
+  // showInTable/showInQualify. Several core slots (utility provider, solar
+  // provider, multiple systems) are false on BOTH flags by default and are
+  // still exported — filtering on the flags would have silently dropped three
+  // real columns of solar data out of every export.
+  //
+  // An org that explicitly saved a core def wins over the template's hide, the
+  // same precedence resolveLeadFields itself uses.
+  const hidden = new Set(templateProfile(viewer.org?.dialerTemplate).fields?.hidden ?? []);
+  const savedCore = new Set(
+    (viewer.org?.settings?.leadFields ?? [])
+      .filter((f) => f.source === "core")
+      .map((f) => f.key),
+  );
   const columns = [
-    ...COLUMNS,
-    ...customColumns(resolveLeadFields(viewer.org?.settings?.leadFields)),
+    // Everything without a slot (name, phone, the metadata tail) always ships.
+    ...COLUMNS.filter((c) => !c.slot || savedCore.has(c.slot) || !hidden.has(c.slot)),
+    ...customColumns(defs),
   ];
 
   const lines = [

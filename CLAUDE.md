@@ -4,10 +4,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project overview
 
-AIATWORK Solar Resolution Dialer — an Apple-grade, Twilio-powered AI outbound calling platform
-for solar organizations. Reps find homeowners paying both a solar loan and a utility bill, qualify
-them, and book account reviews. Supports power dialing, 3X parallel dialing, and an optional AI
-calling agent (ElevenLabs Conversational AI).
+ATLAS by AIATWORK — an Apple-grade, Twilio-powered AI outbound calling platform for **any** sales
+organization. Reps load a book of contacts, qualify them on a call, and book whatever that
+business books. Supports power dialing, 3X parallel dialing, and an optional AI calling agent
+(ElevenLabs Conversational AI).
+
+The product began life as a solar-resolution dialer, and solar remains one **vertical** among ten
+(`src/lib/org/templates.ts`). Solar tenants must keep their exact wording; every other tenant must
+never see it. Nothing user-facing may hardcode an industry noun — see "Workspace vocabulary" below.
 
 ## Stack
 
@@ -22,7 +26,8 @@ calling agent (ElevenLabs Conversational AI).
 
 ## Commands
 
-- `npm run dev` · `npm run build` · `npm run lint`
+- `npm run dev` · `npm run build` · `npm run lint` · `npm test`
+- `npm run verify:ai` — proves the Claude connection, the model, and structured outputs really work.
 - Always run `npm run build` before committing UI changes — it type-checks every route.
 - Copy `.env.example` → `.env.local` and fill in credentials (never commit `.env.local`).
 - After setting up Supabase credentials, run `supabase/schema.sql` in the SQL editor once.
@@ -53,6 +58,37 @@ gates before rendering. Superadmins bypass the kill switch and can never lock th
 Users belong to one org at a time (`profiles.org_id`). The Hub lets them switch between orgs they
 belong to. Orgs are created via the Hub or the Superadmin console.
 
+## Workspace vocabulary (never hardcode an industry noun)
+
+`src/lib/org/vocabulary.ts` — PURE, importable from Server and Client Components.
+
+`orgVocabulary(org)` resolves what a workspace calls things, with one precedence everywhere:
+the org's own `settings.leadNoun` → the vertical template's noun → a neutral default.
+
+- `leadNoun` / `leadNounPlural` / `LeadNoun` / `LeadNounPlural` — "homeowner", "candidate", "lead"
+- `appointmentNoun` — "account review", "showing", "interview"
+- `noNeedLabel` — the label for the `bills_fine` disposition ("Bills are fine", "Not looking right now")
+- `tagline` — the line under the wordmark
+
+Server Components call `orgVocabulary(viewer.org)`. Client Components call `useVocabulary()`
+(`src/components/layout/vocabulary.tsx`) — the app shell provides it. Status maps have
+vocabulary-aware resolvers in `src/lib/status.ts`: `resolveOutcomeConfig`, `resolveLeadStatusConfig`,
+`resolveOutcomeOptions`.
+
+**Stored keys never move** (`bills_fine`, `solarPayment`, `utilityBill` … are on live rows and in
+historical call records) — only the words a human reads. Field LABELS come from the org's resolved
+schema (`resolveLeadFields`), not from literals.
+
+## The call archive
+
+`src/lib/db/call-archive.ts` + `/recordings` — every recording and transcript, searchable by name,
+number, summary, rep notes, and what was said on the call. `call_records.transcript_text` is the
+flattened, indexed copy (`flattenTranscript` in `src/lib/db/records.ts`); the structured turns stay
+on `ai_conversations.transcript`. `call_records.notes` holds the rep's notes for THAT call
+(`leads.notes` is the lead's current note and is overwritten by each call).
+
+One detail view for both channels: `src/components/calls/call-detail-modal.tsx`.
+
 ## Role hierarchy & permissions
 
 `src/lib/permissions.ts` — pure, importable from both server and client.
@@ -75,12 +111,22 @@ nothing crashes when any credential is missing.
 
 `src/lib/ai/claude.ts` — the single entry point for all AI calls.
 
+- `AI_MODEL` defaults to `claude-opus-5`; override with the `AI_MODEL` env var. Model IDs take
+  **no** date suffix.
 - `isAIConfigured()` — `ANTHROPIC_API_KEY` present.
 - `runAI(task, fallback)` — runs Claude or falls back to a deterministic simulation, tagged with
-  `source: "claude" | "demo"` so the UI shows a badge.
-- `generateJSON` / `generateJSONLoose` — structured outputs via the Anthropic SDK.
+  `source: "claude" | "demo"` **and `error`** (why it fell back) so `AiSourceBadge` can say so.
+- `generateJSON` / `generateJSONLoose` — structured outputs. `output_config.format` takes exactly
+  `{ type, schema }`; adding a `name` 400s and silently degrades every surface to demo output.
+- Thinking is ON by default on current models and shares the `max_tokens` budget — `callMessages`
+  pads it. Do NOT "optimize" by disabling thinking: measured, it was slower AND truncated output.
+  `output_config.effort` is the lever that works.
+- Unknown/older models degrade gracefully: a 400 naming `thinking` / `effort` / `format` disables
+  that knob for the process instead of failing the surface. `AI_FAST_MODE=true` opts into fast mode.
 - AI services (briefing, copilot, summary, report, search, chat) live in `src/lib/ai/services.ts`.
 - All AI API routes are under `src/app/api/ai/`.
+- **Verify with `npm run verify:ai`** (add `--full` to exercise every surface against the live API);
+  `/api/ai/health` reports the model, latency, and a plain-English failure reason.
 
 ## Twilio
 

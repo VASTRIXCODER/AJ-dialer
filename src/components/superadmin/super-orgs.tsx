@@ -824,7 +824,7 @@ function AIWizard({ onClose, onCreated }: { onClose: () => void; onCreated: () =
     >
       <div className="flex items-center justify-between border-b border-border/60 p-5">
         <div className="flex items-center gap-3">
-          <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-solar text-white shadow-glow">
+          <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-brand text-white shadow-glow">
             <Wand2 className="h-5 w-5" />
           </span>
           <p className="text-base font-semibold">AI organization builder</p>

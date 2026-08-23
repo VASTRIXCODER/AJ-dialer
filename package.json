@@ -1,14 +1,15 @@
 {
-  "name": "aiatwork-solar-dialer",
+  "name": "aiatwork-atlas-dialer",
   "version": "0.1.0",
   "private": true,
-  "description": "AIATWORK Solar Resolution Dialer — an Apple-grade, Twilio-powered AI outbound calling platform for solar organizations.",
+  "description": "ATLAS by AIATWORK — an Apple-grade, Twilio-powered AI outbound calling platform for any sales organization.",
   "scripts": {
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
     "relay": "node server/media-stream-server.mjs",
+    "verify:ai": "tsx scripts/verify-ai.ts",
     "verify:live-audio": "node scripts/verify-live-audio.mjs",
     "verify:disposition": "tsx scripts/verify-disposition.ts",
     "verify:readcall": "tsx scripts/verify-readcall.ts",

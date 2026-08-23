@@ -121,7 +121,7 @@ function SplitBar({ ai, human }: { ai: number; human: number }) {
       className="mt-1 flex h-1 w-24 overflow-hidden rounded-full bg-muted"
       title={`${ai} AI · ${human} human`}
     >
-      <span className="bg-solar" style={{ width: `${aiPct}%` }} />
+      <span className="bg-brand" style={{ width: `${aiPct}%` }} />
       <span className="bg-accent" style={{ width: `${100 - aiPct}%` }} />
     </div>
   );
@@ -232,7 +232,7 @@ export function LeaderboardView({
                     "flex w-full items-start justify-center rounded-t-xl pt-2 text-lg font-black",
                     heights[i],
                     isFirst
-                      ? "bg-solar text-white shadow-[0_-8px_30px_-10px_hsl(var(--glow)/0.7)]"
+                      ? "bg-brand text-white shadow-[0_-8px_30px_-10px_hsl(var(--glow)/0.7)]"
                       : "bg-muted text-muted-foreground",
                   )}
                 >

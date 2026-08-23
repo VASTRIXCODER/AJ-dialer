@@ -51,13 +51,13 @@ export function SalesDashboard() {
 
   return (
     <div className="relative w-full max-w-xl">
-      <div className="absolute -inset-8 -z-10 rounded-[2.5rem] bg-solar opacity-20 blur-[90px]" />
+      <div className="absolute -inset-8 -z-10 rounded-[2.5rem] bg-brand opacity-20 blur-[90px]" />
 
       <div className="overflow-hidden rounded-3xl border border-border/80 bg-card/80 shadow-lift backdrop-blur-xl">
         {/* Header */}
         <div className="flex items-center justify-between border-b border-border/70 px-5 py-3.5">
           <div className="flex items-center gap-2">
-            <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-solar text-white">
+            <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-brand text-white">
               <TrendingUp className="h-3.5 w-3.5" />
             </span>
             <span className="text-sm font-semibold">Live Sales Floor</span>
@@ -145,7 +145,7 @@ export function SalesDashboard() {
                     </div>
                     <div className="h-1.5 overflow-hidden rounded-full bg-muted/70">
                       <motion.div
-                        className="h-full rounded-full bg-solar"
+                        className="h-full rounded-full bg-brand"
                         initial={reduce ? false : { width: 0 }}
                         whileInView={{ width: `${c.pct}%` }}
                         viewport={{ once: true }}

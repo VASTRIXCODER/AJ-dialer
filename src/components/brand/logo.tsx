@@ -4,7 +4,7 @@ export function LogoMark({ className }: { className?: string }) {
   return (
     <span
       className={cn(
-        "relative inline-flex items-center justify-center rounded-xl bg-solar shadow-glow",
+        "relative inline-flex items-center justify-center rounded-xl bg-brand shadow-glow",
         className,
       )}
     >
@@ -34,17 +34,17 @@ export function LogoMark({ className }: { className?: string }) {
 export function Wordmark({
   className,
   collapsed = false,
-  tagline = "Solar Resolution",
+  tagline = "AI Sales Dialer",
 }: {
   className?: string;
   collapsed?: boolean;
-  /**
-   * Line under the wordmark. Defaults to the original solar tagline so the
-   * marketing site and any caller without org context are unchanged; the app
-   * shell passes the tenant's own (see brandTagline in lib/org/vertical.ts),
-   * because "Solar Resolution" is someone else's industry to a tenant that
-   * doesn't sell solar.
-   */
+   /**
+    * Line under the wordmark. The default is vertical-neutral — it used to be
+    * "Solar Resolution", which is one tenant's product name and reads as a
+    * mistake to everyone else. The app shell passes the workspace's own (see
+    * orgVocabulary), and a solar workspace still gets "Solar Resolution" from
+    * its vertical.
+    */
   tagline?: string;
 }) {
   return (

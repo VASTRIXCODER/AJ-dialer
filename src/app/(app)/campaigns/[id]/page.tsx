@@ -19,8 +19,19 @@ import { buttonVariants } from "@/components/ui/button";
 import { isScriptTestRunning } from "@/lib/campaign-scripts";
 import { getLeadsPage } from "@/lib/db/leads";
 import { getCampaign, getCampaignRecentCalls } from "@/lib/db/pipeline";
-import { campaignStatusConfig, leadStatusConfig, outcomeConfig } from "@/lib/status";
-import { formatDuration, formatNumber, relativeTime } from "@/lib/utils";
+import { getViewer } from "@/lib/org/membership";
+import { orgVocabulary } from "@/lib/org/vocabulary";
+import {
+  campaignStatusConfig,
+  resolveLeadStatusConfig,
+  resolveOutcomeConfig,
+} from "@/lib/status";
+import {
+  formatDuration,
+  formatNumber,
+  leadDisplayName,
+  relativeTime,
+} from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
 
@@ -30,12 +41,20 @@ export default async function CampaignDetailPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  const [c, leadsPage, recentCalls] = await Promise.all([
-    getCampaign(id),
-    getLeadsPage({ page: 1, pageSize: 25, campaignId: id }),
-    getCampaignRecentCalls(id),
+  const [viewer, [c, leadsPage, recentCalls]] = await Promise.all([
+    getViewer(),
+    Promise.all([
+      getCampaign(id),
+      getLeadsPage({ page: 1, pageSize: 25, campaignId: id }),
+      getCampaignRecentCalls(id),
+    ]),
   ]);
   if (!c) notFound();
+
+  // The workspace's own nouns and disposition wording.
+  const vocab = orgVocabulary(viewer.org);
+  const leadStatusConfig = resolveLeadStatusConfig(vocab);
+  const outcomeConfig = resolveOutcomeConfig(vocab);
 
   const st = c.stats;
   const cfg = campaignStatusConfig[c.status];
@@ -201,7 +220,7 @@ export default async function CampaignDetailPage({
                     return (
                       <tr key={l.id} className="border-b border-border/60 last:border-0">
                         <td className="max-w-[220px] truncate py-2.5 pr-4 font-medium">
-                          {`${l.firstName} ${l.lastName}`.trim() || "Homeowner"}
+                          {leadDisplayName(`${l.firstName} ${l.lastName}`, l.phone, vocab.leadNoun)}
                         </td>
                         <td className="py-2.5 pr-4">
                           <Badge tone={lc.tone}>{lc.label}</Badge>

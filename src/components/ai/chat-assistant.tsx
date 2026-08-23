@@ -272,7 +272,7 @@ export function ChatAssistant() {
           >
             <PanelLeft className="h-4 w-4" />
           </button>
-          <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-solar text-white shadow-glow">
+          <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-brand text-white shadow-glow">
             <Sparkles className="h-4 w-4" />
           </span>
           <div className="min-w-0">
@@ -286,7 +286,7 @@ export function ChatAssistant() {
         <div ref={scrollRef} className="flex-1 space-y-4 overflow-y-auto p-4">
           {!active || active.messages.length === 0 ? (
             <div className="flex h-full flex-col items-center justify-center gap-5 text-center">
-              <span className="flex h-14 w-14 items-center justify-center rounded-2xl bg-solar text-white shadow-glow">
+              <span className="flex h-14 w-14 items-center justify-center rounded-2xl bg-brand text-white shadow-glow">
                 <Bot className="h-7 w-7" />
               </span>
               <div>
@@ -318,7 +318,7 @@ export function ChatAssistant() {
                   className={cn("flex gap-3", m.role === "user" ? "justify-end" : "justify-start")}
                 >
                   {m.role === "assistant" && (
-                    <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-solar text-white">
+                    <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-brand text-white">
                       <Bot className="h-4 w-4" />
                     </span>
                   )}
@@ -326,7 +326,7 @@ export function ChatAssistant() {
                     className={cn(
                       "max-w-[80%] rounded-2xl px-4 py-2.5 text-sm",
                       m.role === "user"
-                        ? "rounded-br-md bg-solar text-white"
+                        ? "rounded-br-md bg-brand text-white"
                         : "rounded-bl-md bg-muted text-foreground",
                     )}
                   >
@@ -345,7 +345,7 @@ export function ChatAssistant() {
               ))}
               {sending && (
                 <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex gap-3">
-                  <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-solar text-white">
+                  <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-brand text-white">
                     <Bot className="h-4 w-4" />
                   </span>
                   <div className="flex items-center gap-1 rounded-2xl rounded-bl-md bg-muted px-4 py-3">

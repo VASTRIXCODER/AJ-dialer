@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { OutcomeGrid } from "@/components/dialer/outcome-grid";
+import { useVocabulary } from "@/components/layout/vocabulary";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input, Label, Select, Textarea } from "@/components/ui/input";
@@ -107,6 +108,7 @@ export function AppointmentDialog({
   onRoute: (leadId: string, outcome: CallOutcome) => void;
   onRetryNotification: (id: string) => void;
 }) {
+  const vocab = useVocabulary();
   const creating = !appt;
   const review = appt ? isReview(appt) : false;
   const readOnly = !access.canManage;
@@ -146,7 +148,7 @@ export function AppointmentDialog({
 
   function submitCreate() {
     onCreate({
-      leadName: leadName.trim() || "Homeowner",
+      leadName: leadName.trim() || `Unknown ${vocab.leadNoun}`,
       scheduledAt: startDate ? `${when}:00` : null,
       scheduledLabel: labelFor(startDate),
       durationMin,
@@ -278,7 +280,7 @@ export function AppointmentDialog({
               id="cancel-reason"
               value={cancelReason}
               onChange={(e) => setCancelReason(e.target.value)}
-              placeholder="Homeowner rescheduled, wrong number…"
+              placeholder={`${vocab.LeadNoun} rescheduled, wrong number…`}
             />
             <div className="mt-4 flex items-center gap-2">
               <Button variant="outline" size="sm" onClick={() => setMode("edit")}>
@@ -371,7 +373,7 @@ export function AppointmentDialog({
             <div className="space-y-4 p-5">
               {creating && (
                 <div>
-                  <Label htmlFor="appt-lead">Homeowner</Label>
+                  <Label htmlFor="appt-lead">{vocab.LeadNoun}</Label>
                   <Input
                     id="appt-lead"
                     value={leadName}

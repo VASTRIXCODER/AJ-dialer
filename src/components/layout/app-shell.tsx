@@ -7,9 +7,11 @@ import { CommandPalette } from "@/components/ai/command-palette";
 import { type DialerConfig, DialerProvider } from "@/components/dialer/dialer-context";
 import { GlobalCallBar } from "@/components/dialer/global-call-bar";
 import type { OrgFeatures } from "@/lib/org/settings";
+import { DEFAULT_VOCABULARY, type OrgVocabulary } from "@/lib/org/vocabulary";
 import { AmbientBackground } from "./ambient-background";
 import { Sidebar } from "./sidebar";
 import { Topbar } from "./topbar";
+import { VocabularyProvider } from "./vocabulary";
 
 type Account = { name: string; email: string; initials: string };
 
@@ -22,10 +24,10 @@ export function AppShell({
   features = null,
   orgName = null,
   productName = null,
-  dialerTemplate = null,
   brandColor = null,
   role = null,
   superadmin = false,
+  vocabulary = DEFAULT_VOCABULARY,
   dialerConfig,
 }: {
   children: React.ReactNode;
@@ -36,18 +38,19 @@ export function AppShell({
   features?: OrgFeatures | null;
   orgName?: string | null;
   productName?: string | null;
-  /** Org vertical — hides solar-specific wording for other industries. */
-  dialerTemplate?: string | null;
   brandColor?: string | null;
   role?: string | null;
   superadmin?: boolean;
+  /** The org's own nouns, resolved server-side. See useVocabulary(). */
+  vocabulary?: OrgVocabulary;
   /** Config for the app-wide dialer engine (persists calls across navigation). */
   dialerConfig: DialerConfig;
 }) {
   const [mobileOpen, setMobileOpen] = useState(false);
-  const sidebarProps = { permissions, features, orgName, productName, dialerTemplate, brandColor, role, superadmin };
+  const sidebarProps = { permissions, features, orgName, productName, brandColor, role, superadmin, vocabulary };
 
   return (
+    <VocabularyProvider value={vocabulary}>
     <DialerProvider config={dialerConfig}>
     <div className="relative flex min-h-screen">
       <AmbientBackground />
@@ -108,5 +111,6 @@ export function AppShell({
       <GlobalCallBar />
     </div>
     </DialerProvider>
+    </VocabularyProvider>
   );
 }

@@ -18,6 +18,7 @@ import { listLeadGroupsWithCounts } from "@/lib/db/lead-groups";
 import { resolveLeadFields, type CoreFieldOverrides } from "@/lib/leads/field-schema";
 import { getViewer, listMembers } from "@/lib/org/membership";
 import { templateProfile } from "@/lib/org/templates";
+import { orgVocabulary } from "@/lib/org/vocabulary";
 import { isSolarVertical } from "@/lib/org/vertical";
 import { leadStatusConfig } from "@/lib/status";
 import type { LeadStatus } from "@/lib/types";
@@ -144,10 +145,14 @@ export default async function LeadsPage({
       .fields,
   );
 
+  // "homeowner" was hardcoded here, so every vertical read the solar tenant's
+  // noun on its own leads page. orgVocabulary owns that precedence now (org
+  // setting → vertical → neutral), in one place, for every screen.
+  const vocab = orgVocabulary(viewer.org);
   const header = (
     <PageHeader
-      title="Leads"
-      description="Every homeowner in your pipeline, scored and ready to dial."
+      title={vocab.LeadNounPlural}
+      description={`Every ${vocab.leadNoun} in your pipeline, scored and ready to dial.`}
     >
       {/* Hidden for reps: /api/leads/export is gated on leads.import, so showing
           it to everyone would just hand a rep a 403 page. */}

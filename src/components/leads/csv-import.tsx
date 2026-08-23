@@ -236,7 +236,7 @@ export function CsvImport({
             : "border-border bg-muted/30 hover:border-primary/40 hover:bg-primary-soft/30",
         )}
       >
-        <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-solar text-white shadow-glow">
+        <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-brand text-white shadow-glow">
           <UploadCloud className="h-7 w-7" />
         </div>
         <p className="mt-4 font-semibold">Drop your CSV here</p>

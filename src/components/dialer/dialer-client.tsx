@@ -16,6 +16,8 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { prefetchBriefing } from "@/components/ai/lead-briefing";
+import { useVocabulary } from "@/components/layout/vocabulary";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -33,6 +35,10 @@ import { cn } from "@/lib/utils";
 import type { BookedLead } from "@/lib/db/leads";
 import type { CallOutcome, Lead } from "@/lib/types";
 import { BookAppointmentDialog, type BookedAppointment } from "./book-appointment-dialog";
+import {
+  ScheduleCallbackDialog,
+  type ScheduledCallback,
+} from "./schedule-callback-dialog";
 import { BookedLeadsPanel } from "./booked-leads-panel";
 import { CallStage } from "./call-stage";
 import { useDialerContext, type DialerCampaign } from "./dialer-context";
@@ -75,6 +81,7 @@ export function DialerClient({
     activate,
   } = useDialerContext();
   const { state } = dialer;
+  const vocab = useVocabulary();
   const [showLoadDialog, setShowLoadDialog] = useState(false);
 
   // Which dialer panels this workspace shows (template preset ⊕ admin toggles).
@@ -82,6 +89,10 @@ export function DialerClient({
   const showFloor = layout?.floor !== false;
   const showBookedTab = layout?.bookedTab !== false;
   const showScriptCard = layout?.scriptCard !== false;
+  // Undefined = the layout never resolved a list, so QualifyPanel falls back to
+  // its own core defaults and DOES render fields. Only an explicit empty list
+  // means the panel is briefing-and-notes only.
+  const hasQualifyFields = config.qualifyFields?.length !== 0;
 
   // ── Booked tab ────────────────────────────────────────────────────────────
   // Leads with an appointment already on the calendar. getDialQueue already
@@ -146,8 +157,54 @@ export function DialerClient({
 
   const campaignsForSelect = ctxCampaigns.length ? ctxCampaigns : campaigns;
 
-  // Track the rep's in-call notes so they can be saved with the disposition.
+  // The rep's in-call notes, owned HERE so the qualify panel and the wrap-up
+  // screen edit the same note — and so there is exactly ONE writer persisting
+  // it. A ref mirrors the value because fileOutcome reads the latest at
+  // disposition time without wanting to be re-created on every keystroke.
+  const [notes, setNotes] = useState<string>("");
   const notesRef = useRef<string>("");
+  const notesTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const notesLeadRef = useRef<string | null>(null);
+
+  // Notes used to reach the lead ONLY through a disposition, so a rep who typed
+  // "spoke to his wife, call back Friday" and then skipped the call — or simply
+  // navigated away — lost it. They now save on the same 800ms debounce the
+  // qualify fields use.
+  const flushNotes = useCallback(() => {
+    if (notesTimer.current) {
+      clearTimeout(notesTimer.current);
+      notesTimer.current = null;
+    }
+    const leadId = notesLeadRef.current;
+    if (!leadId) return;
+    notesLeadRef.current = null;
+    void fetch("/api/leads/update", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      // keepalive so a save racing a lead advance or a tab close still lands.
+      body: JSON.stringify({ id: leadId, leadId, notes: notesRef.current }),
+      keepalive: true,
+    }).catch(() => {
+      /* transient — the rep's screen already shows what they typed */
+    });
+  }, []);
+
+  const updateNotes = useCallback(
+    (next: string, leadId?: string | null) => {
+      notesRef.current = next;
+      setNotes(next);
+      if (!leadId) return; // seeding from the lead, not a rep edit
+      notesLeadRef.current = leadId;
+      if (notesTimer.current) clearTimeout(notesTimer.current);
+      notesTimer.current = setTimeout(() => flushNotes(), 800);
+    },
+    [flushNotes],
+  );
+
+  // Flush on unmount so navigating away mid-sentence doesn't drop the note.
+  const flushNotesRef = useRef(flushNotes);
+  flushNotesRef.current = flushNotes;
+  useEffect(() => () => flushNotesRef.current(), []);
   // The script variant (A/B) shown for the focus lead — same ref idiom as
   // notesRef, so the disposition POST can carry it without re-binding
   // fileOutcome on every render. Updated by an effect further down, once the
@@ -163,7 +220,10 @@ export function DialerClient({
       state.connectedLead ??
       state.lines[0]?.lead ??
       (queueForDialer.length ? queueForDialer[state.queueIndex % queueForDialer.length] : null);
-    notesRef.current = lead?.notes ?? "";
+    // Land any pending edit for the PREVIOUS lead before the value is replaced,
+    // then seed from the new lead without writing that seed back.
+    flushNotesRef.current();
+    updateNotes(lead?.notes ?? "");
     // Reset notes to the lead's saved notes whenever the active lead changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [focusLeadId]);
@@ -172,6 +232,7 @@ export function DialerClient({
   useEffect(() => {
     void replayQueuedDispositions();
   }, []);
+
 
   // Auto-dial a callback number as soon as the Twilio device is live and idle.
   const callbackFiredRef = useRef(false);
@@ -196,6 +257,16 @@ export function DialerClient({
       )
     : [];
 
+  // Warm the NEXT lead's AI briefing while the rep is still on this call, so it
+  // is on screen the moment the queue advances instead of after a multi-second
+  // model call. Deliberately gated on an active call: browsing the queue while
+  // idle must not fire a briefing for every lead the rep scrolls past.
+  const nextLeadId = upNext[0]?.id ?? null;
+  useEffect(() => {
+    if (state.status === "idle") return;
+    prefetchBriefing(nextLeadId);
+  }, [nextLeadId, state.status]);
+
   // ── Campaign script (A/B test) ─────────────────────────────────────────────
   // Which script the focus lead's campaign assigns them. Deterministic per lead
   // (hash of the id), so the same homeowner hears the same script on every
@@ -216,14 +287,29 @@ export function DialerClient({
   }, [scriptVariant]);
 
   // ── Disposition ────────────────────────────────────────────────────────────
-  // "Appointment booked" pauses here to ask WHEN, because filing the disposition
-  // is a one-way door: dialer.selectOutcome() advances the queue and, with
-  // auto-dial on, immediately starts calling the next homeowner. Ask first, file
-  // second. Every other outcome files straight through, untouched.
+  // Two outcomes pause here to ask WHEN, because filing the disposition is a
+  // one-way door: dialer.selectOutcome() advances the queue and, with auto-dial
+  // on, immediately starts calling the next lead. Ask first, file second.
+  //
+  //  • "Appointment booked" → the slot, so the review reaches the calendar.
+  //  • "Callback"           → the time, so the promise reaches the Callbacks
+  //                           board's overdue/due/upcoming triage. Without it
+  //                           every callback a rep ever promised was filed with
+  //                           no due date and sat in "Due now" forever.
+  //
+  // Every other outcome files straight through, untouched.
   const [booking, setBooking] = useState<{ lead: Lead; notes: string } | null>(null);
+  const [callback, setCallback] = useState<{ lead: Lead; notes: string } | null>(null);
 
   const fileOutcome = useCallback(
-    (o: CallOutcome, lead: Lead | null, appointment?: BookedAppointment | null) => {
+    (
+      o: CallOutcome,
+      lead: Lead | null,
+      extra?: {
+        appointment?: BookedAppointment | null;
+        callback?: ScheduledCallback | null;
+      },
+    ) => {
       if (lead) {
         // Durable: on any network failure the disposition is queued in
         // localStorage and replayed on the next load, instead of being silently
@@ -237,7 +323,8 @@ export function DialerClient({
           callSid: state.callSid,
           room: state.room,
           notes: notesRef.current || undefined,
-          appointment: appointment ?? undefined,
+          appointment: extra?.appointment ?? undefined,
+          callback: extra?.callback ?? undefined,
           // Which script (A/B) the rep was shown for this lead — powers the
           // per-variant split on the campaign page. Absent when no script.
           scriptVariant: scriptVariantRef.current ?? undefined,
@@ -252,6 +339,10 @@ export function DialerClient({
     (o: CallOutcome) => {
       if (o === "appointment_booked" && focusLead) {
         setBooking({ lead: focusLead, notes: notesRef.current });
+        return;
+      }
+      if (o === "callback_scheduled" && focusLead) {
+        setCallback({ lead: focusLead, notes: notesRef.current });
         return;
       }
       fileOutcome(o, focusLead);
@@ -474,7 +565,8 @@ export function DialerClient({
             state={state}
             focusLead={focusLead}
             hasQueue={queueForDialer.length > 0}
-            wrapupNotes={notesRef.current}
+            wrapupNotes={notes}
+            onNotesChange={(n) => updateNotes(n, focusLead?.id ?? null)}
             aiConfigured={config.aiAgentConfigured}
             manualEnabled={config.manualEnabled}
             aiEnabled={config.aiEnabled}
@@ -509,12 +601,20 @@ export function DialerClient({
         <Card className="overflow-hidden lg:col-span-4">
           <div className="border-b border-border px-5 py-3">
             <h3 className="font-semibold">
-              {config.qualifyShowSolarPayment !== false
-                ? "Solar resolution workflow"
-                : "Qualification workflow"}
+              {/* Two things vary here. An org can switch every qualify field off
+                  (Admin → field schema), leaving the briefing and notes — calling
+                  that a "workflow" would describe a panel that isn't on screen.
+                  And the header used to read "Solar resolution workflow" for the
+                  solar vertical and promise "the account review" to everyone
+                  else, so a recruiter's dialer told them to capture a homeowner's
+                  utility review. Both now follow what's actually on screen and
+                  the words this workspace uses. */}
+              {hasQualifyFields ? "Qualification workflow" : `${vocab.LeadNoun} briefing`}
             </h3>
             <p className="text-xs text-muted-foreground">
-              Qualify the lead & capture the account review
+              {hasQualifyFields
+                ? `Qualify the ${vocab.leadNoun} & book the ${vocab.appointmentNoun}`
+                : "Context for this call & your notes"}
             </p>
           </div>
           {showScriptCard && scriptText.length > 0 && (
@@ -554,9 +654,8 @@ export function DialerClient({
               lead={focusLead}
               fields={config.qualifyFields}
               showAiBriefing={layout?.aiBriefing !== false}
-              onNotesChange={(n) => {
-                notesRef.current = n;
-              }}
+              notes={notes}
+              onNotesChange={(n) => updateNotes(n, focusLead?.id ?? null)}
             />
           </div>
         </Card>
@@ -570,7 +669,7 @@ export function DialerClient({
           defaultNotes={booking.notes}
           onConfirm={(appt) => {
             setBooking(null);
-            fileOutcome("appointment_booked", booking.lead, appt);
+            fileOutcome("appointment_booked", booking.lead, { appointment: appt });
           }}
           onSkip={() => {
             // Books it with no time — the pre-existing behavior. It lands in the
@@ -581,6 +680,26 @@ export function DialerClient({
           // Backing out files nothing at all: the rep mis-clicked, and the call
           // stays open on the same lead.
           onCancel={() => setBooking(null)}
+        />
+      )}
+
+      {callback && (
+        <ScheduleCallbackDialog
+          lead={callback.lead}
+          defaultReason={callback.notes}
+          onConfirm={(cb) => {
+            setCallback(null);
+            fileOutcome("callback_scheduled", callback.lead, { callback: cb });
+          }}
+          onSkip={() => {
+            // Files the callback with no time — the pre-existing behavior. It
+            // lands in "Due now" rather than being lost.
+            setCallback(null);
+            fileOutcome("callback_scheduled", callback.lead);
+          }}
+          // Backing out files nothing at all: the rep mis-clicked, and the call
+          // stays open on the same lead.
+          onCancel={() => setCallback(null)}
         />
       )}
 

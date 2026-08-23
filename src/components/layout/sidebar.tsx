@@ -8,11 +8,11 @@ import { useId } from "react";
 import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Wordmark } from "@/components/brand/logo";
-import { brandTagline } from "@/lib/org/vertical";
 import type { OrgFeatures } from "@/lib/org/settings";
+import { DEFAULT_VOCABULARY, type OrgVocabulary } from "@/lib/org/vocabulary";
 import { ROLE_LABEL, type OrgRole, isOrgRole } from "@/lib/permissions";
 import { cn } from "@/lib/utils";
-import { navGroups } from "./nav";
+import { navGroups, navLabel } from "./nav";
 
 type Account = { name: string; email: string; initials: string };
 
@@ -22,10 +22,10 @@ export function Sidebar({
   features = null,
   orgName = null,
   productName = null,
-  dialerTemplate = null,
   brandColor = null,
   role = null,
   superadmin = false,
+  vocabulary = DEFAULT_VOCABULARY,
   onNavigate,
 }: {
   account?: Account | null;
@@ -33,11 +33,11 @@ export function Sidebar({
   features?: OrgFeatures | null;
   orgName?: string | null;
   productName?: string | null;
-  /** Org vertical — decides whether solar-specific wording appears. */
-  dialerTemplate?: string | null;
   brandColor?: string | null;
   role?: string | null;
   superadmin?: boolean;
+  /** The workspace's own nouns — nav labels follow them. */
+  vocabulary?: OrgVocabulary;
   onNavigate?: () => void;
 }) {
   const pathname = usePathname();
@@ -66,7 +66,7 @@ export function Sidebar({
     <div className="glass flex h-full flex-col gap-6 border-r border-border/60">
       <div className="px-5 pt-5">
         <Link href="/dashboard" onClick={onNavigate} className="inline-flex">
-          <Wordmark tagline={brandTagline(dialerTemplate, productName)} />
+          <Wordmark tagline={vocabulary.tagline} />
         </Link>
       </div>
 
@@ -164,7 +164,7 @@ export function Sidebar({
                           active && "drop-shadow-[0_0_6px_hsl(var(--glow)/0.7)]",
                         )}
                       />
-                      <span className="relative z-10 flex-1">{item.label}</span>
+                      <span className="relative z-10 flex-1">{navLabel(item, vocabulary)}</span>
                       {item.badge &&
                         (item.badge === "Live" ? (
                           <span className="relative z-10 flex items-center gap-1.5 text-[10px] font-bold text-success">

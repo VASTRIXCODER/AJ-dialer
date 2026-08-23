@@ -46,7 +46,7 @@ export function ReportFunnel({ funnel }: { funnel: Funnel }) {
             <div
               className={cn(
                 "h-full rounded-full",
-                i === 0 ? "bg-primary/40" : i === 1 ? "bg-accent" : "bg-solar",
+                i === 0 ? "bg-primary/40" : i === 1 ? "bg-accent" : "bg-brand",
               )}
               style={{ width: `${s.width}%` }}
             />
@@ -101,7 +101,7 @@ export function ChannelCompare({ channelStats }: { channelStats: ChannelRow[] })
               <span
                 className={cn(
                   "flex h-8 w-8 items-center justify-center rounded-lg",
-                  isAI ? "bg-solar text-white shadow-glow" : "bg-accent-soft text-accent",
+                  isAI ? "bg-brand text-white shadow-glow" : "bg-accent-soft text-accent",
                 )}
               >
                 <Icon className="h-4 w-4" />

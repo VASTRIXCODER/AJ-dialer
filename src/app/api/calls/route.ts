@@ -33,6 +33,12 @@ export async function POST(req: Request) {
       durationMin?: number;
       location?: string;
     } | null;
+    /**
+     * The callback time the rep agreed, captured by the scheduling dialog on
+     * "Callback". Optional — skipping it files a callback with no time, which is
+     * what EVERY rep-scheduled callback did before this existed.
+     */
+    callback?: { iso?: string; when?: string; reason?: string } | null;
     /** Which campaign script (A/B) the rep was shown for this lead, if any. */
     scriptVariant?: string;
   };
@@ -53,6 +59,15 @@ export async function POST(req: Request) {
         }
       : null;
 
+  const callback =
+    body.outcome === "callback_scheduled" && body.callback
+      ? {
+          iso: body.callback.iso,
+          when: body.callback.when ?? "",
+          reason: body.callback.reason ?? "",
+        }
+      : null;
+
   const recordId = await insertCallRecord({
     leadId: body.leadId ?? null,
     leadName: body.leadName,
@@ -64,6 +79,7 @@ export async function POST(req: Request) {
     room: body.room ?? null,
     notes: body.notes,
     appointment: appt,
+    callback,
     scriptVariant,
   });
 
@@ -112,7 +128,23 @@ export async function POST(req: Request) {
         // remaining solar-default caller after P6.AIADAPT.
         const viewer = await getViewer();
         const ctx = orgAIContext(viewer.org);
-        const result = await getCallSummary(lead, body.outcome!, ctx.isSolar, undefined, ctx);
+        // The rep's notes and the call duration are the only real evidence a
+        // manual call leaves — and they were being thrown away here, so the
+        // summary PERSISTED on the record was written blind while the one the
+        // rep saw on screen (which does pass them) was better informed.
+        const result = await getCallSummary(
+          lead,
+          body.outcome!,
+          ctx.isSolar,
+          {
+            notes: typeof body.notes === "string" ? body.notes.slice(0, 4000) : undefined,
+            durationSec:
+              typeof body.durationSec === "number" && Number.isFinite(body.durationSec)
+                ? Math.max(0, Math.round(body.durationSec))
+                : undefined,
+          },
+          ctx,
+        );
         if (result.data.executiveSummary) {
           await supabase
             .from("call_records")

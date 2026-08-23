@@ -11,8 +11,10 @@ import {
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { navGroups } from "@/components/layout/nav";
-import { cn, formatCurrency } from "@/lib/utils";
+import { AiSourceBadge } from "@/components/ai/source-badge";
+import { navGroups, navLabel } from "@/components/layout/nav";
+import { useVocabulary } from "@/components/layout/vocabulary";
+import { cn } from "@/lib/utils";
 
 type LeadMatch = {
   id: string;
@@ -20,7 +22,8 @@ type LeadMatch = {
   name: string;
   city: string;
   state: string;
-  utilityBill: number | null;
+  /** The org's own headline figure, pre-labelled and formatted server-side. */
+  headline: string | null;
   status: string;
 };
 
@@ -31,21 +34,26 @@ type Item =
 /** Open the palette from anywhere: window.dispatchEvent(new Event("open-command-palette")). */
 export function CommandPalette() {
   const router = useRouter();
+  const vocab = useVocabulary();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(false);
   const [interpretation, setInterpretation] = useState("");
   const [matches, setMatches] = useState<LeadMatch[]>([]);
   const [source, setSource] = useState<"claude" | "demo" | null>(null);
+  const [sourceError, setSourceError] = useState<string | undefined>();
   const [active, setActive] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const commands = useMemo(
     () =>
       navGroups.flatMap((g) =>
-        g.items.map((i) => ({ label: i.label, href: i.href, hint: g.label })),
+        // The palette must search the labels the sidebar actually shows: a
+        // recruiter typing "candidates" was finding nothing, because the nav
+        // item's static label is "Leads".
+        g.items.map((i) => ({ label: navLabel(i, vocab), href: i.href, hint: g.label })),
       ),
-    [],
+    [vocab],
   );
 
   const filteredCommands = useMemo(() => {
@@ -121,6 +129,7 @@ export function CommandPalette() {
         setMatches(json.matches ?? []);
         setInterpretation(json.interpretation ?? "");
         setSource(json.source ?? null);
+        setSourceError(json.error);
       } catch {
         /* aborted or failed — leave previous results */
       } finally {
@@ -191,7 +200,7 @@ export function CommandPalette() {
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
                 onKeyDown={onInputKey}
-                placeholder="Search or ask AI — “homeowners overpaying with an EV”…"
+                placeholder={`Search or ask AI — “${vocab.leadNounPlural} worth calling first”…`}
                 className="h-14 w-full bg-transparent text-[15px] outline-none placeholder:text-muted-foreground/70"
               />
               <kbd className="hidden shrink-0 rounded-md border border-border/70 bg-muted/60 px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground sm:inline-flex">
@@ -205,19 +214,10 @@ export function CommandPalette() {
                 <div className="mb-1 flex items-center gap-2 px-3 py-2 text-xs text-muted-foreground">
                   <Sparkles className="h-3.5 w-3.5 text-accent" />
                   <span className="flex-1 truncate">
-                    {loading ? "Claude is interpreting your query…" : interpretation}
+                    {loading ? "Interpreting your query…" : interpretation}
                   </span>
                   {source && !loading && (
-                    <span
-                      className={cn(
-                        "rounded-full px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide",
-                        source === "claude"
-                          ? "bg-accent-soft text-accent"
-                          : "bg-muted text-muted-foreground",
-                      )}
-                    >
-                      {source === "claude" ? "Claude" : "Demo AI"}
-                    </span>
+                    <AiSourceBadge source={source} error={sourceError} />
                   )}
                 </div>
               )}
@@ -254,7 +254,7 @@ export function CommandPalette() {
               {matches.length > 0 && (
                 <div>
                   <p className="px-3 pb-1 pt-2 text-[10px] font-bold uppercase tracking-[0.12em] text-muted-foreground/60">
-                    Homeowners
+                    {vocab.LeadNounPlural}
                   </p>
                   {matches.map((m, i) => {
                     const idx = filteredCommands.length + i;
@@ -278,9 +278,9 @@ export function CommandPalette() {
                             {m.city}, {m.state} · {m.reason}
                           </span>
                         </span>
-                        {m.utilityBill != null && (
+                        {m.headline && (
                           <span className="shrink-0 text-xs font-bold tabular text-muted-foreground">
-                            {formatCurrency(m.utilityBill)}/mo
+                            {m.headline}
                           </span>
                         )}
                       </button>
@@ -303,7 +303,7 @@ export function CommandPalette() {
             <div className="flex items-center justify-between border-t border-border/60 px-4 py-2 text-[11px] text-muted-foreground">
               <span className="flex items-center gap-1.5">
                 <Sparkles className="h-3 w-3 text-accent" />
-                Semantic search, powered by Claude
+                Semantic search
               </span>
               <span className="flex items-center gap-1">
                 <CornerDownLeft className="h-3 w-3" /> to open

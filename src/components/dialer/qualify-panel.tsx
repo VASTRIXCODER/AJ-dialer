@@ -91,11 +91,19 @@ const DEFAULT_QUALIFY_FIELDS = CORE_LEAD_FIELDS.filter((f) => f.showInQualify);
 
 export function QualifyPanel({
   lead,
+  notes: controlledNotes,
   onNotesChange,
   fields,
   showAiBriefing = true,
 }: {
   lead: Lead | null;
+  /**
+   * Controlled notes. The wrap-up screen edits the SAME note as this panel — a
+   * rep typing "call back Thursday" while dispositioning shouldn't have to find
+   * a different textarea in another column — so the value is lifted to the
+   * dialer page and both views read it from there.
+   */
+  notes?: string;
   onNotesChange?: (notes: string) => void;
   /** The fields to render, in order — the org's resolved qualify schema. */
   fields?: LeadFieldDef[];
@@ -123,7 +131,8 @@ export function QualifyPanel({
     }
     return init;
   });
-  const [notes, setNotes] = useState(lead?.notes ?? "");
+  const [ownNotes, setOwnNotes] = useState(lead?.notes ?? "");
+  const notes = controlledNotes ?? ownNotes;
 
   // ── Persistence (debounced 800ms) ──────────────────────────────────────────
   // These entries used to be local state only — reps thought they were saving
@@ -287,7 +296,7 @@ export function QualifyPanel({
           placeholder="Lifestyle changes, objections, follow-ups…"
           value={notes}
           onChange={(e) => {
-            setNotes(e.target.value);
+            setOwnNotes(e.target.value);
             onNotesChange?.(e.target.value);
           }}
         />

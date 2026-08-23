@@ -19,10 +19,22 @@ import { buttonVariants } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { getBillsFine } from "@/lib/db/pipeline";
+import { resolveLeadFields } from "@/lib/leads/field-schema";
 import { getViewer } from "@/lib/org/membership";
-import { formatCurrency, formatPhone, initials, relativeTime } from "@/lib/utils";
+import { templateProfile } from "@/lib/org/templates";
+import { orgVocabulary } from "@/lib/org/vocabulary";
+import {
+  formatCurrency,
+  formatPhone,
+  initials,
+  leadDisplayName,
+  relativeTime,
+} from "@/lib/utils";
 
-export const metadata = { title: "Bills Are Fine" };
+// The stored status key stays `bills_fine` (it is on historical leads and call
+// records); every WORD on this page comes from the workspace's vertical, so a
+// recruiting team reads "Not looking right now" rather than a solar sentence.
+export const metadata = { title: "Set aside" };
 export const dynamic = "force-dynamic";
 
 const PAGE_SIZE = 50;
@@ -48,8 +60,17 @@ export default async function BillsFinePage({
     getBillsFine({ page, pageSize: PAGE_SIZE, q }),
     getViewer(),
   ]);
-  const isSolar = viewer.org?.dialerTemplate === "solar";
-  const secondPaymentLabel = isSolar ? "Solar" : "Other";
+  const vocab = orgVocabulary(viewer.org);
+  // Money labels come from the org's own field schema — "Utility"/"Solar" were
+  // one tenant's column names printed on everyone's screen.
+  const fields = resolveLeadFields(
+    viewer.org?.settings.leadFields,
+    templateProfile(viewer.org?.dialerTemplate).fields,
+  );
+  const bare = (label: string) => label.replace(/\s*\([^)]*\)\s*$/, "").trim() || label;
+  const primaryLabel = bare(fields.find((f) => f.key === "utilityBill")?.label ?? "Monthly bill");
+  const secondPayment = fields.find((f) => f.key === "solarPayment");
+  const secondPaymentLabel = secondPayment ? bare(secondPayment.label) : "Other";
 
   // Only the truly-empty book gets the full empty state — an empty SEARCH (or
   // an out-of-range page) still renders the header, KPIs, and the search box.
@@ -57,13 +78,13 @@ export default async function BillsFinePage({
     return (
       <PageContainer>
         <PageHeader
-          title="Bills Are Fine"
-          description="Homeowners who said their bills are currently manageable — worth revisiting when rates change."
+          title={vocab.noNeedLabel}
+          description={`${vocab.LeadNounPlural} who don't need you right now — worth revisiting when their situation changes.`}
         />
         <EmptyState
           icon={CheckCircle2}
-          title="No 'Bills are fine' leads yet"
-          description="When a rep or the AI agent marks a homeowner as 'Bills are fine', they'll appear here for follow-up."
+          title={`Nothing set aside yet`}
+          description={`When a rep or the AI agent marks a ${vocab.leadNoun} as “${vocab.noNeedLabel}”, they'll appear here for follow-up.`}
         />
       </PageContainer>
     );
@@ -100,8 +121,8 @@ export default async function BillsFinePage({
   return (
     <PageContainer>
       <PageHeader
-        title="Bills Are Fine"
-        description="These homeowners aren't feeling the pain yet — but rate increases may change that. Re-engage when the timing is right."
+        title={vocab.noNeedLabel}
+        description={`These ${vocab.leadNounPlural} said no for now — not never. Re-engage when the timing is right.`}
       >
         {teamWide && (
           <Badge tone="primary" className="gap-1">
@@ -112,9 +133,9 @@ export default async function BillsFinePage({
 
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
         <MetricCard label="Total" value={String(total)} icon={CheckCircle2} accent="warning" />
-        <MetricCard label="With bill data" value={String(withBills)} icon={Zap} accent="accent" />
+        <MetricCard label={`With ${primaryLabel.toLowerCase()} data`} value={String(withBills)} icon={Zap} accent="accent" />
         <MetricCard
-          label="Avg energy cost"
+          label="Avg monthly spend"
           value={
             avgEnergyCost && avgEnergyCost > 0 ? formatCurrency(Math.round(avgEnergyCost)) : "—"
           }
@@ -157,7 +178,9 @@ export default async function BillsFinePage({
             <div key={lead.id} className="flex items-center gap-3 px-5 py-4">
               <Avatar initials={initials(lead.leadName)} tone="warning" size="sm" />
               <div className="min-w-0 flex-1">
-                <p className="truncate text-sm font-semibold">{lead.leadName}</p>
+                <p className="truncate text-sm font-semibold">
+                  {leadDisplayName(lead.leadName, lead.phone, vocab.leadNoun)}
+                </p>
                 <p className="truncate text-xs text-muted-foreground tabular">
                   {lead.phone ? formatPhone(lead.phone) : "—"}
                   {lead.utilityProvider && <span> · {lead.utilityProvider}</span>}
@@ -165,7 +188,7 @@ export default async function BillsFinePage({
                 </p>
                 {(lead.utilityBill || lead.solarPayment) && (
                   <p className="mt-0.5 text-xs text-muted-foreground tabular">
-                    {lead.utilityBill ? `Utility: ${formatCurrency(lead.utilityBill)}/mo` : ""}
+                    {lead.utilityBill ? `${primaryLabel}: ${formatCurrency(lead.utilityBill)}/mo` : ""}
                     {lead.utilityBill && lead.solarPayment ? " · " : ""}
                     {lead.solarPayment
                       ? `${secondPaymentLabel}: ${formatCurrency(lead.solarPayment)}/mo`

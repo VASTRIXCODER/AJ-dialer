@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { listFailedNotifications } from "@/lib/notifications/outbox";
 import { getViewer } from "@/lib/org/membership";
+import { orgVocabulary } from "@/lib/org/vocabulary";
 import { isSupabaseConfigured } from "@/lib/supabase/config";
 import { createClient } from "@/lib/supabase/server";
 
@@ -88,6 +89,11 @@ export async function GET() {
       })(),
     ]);
 
+    // A nameless row is a data gap, not a homeowner — and "homeowner" is one
+    // vertical's word regardless. Use the workspace's own noun.
+    const viewer = await getViewer();
+    const leadNoun = `Unknown ${orgVocabulary(viewer.org).leadNoun}`;
+
     const notifications: Notification[] = [];
 
     for (const a of (appts.data ?? []) as Row[]) {
@@ -95,7 +101,7 @@ export async function GET() {
         id: `a-${s(a.id)}`,
         type: "appointment",
         title: "Appointment booked",
-        body: `${s(a.lead_name) || "Homeowner"}${a.scheduled_label ? ` — ${s(a.scheduled_label)}` : ""}`,
+        body: `${s(a.lead_name) || leadNoun}${a.scheduled_label ? ` — ${s(a.scheduled_label)}` : ""}`,
         at: s(a.created_at),
         href: "/appointments",
       });
@@ -105,7 +111,7 @@ export async function GET() {
         id: `c-${s(c.id)}`,
         type: "callback",
         title: "Callback to make",
-        body: `${s(c.lead_name) || "Homeowner"}${c.reason ? ` — ${s(c.reason)}` : ""}`,
+        body: `${s(c.lead_name) || leadNoun}${c.reason ? ` — ${s(c.reason)}` : ""}`,
         at: s(c.created_at),
         href: "/callbacks",
       });
@@ -115,7 +121,7 @@ export async function GET() {
         id: `r-${s(r.id)}`,
         type: "call",
         title: "AI call completed",
-        body: `${s(r.lead_name) || "Homeowner"} — ${OUTCOME_LABEL[s(r.outcome)] ?? "Completed"}`,
+        body: `${s(r.lead_name) || leadNoun} — ${OUTCOME_LABEL[s(r.outcome)] ?? "Completed"}`,
         at: s(r.started_at),
         href: "/reports",
       });
@@ -127,7 +133,6 @@ export async function GET() {
     // Only shown to people who could act on it (they manage the calendar), and
     // sorted to the top regardless of age — an unsent booking doesn't get less
     // urgent because it's from yesterday.
-    const viewer = await getViewer();
     if (viewer.permissions.includes("appointments.manage")) {
       const failed = await listFailedNotifications(viewer.org?.id ?? null);
       for (const f of failed) {

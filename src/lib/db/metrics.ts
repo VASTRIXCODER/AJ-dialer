@@ -97,7 +97,10 @@ function mapRecentCall(
       : Boolean(conversationId && outcome && CONNECTED_OUTCOMES.has(outcome));
   return {
     id: String(r.id ?? conversationId ?? `${r.owner_id}-${r.started_at}`),
-    leadName: String(r.lead_name ?? "Homeowner"),
+    // No name on the row is a DATA gap, not a homeowner. The UI falls back to
+    // the phone number (far more useful to a rep) and only then to the
+    // workspace's own noun.
+    leadName: String(r.lead_name ?? "").trim(),
     channel,
     repName: supervisor ? nameById.get(String(r.owner_id)) || "Rep" : undefined,
     phone: String(r.phone ?? ""),
@@ -629,7 +632,7 @@ export async function getReportingData(
       .slice(0, 30)
       .map((a, i) => ({
         id: String(a.id ?? i),
-        leadName: String(a.lead_name ?? "Homeowner"),
+        leadName: String(a.lead_name ?? "").trim(),
         whenLabel: apptWhen(a),
         source: String(a.source ?? "ai"),
         status: String(a.status ?? "scheduled"),
@@ -640,7 +643,7 @@ export async function getReportingData(
       .filter((c) => c.startedAt >= liveCutoff)
       .map((c) => ({
         id: c.conversationId,
-        leadName: c.leadName || "Homeowner",
+        leadName: c.leadName,
         city: c.city,
         state: c.state,
       }));

@@ -1,16 +1,13 @@
 import {
   BarChart3,
-  Battery,
   Bot,
   CalendarRange,
-  Car,
   Clock,
   Filter,
   PhoneCall,
   Target,
   Users,
   Wallet,
-  Waves,
   Zap,
 } from "lucide-react";
 import Link from "next/link";
@@ -18,6 +15,10 @@ import { AiExecReport } from "@/components/ai/exec-report";
 import { HourlyBarChart, OutcomeDonut, TrendAreaChart } from "@/components/dashboard/charts";
 import { MetricCard } from "@/components/dashboard/metric-card";
 import { CallHistory } from "@/components/reports/call-history";
+import {
+  FieldInsights,
+  resolveFieldInsights,
+} from "@/components/reports/field-insights";
 import {
   ChannelCompare,
   DispositionBreakdown,
@@ -36,10 +37,20 @@ import { buttonVariants } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { costBreakdown } from "@/lib/call-costs";
 import { getReportingData, getTeamLeaderboard } from "@/lib/db/metrics";
+import { resolveLeadFields } from "@/lib/leads/field-schema";
 import { getViewer } from "@/lib/org/membership";
 import { DEFAULT_COST_RATES } from "@/lib/org/settings";
-import { outcomeConfig } from "@/lib/status";
-import { cn, formatCurrency, formatDuration, formatNumber, formatPercent } from "@/lib/utils";
+import { templateProfile } from "@/lib/org/templates";
+import { orgVocabulary } from "@/lib/org/vocabulary";
+import { resolveOutcomeConfig } from "@/lib/status";
+import {
+  cn,
+  formatCurrency,
+  formatDuration,
+  formatNumber,
+  formatPercent,
+  leadDisplayName,
+} from "@/lib/utils";
 
 export const metadata = { title: "Reports" };
 export const dynamic = "force-dynamic";
@@ -82,6 +93,11 @@ export default async function ReportsPage({
   // Manual-only orgs (e.g. Donny) have no AI calls, so drop the AI-vs-human
   // split and the AI executive report — every call here is a human call.
   const aiDialerEnabled = viewer.org?.settings.features.aiDialer !== false;
+
+  // The workspace's own nouns — this page said "homeowners" and "reviews" to
+  // every tenant regardless of what they sell.
+  const vocab = orgVocabulary(viewer.org);
+  const outcomes = resolveOutcomeConfig(vocab);
 
   // Cost & usage: talk time × the org's per-minute rates (defaults apply when
   // the org never configured any). channelStats is already scoped to the
@@ -139,12 +155,17 @@ export default async function ReportsPage({
   }
 
   const teamWide = scope === "org";
-  const isSolar = viewer.org?.dialerTemplate === "solar";
-  const homeStats = [
-    { label: "EV ownership", value: metrics.evOwnership, icon: Car },
-    { label: "Pool ownership", value: metrics.poolOwnership, icon: Waves },
-    { label: "Battery storage", value: metrics.batteryOwnership, icon: Battery },
-  ];
+  // Book-wide insights in the ORG's own field labels. The panel this replaced
+  // was gated on `dialerTemplate === "solar"` and hardcoded "Avg bill / Avg
+  // solar / Total cost" over "qualified homeowners" — the same five typed
+  // columns every vertical stores, described in one vertical's words.
+  const fieldInsights = resolveFieldInsights(
+    resolveLeadFields(
+      viewer.org?.settings.leadFields,
+      templateProfile(viewer.org?.dialerTemplate).fields,
+    ),
+    metrics,
+  );
   const pipelineInsights = [
     { label: "Appointment rate", value: metrics.appointmentRate },
     { label: "Callback rate", value: metrics.callbackRate },
@@ -163,10 +184,12 @@ export default async function ReportsPage({
       headers: ["Date", "Lead", "Rep", "Channel", "Disposition", "Duration (s)"],
       rows: recentCalls.map((c) => [
         new Date(c.startedAt).toLocaleString(),
-        c.leadName,
+        // A nameless row exports as the number the rep actually dialed rather
+        // than an empty cell (or, as it used to, the word "Homeowner").
+        leadDisplayName(c.leadName, c.phone, vocab.leadNoun),
         c.repName ?? "—",
         c.channel,
-        c.outcome ? outcomeConfig[c.outcome].label : "—",
+        c.outcome ? outcomes[c.outcome].label : "—",
         c.durationSec,
       ]),
     },
@@ -198,7 +221,7 @@ export default async function ReportsPage({
             Same table the Dashboard + calendar use, so screens agree on the same
             window; the Dashboard just shows all-time. (Range-scoping is why
             Reports(Today) no longer reads "5 calls / 340 appointments".) */}
-        <MetricCard label="Appointments" value={formatNumber(metrics.appointmentsBooked)} icon={Target} accent="success" sub="reviews on the books" />
+        <MetricCard label="Appointments" value={formatNumber(metrics.appointmentsBooked)} icon={Target} accent="success" sub={`${vocab.appointmentNounPlural} on the books`} />
         <MetricCard label="Avg talk time" value={formatDuration(metrics.avgCallLenSec)} icon={Clock} accent="warning" />
       </div>
 
@@ -311,35 +334,12 @@ export default async function ReportsPage({
         <SectionCard title="Hourly productivity" description="Dials & connects (today)" className="lg:col-span-2">
           <HourlyBarChart data={hourlyCalls} />
         </SectionCard>
-        {isSolar ? (
-          <SectionCard title="Utility-bill insights" description="Across qualified homeowners">
-            <div className="space-y-4">
-              <div className="grid grid-cols-3 gap-2 text-center">
-                <div className="rounded-xl bg-muted p-3">
-                  <p className="text-lg font-bold tabular">{formatCurrency(metrics.avgUtilityBill)}</p>
-                  <p className="text-[10px] text-muted-foreground">Avg bill</p>
-                </div>
-                <div className="rounded-xl bg-muted p-3">
-                  <p className="text-lg font-bold tabular">{formatCurrency(metrics.avgSolarPayment)}</p>
-                  <p className="text-[10px] text-muted-foreground">Avg solar</p>
-                </div>
-                <div className="rounded-xl bg-primary-soft p-3">
-                  <p className="text-lg font-bold tabular text-primary">{formatCurrency(metrics.avgTotalEnergyCost)}</p>
-                  <p className="text-[10px] text-muted-foreground">Total cost</p>
-                </div>
-              </div>
-              <div className="space-y-3 pt-1">
-                {homeStats.map((s) => (
-                  <div key={s.label} className="flex items-center gap-3">
-                    <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-accent-soft text-accent">
-                      <s.icon className="h-4 w-4" />
-                    </div>
-                    <span className="flex-1 text-sm text-muted-foreground">{s.label}</span>
-                    <span className="text-sm font-bold tabular">{s.value}%</span>
-                  </div>
-                ))}
-              </div>
-            </div>
+        {fieldInsights.length > 0 ? (
+          <SectionCard
+            title={`${vocab.LeadNoun} insights`}
+            description={`Averages and ownership across your ${vocab.leadNounPlural}`}
+          >
+            <FieldInsights insights={fieldInsights} combinedLabel="Combined" />
           </SectionCard>
         ) : (
           <SectionCard title="Pipeline insights" description="Conversion across the funnel">
@@ -362,11 +362,11 @@ export default async function ReportsPage({
 
       <SectionCard
         title="Call history"
-        description={
-          aiDialerEnabled
-            ? "Every call, newest first (all time — not filtered by the date range above) — click any for the full breakdown (transcript, summary, appointment & recording)"
-            : "Every call, newest first (all time — not filtered by the date range above) — click any for the full breakdown (summary, outcome & recording)"
-        }
+        description="Every call, newest first (all time — not filtered by the date range above). Click any row for the summary, notes, transcript and recording."
+        // Search, date ranges, per-rep filters and transcript search live on the
+        // archive. This list stays as the at-a-glance feed and points at it,
+        // rather than being the only way in.
+        action={{ label: "Search recordings & transcripts", href: "/recordings" }}
         bodyClassName="p-0"
       >
         <CallHistory />

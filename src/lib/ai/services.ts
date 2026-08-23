@@ -125,7 +125,11 @@ export function getLeadBriefing(
           "Scores are 0-100; estimatedValue is annual USD opportunity. Be specific to the data.\n\n" +
           `Lead: ${leadContext(lead, c)}`,
         schemaName: "lead_briefing",
-        effort: "medium",
+        // A rep is looking at a spinner on the dial screen while this runs, so
+        // latency IS the feature. Current models are strong at low effort on a
+        // summarize-and-score task over structured data, and the measured
+        // difference against `medium` here is seconds, not quality.
+        effort: "low",
         schema: obj({
           summary: str,
           priorityScore: num,
@@ -460,7 +464,13 @@ export function getExecutiveReport(
           "with prioritized recommendations.\n\n" +
           `Metrics: ${JSON.stringify(serialized)}`,
         schemaName: "executive_report",
-        effort: "medium",
+        // Narrating a fixed metrics blob — the reasoning is shallow and the
+        // Reports page holds a skeleton open while it runs.
+        effort: "low",
+        // The widest schema here (a headline, a narrative, three arrays and a
+        // recommendation list). At the shared 2k default it truncated mid-array
+        // and the whole report fell back to demo output.
+        maxTokens: 3072,
         schema: obj({
           headline: str,
           narrative: str,

@@ -13,6 +13,21 @@ export interface TemplateProfile {
   blurb: string;
   leadNoun: string;
   leadNounPlural: string;
+  /**
+   * What this vertical calls the meeting a rep books. Absent ⇒ "appointment".
+   * Solar books an "account review"; real estate books a "showing"; recruiting
+   * books an "interview" — writing "appointment" everywhere is not wrong so much
+   * as foreign, and writing "account review" everywhere is somebody else's word.
+   */
+  appointmentNoun?: string;
+  appointmentNounPlural?: string;
+  /**
+   * What the `bills_fine` disposition is called here. The stored key can't move
+   * (it's on historical call records), but the label can and must — "Bills are
+   * fine" is meaningless on a recruiting or healthcare call. Absent ⇒ a neutral
+   * "No need right now".
+   */
+  noNeedLabel?: string;
   brandColor: string;
   accentColor: string;
   agentName: string;
@@ -51,6 +66,9 @@ export const TEMPLATE_PROFILES: TemplateProfile[] = [
     blurb: "All-purpose AI auto-dialer.",
     leadNoun: "lead",
     leadNounPlural: "leads",
+    appointmentNoun: "appointment",
+    appointmentNounPlural: "appointments",
+    noNeedLabel: "No need right now",
     brandColor: "#2563eb",
     accentColor: "#06b6d4",
     agentName: "Aria",
@@ -79,6 +97,9 @@ export const TEMPLATE_PROFILES: TemplateProfile[] = [
     blurb: "Residential solar resolution & sales.",
     leadNoun: "homeowner",
     leadNounPlural: "homeowners",
+    appointmentNoun: "account review",
+    appointmentNounPlural: "account reviews",
+    noNeedLabel: "Bills are fine",
     brandColor: "#f59e0b",
     accentColor: "#0ea5e9",
     agentName: "Sunny",
@@ -103,6 +124,9 @@ export const TEMPLATE_PROFILES: TemplateProfile[] = [
     blurb: "Policy quoting & renewals.",
     leadNoun: "policyholder",
     leadNounPlural: "policyholders",
+    appointmentNoun: "policy review",
+    appointmentNounPlural: "policy reviews",
+    noNeedLabel: "Happy with current cover",
     brandColor: "#4f46e5",
     accentColor: "#22d3ee",
     agentName: "Quinn",
@@ -135,6 +159,9 @@ export const TEMPLATE_PROFILES: TemplateProfile[] = [
     blurb: "Buyer & seller outreach.",
     leadNoun: "prospect",
     leadNounPlural: "prospects",
+    appointmentNoun: "showing",
+    appointmentNounPlural: "showings",
+    noNeedLabel: "Not moving right now",
     brandColor: "#059669",
     accentColor: "#34d399",
     agentName: "Riley",
@@ -162,6 +189,9 @@ export const TEMPLATE_PROFILES: TemplateProfile[] = [
     blurb: "Estimates & scheduling.",
     leadNoun: "customer",
     leadNounPlural: "customers",
+    appointmentNoun: "estimate",
+    appointmentNounPlural: "estimates",
+    noNeedLabel: "No work needed",
     brandColor: "#ea580c",
     accentColor: "#f59e0b",
     agentName: "Jordan",
@@ -190,6 +220,9 @@ export const TEMPLATE_PROFILES: TemplateProfile[] = [
     blurb: "Appointment & intake calls.",
     leadNoun: "patient",
     leadNounPlural: "patients",
+    appointmentNoun: "appointment",
+    appointmentNounPlural: "appointments",
+    noNeedLabel: "Nothing needed",
     brandColor: "#0d9488",
     accentColor: "#2dd4bf",
     agentName: "Sam",
@@ -222,6 +255,9 @@ export const TEMPLATE_PROFILES: TemplateProfile[] = [
     blurb: "Lending & advisory outreach.",
     leadNoun: "client",
     leadNounPlural: "clients",
+    appointmentNoun: "consultation",
+    appointmentNounPlural: "consultations",
+    noNeedLabel: "Happy with current setup",
     brandColor: "#1d4ed8",
     accentColor: "#38bdf8",
     agentName: "Morgan",
@@ -252,6 +288,9 @@ export const TEMPLATE_PROFILES: TemplateProfile[] = [
     blurb: "Sales & service follow-ups.",
     leadNoun: "customer",
     leadNounPlural: "customers",
+    appointmentNoun: "appointment",
+    appointmentNounPlural: "appointments",
+    noNeedLabel: "Happy with current vehicle",
     brandColor: "#dc2626",
     accentColor: "#f97316",
     agentName: "Casey",
@@ -282,6 +321,9 @@ export const TEMPLATE_PROFILES: TemplateProfile[] = [
     blurb: "Candidate screening calls.",
     leadNoun: "candidate",
     leadNounPlural: "candidates",
+    appointmentNoun: "interview",
+    appointmentNounPlural: "interviews",
+    noNeedLabel: "Not looking right now",
     brandColor: "#7c3aed",
     accentColor: "#a78bfa",
     agentName: "Avery",
@@ -313,6 +355,9 @@ export const TEMPLATE_PROFILES: TemplateProfile[] = [
     blurb: "Enrollment & admissions.",
     leadNoun: "student",
     leadNounPlural: "students",
+    appointmentNoun: "info session",
+    appointmentNounPlural: "info sessions",
+    noNeedLabel: "Not enrolling right now",
     brandColor: "#0284c7",
     accentColor: "#38bdf8",
     agentName: "Taylor",

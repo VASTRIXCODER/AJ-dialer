@@ -42,7 +42,8 @@ const FEATURE_LABEL: Record<keyof OrgFeatures, string> = {
   leads: "Leads",
   appointments: "Appointments",
   callbacks: "Callbacks",
-  billsFine: "Bills are fine",
+  // Feature-flag list, shown before an org has a vertical — the neutral name.
+  billsFine: "Set aside for later",
   liveMonitor: "Live monitor",
   leaderboard: "Leaderboard",
   campaigns: "Campaigns",
@@ -220,7 +221,7 @@ export function HubView({
         />
         {superadmin && (
           <div className="surface-glass flex flex-col rounded-2xl border border-border/60 p-6 shadow-soft">
-            <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-solar text-white shadow-glow">
+            <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-brand text-white shadow-glow">
               <Wand2 className="h-5 w-5" />
             </span>
             <h3 className="mt-3 text-base font-bold tracking-tight">
@@ -395,7 +396,7 @@ function AIBuilder({
     <Modal onClose={onClose} label="AI organization builder" maxWidth="max-w-2xl">
       <div className="flex items-center justify-between border-b border-border/60 p-5">
         <div className="flex items-center gap-3">
-          <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-solar text-white shadow-glow">
+          <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-brand text-white shadow-glow">
             <Wand2 className="h-5 w-5" />
           </span>
           <div>

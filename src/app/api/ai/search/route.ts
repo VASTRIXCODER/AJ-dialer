@@ -2,7 +2,9 @@ import { NextResponse } from "next/server";
 import { orgAIContext } from "@/lib/ai/org-context";
 import { getSemanticSearch } from "@/lib/ai/services";
 import { searchLeadCandidates } from "@/lib/db/leads";
+import { formatFieldValue, leadFieldValue } from "@/lib/leads/field-schema";
 import { getViewer } from "@/lib/org/membership";
+import { orgVocabulary } from "@/lib/org/vocabulary";
 import { clientIp, rateLimit } from "@/lib/rate-limit";
 
 export async function POST(req: Request) {
@@ -37,25 +39,41 @@ export async function POST(req: Request) {
     return NextResponse.json({ source: "demo", interpretation: "", matches: [] });
   }
   const ctx = orgAIContext(viewer.org);
-  const { data, source } = await getSemanticSearch(query, leads, ctx.isSolar, ctx);
+  const { data, source, error } = await getSemanticSearch(query, leads, ctx.isSolar, ctx);
   const byId = new Map(leads.map((l) => [l.id, l]));
 
-  // Enrich AI matches with display fields so the palette can render rich rows.
+  // The headline figure on a result row used to be `lead.utilityBill`, hardcoded
+  // — so a recruiting workspace saw a homeowner's power bill slot labelled
+  // "/mo". Take the org's OWN first money field instead (an insurance org's
+  // "Current premium", a recruiter's "Desired pay") and send it pre-labelled and
+  // pre-formatted, so the palette renders the org's vocabulary without knowing
+  // anything about it.
+  const moneyField = ctx.fields.find((f) => f.type === "currency");
   const matches = data.matches
     .map((m) => {
       const l = byId.get(m.id);
       if (!l) return null;
+      const raw = moneyField ? leadFieldValue(l, moneyField) : null;
       return {
         id: l.id,
         reason: m.reason,
         name: `${l.firstName} ${l.lastName}`,
         city: l.city,
         state: l.state,
-        utilityBill: l.utilityBill ?? null,
+        headline:
+          moneyField && raw != null && raw !== "" && raw !== 0
+            ? formatFieldValue(raw, moneyField.type)
+            : null,
         status: l.status,
       };
     })
     .filter(Boolean);
 
-  return NextResponse.json({ source, interpretation: data.interpretation, matches });
+  return NextResponse.json({
+    source,
+    error,
+    interpretation: data.interpretation,
+    matches,
+    leadNounPlural: orgVocabulary(viewer.org).LeadNounPlural,
+  });
 }

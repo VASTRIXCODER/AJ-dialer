@@ -845,10 +845,20 @@ export async function fetchConversation(
 }
 
 /** Streams the recording audio for a completed conversation. */
-export async function getConversationAudio(id: string): Promise<Response> {
+export async function getConversationAudio(
+  id: string,
+  /** Forwarded verbatim so the browser can seek within a long recording. */
+  extraHeaders: Record<string, string> = {},
+): Promise<Response> {
   return el(`/v1/convai/conversations/${encodeURIComponent(id)}/audio`, {
     method: "GET",
-    headers: { accept: "audio/mpeg" },
+    headers: { accept: "audio/mpeg", ...extraHeaders },
+    // The shared 10s API budget is for JSON reads made inline in a page render.
+    // This is a MEDIA stream we hand straight to the browser: the timer starts
+    // when the request starts and does not care that bytes are still flowing, so
+    // the shared budget silently truncated any recording that took longer than
+    // ten seconds to transfer — i.e. every long call on a slow connection.
+    signal: AbortSignal.timeout(120_000),
   });
 }
 

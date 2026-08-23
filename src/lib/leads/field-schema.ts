@@ -232,6 +232,31 @@ export function resolveLeadFields(
   return [...core, ...custom];
 }
 
+/**
+ * Which fields the dialer's qualify panel renders, in order. Precedence:
+ *   1. the org's own `settings.qualify.fields`
+ *   2. the vertical template's `qualifyFields` preset
+ *   3. every schema field flagged `showInQualify`
+ * Keys that don't resolve against `schema` drop out, so a stale key left behind
+ * by a deleted custom field can't render a ghost input.
+ *
+ * A PRESENT-but-EMPTY list at either of the first two levels is a real answer —
+ * "render no qualify fields", leaving a briefing-and-notes-only panel — and
+ * stops the cascade. Only `undefined` (nothing configured) falls through. These
+ * were previously collapsed by a `.length` test, so a workspace that switched
+ * every field off silently got the template's fields back.
+ */
+export function resolveQualifyFields(
+  orgKeys: string[] | undefined,
+  templateKeys: string[] | undefined,
+  schema: LeadFieldDef[],
+): LeadFieldDef[] {
+  const keys = orgKeys ?? templateKeys;
+  if (!keys) return schema.filter((f) => f.showInQualify);
+  const byKey = new Map(schema.map((f) => [f.key, f]));
+  return keys.map((k) => byKey.get(k)).filter((f): f is LeadFieldDef => Boolean(f));
+}
+
 /** Read a field's value off a lead, wherever it lives. */
 export function leadFieldValue(
   lead: Lead,

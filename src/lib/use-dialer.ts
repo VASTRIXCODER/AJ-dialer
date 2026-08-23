@@ -1690,7 +1690,7 @@ export function useDialer(
       if (!micOkRef.current) {
         patch({
           error:
-            "Your microphone isn't available, so the call would ring the homeowner with no one on the line. Allow microphone access for this site, then press Reconnect.",
+            "Your microphone isn't available, so the call would ring with no one on the line. Allow microphone access for this site, then press Reconnect.",
           status: "idle",
           micBlocked: true,
         });

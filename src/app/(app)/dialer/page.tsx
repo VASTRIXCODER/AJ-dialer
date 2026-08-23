@@ -51,7 +51,7 @@ export default async function DialerPage({
     <PageContainer>
       <PageHeader
         title="Power Dialer"
-        description={`Browser-based dialing with live ${isSolarVertical(viewer.org?.dialerTemplate) ? "solar " : ""}qualification. No desk phone required.`}
+        description="Browser-based dialing with live qualification. No desk phone required."
       >
         {queueCount > 0 ? (
           <Badge tone="accent" className="gap-1.5">

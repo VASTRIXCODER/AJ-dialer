@@ -10,6 +10,8 @@ import {
   Target,
 } from "lucide-react";
 import { useEffect, useState } from "react";
+import { AiSourceBadge } from "@/components/ai/source-badge";
+import { useVocabulary } from "@/components/layout/vocabulary";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import type { LeadBriefing } from "@/lib/ai/types";
@@ -19,24 +21,10 @@ type State = {
   loading: boolean;
   data?: LeadBriefing;
   source?: "claude" | "demo";
+  /** Why the server fell back to the simulator, when it did. */
+  sourceError?: string;
   error?: boolean;
 };
-
-function SourceBadge({ source }: { source: "claude" | "demo" }) {
-  return (
-    <span
-      className={cn(
-        "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide",
-        source === "claude"
-          ? "bg-accent-soft text-accent"
-          : "bg-muted text-muted-foreground",
-      )}
-    >
-      <Sparkles className="h-3 w-3" />
-      {source === "claude" ? "Claude" : "Demo AI"}
-    </span>
-  );
-}
 
 function Stat({
   label,
@@ -71,7 +59,62 @@ function Bar({ label, value }: { label: string; value: number }) {
   );
 }
 
+type BriefingPayload = {
+  data: LeadBriefing;
+  source: "claude" | "demo";
+  error?: string;
+};
+
+// ── Briefing cache + prefetch ────────────────────────────────────────────────
+// A live briefing is a real model call and takes seconds — long enough that a
+// rep who dispositions and advances sits watching a skeleton before every dial.
+// The queue already knows who is next, so the next lead's briefing is fetched
+// while the rep is still on the current call and is simply THERE when they get
+// to it.
+//
+// In-flight promises are cached (not just results), so a prefetch and the render
+// that catches up to it share one request rather than racing to make two.
+const cache = new Map<string, Promise<BriefingPayload>>();
+/** Bounded so a long dialing session can't grow this without limit. */
+const MAX_CACHED = 60;
+
+function load(leadId: string): Promise<BriefingPayload> {
+  const hit = cache.get(leadId);
+  if (hit) return hit;
+  const p = fetch("/api/ai/briefing", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ leadId }),
+  })
+    .then((r) => r.json() as Promise<BriefingPayload>)
+    .then((j) => {
+      if (!j?.data) throw new Error("no briefing");
+      return j;
+    })
+    .catch((e) => {
+      // Never cache a failure — the next render (or a retry) must be able to
+      // ask again rather than being pinned to one bad response forever.
+      cache.delete(leadId);
+      throw e;
+    });
+  if (cache.size >= MAX_CACHED) {
+    const oldest = cache.keys().next().value;
+    if (oldest) cache.delete(oldest);
+  }
+  cache.set(leadId, p);
+  return p;
+}
+
+/**
+ * Warm the briefing for a lead the rep hasn't reached yet. Safe to call
+ * repeatedly: an in-flight or completed briefing is reused, not re-requested.
+ */
+export function prefetchBriefing(leadId: string | null | undefined): void {
+  if (leadId) void load(leadId).catch(() => {});
+}
+
 export function AiBriefing({ leadId }: { leadId: string | null }) {
+  const vocab = useVocabulary();
   const [state, setState] = useState<State>({ loading: false });
 
   useEffect(() => {
@@ -79,22 +122,26 @@ export function AiBriefing({ leadId }: { leadId: string | null }) {
       setState({ loading: false });
       return;
     }
-    setState({ loading: true });
-    const ctrl = new AbortController();
-    fetch("/api/ai/briefing", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ leadId }),
-      signal: ctrl.signal,
-    })
-      .then((r) => r.json())
-      .then((j: { data: LeadBriefing; source: "claude" | "demo" }) =>
-        setState({ loading: false, data: j.data, source: j.source }),
-      )
+    let alive = true;
+    // Already warmed by the prefetch? Render immediately instead of flashing a
+    // skeleton for a briefing we're holding.
+    setState({ loading: !cache.has(leadId) });
+    load(leadId)
+      .then((j) => {
+        if (!alive) return;
+        setState({
+          loading: false,
+          data: j.data,
+          source: j.source,
+          sourceError: j.error,
+        });
+      })
       .catch(() => {
-        if (!ctrl.signal.aborted) setState({ loading: false, error: true });
+        if (alive) setState({ loading: false, error: true });
       });
-    return () => ctrl.abort();
+    return () => {
+      alive = false;
+    };
   }, [leadId]);
 
   if (!leadId) {
@@ -105,7 +152,7 @@ export function AiBriefing({ leadId }: { leadId: string | null }) {
           <span className="text-sm font-semibold">AI briefing</span>
         </div>
         <p className="mt-1.5 text-xs text-muted-foreground">
-          Select or dial a homeowner and Claude will brief you instantly.
+          Select or dial a {vocab.leadNoun} for an instant briefing.
         </p>
       </div>
     );
@@ -116,7 +163,7 @@ export function AiBriefing({ leadId }: { leadId: string | null }) {
       <div className="space-y-2.5 rounded-xl border border-border/60 p-3">
         <div className="flex items-center gap-2 text-accent">
           <Sparkles className="h-4 w-4 animate-pulse" />
-          <span className="text-sm font-semibold">Briefing the homeowner…</span>
+          <span className="text-sm font-semibold">Preparing your briefing…</span>
         </div>
         <div className="skeleton h-3 w-full rounded" />
         <div className="skeleton h-3 w-4/5 rounded" />
@@ -155,7 +202,9 @@ export function AiBriefing({ leadId }: { leadId: string | null }) {
           <span className="text-[11px] text-muted-foreground tabular">
             {b.confidence}% conf.
           </span>
-          {state.source && <SourceBadge source={state.source} />}
+          {state.source && (
+            <AiSourceBadge source={state.source} error={state.sourceError} />
+          )}
         </div>
       </motion.div>
 

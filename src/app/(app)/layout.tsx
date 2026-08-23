@@ -9,7 +9,7 @@ import { listLeadGroups } from "@/lib/db/lead-groups";
 import { getPlatformPool } from "@/lib/dialer/rotation-server";
 import { restrictToAssignedNumbers } from "@/lib/dialer/rotation";
 import { agentLabels, isElevenLabsConfigured, isSecondAgentConfigured } from "@/lib/elevenlabs";
-import { resolveLeadFields, type LeadFieldDef } from "@/lib/leads/field-schema";
+import { resolveLeadFields, resolveQualifyFields } from "@/lib/leads/field-schema";
 import { getViewer } from "@/lib/org/membership";
 import {
   DEFAULT_DIALER_LAYOUT,
@@ -17,6 +17,7 @@ import {
   resolveDialerAccess,
 } from "@/lib/org/settings";
 import { templateProfile } from "@/lib/org/templates";
+import { orgVocabulary } from "@/lib/org/vocabulary";
 import { isSuperadmin } from "@/lib/superadmin";
 import { isVoiceConfigured } from "@/lib/twilio";
 import { MAX_PARALLEL_HUMAN } from "@/lib/use-dialer";
@@ -146,17 +147,15 @@ export default async function AppGroupLayout({
       f.key === "hasBattery" ? { ...f, label: legacyOtherLabel } : f,
     );
   }
-  // Which fields the qualify panel renders: org qualify.fields → template
-  // preset → every schema field flagged showInQualify. Unknown keys drop out.
-  const fieldByKey = new Map(leadFields.map((f) => [f.key, f]));
-  const qualifyKeys = orgSettings?.qualify?.fields?.length
-    ? orgSettings.qualify.fields
-    : profile.qualifyFields;
-  const qualifyFields = qualifyKeys
-    ? qualifyKeys
-        .map((k) => fieldByKey.get(k))
-        .filter((f): f is LeadFieldDef => Boolean(f))
-    : leadFields.filter((f) => f.showInQualify);
+  // Which fields the qualify panel renders (org → template preset → every field
+  // flagged showInQualify). mergeSettings keeps an absent list `undefined` and an
+  // explicit empty one `[]`, which is the distinction resolveQualifyFields turns
+  // into "inherit" vs "render nothing".
+  const qualifyFields = resolveQualifyFields(
+    orgSettings?.qualify?.fields,
+    profile.qualifyFields,
+    leadFields,
+  );
   // Effective page layout: default all-on ⊕ template preset ⊕ org toggles.
   const dialerLayout = {
     ...DEFAULT_DIALER_LAYOUT,
@@ -209,8 +208,11 @@ export default async function AppGroupLayout({
       features={viewer.org?.settings.features ?? null}
       orgName={viewer.org?.name ?? null}
       productName={viewer.org?.productName || null}
-      dialerTemplate={viewer.org?.dialerTemplate ?? null}
       brandColor={viewer.org?.brandColor || null}
+      // Resolved once, per request, and handed to every Client Component under
+      // the shell — so no screen has to hardcode "homeowner" or re-derive the
+      // vertical's nouns for itself.
+      vocabulary={orgVocabulary(viewer.org)}
       role={viewer.role}
       superadmin={superadmin}
       dialerConfig={dialerConfig}

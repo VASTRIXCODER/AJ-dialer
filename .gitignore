@@ -42,3 +42,13 @@ yarn-error.log*
 
 # scratch prompt drafts
 promptx.txt
+
+# Customer lead exports — real names, phones, emails and addresses. These land in
+# the repo root because that's where a browser download goes, and one `git add -A`
+# would put a customer's whole book into public history permanently.
+# Covers this app's own export filename (slug-leads-YYYY-MM-DD.csv) too.
+*-leads-export-*.csv
+*-leads-[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9].csv
+
+# Scratch: pasted provider error pages, saved while debugging.
+/error.txt

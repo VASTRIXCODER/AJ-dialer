@@ -2,6 +2,7 @@
 
 import { CalendarCheck, Clock, MapPin, X } from "lucide-react";
 import { useMemo, useState } from "react";
+import { useVocabulary } from "@/components/layout/vocabulary";
 import { Button } from "@/components/ui/button";
 import { Input, Label, Select, Textarea } from "@/components/ui/input";
 import { Modal } from "@/components/ui/modal";
@@ -83,6 +84,10 @@ export function BookAppointmentDialog({
   /** Backed out entirely: no appointment, no disposition. */
   onCancel: () => void;
 }) {
+  const vocab = useVocabulary();
+  // "Book the account review" is solar's phrase. Every vertical books something,
+  // and it is rarely an account review.
+  const title = `Book the ${vocab.appointmentNoun}`;
   const address = useMemo(() => formatAddress(lead), [lead]);
 
   const [when, setWhen] = useState(() => toDateTimeInput(defaultSlot()));
@@ -108,13 +113,13 @@ export function BookAppointmentDialog({
   }
 
   return (
-    <Modal onClose={onCancel} label="Book the account review" maxWidth="max-w-md">
+    <Modal onClose={onCancel} label={title} maxWidth="max-w-md">
       <div className="flex items-start gap-3 border-b border-border/60 p-5">
         <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-success/15 text-success">
           <CalendarCheck className="h-5 w-5" />
         </span>
         <div className="min-w-0 flex-1">
-          <h2 className="truncate text-lg font-semibold">Book the account review</h2>
+          <h2 className="truncate text-lg font-semibold">{title}</h2>
           <p className="truncate text-sm text-muted-foreground">
             {lead.firstName} {lead.lastName}
             {lead.city ? ` · ${lead.city}` : ""}

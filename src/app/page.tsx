@@ -138,14 +138,14 @@ export default function LandingPage() {
       {/* ── Hero ─────────────────────────────────────────────────────────── */}
       <section className="relative overflow-hidden pt-16">
         <div className="pointer-events-none absolute inset-0 bg-grid [mask-image:radial-gradient(ellipse_at_top,black,transparent_70%)]" />
-        <div className="pointer-events-none absolute -top-32 left-1/2 h-[460px] w-[820px] -translate-x-1/2 rounded-full bg-solar opacity-[0.16] blur-[130px]" />
+        <div className="pointer-events-none absolute -top-32 left-1/2 h-[460px] w-[820px] -translate-x-1/2 rounded-full bg-brand opacity-[0.16] blur-[130px]" />
 
         <div className="relative mx-auto grid max-w-7xl items-center gap-12 px-4 py-16 sm:px-6 lg:grid-cols-2 lg:py-24">
           <div className="animate-fade-up">
             <PriceChip />
             <h1 className="mt-5 text-4xl font-black leading-[1.05] tracking-tight sm:text-5xl lg:text-6xl">
               More Conversations. More Appointments.{" "}
-              <span className="text-gradient-solar">More Revenue.</span>
+              <span className="text-gradient-brand">More Revenue.</span>
             </h1>
             <p className="mt-5 max-w-xl text-lg text-muted-foreground">
               Give your sales team a complete power dialer, CRM, call intelligence,
@@ -353,10 +353,10 @@ export default function LandingPage() {
 
           <Reveal className="mt-12">
             <Card className="relative overflow-hidden p-8 ring-2 ring-primary sm:p-10">
-              <div className="pointer-events-none absolute -right-16 -top-16 h-56 w-56 rounded-full bg-solar opacity-20 blur-3xl" />
+              <div className="pointer-events-none absolute -right-16 -top-16 h-56 w-56 rounded-full bg-brand opacity-20 blur-3xl" />
               <div className="relative grid gap-8 lg:grid-cols-[auto_1fr]">
                 <div className="lg:border-r lg:border-border/60 lg:pr-8">
-                  <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-solar text-white">
+                  <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-brand text-white">
                     <PhoneCall className="h-6 w-6" />
                   </div>
                   <div className="mt-6 flex items-end gap-1.5">
@@ -435,7 +435,7 @@ export default function LandingPage() {
               Everything above — one login, one bill.
             </p>
             <p className="text-2xl font-black tracking-tight">
-              All included for <span className="text-gradient-solar">$30 / seat</span>
+              All included for <span className="text-gradient-brand">$30 / seat</span>
             </p>
             <Link href="/signup" className={buttonVariants({ className: "mt-1 gap-2" })}>
               Book a Live Demo
@@ -448,7 +448,7 @@ export default function LandingPage() {
       {/* ── Final CTA ────────────────────────────────────────────────────── */}
       <section className="mx-auto max-w-7xl px-4 pb-20 sm:px-6">
         <Reveal>
-          <div className="relative overflow-hidden rounded-3xl bg-solar px-6 py-16 text-center text-white shadow-glow sm:px-12">
+          <div className="relative overflow-hidden rounded-3xl bg-brand px-6 py-16 text-center text-white shadow-glow sm:px-12">
             <div className="pointer-events-none absolute inset-0 bg-dots opacity-20" />
             <div className="relative mx-auto max-w-2xl">
               <TrendingUp className="mx-auto h-10 w-10" />
@@ -489,7 +489,7 @@ export default function LandingPage() {
           <div className="grid gap-10 sm:grid-cols-2 lg:grid-cols-4">
             <div>
               <div className="flex items-center gap-2.5">
-                <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-solar text-white shadow-glow">
+                <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-brand text-white shadow-glow">
                   <PhoneCall className="h-4 w-4" />
                 </span>
                 <span className="text-[15px] font-bold tracking-tight">AIATWORK</span>

@@ -103,7 +103,7 @@ function UploadTile({
         <div
           className={cn(
             "flex h-10 w-10 items-center justify-center rounded-xl text-white shadow-glow",
-            groupKey === null ? "bg-warning" : manual ? "bg-muted-foreground" : "bg-solar",
+            groupKey === null ? "bg-warning" : manual ? "bg-muted-foreground" : "bg-brand",
           )}
         >
           {status.type === "working" ? (

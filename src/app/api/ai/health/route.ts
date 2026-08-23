@@ -8,11 +8,17 @@ export const dynamic = "force-dynamic";
 /**
  * Anthropic connection health check. Visit /api/ai/health in a browser to
  * confirm the server can actually reach Claude:
- *   { configured: true, ok: true, model: "claude-opus-4-8", reply: "OK" }
+ *   { configured: true, ok: true, model: "claude-opus-5", reply: "OK",
+ *     stopReason: "end_turn", latencyMs: 812 }
  *
  *   configured:false → ANTHROPIC_API_KEY isn't set on the server (Vercel env).
  *   ok:false + error → key is set but the call failed (bad key, no model
- *                      access, network) — the `error` says which.
+ *                      access, network) — the `error` says which, in words an
+ *                      operator can act on rather than a raw SDK message.
+ *   degraded:[…]     → the configured model rejected an advanced parameter
+ *                      (thinking / effort / structured outputs) and the AI layer
+ *                      has stopped sending it. Everything still works; the model
+ *                      is simply older or served by a provider that lacks it.
  */
 export async function GET() {
   // Require a signed-in user when Supabase is configured: this pings Claude (real

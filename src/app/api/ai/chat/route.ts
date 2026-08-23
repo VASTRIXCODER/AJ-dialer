@@ -20,6 +20,10 @@ const SYSTEM = (ctx: string, ai: OrgAIContext) =>
       `auto-dialer. Reps (and an AI voice agent, where enabled) call ${ai.leadNounPlural}, qualify ` +
       "them, and book appointments — never assume or mention solar, utility bills, " +
       "or energy costs unless they're explicitly present in the data below. ") +
+  // The nav names below are what a rep sees, so the assistant's instructions
+  // have to use the same words or its "go to Leads" advice points at a tab
+  // labelled "Candidates".
+  `This workspace calls its contacts "${ai.leadNounPlural}". ` +
   "You help the user oversee the floor: brief them on " +
   "performance, suggest who to call, interpret reports, and explain how to use " +
   "any part of the app (Power Dialer with AI/manual dialing, Live Monitor, " +
