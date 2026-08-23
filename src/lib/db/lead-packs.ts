@@ -171,16 +171,21 @@ export async function createPacks(
      *  Index i names pack seq i+1. Short/absent entries fall back to the
      *  numbered default, so a caller can name some packs and not others. */
     labels?: string[];
+    /** Continue numbering from an earlier call for the same batch. A big upload
+     *  arrives as several chunked requests; without this each chunk would start
+     *  its packs back at "Pack 1" and one file would deal out three Pack 1s. */
+    seqOffset?: number;
   },
 ): Promise<LeadPack[]> {
   if (!isAdminConfigured() || opts.packCount <= 0) return [];
   const admin = createAdminClient();
   const batch = (opts.batch || "Upload").trim().slice(0, 80);
+  const seqBase = Math.max(0, Math.floor(opts.seqOffset ?? 0));
   const rows = Array.from({ length: Math.min(opts.packCount, MAX_PACKS_PER_UPLOAD) }, (_, i) => ({
     org_id: orgId,
     batch,
-    seq: i + 1,
-    label: (opts.labels?.[i] || `${batch} · Pack ${i + 1}`).slice(0, 160),
+    seq: seqBase + i + 1,
+    label: (opts.labels?.[i] || `${batch} · Pack ${seqBase + i + 1}`).slice(0, 160),
     size: 0,
     created_by: opts.createdBy ?? null,
   }));

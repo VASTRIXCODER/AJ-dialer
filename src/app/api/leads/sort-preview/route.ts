@@ -9,7 +9,16 @@ export const dynamic = "force-dynamic";
 
 type PreviewLead = ParsedLead & { tempId: string };
 
-/** Same ceiling /api/leads/import enforces, so preview counts equal what lands. */
+/**
+ * Rows one preview will classify and hand back.
+ *
+ * Unlike /api/leads/import — which now chunks and imports a file in full — this
+ * ceiling is real and deliberate: the response carries every previewed lead back
+ * to the browser as JSON for the reviewer to confirm, and the client then posts
+ * each bucket back again. Any row past it is reported in `truncated` so the
+ * review screen can say plainly that the AI sort covered part of the file and
+ * the plain importer handles the rest; it is never silently discarded.
+ */
 const MAX_ROWS = 5000;
 
 /**
@@ -86,6 +95,8 @@ export async function POST(req: Request) {
     source,
     chunkFailures,
     totalRows: capped.length,
+    /** Rows the file had past MAX_ROWS — import them with the plain CSV importer. */
+    truncated: Math.max(0, parsed.leads.length - capped.length),
     sortedRows: toSort.length,
     deferredRows: deferred.length,
     groups: groups.map((g) => ({ key: g.key, label: g.label, kind: g.kind })),

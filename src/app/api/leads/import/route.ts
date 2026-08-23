@@ -8,7 +8,11 @@ import {
   type ParsedLead,
 } from "@/lib/leads/csv";
 import type { LeadFieldDef } from "@/lib/leads/field-schema";
-import { parseCsvToLeads } from "@/lib/leads/parse-request";
+import {
+  parseCsvToLeads,
+  sanitizeColumnPlan,
+  type ColumnPlan,
+} from "@/lib/leads/parse-request";
 import { isValidGroupKey } from "@/lib/db/lead-groups";
 import {
   createPacks,
@@ -24,8 +28,27 @@ import { createAdminClient, isAdminConfigured } from "@/lib/supabase/admin";
 
 export const dynamic = "force-dynamic";
 
-/** Reject CSV payloads larger than this (bytes) before we ever parse them. */
-const MAX_CSV_BYTES = 2_000_000;
+/**
+ * Reject CSV payloads larger than this (bytes) before we ever parse them.
+ *
+ * This is a REQUEST ceiling, not a file ceiling. The importer splits an upload
+ * into chunks under this size (see lib/leads/chunk.ts) and sends them in order,
+ * so a 40 MB export imports in full — it just arrives as more than one request.
+ * The value sits under the serverless body limit with room for the JSON envelope.
+ */
+const MAX_CSV_BYTES = 3_500_000;
+
+/**
+ * Rows one request will insert.
+ *
+ * This used to be 5,000 and was applied with a bare `.slice()` — a 9,381-row
+ * customer file reported "Imported 5000 leads" and the other 4,381 homeowners
+ * were discarded with no error, no warning, and no way for the importer to know.
+ * It is now a backstop rather than a policy: the client chunks below it, so
+ * hitting it means something unusual happened, and when it IS hit the response
+ * says so (`truncated`) instead of lying about a clean import.
+ */
+const MAX_ROWS_PER_REQUEST = 25_000;
 
 /**
  * Append NEW discovered custom fields to the org's settings.leadFields so the
@@ -87,8 +110,12 @@ export async function POST(req: Request) {
   }
 
   // Throttle imports: each one can trigger CSV parsing + a Claude column-mapping
-  // call, so a loop would be a CPU + token DoS. Generous for real use.
-  const rl = rateLimit(`import:${viewer.user?.id ?? clientIp(req)}`, 12, 60_000);
+  // call, so a loop would be a CPU + token DoS. The budget is per REQUEST and a
+  // large upload is now legitimately many requests (one per chunk), so the old
+  // ceiling of 12 would have failed a big import part-way through. The token
+  // cost it was really protecting is bounded elsewhere: the model runs once per
+  // upload and every later chunk replays the resolved plan.
+  const rl = rateLimit(`import:${viewer.user?.id ?? clientIp(req)}`, 240, 60_000);
   if (!rl.ok) {
     return NextResponse.json(
       { inserted: 0, error: "Too many imports in a row — wait a moment and try again." },
@@ -112,6 +139,16 @@ export async function POST(req: Request) {
      *  "city" gives each city its own pack(s), in the order the file presents
      *  them. Either way rows keep their file order — see planCityPacks. */
     packBy?: "sequence" | "city" | null;
+    // ── Chunked upload (one file arriving as several requests) ──────────────
+    /** This chunk's first data row index within the whole file. Keeps created_at
+     *  — and therefore the dial queue — in file order across chunks. */
+    rowOffset?: number;
+    /** Packs already created for this upload, so numbering continues. */
+    packSeqOffset?: number;
+    /** The column layout resolved on the first chunk. Replaying it is what makes
+     *  a chunked upload cost one Claude call instead of one per chunk, and what
+     *  stops two chunks of the same file reading it differently. */
+    columnPlan?: unknown;
   };
 
   // Reject an oversized CSV before parsing: parseCsvToLeads walks the whole string
@@ -122,8 +159,8 @@ export async function POST(req: Request) {
       {
         inserted: 0,
         error:
-          "That file is too large to import at once. Split it into smaller CSVs " +
-          "(under ~2 MB each) and import them in batches.",
+          "That upload chunk is too large. Reload the page and try again — the " +
+          "importer splits big files automatically, so this shouldn't happen.",
       },
       { status: 413 },
     );
@@ -167,9 +204,20 @@ export async function POST(req: Request) {
   let source: "headers" | "ai" | "rows" = "rows";
   let aiError: string | null = null;
   let discoveredFields: LeadFieldDef[] = [];
+  // Handed back so the client can replay it on the rest of this upload's chunks.
+  let columnPlan: ColumnPlan | null = null;
+  // Data rows this request received, and how many of them carried neither a
+  // phone nor a name. Reported so the importer can reconcile every row of the
+  // file against an outcome instead of trusting a bare success.
+  let fileRows = 0;
+  let skippedRows = 0;
 
   if (typeof body.csv === "string" && body.csv.trim()) {
-    const parsed = await parseCsvToLeads(body.csv);
+    const parsed = await parseCsvToLeads(body.csv, {
+      // Untrusted by the time it comes back through the browser — rebuilt from
+      // recognised values only, or discarded (then this chunk resolves its own).
+      plan: sanitizeColumnPlan(body.columnPlan),
+    });
     if ("error" in parsed) {
       return NextResponse.json({ inserted: 0, error: parsed.error }, { status: 400 });
     }
@@ -177,8 +225,12 @@ export async function POST(req: Request) {
     source = parsed.source;
     aiError = parsed.aiError;
     discoveredFields = parsed.discoveredFields;
+    columnPlan = parsed.plan;
+    fileRows = parsed.fileRows;
+    skippedRows = parsed.skippedRows;
   } else if (Array.isArray(body.rows)) {
     leads = body.rows;
+    fileRows = body.rows.length;
     // Client-held ParsedLead JSON (the sort-preview round trip) — its field
     // defs arrive over the wire, so re-validate every one before trusting it.
     discoveredFields = sanitizeDiscoveredFields(body.discoveredFields);
@@ -210,7 +262,11 @@ export async function POST(req: Request) {
       )
     : leads;
   const dncSkipped = leads.length - scrubbed.length;
-  const capped = scrubbed.slice(0, 5000);
+  // Backstop only, and a LOUD one: `truncated` rides back on the response and the
+  // importer surfaces it. Silently slicing here is the bug this whole change
+  // exists to kill — an import that drops rows must never report success.
+  const capped = scrubbed.slice(0, MAX_ROWS_PER_REQUEST);
+  const truncated = scrubbed.length - capped.length;
 
   // ── Packs ────────────────────────────────────────────────────────────────
   // Cut the batch into numbered slices so a big list can be dealt out a pack
@@ -220,6 +276,9 @@ export async function POST(req: Request) {
   const packSize = Number(body.packSize) || 0;
   const wantsPacks = packSize > 0 && Boolean(viewer.org?.id);
   const packBy = body.packBy === "city" ? "city" : "sequence";
+  // Packs this upload already created in earlier chunks — numbering continues
+  // from there so one file never deals out two "Pack 1"s.
+  const packSeqOffset = Math.max(0, Math.floor(Number(body.packSeqOffset) || 0));
   let packIds: string[] = [];
   let assignedPackOf: (index: number) => string | null = () => null;
 
@@ -238,7 +297,13 @@ export async function POST(req: Request) {
         batch,
         packCount: planned.length,
         createdBy: viewer.user?.id ?? null,
-        labels: planned.map((p) => p.label),
+        // A city that spans two chunks gets a pack in each. Both would otherwise
+        // read "Jan list · Fresno, CA" with nothing to tell them apart, so a
+        // continuation chunk numbers its packs explicitly.
+        labels: planned.map((p, i) =>
+          packSeqOffset > 0 ? `${p.label} · Pack ${packSeqOffset + i + 1}` : p.label,
+        ),
+        seqOffset: packSeqOffset,
       });
       if (packs.length) {
         packIds = packs.map((p) => p.id);
@@ -255,6 +320,7 @@ export async function POST(req: Request) {
         batch,
         packCount,
         createdBy: viewer.user?.id ?? null,
+        seqOffset: packSeqOffset,
       });
       if (packs.length) {
         packIds = packs.map((p) => p.id);
@@ -270,7 +336,20 @@ export async function POST(req: Request) {
     ...(packIds.length ? { leadPackId: assignedPackOf(i) } : {}),
   }));
 
-  const result = await insertLeads(rows);
+  // The chunk's position in the file drives the created_at origin, so chunk 7's
+  // rows sort after chunk 6's however long the requests took — see insertLeads.
+  const rowOffset = Math.max(0, Math.floor(Number(body.rowOffset) || 0));
+  const written = rows.length
+    ? await insertLeads(rows, { createdAtOffsetMs: rowOffset })
+    : { inserted: 0, invalidPhone: 0, duplicates: 0, noop: true };
+
+  // "Nothing worth inserting" is not a failure. One chunk of a re-uploaded file
+  // is often 100% duplicates (or 100% DNC, leaving `rows` empty above), and
+  // answering 400 there would abort the remaining chunks and leave the file
+  // half-imported — the failure mode this change exists to remove. Real errors
+  // (a DB write that failed, no session) still come back as errors.
+  const { noop, ...counts } = written;
+  const result = noop ? { ...counts, error: undefined } : counts;
 
   // Register any newly discovered custom fields AFTER the rows land — an
   // import that failed (or inserted nothing) must not grow the org's schema.
@@ -296,7 +375,23 @@ export async function POST(req: Request) {
   }
 
   return NextResponse.json(
-    { ...result, source, aiError, packs: packIds.length, dncSkipped },
+    {
+      ...result,
+      source,
+      aiError,
+      packs: packIds.length,
+      dncSkipped,
+      // The full accounting for this request: every data row it received ends up
+      // in exactly one of inserted / duplicates / dncSkipped / skippedRows /
+      // truncated. Reported every time so the importer can reconcile the file
+      // instead of trusting a bare success.
+      fileRows,
+      parsedRows: leads.length,
+      skippedRows,
+      truncated,
+      // Replayed by the client on the rest of this upload's chunks.
+      columnPlan,
+    },
     { status: result.error ? 400 : 200 },
   );
 }

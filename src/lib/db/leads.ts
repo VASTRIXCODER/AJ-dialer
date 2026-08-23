@@ -1757,7 +1757,27 @@ export interface LeadInput {
  */
 export async function insertLeads(
   rows: LeadInput[],
-): Promise<{ inserted: number; invalidPhone: number; duplicates: number; error?: string }> {
+  opts: {
+    /** Milliseconds to add to this batch's created_at origin, so a chunked
+     *  upload's later requests still sort after its earlier ones. Pass the
+     *  chunk's row offset within the file. */
+    createdAtOffsetMs?: number;
+  } = {},
+): Promise<{
+  inserted: number;
+  invalidPhone: number;
+  duplicates: number;
+  error?: string;
+  /**
+   * True when nothing was inserted because there was nothing WORTH inserting —
+   * every row was a duplicate, or none had a phone or a name. That is an outcome,
+   * not a failure, and callers must not treat it as one: a chunk of a re-uploaded
+   * file is legitimately 100% duplicates, and aborting there would leave the rest
+   * of the file unimported. The message is still returned for a caller that wants
+   * to show it; `noop` is what says it's safe to carry on.
+   */
+  noop?: boolean;
+}> {
   if (!isSupabaseConfigured())
     return { inserted: 0, invalidPhone: 0, duplicates: 0, error: "Connect Supabase to save leads." };
   try {
@@ -1809,7 +1829,13 @@ export async function insertLeads(
       });
 
     if (!candidates.length)
-      return { inserted: 0, invalidPhone, duplicates: 0, error: "No valid rows found." };
+      return {
+        inserted: 0,
+        invalidPhone,
+        duplicates: 0,
+        error: "No valid rows found.",
+        noop: true,
+      };
 
     // Every phone this org already has on file, from any uploader — the shared
     // pool means a duplicate is still a duplicate even if a different rep
@@ -1835,33 +1861,58 @@ export async function insertLeads(
       .map((c) => c.row);
 
     if (!payload.length)
-      return { inserted: 0, invalidPhone, duplicates, error: "Every row was already in your organization's leads." };
+      return {
+        inserted: 0,
+        invalidPhone,
+        duplicates,
+        error: "Every row was already in your organization's leads.",
+        noop: true,
+      };
 
     // PRESERVE CSV ROW ORDER. `created_at` defaults to now(), which in Postgres
     // is the TRANSACTION timestamp — so every row of a bulk insert gets the
     // IDENTICAL value and the file's order is unrecoverable (ordering then falls
     // back to random UUIDs). The dial queue orders by created_at, so stamp each
     // row 1ms apart in file order: row 0 sorts before row 1, and a later import
-    // still lands after an earlier one. Drift is one millisecond per row (5s for
-    // a 5,000-row file), which is irrelevant to every consumer of this column.
-    const base = Date.now();
+    // still lands after an earlier one. Drift is one millisecond per row (40s for
+    // a 40,000-row file), which is irrelevant to every consumer of this column.
+    //
+    // `createdAtOffsetMs` is how a CHUNKED upload keeps one file's order. Chunk 2
+    // is a separate request that would otherwise re-read Date.now() — and if it
+    // started before chunk 1's stamps ran out, its rows would interleave into the
+    // middle of chunk 1. The caller passes the row offset instead, so every chunk
+    // stamps from the same conceptual origin and the file lands in file order.
+    const offset = Math.max(0, Math.floor(opts.createdAtOffsetMs ?? 0));
+    const base = Date.now() + offset;
     const stamped = payload.map((row, i) => ({
       ...row,
       created_at: new Date(base + i).toISOString(),
     }));
 
-    let { error, count } = await supabase
-      .from("leads")
-      .insert(stamped, { count: "exact" });
-    if (error && /custom_fields/i.test(error.message)) {
-      // Schema drift (DB not yet migrated with the custom_fields column):
-      // rather than failing the whole import, retry without the spillover so
-      // the core lead data still lands.
-      const bare = stamped.map(({ custom_fields: _cf, ...rest }) => rest);
-      ({ error, count } = await supabase.from("leads").insert(bare, { count: "exact" }));
+    // BATCHED. A single insert puts every row in one PostgREST request body;
+    // tens of thousands of rows (each with a custom_fields jsonb) overflow the
+    // request limit and the whole import fails with an opaque error. Batching
+    // also means a failure half way through reports what actually landed instead
+    // of claiming zero — the rows are already in the table either way, and an
+    // importer told "0 inserted" re-uploads and doubles the list.
+    const BATCH = 500;
+    let inserted = 0;
+    for (let i = 0; i < stamped.length; i += BATCH) {
+      const slice = stamped.slice(i, i + BATCH);
+      let { error, count } = await supabase
+        .from("leads")
+        .insert(slice, { count: "exact" });
+      if (error && /custom_fields/i.test(error.message)) {
+        // Schema drift (DB not yet migrated with the custom_fields column):
+        // rather than failing the whole import, retry without the spillover so
+        // the core lead data still lands.
+        const bare = slice.map(({ custom_fields: _cf, ...rest }) => rest);
+        ({ error, count } = await supabase.from("leads").insert(bare, { count: "exact" }));
+      }
+      if (error) return { inserted, invalidPhone, duplicates, error: error.message };
+      inserted += count ?? slice.length;
     }
-    if (error) return { inserted: 0, invalidPhone, duplicates, error: error.message };
-    return { inserted: count ?? payload.length, invalidPhone, duplicates };
+    return { inserted, invalidPhone, duplicates };
   } catch (e) {
     return {
       inserted: 0,

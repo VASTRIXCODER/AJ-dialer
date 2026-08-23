@@ -6,6 +6,7 @@ import {
   MAX_CUSTOM_FIELDS,
   recoverPhone,
   sampleColumn,
+  type CustomCapture,
   type ParsedLead,
   type ParseResult,
 } from "@/lib/leads/csv";
@@ -14,7 +15,6 @@ import {
   normalizeFieldKey,
   parseFieldValue,
   RESERVED_FIELD_KEYS,
-  type LeadFieldType,
 } from "@/lib/leads/field-schema";
 import { isValidPhone, normalizePhone } from "@/lib/utils";
 import { generateJSON, generateJSONLoose, isAIConfigured } from "./claude";
@@ -30,13 +30,13 @@ import { generateJSON, generateJSONLoose, isAIConfigured } from "./claude";
 // same way everywhere, so "+1…", "1…" and bare 10-digit numbers all work.
 // ─────────────────────────────────────────────────────────────────────────────
 
-interface PhoneCol {
+export interface PhoneCol {
   numberCol: number;
   /** Column holding a "Do Not Call"/status flag for this number (-1 if none). */
   dncCol: number;
 }
 
-interface ColumnMapping {
+export interface ColumnMapping {
   hasHeader: boolean;
   firstNameCol: number;
   lastNameCol: number;
@@ -136,15 +136,42 @@ const SYSTEM =
   '  "extras": [{ "label": string, "col": integer }]\n' +
   "}";
 
-/** Build a compact, token-bounded sample of the grid for the model. */
-function sampleFor(grid: string[][]): string {
-  const rows = grid.slice(0, 12).map((r) => r.map((c) => (c ?? "").slice(0, 50)));
+/** How many rows of the file the model gets to look at. */
+const SAMPLE_ROWS = 30;
+
+/**
+ * Build a compact, token-bounded sample of the grid for the model.
+ *
+ * Rows are taken from the TOP and from further down the file rather than the
+ * first N: broker exports routinely lead with their most complete records, and a
+ * mapping decided on those alone mis-reads the columns that only start carrying
+ * data (or only start being ambiguous) a few thousand rows in.
+ */
+export function sampleFor(grid: string[][]): string {
+  const head = grid.slice(0, Math.min(grid.length, SAMPLE_ROWS / 2));
+  const rest = grid.slice(head.length);
+  const stride = Math.max(1, Math.floor(rest.length / (SAMPLE_ROWS / 2)));
+  const spread: string[][] = [];
+  for (let i = 0; i < rest.length && spread.length < SAMPLE_ROWS / 2; i += stride) {
+    spread.push(rest[i]);
+  }
+  const rows = [...head, ...spread].map((r) => r.map((c) => (c ?? "").slice(0, 50)));
   const colCount = grid.reduce((m, r) => Math.max(m, r.length), 0);
   return `Columns: ${colCount}. Rows (each is an array of cells, index 0..${colCount - 1}):\n${JSON.stringify(rows)}`;
 }
 
-async function inferColumns(grid: string[][]): Promise<ColumnMapping> {
+/**
+ * Ask Claude which column is which. ONE call per upload — the resolved mapping is
+ * carried across every chunk of the file by the caller (see ColumnPlan in
+ * lib/leads/parse-request.ts), so a 40,000-row import is still a single call.
+ */
+export async function aiInferMapping(grid: string[][]): Promise<ColumnMapping> {
   const prompt = sampleFor(grid);
+  // Bounded, because this now runs on the happy path of every import: a rep is
+  // watching a progress line, and a model call that hangs must cost them a few
+  // seconds and a fall back to the header mapper — never a stalled upload.
+  // Two attempts share the budget, so the worst case stays inside it.
+  const timeoutMs = 20_000;
   // Plain JSON first (most compatible — independent of the output_config.format
   // shape, which varies across API versions). Fall back to structured outputs if
   // the loose parse somehow fails.
@@ -153,6 +180,7 @@ async function inferColumns(grid: string[][]): Promise<ColumnMapping> {
       system: SYSTEM,
       prompt,
       maxTokens: 1024,
+      timeoutMs,
     });
   } catch {
     return generateJSON<ColumnMapping>({
@@ -162,6 +190,7 @@ async function inferColumns(grid: string[][]): Promise<ColumnMapping> {
       schemaName: "lead_column_mapping",
       effort: "low",
       maxTokens: 1024,
+      timeoutMs,
     });
   }
 }
@@ -177,12 +206,12 @@ const isDnc = (v: string) => /do\s*not\s*call|dnc|opt(ed)?\s*out/i.test(v);
  * column's type from its values, drop empty/colliding/dataless columns, and cap
  * at MAX_CUSTOM_FIELDS.
  */
-function typedExtras(
+export function resolveAIExtras(
   grid: string[][],
   m: ColumnMapping,
   start: number,
-): { col: number; key: string; label: string; type: LeadFieldType }[] {
-  const captures: { col: number; key: string; label: string; type: LeadFieldType }[] = [];
+): CustomCapture[] {
+  const captures: CustomCapture[] = [];
   const seen = new Set<string>();
   for (const ex of m.extras ?? []) {
     if (captures.length >= MAX_CUSTOM_FIELDS) break;
@@ -199,10 +228,19 @@ function typedExtras(
   return captures;
 }
 
-/** Apply an inferred mapping to every data row. */
-function applyMapping(grid: string[][], m: ColumnMapping): ParseResult {
+/**
+ * Apply an inferred mapping to every data row. Pass `knownExtras` (resolved on
+ * the upload's first chunk) so later chunks type the same columns identically —
+ * detectFieldType reads a column's VALUES, so re-resolving per chunk lets one
+ * file disagree with itself about what a column holds.
+ */
+export function applyAIMapping(
+  grid: string[][],
+  m: ColumnMapping,
+  knownExtras?: CustomCapture[],
+): ParseResult {
   const start = m.hasHeader ? 1 : 0;
-  const extras = typedExtras(grid, m, start);
+  const extras = knownExtras ?? resolveAIExtras(grid, m, start);
   const out: ParsedLead[] = [];
   let noPhone = 0;
 
@@ -295,6 +333,6 @@ export const canAIParse = isAIConfigured;
 
 /** Infer the schema with Claude and extract every lead. Throws if AI is off. */
 export async function aiParseLeads(grid: string[][]): Promise<ParseResult> {
-  const mapping = await inferColumns(grid);
-  return applyMapping(grid, mapping);
+  const mapping = await aiInferMapping(grid);
+  return applyAIMapping(grid, mapping);
 }

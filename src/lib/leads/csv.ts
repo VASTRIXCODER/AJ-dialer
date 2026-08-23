@@ -110,7 +110,11 @@ export function digitCount(v: string): number {
 
 // customFields is excluded: no header maps to it directly — unmapped columns
 // are captured into it by key instead (see discoverCustomColumns).
-type Field = Exclude<keyof ParsedLead, "customFields"> | "name" | "address2" | null;
+export type Field =
+  | Exclude<keyof ParsedLead, "customFields">
+  | "name"
+  | "address2"
+  | null;
 
 /**
  * Map a column header to a lead field. Phone is checked FIRST and matches a wide
@@ -236,7 +240,12 @@ function sniffPhoneColumn(grid: string[][], header: Field[]): number {
 }
 
 /** A column earmarked for customFields capture, with its detected type. */
-type CustomCapture = { col: number; key: string; label: string; type: LeadFieldType };
+export type CustomCapture = {
+  col: number;
+  key: string;
+  label: string;
+  type: LeadFieldType;
+};
 
 /** Non-empty values of one column (data rows only), enough for type detection. */
 export function sampleColumn(grid: string[][], col: number, start = 1): string[] {
@@ -294,19 +303,46 @@ export function captureToFieldDef(cap: {
   };
 }
 
-/** Deterministic header-based mapping (fast path for well-formed CSVs). */
-export function rowsToLeads(grid: string[][]): ParseResult {
-  if (grid.length < 2)
-    return { leads: [], noPhone: 0, sawPhoneColumn: false, discoveredFields: [] };
+/**
+ * Which column is which, plus the typed customFields captures — resolved ONCE
+ * per upload and reused for every chunk of it.
+ *
+ * Both halves sample the DATA, not just the header row (sniffPhoneColumn scores
+ * columns by how many values are real phone numbers; detectFieldType reads a
+ * column's values). Re-resolving per chunk would therefore let a big upload
+ * disagree with itself — chunk 1 typing a column "number" and chunk 7 typing the
+ * same column "text", or one chunk sniffing a phone column another one misses.
+ * Resolve on the first chunk, carry the plan, and every row of the file is read
+ * the same way.
+ */
+export interface HeaderPlan {
+  header: Field[];
+  captures: CustomCapture[];
+}
+
+/** Work out this file's column layout from its header row + a sample of its data. */
+export function resolveHeaderPlan(grid: string[][]): HeaderPlan {
+  if (!grid.length) return { header: [], captures: [] };
   const header = grid[0].map(mapHeader);
   if (!header.includes("phone")) {
     const sniffed = sniffPhoneColumn(grid, header);
     if (sniffed >= 0) header[sniffed] = "phone";
   }
-  const sawPhoneColumn = header.includes("phone");
   // Capture is decided AFTER phone sniffing so a data-detected phone column is
   // never duplicated into customFields.
-  const captures = discoverCustomColumns(grid, header);
+  return { header, captures: discoverCustomColumns(grid, header) };
+}
+
+/**
+ * Deterministic header-based mapping (fast path for well-formed CSVs).
+ * Pass the `plan` resolved from the first chunk to read later chunks of the same
+ * upload identically — see HeaderPlan.
+ */
+export function rowsToLeads(grid: string[][], plan?: HeaderPlan): ParseResult {
+  if (grid.length < 2)
+    return { leads: [], noPhone: 0, sawPhoneColumn: false, discoveredFields: [] };
+  const { header, captures } = plan ?? resolveHeaderPlan(grid);
+  const sawPhoneColumn = header.includes("phone");
   const out: ParsedLead[] = [];
   let noPhone = 0;
   for (let r = 1; r < grid.length; r++) {

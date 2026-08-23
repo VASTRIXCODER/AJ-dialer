@@ -2,6 +2,11 @@
 
 import { useRouter } from "next/navigation";
 import { useRef, useState } from "react";
+import {
+  describeImport,
+  importCsvInChunks,
+  importShortfall,
+} from "@/lib/leads/import-client";
 import type { LeadGroup } from "@/lib/types";
 
 export type UploadStatus = { type: "idle" | "working" | "done" | "error"; message?: string };
@@ -13,6 +18,10 @@ export type UploadStatus = { type: "idle" | "working" | "done" | "error"; messag
  * `leadGroup` is stamped on every row in the batch when provided (undefined =
  * don't touch the column at all, matching /api/leads/import's own
  * hasOwnProperty distinction between "omitted" and "explicitly null").
+ *
+ * A big file is sent as several requests — see lib/leads/import-client.ts — and
+ * this reports the SUM, plus a warning if any row of the file can't be accounted
+ * for. A partial import is never presented as a clean one.
  */
 export function useCsvUpload(
   opts: {
@@ -36,11 +45,9 @@ export function useCsvUpload(
   const pendingTextRef = useRef<string | null>(null);
 
   async function runImport(text: string) {
-    const res = await fetch("/api/leads/import", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        csv: text,
+    const outcome = await importCsvInChunks(
+      text,
+      {
         ...(opts.campaignId ? { campaignId: opts.campaignId } : {}),
         ...(opts.leadGroup !== undefined ? { leadGroup: opts.leadGroup } : {}),
         ...(opts.packSize && opts.packSize > 0
@@ -50,42 +57,45 @@ export function useCsvUpload(
               packBy: opts.packBy ?? "sequence",
             }
           : {}),
-      }),
-    });
-    const json = await res.json().catch(() => ({}));
+      },
+      (sent, total) => {
+        if (total > 1) {
+          setStatus({
+            type: "working",
+            message: `Importing… part ${Math.min(sent + 1, total)} of ${total}`,
+          });
+        }
+      },
+    );
 
-    if (json.certificationRequired) {
-      pendingTextRef.current = text;
-      setCertPrompt({ campaignId: json.campaignId ?? null });
-      setStatus({ type: "idle" });
-      return;
-    }
-    if (!res.ok || json.error) {
-      setStatus({ type: "error", message: json.error ?? "Import failed." });
-      return;
-    }
-    const skipped = typeof json.invalidPhone === "number" ? json.invalidPhone : 0;
-    const duplicates = typeof json.duplicates === "number" ? json.duplicates : 0;
-    const notes = [
-      skipped > 0 ? `${skipped} without a valid phone — not dialable` : "",
-      duplicates > 0 ? `${duplicates} already in your org's leads — skipped` : "",
-    ].filter(Boolean);
-    const skipNote = notes.length ? ` (${notes.join("; ")})` : "";
-    const how = json.source === "ai" ? " — columns mapped by AI" : "";
-    const packNote =
-      typeof json.packs === "number" && json.packs > 0
-        ? ` · ${json.packs} pack${json.packs === 1 ? "" : "s"}`
+    if (!outcome.ok) {
+      if (outcome.certificationRequired) {
+        pendingTextRef.current = text;
+        setCertPrompt({ campaignId: outcome.campaignId ?? null });
+        setStatus({ type: "idle" });
+        return;
+      }
+      // A mid-file failure has already written rows. Say how many, so nobody
+      // re-uploads the whole list on top of them.
+      const landed = outcome.totals.inserted
+        ? ` ${outcome.totals.inserted} leads were imported before it stopped.`
         : "";
-    if (json.aiError) {
+      setStatus({ type: "error", message: `${outcome.error}${landed}` });
+      router.refresh();
+      return;
+    }
+
+    const { totals } = outcome;
+    const shortfall = importShortfall(totals);
+    if (totals.aiError) {
       setStatus({
         type: "error",
-        message: `Imported ${json.inserted} leads, but AI column mapping didn't run: ${json.aiError}`,
+        message: `Imported ${totals.inserted} leads, but ${totals.aiError}`,
       });
+    } else if (shortfall) {
+      setStatus({ type: "error", message: `${describeImport(totals)} ${shortfall}` });
     } else {
-      setStatus({
-        type: "done",
-        message: `Imported ${json.inserted} leads${skipNote}${how}${packNote}.`,
-      });
+      setStatus({ type: "done", message: describeImport(totals) });
     }
     router.refresh();
   }

@@ -55,21 +55,26 @@ export async function generateJSON<T>(opts: {
   schemaName: string;
   maxTokens?: number;
   effort?: "low" | "medium" | "high";
+  /** Fail fast instead of holding a request open — see generateJSONLoose. */
+  timeoutMs?: number;
 }): Promise<T> {
-  const res = await client().messages.create({
-    model: AI_MODEL,
-    max_tokens: opts.maxTokens ?? 2048,
-    system: opts.system,
-    messages: [{ role: "user", content: opts.prompt }],
-    output_config: {
-      effort: opts.effort ?? "low",
-      format: {
-        type: "json_schema",
-        name: opts.schemaName,
-        schema: opts.schema,
+  const res = await client().messages.create(
+    {
+      model: AI_MODEL,
+      max_tokens: opts.maxTokens ?? 2048,
+      system: opts.system,
+      messages: [{ role: "user", content: opts.prompt }],
+      output_config: {
+        effort: opts.effort ?? "low",
+        format: {
+          type: "json_schema",
+          name: opts.schemaName,
+          schema: opts.schema,
+        },
       },
-    },
-  } as Anthropic.MessageCreateParamsNonStreaming);
+    } as Anthropic.MessageCreateParamsNonStreaming,
+    opts.timeoutMs ? { timeout: opts.timeoutMs } : undefined,
+  );
 
   const block = res.content.find(
     (b): b is Anthropic.TextBlock => b.type === "text",
@@ -87,15 +92,26 @@ export async function generateJSONLoose<T>(opts: {
   system: string;
   prompt: string;
   maxTokens?: number;
+  /**
+   * Per-request timeout. The SDK's default is ten minutes, which is the right
+   * default for a background job and the wrong one for anything a person is
+   * waiting on — a call that hangs would hold the whole request open until the
+   * platform killed it. Callers on a user-facing path should always set this and
+   * treat a timeout as "fall back", not "fail".
+   */
+  timeoutMs?: number;
 }): Promise<T> {
-  const res = await client().messages.create({
-    model: AI_MODEL,
-    max_tokens: opts.maxTokens ?? 2048,
-    system:
-      opts.system +
-      "\n\nRespond with ONLY a single valid JSON object — no prose, no explanation, no markdown code fences.",
-    messages: [{ role: "user", content: opts.prompt }],
-  });
+  const res = await client().messages.create(
+    {
+      model: AI_MODEL,
+      max_tokens: opts.maxTokens ?? 2048,
+      system:
+        opts.system +
+        "\n\nRespond with ONLY a single valid JSON object — no prose, no explanation, no markdown code fences.",
+      messages: [{ role: "user", content: opts.prompt }],
+    },
+    opts.timeoutMs ? { timeout: opts.timeoutMs } : undefined,
+  );
   const block = res.content.find(
     (b): b is Anthropic.TextBlock => b.type === "text",
   );

@@ -10,6 +10,11 @@ import {
 import { useRouter } from "next/navigation";
 import { useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
+import {
+  describeImport,
+  importCsvInChunks,
+  importShortfall,
+} from "@/lib/leads/import-client";
 import { cn } from "@/lib/utils";
 import { CampaignCertificationDialog } from "./campaign-certification-dialog";
 
@@ -34,46 +39,53 @@ export function CsvImport({
   const pendingTextRef = useRef<string | null>(null);
 
   async function runImport(text: string) {
-    // The server parses + maps the CSV — using Claude to read any layout
-    // (including header-less broker exports) when the simple mapper can't.
+    // The server parses + maps the CSV, running Claude's column mapping against
+    // the deterministic header mapper and keeping whichever read the file better.
+    // Big files go up as several ordered requests — see lib/leads/import-client.ts
+    // — and what's reported here is the SUM, with a warning if any row of the
+    // file can't be accounted for.
     setStatus({ type: "working", message: "Reading your columns…" });
-    const res = await fetch("/api/leads/import", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ csv: text, campaignId: campaignId || null }),
-    });
-    const json = await res.json().catch(() => ({}));
+    const outcome = await importCsvInChunks(
+      text,
+      { campaignId: campaignId || null },
+      (sent, total) => {
+        if (total > 1) {
+          setStatus({
+            type: "working",
+            message: `Importing… part ${Math.min(sent + 1, total)} of ${total}`,
+          });
+        }
+      },
+    );
 
-    if (json.certificationRequired) {
-      pendingTextRef.current = text;
-      setCertPrompt({ campaignId: json.campaignId ?? null });
-      setStatus({ type: "idle" });
+    if (!outcome.ok) {
+      if (outcome.certificationRequired) {
+        pendingTextRef.current = text;
+        setCertPrompt({ campaignId: outcome.campaignId ?? null });
+        setStatus({ type: "idle" });
+        return;
+      }
+      const landed = outcome.totals.inserted
+        ? ` ${outcome.totals.inserted} leads were imported before it stopped.`
+        : "";
+      setStatus({ type: "error", message: `${outcome.error}${landed}` });
+      router.refresh();
       return;
     }
-    if (!res.ok || json.error) {
-      setStatus({ type: "error", message: json.error ?? "Import failed." });
-      return;
-    }
-    const skipped = typeof json.invalidPhone === "number" ? json.invalidPhone : 0;
-    const duplicates = typeof json.duplicates === "number" ? json.duplicates : 0;
-    const notes = [
-      skipped > 0 ? `${skipped} without a valid phone — not dialable` : "",
-      duplicates > 0 ? `${duplicates} already in your org's leads — skipped` : "",
-    ].filter(Boolean);
-    const skipNote = notes.length ? ` (${notes.join("; ")})` : "";
-    const how = json.source === "ai" ? " — columns mapped by AI" : "";
+
+    const { totals } = outcome;
+    const shortfall = importShortfall(totals);
     // If the file needed AI mapping but it wasn't available/failed, the import
     // still ran with best-effort header detection — warn so it's not silent.
-    if (json.aiError) {
+    if (totals.aiError) {
       setStatus({
         type: "error",
-        message: `Imported ${json.inserted} leads, but AI column mapping didn't run: ${json.aiError}`,
+        message: `Imported ${totals.inserted} leads, but ${totals.aiError}`,
       });
+    } else if (shortfall) {
+      setStatus({ type: "error", message: `${describeImport(totals)} ${shortfall}` });
     } else {
-      setStatus({
-        type: "done",
-        message: `Imported ${json.inserted} leads${skipNote}${how}.`,
-      });
+      setStatus({ type: "done", message: describeImport(totals) });
     }
     router.refresh();
   }
