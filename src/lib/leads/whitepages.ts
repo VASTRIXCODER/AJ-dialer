@@ -2,6 +2,7 @@ import "server-only";
 
 import { generateJSON, isAIConfigured } from "../ai/claude";
 import { normalizePhone } from "../utils";
+import { whitepagesSearchUrl } from "./whitepages-url";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Whitepages reverse search, by browser + Claude.
@@ -47,44 +48,10 @@ export interface WhitepagesInput {
   zip?: string | null;
 }
 
-/** Whitepages' URL slugs: alphanumerics and single hyphens, nothing else. */
-function slug(value: string): string {
-  return value
-    .normalize("NFKD")
-    .replace(/[̀-ͯ]/g, "")
-    .replace(/[^a-zA-Z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
-}
-
-/**
- * The Whitepages URL to search.
- *
- * Navigating straight to the canonical results URL rather than typing into the
- * site's search box: it is the same query with far less to go wrong (no input
- * selector, no submit button, no autocomplete dropdown to fight), and one fewer
- * page load to be challenged on.
- *
- * Address search is preferred when there's a street address — it resolves to a
- * specific household, where a name search on "John Smith, Fresno CA" returns a
- * page of different people.
- */
-export function whitepagesUrl(input: WhitepagesInput): string | null {
-  const city = slug((input.city ?? "").trim());
-  const state = slug((input.state ?? "").trim());
-  const locality = city && state ? `${city}-${state}` : city || state;
-
-  const street = slug((input.address ?? "").trim());
-  if (street && locality) {
-    return `https://www.whitepages.com/address/${street}/${locality}`;
-  }
-
-  const name = slug(`${input.firstName ?? ""} ${input.lastName ?? ""}`.trim());
-  if (name && locality) {
-    return `https://www.whitepages.com/name/${name}/${locality}`;
-  }
-  if (name) return `https://www.whitepages.com/name/${name}`;
-  return null;
-}
+// The URL builder lives in ./whitepages-url (pure, client-safe) so the dialer
+// card can build the same link in the browser. Aliased to its old name so
+// existing server-side importers (and the internal call below) keep working.
+export const whitepagesUrl = whitepagesSearchUrl;
 
 /**
  * Cheap, free block detection that runs before spending a Claude call. Claude

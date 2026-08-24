@@ -9,6 +9,7 @@ import {
   CheckCircle2,
   ChevronLeft,
   ChevronRight,
+  Copy,
   ExternalLink,
   FileText,
   Headphones,
@@ -30,6 +31,7 @@ import {
 import { useEffect, useMemo, useState } from "react";
 import { CallDetailModal } from "@/components/calls/call-detail-modal";
 import { useVocabulary } from "@/components/layout/vocabulary";
+import { truePeopleSearchUrl } from "@/lib/leads/people-search-url";
 import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -72,6 +74,7 @@ export function LeadPanel({
   showCallHistory = true,
   showUpNext = true,
   canReverseSearch = false,
+  reverseSearchConfigured = false,
   onLeadPatched,
 }: {
   lead: Lead | null;
@@ -94,6 +97,9 @@ export function LeadPanel({
   /** Viewer holds `leads.reverseSearch` (managers+). Draws the skip-trace
    *  control; the API re-checks the permission regardless. */
   canReverseSearch?: boolean;
+  /** An automated skip-trace provider is set. False ⇒ the button opens
+   *  TruePeopleSearch in a tab (no key, no server call). */
+  reverseSearchConfigured?: boolean;
   /** Merge a patch into the queued lead so an applied number shows at once. */
   onLeadPatched?: (leadId: string, patch: Partial<Lead>) => void;
 }) {
@@ -170,6 +176,7 @@ export function LeadPanel({
           fields={fields ?? CORE_LEAD_FIELDS}
           showCallHistory={showCallHistory}
           canReverseSearch={canReverseSearch}
+          reverseSearchConfigured={reverseSearchConfigured}
           onLeadPatched={onLeadPatched}
         />
       )}
@@ -531,6 +538,171 @@ function ReverseSearchCard({
   );
 }
 
+/**
+ * Zero-config reverse lookup — no API key, no provider, no server call for the
+ * search itself. Opens TruePeopleSearch in a new tab, pre-filled with the
+ * lead's address, and takes the number the rep reads off it back onto the lead.
+ *
+ * The app can't read the other tab's contents (same-origin policy — no page can
+ * read another site's tab), so the rep types the one number in. That's the
+ * whole trade for needing nothing configured: the browser does the looking, the
+ * human does the copying, the dialer saves the result.
+ *
+ * The address is shown with a Copy button as a backstop: if TruePeopleSearch
+ * ever renames its URL params and the deep link lands on the home page instead
+ * of results, the rep pastes the address into the site's own search and the
+ * feature still works.
+ */
+function ManualLookupCard({
+  lead,
+  onApplied,
+}: {
+  lead: Lead;
+  onApplied: (phone: string) => void;
+}) {
+  const vocab = useVocabulary();
+  const [opened, setOpened] = useState(false);
+  const [manual, setManual] = useState("");
+  const [copied, setCopied] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  // Fresh lead ⇒ fresh state, so a number typed for one homeowner can't be
+  // saved onto the next one after a queue advance.
+  useEffect(() => {
+    setOpened(false);
+    setManual("");
+    setCopied(false);
+    setErr(null);
+  }, [lead.id]);
+
+  const url = truePeopleSearchUrl(lead);
+  const address = formatAddress(lead);
+  const needsNumber = !isValidPhone(lead.phone ?? "");
+
+  function openTab() {
+    if (!url) return;
+    // Triggered by a real click, so the popup blocker allows it. noopener keeps
+    // the people-search tab from being able to script back into the dialer.
+    window.open(url, "_blank", "noopener,noreferrer");
+    setOpened(true);
+  }
+
+  function copyAddress() {
+    if (!address) return;
+    navigator.clipboard
+      ?.writeText(address)
+      .then(() => {
+        setCopied(true);
+        setTimeout(() => setCopied(false), 1500);
+      })
+      .catch(() => {});
+  }
+
+  async function save() {
+    const phone = normalizePhone(manual) || manual;
+    setSaving(true);
+    setErr(null);
+    try {
+      const res = await fetch("/api/leads/update", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ id: lead.id, phone }),
+      });
+      const json = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string };
+      if (!res.ok || !json.ok) {
+        setErr(json.error ?? "Couldn't save that number to the lead.");
+        return;
+      }
+      onApplied(phone);
+      setManual("");
+      setOpened(false);
+    } catch {
+      setErr("Network error while saving that number.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="mt-3">
+      <Button
+        size="sm"
+        variant={needsNumber ? "primary" : "outline"}
+        className="w-full gap-1.5"
+        disabled={!url}
+        onClick={openTab}
+        title={
+          url
+            ? `Open TruePeopleSearch for this ${vocab.leadNoun} in a new tab`
+            : `This ${vocab.leadNoun} has no name or address to search on`
+        }
+      >
+        <ExternalLink className="h-3.5 w-3.5" />
+        Look up number on TruePeopleSearch
+      </Button>
+
+      {opened && (
+        <div className="mt-2 space-y-2 rounded-lg border border-border/70 bg-muted/30 p-2.5">
+          <p className="text-[11px] text-muted-foreground">
+            Opened in a new tab. Read the number off the page and paste it here —
+            it saves straight onto the {vocab.leadNoun}.
+          </p>
+          <div className="flex items-center gap-1.5">
+            <input
+              value={manual}
+              onChange={(e) => setManual(e.target.value)}
+              placeholder="(559) 555-0143"
+              inputMode="tel"
+              autoFocus
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && digitsOnly(manual).length >= 10 && !saving) save();
+              }}
+              className="h-7 min-w-0 flex-1 rounded-md border border-border bg-background px-2 text-xs tabular outline-none focus-visible:border-primary/50"
+            />
+            <Button
+              size="sm"
+              variant="outline"
+              className="gap-1 px-2"
+              disabled={saving || digitsOnly(manual).length < 10}
+              onClick={save}
+            >
+              {saving ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />}
+              Save
+            </Button>
+          </div>
+          {err && (
+            <p className="flex items-start gap-1.5 text-[11px] text-danger">
+              <AlertTriangle className="mt-px h-3 w-3 shrink-0" />
+              {err}
+            </p>
+          )}
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
+            <button
+              type="button"
+              onClick={openTab}
+              className="font-medium text-primary hover:underline"
+            >
+              Reopen tab
+            </button>
+            {address && (
+              <button
+                type="button"
+                onClick={copyAddress}
+                className="inline-flex items-center gap-1 font-medium text-primary hover:underline"
+                title="Copy the address to paste into the site's own search, if the page didn't pre-fill"
+              >
+                {copied ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
+                {copied ? "Copied" : "Copy address"}
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 /** The solar-era chips keep their icons; other labels get a neutral check. */
 function chipIcon(label: string): typeof Car {
   if (label === "EV") return Car;
@@ -545,6 +717,7 @@ function LeadDetail({
   fields,
   showCallHistory,
   canReverseSearch,
+  reverseSearchConfigured,
   onLeadPatched,
 }: {
   lead: Lead;
@@ -552,6 +725,7 @@ function LeadDetail({
   fields: LeadFieldDef[];
   showCallHistory: boolean;
   canReverseSearch: boolean;
+  reverseSearchConfigured: boolean;
   onLeadPatched?: (leadId: string, patch: Partial<Lead>) => void;
 }) {
   const name = `${lead.firstName} ${lead.lastName}`;
@@ -617,13 +791,24 @@ function LeadDetail({
 
         {/* Directly under the number it replaces — this used to sit below the
             address and provider rows, ~215px down, which is not where anyone
-            looks when they notice the phone is missing or dead. */}
-        {canReverseSearch && (
-          <ReverseSearchCard
-            lead={lead}
-            onApplied={(phone) => onLeadPatched?.(lead.id, { phone })}
-          />
-        )}
+            looks when they notice the phone is missing or dead.
+
+            Two modes: with an automated provider set, the server does the
+            lookup (ReverseSearchCard). With none — the zero-config default —
+            the button just opens TruePeopleSearch in a tab and the rep types
+            the number back (ManualLookupCard). No key, no server call. */}
+        {canReverseSearch &&
+          (reverseSearchConfigured ? (
+            <ReverseSearchCard
+              lead={lead}
+              onApplied={(phone) => onLeadPatched?.(lead.id, { phone })}
+            />
+          ) : (
+            <ManualLookupCard
+              lead={lead}
+              onApplied={(phone) => onLeadPatched?.(lead.id, { phone })}
+            />
+          ))}
 
         <div className="mt-4 space-y-2 text-sm">
           {formatAddress(lead) && (

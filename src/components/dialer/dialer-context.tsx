@@ -64,6 +64,9 @@ export interface DialerConfig {
    *  supervisor-only affordances on these (reverse search); every one of them
    *  is re-checked server-side, so this only decides what's DRAWN. */
   permissions?: string[];
+  /** True when an automated skip-trace provider is set. False ⇒ the reverse-
+   *  search button uses zero-config manual mode (open Whitepages in a tab). */
+  reverseSearchConfigured?: boolean;
 }
 
 /** What the dialer knows about a campaign — enough to filter the queue and

@@ -98,16 +98,31 @@ or incomplete, the platform automatically and gracefully falls back to simulatio
 
 ## 🔎 Reverse search (skip trace)
 
-The dialer's lead card has a **Reverse search** button for managers and above
-(`leads.reverseSearch`) that looks a homeowner's phone number up from their name
-and address, then offers the results to save onto the lead.
+The dialer's lead card has a reverse-search control for managers and above
+(`leads.reverseSearch`) that finds a homeowner's phone number from their name and
+address.
 
-It talks to a skip-trace **API**, not to a consumer people-search website. Sites
-like whitepages.com forbid automated access and sit behind bot protection, so a
-scraper would pass review and then quietly start returning nothing in
-production — indistinguishable, on a dialer, from "this homeowner has no listed
-number". Whitepages' own data is sold through Ekata (Mastercard), which is one
-of the supported providers below.
+### Default: zero config, opens TruePeopleSearch
+
+**Out of the box, with nothing set up**, the button reads **"Look up number on
+TruePeopleSearch"**. Clicking it opens
+[truepeoplesearch.com](https://www.truepeoplesearch.com/) in a new tab, already
+searched for that lead's address, and shows a box to paste the number back onto
+the lead. TruePeopleSearch shows numbers for free, so the rep just reads it off
+the page.
+
+No API key, no provider, no server call for the lookup itself. The app can't
+read the other tab's contents (browsers forbid one site from reading another's
+tab), which is why the rep types the number in — one field, and it saves
+straight onto the lead. The address is shown with a **Copy** button as a
+backstop: if the deep link ever lands on the site's home page instead of
+results, paste the address into its own search box.
+
+### Optional upgrade: an automated provider
+
+Set `REVERSE_SEARCH_PROVIDER` and the button instead runs the lookup
+server-side and proposes the numbers itself — no tab, no copy-paste. Worth it
+at volume; unnecessary to get started.
 
 | Variable | Value |
 | --- | --- |

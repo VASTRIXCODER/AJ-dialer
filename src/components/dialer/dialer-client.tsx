@@ -559,6 +559,7 @@ export function DialerClient({
             showCallHistory={layout?.callHistory !== false}
             showUpNext={layout?.upNext !== false}
             canReverseSearch={config.permissions?.includes("leads.reverseSearch") ?? false}
+            reverseSearchConfigured={config.reverseSearchConfigured ?? false}
             onLeadPatched={applyLeadPatch}
           />
         </Card>

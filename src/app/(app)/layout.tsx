@@ -10,6 +10,7 @@ import { getPlatformPool } from "@/lib/dialer/rotation-server";
 import { restrictToAssignedNumbers } from "@/lib/dialer/rotation";
 import { agentLabels, isElevenLabsConfigured, isSecondAgentConfigured } from "@/lib/elevenlabs";
 import { resolveLeadFields, resolveQualifyFields } from "@/lib/leads/field-schema";
+import { isReverseSearchConfigured } from "@/lib/leads/reverse-search";
 import { getViewer } from "@/lib/org/membership";
 import {
   DEFAULT_DIALER_LAYOUT,
@@ -200,6 +201,10 @@ export default async function AppGroupLayout({
     // Gates supervisor-only dialer affordances (reverse search). Every one is
     // re-checked server-side — this only decides what gets drawn.
     permissions: viewer.permissions,
+    // Is an automated skip-trace provider configured? When false, the reverse-
+    // search button drops to zero-config manual mode: open Whitepages in a tab,
+    // read the number off it, type it back — no API key, no server lookup.
+    reverseSearchConfigured: isReverseSearchConfigured(),
   };
 
   return (
