@@ -236,12 +236,24 @@ async function fetchViaWorker(url: string): Promise<ScrapedPage> {
 
 /** One unlocker request. Throws on a transport error / non-200 so the caller
  *  can fail over to the next configured service. */
-async function fetchOneUnlocker(endpoint: string, url: string): Promise<ScrapedPage> {
+async function fetchOneUnlocker(
+  name: string,
+  endpoint: string,
+  url: string,
+): Promise<ScrapedPage> {
   // Unlockers can take 20-40s on a hard target (they retry with heavier methods
   // internally), so the timeout is generous.
   const res = await fetch(endpoint, { signal: AbortSignal.timeout(70_000) });
   const html = await res.text().catch(() => "");
-  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+  if (!res.ok) {
+    // The unlocker's OWN error status (401/403/429) carries the real reason in
+    // its body — a bad key, a plan that lacks the requested proxy tier, or an
+    // empty credit balance. Surfacing a snippet turns an opaque "403 Forbidden"
+    // into the actual fix. (A target-site block, by contrast, comes back as a
+    // 200 whose HTML looksBlocked() catches — handled by the caller.)
+    const reason = html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim().slice(0, 240);
+    throw new Error(`${name} ${res.status}${reason ? ` — ${reason}` : ` ${res.statusText}`}`);
+  }
   const title = /<title[^>]*>([\s\S]*?)<\/title>/i.exec(html)?.[1]?.trim() ?? "";
   return { status: res.status, finalUrl: url, title, text: htmlToText(html).slice(0, 40_000) };
 }
@@ -260,7 +272,7 @@ async function fetchViaUnlockers(url: string): Promise<ScrapedPage> {
   let lastErr: unknown = null;
   for (const u of unlockers) {
     try {
-      const page = await fetchOneUnlocker(u.endpoint(url), url);
+      const page = await fetchOneUnlocker(u.name, u.endpoint(url), url);
       if (page.text.trim() && !looksBlocked(page)) return page; // a real page — done
       lastBlocked = page; // blocked/empty from this one; try the next
     } catch (e) {
