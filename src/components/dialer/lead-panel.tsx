@@ -467,10 +467,10 @@ function ReverseSearchCard({
             <p className="flex items-start gap-1.5 rounded-lg bg-danger/10 px-2 py-1.5 text-[11px] text-danger">
               <ShieldAlert className="mt-px h-3 w-3 shrink-0" />
               <span>
-                <strong>Blocked, not empty.</strong>{" "}
-                {note ?? "The site served a bot check instead of results."} This is
-                not a “no listing” — the lookup never ran. Try again shortly, or
-                switch to an API provider.
+                <strong>The site blocked the automatic lookup.</strong>{" "}
+                {note ?? "It served a bot check instead of results."} This is not a
+                “no listing” — open it in your browser below, where it isn’t
+                blocked, and paste the number.
               </span>
             </p>
           )}

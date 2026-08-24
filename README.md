@@ -145,6 +145,37 @@ TruePeopleSearch specifically because its numbers are free — Claude has
 something to read. `whitepages` works the same way but paywalls its numbers, so
 it's the weaker choice for this.
 
+#### Getting past the bot block (required in practice)
+
+TruePeopleSearch is behind Cloudflare bot protection. A request straight from
+your server (Vercel = a datacenter IP, no real browser) gets **challenged every
+time** — the card shows "the site blocked the automatic lookup" and you fall
+back to opening the tab by hand. This is not a bug; the site is refusing
+automated traffic, and no header tweak defeats it.
+
+The fix is an **unlocker** service — it fetches the page from a residential IP
+with a real browser, solves the challenge, and returns the HTML (Claude still
+does the extraction). Sign up for one (ScraperAPI and ScrapingBee both have free
+tiers of ~1,000 lookups/month), then set:
+
+```
+SCRAPE_API_PROVIDER=scraperapi      # or: scrapingbee
+SCRAPE_API_KEY=...                  # from that service
+```
+
+For any other GET-style unlocker, skip the two above and set a template
+instead — `{url}` and `{key}` are filled in:
+
+```
+SCRAPE_API_URL=https://api.example.com/?token={key}&render=true&url={url}
+```
+
+With an unlocker set, the automated lookup works reliably. Without one, use the
+**zero-config manual mode** (unset `REVERSE_SEARCH_PROVIDER`) — the rep opens
+the tab and reads the number, which is never blocked because it's a real person
+in a real browser. Or use a **keyed skip-trace API** below, which returns the
+data directly with no scraping at all — the most robust option of the three.
+
 ### Keyed API providers
 
 | Variable | Value |

@@ -31,6 +31,18 @@ import { whitepagesSearchUrl } from "./whitepages-url";
 const WORKER_URL = (process.env.SCRAPE_WORKER_URL ?? "").trim();
 const WORKER_SECRET = (process.env.SCRAPE_SECRET ?? "").trim();
 
+// An "unlocker" / scraping-API service — the reliable way past a people-search
+// site's bot protection. It fetches the page from a residential IP with a real
+// browser and returns the HTML; Claude still does the extraction. This is what
+// makes the automated path actually work, because a plain request from a
+// datacenter IP (Vercel) gets challenged every time.
+const SCRAPE_API_KEY = (process.env.SCRAPE_API_KEY ?? "").trim();
+const SCRAPE_API_PROVIDER = (process.env.SCRAPE_API_PROVIDER ?? "").trim().toLowerCase();
+// Escape hatch for any GET-style unlocker not named below: a template where
+// {url} is the (encoded) target and {key} the API key,
+// e.g. https://api.example.com/?token={key}&render=true&url={url}
+const SCRAPE_API_TEMPLATE = (process.env.SCRAPE_API_URL ?? "").trim();
+
 export type PageState = "results" | "no_results" | "blocked" | "paywalled";
 
 export interface ScrapedPage {
@@ -162,6 +174,61 @@ async function fetchViaWorker(url: string): Promise<ScrapedPage> {
   };
 }
 
+/** Build the unlocker request URL for a target page, or null if unconfigured.
+ *  Exported for tests. */
+export function scrapeApiEndpoint(target: string): string | null {
+  const enc = encodeURIComponent(target);
+  if (SCRAPE_API_TEMPLATE) {
+    return SCRAPE_API_TEMPLATE.replace(/\{url\}/g, enc).replace(
+      /\{key\}/g,
+      encodeURIComponent(SCRAPE_API_KEY),
+    );
+  }
+  if (!SCRAPE_API_KEY) return null;
+  // Named presets for the two most common GET-style unlockers. `render`/
+  // `render_js` runs the page's JS so the challenge is actually solved, and a
+  // US geo keeps results relevant to a US phone lookup.
+  switch (SCRAPE_API_PROVIDER) {
+    case "scrapingbee":
+      return `https://app.scrapingbee.com/api/v1/?api_key=${SCRAPE_API_KEY}&render_js=true&country_code=us&url=${enc}`;
+    case "scraperapi":
+    case "": // default shape — ScraperAPI-compatible
+      return `https://api.scraperapi.com/?api_key=${SCRAPE_API_KEY}&render=true&country_code=us&url=${enc}`;
+    default:
+      return null;
+  }
+}
+
+/**
+ * Fetch the page through an unlocker service — the path that actually gets past
+ * a people-search site's bot protection (residential IP + real browser +
+ * challenge solving, done by the service). Returns the page HTML as text for
+ * Claude to read, same shape as the other fetchers.
+ */
+async function fetchViaScrapeApi(url: string): Promise<ScrapedPage> {
+  const endpoint = scrapeApiEndpoint(url);
+  if (!endpoint) {
+    throw new Error(
+      "SCRAPE_API_KEY is set but no provider matched — set SCRAPE_API_PROVIDER " +
+        "to scraperapi or scrapingbee, or SCRAPE_API_URL to a {url}/{key} template.",
+    );
+  }
+  // Unlockers can take 20-40s on a hard target (they may retry with heavier
+  // methods), so the timeout is generous.
+  const res = await fetch(endpoint, { signal: AbortSignal.timeout(70_000) });
+  const html = await res.text().catch(() => "");
+  if (!res.ok) {
+    throw new Error(`Unlocker returned ${res.status} ${res.statusText}`);
+  }
+  const title = /<title[^>]*>([\s\S]*?)<\/title>/i.exec(html)?.[1]?.trim() ?? "";
+  return {
+    status: res.status,
+    finalUrl: url,
+    title,
+    text: htmlToText(html).slice(0, 40_000),
+  };
+}
+
 export function isWhitepagesConfigured(): boolean {
   // The worker is the only path that works in a deployed Next app; in-process
   // Playwright is a local convenience, so "configured" means either is possible.
@@ -281,9 +348,15 @@ async function scrapeAndExtract(
     throw new Error(`${site} lookup needs ANTHROPIC_API_KEY — Claude does the extraction.`);
   }
 
-  // Worker when one is configured (a real browser gets through more often),
-  // otherwise the zero-setup direct fetch.
-  const page = WORKER_URL ? await fetchViaWorker(url) : await fetchDirect(url);
+  // Precedence, most-likely-to-get-through first:
+  //   1. unlocker API (residential IP + real browser + challenge solving)
+  //   2. own scrape worker (a real browser, but a datacenter IP)
+  //   3. direct fetch (no browser, datacenter IP — blocked by protected sites)
+  const page = SCRAPE_API_KEY || SCRAPE_API_TEMPLATE
+    ? await fetchViaScrapeApi(url)
+    : WORKER_URL
+      ? await fetchViaWorker(url)
+      : await fetchDirect(url);
 
   // Fast path: don't spend a Claude call on an obvious challenge page.
   if (looksBlocked(page)) {
