@@ -1,8 +1,10 @@
 import "server-only";
 
 import { normalizePhone } from "../utils";
+import { truePeopleSearchUrl } from "./people-search-url";
 import {
   isWhitepagesConfigured,
+  truePeopleSearchScrape,
   whitepagesConfigProblem,
   whitepagesReverseSearch,
   whitepagesUrl,
@@ -39,7 +41,17 @@ import {
 // been consented to the way a number a homeowner typed into a form has.
 // ─────────────────────────────────────────────────────────────────────────────
 
-export type ReverseSearchProvider = "ekata" | "endato" | "batchdata" | "whitepages";
+export type ReverseSearchProvider =
+  | "ekata"
+  | "endato"
+  | "batchdata"
+  | "whitepages"
+  | "truepeoplesearch";
+
+/** The two scraped (browser/HTTP + Claude) providers, as opposed to the keyed
+ *  API vendors. They share the same config: an optional worker, plus a Claude
+ *  key for the extraction. */
+const SCRAPED: ReverseSearchProvider[] = ["whitepages", "truepeoplesearch"];
 
 const PROVIDER = (process.env.REVERSE_SEARCH_PROVIDER ?? "").trim().toLowerCase();
 const API_KEY = (process.env.REVERSE_SEARCH_API_KEY ?? "").trim();
@@ -49,10 +61,10 @@ const API_SECRET = (process.env.REVERSE_SEARCH_API_SECRET ?? "").trim();
 const NEEDS_SECRET: ReverseSearchProvider[] = ["endato"];
 
 function activeProvider(): ReverseSearchProvider | null {
-  // Whitepages is the browser-driven path — it has no API key of its own; what
-  // it needs is a scrape backend and a Claude key, checked in ./whitepages.ts.
-  if (PROVIDER === "whitepages") {
-    return isWhitepagesConfigured() ? "whitepages" : null;
+  // The scraped providers have no API key of their own — they need a Claude key
+  // (and optionally a scrape worker), checked in ./whitepages.ts.
+  if ((SCRAPED as string[]).includes(PROVIDER)) {
+    return isWhitepagesConfigured() ? (PROVIDER as ReverseSearchProvider) : null;
   }
   if (PROVIDER !== "ekata" && PROVIDER !== "endato" && PROVIDER !== "batchdata") {
     return null;
@@ -74,11 +86,11 @@ function activeProvider(): ReverseSearchProvider | null {
  */
 export function reverseSearchConfigProblem(): string | null {
   if (!PROVIDER) return null; // nothing set — demo is the intended behaviour
-  const known: string[] = ["ekata", "endato", "batchdata", "whitepages"];
+  const known: string[] = ["ekata", "endato", "batchdata", "whitepages", "truepeoplesearch"];
   if (!known.includes(PROVIDER)) {
     return `REVERSE_SEARCH_PROVIDER is "${PROVIDER}", which isn't one of: ${known.join(", ")}.`;
   }
-  if (PROVIDER === "whitepages") return whitepagesConfigProblem();
+  if ((SCRAPED as string[]).includes(PROVIDER)) return whitepagesConfigProblem(PROVIDER);
   if (!API_KEY) {
     return `REVERSE_SEARCH_PROVIDER is "${PROVIDER}" but REVERSE_SEARCH_API_KEY is empty.`;
   }
@@ -104,6 +116,7 @@ const PROVIDER_LABEL: Record<ReverseSearchProvider, string> = {
   endato: "Endato",
   batchdata: "BatchData",
   whitepages: "Whitepages",
+  truepeoplesearch: "TruePeopleSearch",
 };
 
 export interface ReverseSearchInput {
@@ -439,16 +452,20 @@ export async function reverseSearch(
     };
   }
 
-  // The browser-driven path has its own result shape (it can be blocked or
-  // paywalled, which no API provider can be), so it returns separately rather
+  // The scraped paths have their own result shape (they can be blocked or
+  // paywalled, which no API provider can be), so they return separately rather
   // than being squeezed through harvestPhones.
-  if (provider === "whitepages") {
+  if ((SCRAPED as string[]).includes(provider)) {
+    const label = PROVIDER_LABEL[provider];
     try {
-      const wp = await whitepagesReverseSearch(input);
+      const wp =
+        provider === "truepeoplesearch"
+          ? await truePeopleSearchScrape(input)
+          : await whitepagesReverseSearch(input);
       return {
         candidates: wp.phones.slice(0, MAX_CANDIDATES),
         source: "provider",
-        provider: PROVIDER_LABEL.whitepages,
+        provider: label,
         error: null,
         pageState: wp.pageState,
         note: wp.note,
@@ -458,14 +475,12 @@ export async function reverseSearch(
       return {
         candidates: [],
         source: "provider",
-        provider: PROVIDER_LABEL.whitepages,
-        error:
-          e instanceof Error
-            ? `Whitepages lookup failed: ${e.message}`
-            : "Whitepages lookup failed.",
+        provider: label,
+        error: e instanceof Error ? `${label} lookup failed: ${e.message}` : `${label} lookup failed.`,
         pageState: "no_results",
         note: null,
-        searchUrl: whitepagesUrl(input),
+        searchUrl:
+          provider === "truepeoplesearch" ? truePeopleSearchUrl(input) : whitepagesUrl(input),
       };
     }
   }

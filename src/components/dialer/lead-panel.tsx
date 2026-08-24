@@ -28,7 +28,7 @@ import {
   X,
   Zap,
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { CallDetailModal } from "@/components/calls/call-detail-modal";
 import { useVocabulary } from "@/components/layout/vocabulary";
 import { truePeopleSearchUrl } from "@/lib/leads/people-search-url";
@@ -244,6 +244,12 @@ function ReverseSearchCard({
   const [manual, setManual] = useState("");
   const [err, setErr] = useState<string | null>(null);
   const [applying, setApplying] = useState<string | null>(null);
+  /** The candidate now loaded onto the lead (auto or by click) — drives the
+   *  "ready to dial" banner and marks which row is live. */
+  const [appliedPhone, setAppliedPhone] = useState<string | null>(null);
+  // Leads already auto-searched this session, so scrolling back to one doesn't
+  // spend a second lookup on it.
+  const searchedRef = useRef<Set<string>>(new Set());
   // "homeowner" / "policyholder" / "lead" — this control talks about the person
   // being looked up, so it has to use the workspace's own noun.
   const vocab = useVocabulary();
@@ -261,6 +267,7 @@ function ReverseSearchCard({
     setConfigProblem(null);
     setSearchUrl(null);
     setManual("");
+    setAppliedPhone(null);
   }, [lead.id]);
 
   // No dialable number on file — the case this feature exists for, so the
@@ -302,7 +309,8 @@ function ReverseSearchCard({
         setStatus("idle");
         return;
       }
-      setCandidates(json.candidates ?? []);
+      const cands = json.candidates ?? [];
+      setCandidates(cands);
       setSuppressed(json.suppressed ?? 0);
       setSource(json.source ?? null);
       setProvider(json.provider ?? null);
@@ -314,6 +322,13 @@ function ReverseSearchCard({
       // so "found nothing" and "the lookup broke" don't look identical.
       setErr(json.error ?? null);
       setStatus("done");
+      // Auto-load the best candidate (the server returns them best-first) so
+      // the number is on the lead and dialable without a click — the whole
+      // point of the automated mode. The others stay listed to switch to, and
+      // there's an Undo, so a wrong top-pick is one click to fix rather than a
+      // silent overwrite. Only auto-applies a real provider hit, never a demo
+      // 555 number.
+      if (cands.length && json.source === "provider") void apply(cands[0].phone);
     } catch {
       setErr("Couldn't reach the server.");
       setStatus("idle");
@@ -339,14 +354,28 @@ function ReverseSearchCard({
         return;
       }
       onApplied(phone);
-      setStatus("idle");
-      setCandidates([]);
+      setAppliedPhone(phone);
+      // Candidates stay on screen so the rep can switch to another; the applied
+      // one is marked in the list rather than the list being cleared.
     } catch {
       setErr("Network error while saving that number.");
     } finally {
       setApplying(null);
     }
   }
+
+  // Background auto-lookup: a focused lead with no dialable number gets a
+  // search fired automatically, so the number is found and loaded with the rep
+  // doing nothing. Bounded to the case that needs it — no number to overwrite,
+  // something to search on, once per lead per session — so it can't quietly
+  // burn a lookup on every lead in a queue that already has numbers.
+  useEffect(() => {
+    if (!needsNumber || !searchable) return;
+    if (searchedRef.current.has(lead.id)) return;
+    searchedRef.current.add(lead.id);
+    void run();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lead.id, needsNumber, searchable]);
 
   return (
     <div className="mt-3">
@@ -375,9 +404,9 @@ function ReverseSearchCard({
           <ScanSearch className="h-3.5 w-3.5" />
         )}
         {status === "searching"
-          ? "Searching…"
+          ? "Finding a number…"
           : status === "done"
-            ? "Reverse search again"
+            ? "Look up another number"
             : "Reverse search"}
       </Button>
 
@@ -390,6 +419,32 @@ function ReverseSearchCard({
 
       {status === "done" && (
         <div className="mt-3 space-y-1.5">
+          {/* Auto-loaded onto the lead — the number is on the card and the
+              dialer will dial it. Shown prominently, with Undo, so the rep can
+              see what happened and reverse a wrong pick in one click. */}
+          {appliedPhone && (
+            <div className="flex flex-wrap items-center gap-2 rounded-lg border border-success/40 bg-success/10 px-2.5 py-1.5">
+              <PhoneCall className="h-3.5 w-3.5 shrink-0 text-success" />
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-xs font-semibold tabular text-success">
+                  {formatPhone(appliedPhone)}
+                </p>
+                <p className="truncate text-[11px] text-muted-foreground">Loaded — ready to dial</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  onApplied("");
+                  setAppliedPhone(null);
+                }}
+                disabled={applying !== null}
+                className="text-[11px] font-medium text-muted-foreground hover:text-foreground"
+                title="Clear the number that was loaded onto this lead"
+              >
+                Undo
+              </button>
+            </div>
+          )}
           {/* A half-configured provider used to produce the same "nothing is
               configured" line as an unconfigured one, which reads as the
               feature being broken. Say which variable is missing. */}
@@ -433,50 +488,56 @@ function ReverseSearchCard({
               {note ?? `No numbers listed for this ${vocab.leadNoun}'s name and address.`}
             </p>
           )}
-          {candidates.map((c) => (
-            <div
-              key={c.phone}
-              className="flex flex-wrap items-center gap-2 rounded-lg border border-border/70 bg-background/60 px-2.5 py-1.5"
-            >
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-xs font-semibold tabular">
-                  {formatPhone(c.phone)}
-                </p>
-                <p className="truncate text-[11px] text-muted-foreground">
-                  {[
-                    LINE_TYPE_LABEL[c.lineType],
-                    c.confidence != null ? `${c.confidence}% match` : null,
-                    c.matchedName,
-                  ]
-                    .filter(Boolean)
-                    .join(" · ")}
-                </p>
+          {/* The auto-loaded number shows in the banner above; this lists the
+              OTHER matches as one-click alternatives, since a skip trace often
+              returns several and the top pick isn't always the right person. */}
+          {candidates.some((c) => c.phone !== appliedPhone) && (
+            <p className="pt-0.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+              {appliedPhone ? "Or use a different number" : "Matches"}
+            </p>
+          )}
+          {candidates
+            .filter((c) => c.phone !== appliedPhone)
+            .map((c) => (
+              <div
+                key={c.phone}
+                className="flex flex-wrap items-center gap-2 rounded-lg border border-border/70 bg-background/60 px-2.5 py-1.5"
+              >
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-xs font-semibold tabular">
+                    {formatPhone(c.phone)}
+                  </p>
+                  <p className="truncate text-[11px] text-muted-foreground">
+                    {[
+                      LINE_TYPE_LABEL[c.lineType],
+                      c.confidence != null ? `${c.confidence}% match` : null,
+                      c.matchedName,
+                    ]
+                      .filter(Boolean)
+                      .join(" · ")}
+                  </p>
+                </div>
+                {c.isCurrent ? (
+                  <Badge tone="success">On file</Badge>
+                ) : (
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="gap-1"
+                    disabled={applying !== null}
+                    onClick={() => apply(c.phone)}
+                    title={`Load this number onto the ${vocab.leadNoun} instead`}
+                  >
+                    {applying === c.phone ? (
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                    ) : (
+                      <Check className="h-3 w-3" />
+                    )}
+                    Use
+                  </Button>
+                )}
               </div>
-              {c.isCurrent ? (
-                <Badge tone="success">On file</Badge>
-              ) : (
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  className="gap-1"
-                  disabled={applying !== null}
-                  onClick={() => apply(c.phone)}
-                  title={
-                    lead.phone
-                      ? `Replaces ${formatPhone(lead.phone)} on this ${vocab.leadNoun}`
-                      : `Save this number to the ${vocab.leadNoun}`
-                  }
-                >
-                  {applying === c.phone ? (
-                    <Loader2 className="h-3 w-3 animate-spin" />
-                  ) : (
-                    <Check className="h-3 w-3" />
-                  )}
-                  Use
-                </Button>
-              )}
-            </div>
-          ))}
+            ))}
           {/* When the automated read comes back empty — blocked, paywalled or
               genuinely nothing — the rep's OWN browser is the thing that isn't
               being challenged: real IP, real session, already trusted. Handing

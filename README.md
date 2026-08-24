@@ -118,17 +118,44 @@ straight onto the lead. The address is shown with a **Copy** button as a
 backstop: if the deep link ever lands on the site's home page instead of
 results, paste the address into its own search box.
 
-### Optional upgrade: an automated provider
+### Automated: fully hands-off (`truepeoplesearch` + Claude)
 
-Set `REVERSE_SEARCH_PROVIDER` and the button instead runs the lookup
-server-side and proposes the numbers itself — no tab, no copy-paste. Worth it
-at volume; unnecessary to get started.
+```
+REVERSE_SEARCH_PROVIDER=truepeoplesearch
+ANTHROPIC_API_KEY=...        # Claude does the extraction
+```
+
+With this set, the lookup runs **in the background** — no tab opens. The server
+fetches the TruePeopleSearch page, **Claude reads the number out of it**, and
+the best match is **loaded straight onto the lead, ready to dial**. The card
+shows a green "ready to dial" banner with an **Undo**, and lists any other
+matches to switch to in one click.
+
+It's genuinely hands-off: focusing a lead that has **no number** fires the
+lookup automatically (once per lead), so a rep working a list of numberless
+leads sees numbers appear on their own. Leads that already have a number are
+left alone — click **Reverse search** to replace a dead one. A wrong top pick
+is never a silent overwrite: it's on screen, with Undo and alternatives.
+
+> **Cost note:** each auto-lookup is one page fetch plus one Claude call, so a
+> queue of numberless leads spends per lead worked. The `leads.reverseSearch`
+> rate limit (20/min/user) caps runaway usage.
+
+TruePeopleSearch specifically because its numbers are free — Claude has
+something to read. `whitepages` works the same way but paywalls its numbers, so
+it's the weaker choice for this.
+
+### Keyed API providers
 
 | Variable | Value |
 | --- | --- |
-| `REVERSE_SEARCH_PROVIDER` | `ekata`, `endato`, `batchdata` or `whitepages` |
-| `REVERSE_SEARCH_API_KEY` | The vendor's API key (for Endato: the AP **name**) |
+| `REVERSE_SEARCH_PROVIDER` | `ekata`, `endato`, `batchdata`, `whitepages` or `truepeoplesearch` |
+| `REVERSE_SEARCH_API_KEY` | API vendors only — the vendor's key (for Endato: the AP **name**) |
 | `REVERSE_SEARCH_API_SECRET` | Endato only — the AP **password** |
+
+`ekata` / `endato` / `batchdata` are contracted skip-trace APIs — most reliable,
+metered and billed by the vendor. The two scraped providers
+(`whitepages`, `truepeoplesearch`) need no vendor account, just the Claude key.
 
 ### The `whitepages` provider (browser + Claude)
 

@@ -2,6 +2,7 @@ import "server-only";
 
 import { generateJSON, isAIConfigured } from "../ai/claude";
 import { normalizePhone } from "../utils";
+import { truePeopleSearchUrl } from "./people-search-url";
 import { whitepagesSearchUrl } from "./whitepages-url";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -175,10 +176,12 @@ export function isWhitepagesConfigured(): boolean {
  * SCRAPE_WORKER_URL and forgot SCRAPE_SECRET needs to hear about the secret,
  * not a generic "not configured".
  */
-export function whitepagesConfigProblem(): string | null {
+export function whitepagesConfigProblem(provider = "whitepages"): string | null {
   // The worker is OPTIONAL. With no SCRAPE_WORKER_URL the direct-fetch path
-  // runs, which needs nothing beyond a Claude key — so the only setup for
-  // whitepages is the one variable naming it, plus the key you already have.
+  // runs, which needs nothing beyond a Claude key — so the only setup for a
+  // scraped provider is the one variable naming it, plus the key you already
+  // have. `provider` only shapes the message, not the logic (both scraped
+  // providers share the same scrape config).
   if (WORKER_URL && !WORKER_SECRET) {
     return (
       "SCRAPE_WORKER_URL is set but SCRAPE_SECRET is empty — the worker will " +
@@ -187,7 +190,7 @@ export function whitepagesConfigProblem(): string | null {
     );
   }
   if (!isAIConfigured()) {
-    return "REVERSE_SEARCH_PROVIDER=whitepages needs ANTHROPIC_API_KEY — Claude does the extraction from the page.";
+    return `REVERSE_SEARCH_PROVIDER=${provider} needs ANTHROPIC_API_KEY — Claude does the extraction from the page.`;
   }
   return null;
 }
@@ -257,23 +260,25 @@ Rules:
 - Judge confidence against the person asked for: an exact name+address match is high; one of several same-name people is low.`;
 
 /**
- * Look a lead up on Whitepages and extract phone numbers with Claude.
+ * Fetch one people-search results page and have Claude pull the numbers out.
+ * The engine behind every scraped provider — pass the URL and a display name
+ * for the site; the fetch, block detection and extraction are identical across
+ * them, only the URL differs. Whitepages and TruePeopleSearch are thin wrappers.
  *
- * Every failure path is reported as a distinct `pageState` rather than as an
- * empty list — see the header note. Throws only when the lookup could not be
- * attempted at all (no backend, no Claude key).
+ * Every failure path is reported as a distinct `pageState` rather than an empty
+ * list — see the header note. Throws only when the lookup could not be
+ * attempted at all (no Claude key).
  */
-export async function whitepagesReverseSearch(
+async function scrapeAndExtract(
+  url: string | null,
+  site: string,
   input: WhitepagesInput,
 ): Promise<WhitepagesResult> {
-  const url = whitepagesUrl(input);
   if (!url) {
     return { phones: [], pageState: "no_results", note: "Nothing to search on.", url: null };
   }
   if (!isAIConfigured()) {
-    throw new Error(
-      "Whitepages lookup needs ANTHROPIC_API_KEY — Claude does the extraction.",
-    );
+    throw new Error(`${site} lookup needs ANTHROPIC_API_KEY — Claude does the extraction.`);
   }
 
   // Worker when one is configured (a real browser gets through more often),
@@ -282,18 +287,13 @@ export async function whitepagesReverseSearch(
 
   // Fast path: don't spend a Claude call on an obvious challenge page.
   if (looksBlocked(page)) {
-    return {
-      phones: [],
-      pageState: "blocked",
-      note: "Whitepages served a bot check instead of results.",
-      url,
-    };
+    return { phones: [], pageState: "blocked", note: `${site} served a bot check instead of results.`, url };
   }
   if (!page.text.trim()) {
     return {
       phones: [],
       pageState: "blocked",
-      note: "Whitepages returned an empty page — usually a silent block.",
+      note: `${site} returned an empty page — usually a silent block.`,
       url,
     };
   }
@@ -305,7 +305,7 @@ export async function whitepagesReverseSearch(
   }>({
     system: SYSTEM,
     schema: EXTRACT_SCHEMA as unknown as Parameters<typeof generateJSON>[0]["schema"],
-    schemaName: "WhitepagesExtraction",
+    schemaName: "PeopleSearchExtraction",
     // Truncated: the useful listings are at the top of the page and the tail is
     // navigation/footer boilerplate that only costs tokens.
     prompt: [
@@ -350,4 +350,16 @@ export async function whitepagesReverseSearch(
         : "no_results";
 
   return { phones, pageState, note: String(parsed.note ?? "").trim() || null, url };
+}
+
+/** Whitepages, via the shared scrape engine. Numbers are often paywalled here —
+ *  prefer truePeopleSearchScrape, whose numbers are free and so actually land. */
+export function whitepagesReverseSearch(input: WhitepagesInput): Promise<WhitepagesResult> {
+  return scrapeAndExtract(whitepagesSearchUrl(input), "Whitepages", input);
+}
+
+/** TruePeopleSearch, via the shared scrape engine. The one to reach for: it
+ *  prints phone numbers for free, so the extraction has something to find. */
+export function truePeopleSearchScrape(input: WhitepagesInput): Promise<WhitepagesResult> {
+  return scrapeAndExtract(truePeopleSearchUrl(input), "TruePeopleSearch", input);
 }

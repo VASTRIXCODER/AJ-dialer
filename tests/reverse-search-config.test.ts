@@ -32,12 +32,25 @@ describe("reverseSearchConfigProblem", () => {
   it("names an unknown provider value", async () => {
     const p = await problemWith({ ...BASE, REVERSE_SEARCH_PROVIDER: "whitepgaes" });
     expect(p).toMatch(/whitepgaes/);
-    expect(p).toMatch(/ekata, endato, batchdata, whitepages/);
+    expect(p).toMatch(/ekata, endato, batchdata, whitepages, truepeoplesearch/);
   });
 
   it("names the missing API key for an API provider", async () => {
     const p = await problemWith({ ...BASE, REVERSE_SEARCH_PROVIDER: "ekata" });
     expect(p).toMatch(/REVERSE_SEARCH_API_KEY/);
+  });
+
+  it("treats truepeoplesearch like whitepages — needs only a Claude key", async () => {
+    // No API key, no worker: the only requirement is ANTHROPIC_API_KEY.
+    const missing = await problemWith({ ...BASE, REVERSE_SEARCH_PROVIDER: "truepeoplesearch" });
+    expect(missing).toMatch(/ANTHROPIC_API_KEY/);
+    expect(missing).toMatch(/truepeoplesearch/);
+    const ready = await problemWith({
+      ...BASE,
+      REVERSE_SEARCH_PROVIDER: "truepeoplesearch",
+      ANTHROPIC_API_KEY: "sk-ant-x",
+    });
+    expect(ready).toBeNull();
   });
 
   it("names the missing secret for Endato specifically", async () => {
