@@ -156,15 +156,20 @@ automated traffic, and no header tweak defeats it.
 The fix is an **unlocker** service — it fetches the page from a residential IP
 with a real browser, solves the challenge, and returns the HTML (Claude still
 does the extraction). Sign up for one (ScraperAPI and ScrapingBee both have free
-tiers of ~1,000 lookups/month), then set:
+tiers of ~1,000 lookups/month) and set its key:
 
 ```
-SCRAPE_API_PROVIDER=scraperapi      # or: scrapingbee
-SCRAPE_API_KEY=...                  # from that service
+SCRAPERAPI_KEY=...          # from scraperapi.com
+SCRAPINGBEE_KEY=...          # from scrapingbee.com
 ```
 
-For any other GET-style unlocker, skip the two above and set a template
-instead — `{url}` and `{key}` are filled in:
+Set **either or both** — with both, they fail over automatically: each lookup
+tries ScraperAPI first, and if it's blocked or erroring that day, ScrapingBee
+gets the turn (and vice versa). Keys go in Vercel's environment variables, never
+in the code — a key committed to the repo is a permanent leak in git history.
+
+For any other GET-style unlocker, set a template instead — `{url}` and `{key}`
+are filled in:
 
 ```
 SCRAPE_API_URL=https://api.example.com/?token={key}&render=true&url={url}

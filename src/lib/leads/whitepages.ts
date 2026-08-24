@@ -31,17 +31,71 @@ import { whitepagesSearchUrl } from "./whitepages-url";
 const WORKER_URL = (process.env.SCRAPE_WORKER_URL ?? "").trim();
 const WORKER_SECRET = (process.env.SCRAPE_SECRET ?? "").trim();
 
-// An "unlocker" / scraping-API service — the reliable way past a people-search
-// site's bot protection. It fetches the page from a residential IP with a real
-// browser and returns the HTML; Claude still does the extraction. This is what
-// makes the automated path actually work, because a plain request from a
-// datacenter IP (Vercel) gets challenged every time.
-const SCRAPE_API_KEY = (process.env.SCRAPE_API_KEY ?? "").trim();
-const SCRAPE_API_PROVIDER = (process.env.SCRAPE_API_PROVIDER ?? "").trim().toLowerCase();
-// Escape hatch for any GET-style unlocker not named below: a template where
-// {url} is the (encoded) target and {key} the API key,
+// "Unlocker" / scraping-API services — the reliable way past a people-search
+// site's bot protection. Each fetches the page from a residential IP with a
+// real browser, solves the challenge, and returns the HTML (Claude still does
+// the extraction). This is what makes the automated path actually work; a plain
+// request from a datacenter IP (Vercel) is challenged every time.
+//
+// Configure ANY NUMBER of them — they're tried in order and the first that
+// returns a real (non-blocked) page wins, so ScraperAPI + ScrapingBee together
+// cover for each other when one is having a bad day. Keys are read from env,
+// never hardcoded (a key in the repo is a permanent leak in git history).
+const SCRAPERAPI_KEY = (process.env.SCRAPERAPI_KEY ?? "").trim();
+const SCRAPINGBEE_KEY = (process.env.SCRAPINGBEE_KEY ?? "").trim();
+// Escape hatch for any other GET-style unlocker: a template where {url} is the
+// (encoded) target and {key} the API key,
 // e.g. https://api.example.com/?token={key}&render=true&url={url}
 const SCRAPE_API_TEMPLATE = (process.env.SCRAPE_API_URL ?? "").trim();
+// Back-compat with the earlier single-var form (SCRAPE_API_KEY +
+// SCRAPE_API_PROVIDER). Folded into the list below.
+const LEGACY_API_KEY = (process.env.SCRAPE_API_KEY ?? "").trim();
+const LEGACY_API_PROVIDER = (process.env.SCRAPE_API_PROVIDER ?? "").trim().toLowerCase();
+
+interface Unlocker {
+  name: string;
+  endpoint: (target: string) => string;
+}
+
+/** Encoded ScraperAPI request for a target page. */
+const scraperApiEndpoint = (key: string) => (target: string) =>
+  `https://api.scraperapi.com/?api_key=${encodeURIComponent(key)}&render=true&country_code=us&url=${encodeURIComponent(target)}`;
+
+/** Encoded ScrapingBee request for a target page. */
+const scrapingBeeEndpoint = (key: string) => (target: string) =>
+  `https://app.scrapingbee.com/api/v1/?api_key=${encodeURIComponent(key)}&render_js=true&country_code=us&url=${encodeURIComponent(target)}`;
+
+/**
+ * Every configured unlocker, in try-order. Named keys first (ScraperAPI, then
+ * ScrapingBee), then a custom template, then the legacy single-var form — so
+ * setting both SCRAPERAPI_KEY and SCRAPINGBEE_KEY gives automatic failover
+ * between the two.
+ */
+export function configuredUnlockers(): Unlocker[] {
+  const list: Unlocker[] = [];
+  if (SCRAPERAPI_KEY) list.push({ name: "ScraperAPI", endpoint: scraperApiEndpoint(SCRAPERAPI_KEY) });
+  if (SCRAPINGBEE_KEY) list.push({ name: "ScrapingBee", endpoint: scrapingBeeEndpoint(SCRAPINGBEE_KEY) });
+  if (SCRAPE_API_TEMPLATE) {
+    list.push({
+      name: "Unlocker",
+      endpoint: (target: string) =>
+        SCRAPE_API_TEMPLATE.replace(/\{url\}/g, encodeURIComponent(target)).replace(
+          /\{key\}/g,
+          encodeURIComponent(LEGACY_API_KEY),
+        ),
+    });
+  }
+  if (LEGACY_API_KEY && !SCRAPERAPI_KEY && !SCRAPINGBEE_KEY && !SCRAPE_API_TEMPLATE) {
+    list.push(
+      LEGACY_API_PROVIDER === "scrapingbee"
+        ? { name: "ScrapingBee", endpoint: scrapingBeeEndpoint(LEGACY_API_KEY) }
+        : { name: "ScraperAPI", endpoint: scraperApiEndpoint(LEGACY_API_KEY) },
+    );
+  }
+  return list;
+}
+
+const hasUnlocker = () => configuredUnlockers().length > 0;
 
 export type PageState = "results" | "no_results" | "blocked" | "paywalled";
 
@@ -174,59 +228,43 @@ async function fetchViaWorker(url: string): Promise<ScrapedPage> {
   };
 }
 
-/** Build the unlocker request URL for a target page, or null if unconfigured.
- *  Exported for tests. */
-export function scrapeApiEndpoint(target: string): string | null {
-  const enc = encodeURIComponent(target);
-  if (SCRAPE_API_TEMPLATE) {
-    return SCRAPE_API_TEMPLATE.replace(/\{url\}/g, enc).replace(
-      /\{key\}/g,
-      encodeURIComponent(SCRAPE_API_KEY),
-    );
-  }
-  if (!SCRAPE_API_KEY) return null;
-  // Named presets for the two most common GET-style unlockers. `render`/
-  // `render_js` runs the page's JS so the challenge is actually solved, and a
-  // US geo keeps results relevant to a US phone lookup.
-  switch (SCRAPE_API_PROVIDER) {
-    case "scrapingbee":
-      return `https://app.scrapingbee.com/api/v1/?api_key=${SCRAPE_API_KEY}&render_js=true&country_code=us&url=${enc}`;
-    case "scraperapi":
-    case "": // default shape — ScraperAPI-compatible
-      return `https://api.scraperapi.com/?api_key=${SCRAPE_API_KEY}&render=true&country_code=us&url=${enc}`;
-    default:
-      return null;
-  }
+/** One unlocker request. Throws on a transport error / non-200 so the caller
+ *  can fail over to the next configured service. */
+async function fetchOneUnlocker(endpoint: string, url: string): Promise<ScrapedPage> {
+  // Unlockers can take 20-40s on a hard target (they retry with heavier methods
+  // internally), so the timeout is generous.
+  const res = await fetch(endpoint, { signal: AbortSignal.timeout(70_000) });
+  const html = await res.text().catch(() => "");
+  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+  const title = /<title[^>]*>([\s\S]*?)<\/title>/i.exec(html)?.[1]?.trim() ?? "";
+  return { status: res.status, finalUrl: url, title, text: htmlToText(html).slice(0, 40_000) };
 }
 
 /**
- * Fetch the page through an unlocker service — the path that actually gets past
- * a people-search site's bot protection (residential IP + real browser +
- * challenge solving, done by the service). Returns the page HTML as text for
- * Claude to read, same shape as the other fetchers.
+ * Fetch the page through the configured unlockers, in order, returning the
+ * first that comes back as a REAL page. If ScraperAPI is itself blocked or
+ * erroring, ScrapingBee gets a turn, and vice versa — one bad day on one
+ * service doesn't sink the lookup. If every unlocker comes back blocked, the
+ * last blocked page is returned so the UI still surfaces "blocked" honestly
+ * (rather than a misleading "no results").
  */
-async function fetchViaScrapeApi(url: string): Promise<ScrapedPage> {
-  const endpoint = scrapeApiEndpoint(url);
-  if (!endpoint) {
-    throw new Error(
-      "SCRAPE_API_KEY is set but no provider matched — set SCRAPE_API_PROVIDER " +
-        "to scraperapi or scrapingbee, or SCRAPE_API_URL to a {url}/{key} template.",
-    );
+async function fetchViaUnlockers(url: string): Promise<ScrapedPage> {
+  const unlockers = configuredUnlockers();
+  let lastBlocked: ScrapedPage | null = null;
+  let lastErr: unknown = null;
+  for (const u of unlockers) {
+    try {
+      const page = await fetchOneUnlocker(u.endpoint(url), url);
+      if (page.text.trim() && !looksBlocked(page)) return page; // a real page — done
+      lastBlocked = page; // blocked/empty from this one; try the next
+    } catch (e) {
+      lastErr = e; // transport/HTTP error from this one; try the next
+    }
   }
-  // Unlockers can take 20-40s on a hard target (they may retry with heavier
-  // methods), so the timeout is generous.
-  const res = await fetch(endpoint, { signal: AbortSignal.timeout(70_000) });
-  const html = await res.text().catch(() => "");
-  if (!res.ok) {
-    throw new Error(`Unlocker returned ${res.status} ${res.statusText}`);
-  }
-  const title = /<title[^>]*>([\s\S]*?)<\/title>/i.exec(html)?.[1]?.trim() ?? "";
-  return {
-    status: res.status,
-    finalUrl: url,
-    title,
-    text: htmlToText(html).slice(0, 40_000),
-  };
+  if (lastBlocked) return lastBlocked;
+  throw lastErr instanceof Error
+    ? new Error(`Every unlocker failed — last error: ${lastErr.message}`)
+    : new Error("Every configured unlocker failed.");
 }
 
 export function isWhitepagesConfigured(): boolean {
@@ -349,11 +387,12 @@ async function scrapeAndExtract(
   }
 
   // Precedence, most-likely-to-get-through first:
-  //   1. unlocker API (residential IP + real browser + challenge solving)
+  //   1. unlocker APIs (residential IP + real browser + challenge solving),
+  //      each tried in turn until one returns a real page
   //   2. own scrape worker (a real browser, but a datacenter IP)
   //   3. direct fetch (no browser, datacenter IP — blocked by protected sites)
-  const page = SCRAPE_API_KEY || SCRAPE_API_TEMPLATE
-    ? await fetchViaScrapeApi(url)
+  const page = hasUnlocker()
+    ? await fetchViaUnlockers(url)
     : WORKER_URL
       ? await fetchViaWorker(url)
       : await fetchDirect(url);

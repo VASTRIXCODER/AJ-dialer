@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 const TARGET = "https://www.truepeoplesearch.com/results?streetaddress=1200+Maple+St&citystatezip=Fresno%2C+CA";
 
 /** Env is read at module load, so each case needs a fresh module registry. */
-async function endpointWith(env: Record<string, string | undefined>) {
+async function unlockersWith(env: Record<string, string | undefined>) {
   vi.resetModules();
   const prev = { ...process.env };
   for (const [k, v] of Object.entries(env)) {
@@ -11,81 +11,73 @@ async function endpointWith(env: Record<string, string | undefined>) {
     else process.env[k] = v;
   }
   const mod = await import("@/lib/leads/whitepages");
-  const out = mod.scrapeApiEndpoint(TARGET);
+  const out = mod.configuredUnlockers().map((u) => ({ name: u.name, url: u.endpoint(TARGET) }));
   process.env = prev;
   return out;
 }
 
 const BASE = {
+  SCRAPERAPI_KEY: undefined,
+  SCRAPINGBEE_KEY: undefined,
+  SCRAPE_API_URL: undefined,
   SCRAPE_API_KEY: undefined,
   SCRAPE_API_PROVIDER: undefined,
-  SCRAPE_API_URL: undefined,
 };
 
-describe("scrapeApiEndpoint", () => {
-  it("returns null when no unlocker is configured", async () => {
-    expect(await endpointWith(BASE)).toBeNull();
+describe("configuredUnlockers", () => {
+  it("is empty when nothing is configured", async () => {
+    expect(await unlockersWith(BASE)).toEqual([]);
   });
 
-  it("builds a ScraperAPI URL and encodes the target", async () => {
-    const url = await endpointWith({
-      ...BASE,
-      SCRAPE_API_PROVIDER: "scraperapi",
-      SCRAPE_API_KEY: "KEY123",
-    });
-    expect(url).toContain("https://api.scraperapi.com/");
-    expect(url).toContain("api_key=KEY123");
-    expect(url).toContain("render=true");
+  it("builds a ScraperAPI endpoint and encodes the target", async () => {
+    const [u] = await unlockersWith({ ...BASE, SCRAPERAPI_KEY: "KEY123" });
+    expect(u.name).toBe("ScraperAPI");
+    expect(u.url).toContain("https://api.scraperapi.com/");
+    expect(u.url).toContain("api_key=KEY123");
+    expect(u.url).toContain("render=true");
     // The target must be percent-encoded so its own query string doesn't merge
     // into the unlocker's.
-    expect(url).toContain(`url=${encodeURIComponent(TARGET)}`);
-    expect(url).not.toContain("streetaddress=1200"); // i.e. not left raw
+    expect(u.url).toContain(`url=${encodeURIComponent(TARGET)}`);
+    expect(u.url).not.toContain("streetaddress=1200"); // i.e. not left raw
   });
 
-  it("defaults to the ScraperAPI shape when a key is set with no provider", async () => {
-    const url = await endpointWith({ ...BASE, SCRAPE_API_KEY: "K" });
-    expect(url).toContain("api.scraperapi.com");
+  it("builds a ScrapingBee endpoint with render_js", async () => {
+    const [u] = await unlockersWith({ ...BASE, SCRAPINGBEE_KEY: "BEE" });
+    expect(u.name).toBe("ScrapingBee");
+    expect(u.url).toContain("https://app.scrapingbee.com/api/v1/");
+    expect(u.url).toContain("api_key=BEE");
+    expect(u.url).toContain("render_js=true");
   });
 
-  it("builds a ScrapingBee URL with render_js", async () => {
-    const url = await endpointWith({
-      ...BASE,
-      SCRAPE_API_PROVIDER: "scrapingbee",
-      SCRAPE_API_KEY: "BEE",
-    });
-    expect(url).toContain("https://app.scrapingbee.com/api/v1/");
-    expect(url).toContain("api_key=BEE");
-    expect(url).toContain("render_js=true");
+  it("configures BOTH for failover, ScraperAPI first", async () => {
+    const list = await unlockersWith({ ...BASE, SCRAPERAPI_KEY: "A", SCRAPINGBEE_KEY: "B" });
+    expect(list.map((u) => u.name)).toEqual(["ScraperAPI", "ScrapingBee"]);
   });
 
   it("fills a custom template's {url} and {key} placeholders", async () => {
-    const url = await endpointWith({
+    const [u] = await unlockersWith({
       ...BASE,
       SCRAPE_API_URL: "https://api.example.com/?token={key}&render=1&url={url}",
       SCRAPE_API_KEY: "T0K",
     });
-    expect(url).toBe(
+    expect(u.url).toBe(
       `https://api.example.com/?token=T0K&render=1&url=${encodeURIComponent(TARGET)}`,
     );
   });
 
-  it("prefers a custom template over the named presets", async () => {
-    const url = await endpointWith({
+  it("honors the legacy single-var form when no named key is set", async () => {
+    const bee = await unlockersWith({
       ...BASE,
-      SCRAPE_API_URL: "https://custom.example/?u={url}",
-      SCRAPE_API_PROVIDER: "scraperapi",
-      SCRAPE_API_KEY: "K",
+      SCRAPE_API_KEY: "L",
+      SCRAPE_API_PROVIDER: "scrapingbee",
     });
-    expect(url).toContain("custom.example");
-    expect(url).not.toContain("scraperapi");
+    expect(bee[0].name).toBe("ScrapingBee");
+    const scr = await unlockersWith({ ...BASE, SCRAPE_API_KEY: "L" }); // default shape
+    expect(scr[0].name).toBe("ScraperAPI");
   });
 
-  it("returns null for an unknown named provider (so it fails loudly, not silently mis-fetches)", async () => {
-    const url = await endpointWith({
-      ...BASE,
-      SCRAPE_API_PROVIDER: "somethingelse",
-      SCRAPE_API_KEY: "K",
-    });
-    expect(url).toBeNull();
+  it("does not double-count the legacy var when a named key is present", async () => {
+    const list = await unlockersWith({ ...BASE, SCRAPERAPI_KEY: "A", SCRAPE_API_KEY: "L" });
+    expect(list.map((u) => u.name)).toEqual(["ScraperAPI"]);
   });
 });
