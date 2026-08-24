@@ -35,6 +35,9 @@ describe("configuredUnlockers", () => {
     expect(u.url).toContain("https://api.scraperapi.com/");
     expect(u.url).toContain("api_key=KEY123");
     expect(u.url).toContain("render=true");
+    // Cloudflare-protected people-search sites need residential proxies + the
+    // heaviest anti-bot, or the request is blocked like a raw one.
+    expect(u.url).toContain("ultra_premium=true");
     // The target must be percent-encoded so its own query string doesn't merge
     // into the unlocker's.
     expect(u.url).toContain(`url=${encodeURIComponent(TARGET)}`);

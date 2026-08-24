@@ -57,9 +57,15 @@ interface Unlocker {
   endpoint: (target: string) => string;
 }
 
-/** Encoded ScraperAPI request for a target page. */
+/** Encoded ScraperAPI request for a target page.
+ *  `ultra_premium=true` is not optional for a Cloudflare-protected people-search
+ *  site: the default (datacenter proxies) is blocked exactly like a raw request,
+ *  so basic `render=true` would just reproduce the block. ultra_premium uses
+ *  residential IPs and the heaviest anti-bot, which is what actually gets
+ *  through — at a higher credit cost per request (see README). Override the
+ *  whole request via the SCRAPE_API_URL template if you want to tune that. */
 const scraperApiEndpoint = (key: string) => (target: string) =>
-  `https://api.scraperapi.com/?api_key=${encodeURIComponent(key)}&render=true&country_code=us&url=${encodeURIComponent(target)}`;
+  `https://api.scraperapi.com/?api_key=${encodeURIComponent(key)}&render=true&ultra_premium=true&country_code=us&url=${encodeURIComponent(target)}`;
 
 /** Encoded ScrapingBee request for a target page. */
 const scrapingBeeEndpoint = (key: string) => (target: string) =>

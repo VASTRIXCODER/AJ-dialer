@@ -168,6 +168,13 @@ tries ScraperAPI first, and if it's blocked or erroring that day, ScrapingBee
 gets the turn (and vice versa). Keys go in Vercel's environment variables, never
 in the code — a key committed to the repo is a permanent leak in git history.
 
+> **Credits:** these sites are Cloudflare-protected, so the request uses each
+> service's residential/anti-bot mode (ScraperAPI `ultra_premium`, ScrapingBee
+> `render_js`) — the only mode that gets through, but it costs more credits per
+> lookup than a basic fetch (ScraperAPI bills ultra_premium at ~30 credits
+> each). Budget accordingly; the `leads.reverseSearch` rate limit (20/min/user)
+> is also a spend cap.
+
 For any other GET-style unlocker, set a template instead — `{url}` and `{key}`
 are filled in:
 
