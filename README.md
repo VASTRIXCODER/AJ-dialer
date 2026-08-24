@@ -96,6 +96,38 @@ or incomplete, the platform automatically and gracefully falls back to simulatio
 
 ---
 
+## 🔎 Reverse search (skip trace)
+
+The dialer's lead card has a **Reverse search** button for managers and above
+(`leads.reverseSearch`) that looks a homeowner's phone number up from their name
+and address, then offers the results to save onto the lead.
+
+It talks to a skip-trace **API**, not to a consumer people-search website. Sites
+like whitepages.com forbid automated access and sit behind bot protection, so a
+scraper would pass review and then quietly start returning nothing in
+production — indistinguishable, on a dialer, from "this homeowner has no listed
+number". Whitepages' own data is sold through Ekata (Mastercard), which is one
+of the supported providers below.
+
+| Variable | Value |
+| --- | --- |
+| `REVERSE_SEARCH_PROVIDER` | `ekata`, `endato` or `batchdata` |
+| `REVERSE_SEARCH_API_KEY` | The vendor's API key (for Endato: the AP **name**) |
+| `REVERSE_SEARCH_API_SECRET` | Endato only — the AP **password** |
+
+Leave them unset and the button still works in demo mode, returning a reserved
+`555-01xx` number (the NANP block set aside for fiction) clearly labelled as
+such, so the flow is explorable without a vendor account and a demo result can
+never route to a real person.
+
+Results are **proposed, never auto-applied** — a skip-trace hit is a broker's
+probabilistic match, so saving one is an explicit click that shows the number it
+would replace. Anything on the org's Do-Not-Call list is dropped from the
+results before they reach the screen, and the count of what was dropped is shown
+rather than silently shrinking the list.
+
+---
+
 ## 🗂️ Project structure
 
 ```

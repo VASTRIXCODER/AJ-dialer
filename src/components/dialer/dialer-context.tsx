@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useContext, useEffect, useRef, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
 import type { LeadFieldDef } from "@/lib/leads/field-schema";
 import type { AiLockReason, DialerLayout } from "@/lib/org/settings";
 import type { Lead, LeadGroup } from "@/lib/types";
@@ -60,6 +60,10 @@ export interface DialerConfig {
   leadGroupLabels?: Record<string, string>;
   /** The org's own intake groups, in display order — drives the group filter. */
   leadGroups?: { key: string; label: string }[];
+  /** The viewer's effective permissions. The dialer gates a couple of
+   *  supervisor-only affordances on these (reverse search); every one of them
+   *  is re-checked server-side, so this only decides what's DRAWN. */
+  permissions?: string[];
 }
 
 /** What the dialer knows about a campaign — enough to filter the queue and
@@ -88,6 +92,12 @@ interface DialerContextValue {
   myLeadsOnly: boolean;
   setMyLeadsOnly: (v: boolean) => void;
   campaigns: Campaign[];
+  /** Merge a patch into one queued lead in place, so an edit made from inside
+   *  the dialer (e.g. a reverse-searched phone number) shows on the card
+   *  immediately. Deliberately NOT a refetch: loadLeads() rebuilds the whole
+   *  queue and resets the position a rep is working through. The server write
+   *  is the caller's job — this only moves the client's copy into step. */
+  applyLeadPatch: (leadId: string, patch: Partial<Lead>) => void;
   loadLeads: () => Promise<Lead[]>;
   loadingLeads: boolean;
   loadMsg: string | null;
@@ -184,6 +194,10 @@ export function DialerProvider({
     config.maxHumanLines ?? MAX_PARALLEL_HUMAN,
   );
   const { state } = dialer;
+
+  const applyLeadPatch = useCallback((leadId: string, patch: Partial<Lead>) => {
+    setQueue((q) => q.map((l) => (l.id === leadId ? { ...l, ...patch } : l)));
+  }, []);
 
   async function loadLeads(): Promise<Lead[]> {
     setLoadingLeads(true);
@@ -296,6 +310,7 @@ export function DialerProvider({
     myLeadsOnly,
     setMyLeadsOnly: setMyLeadsOnlyPersisted,
     campaigns,
+    applyLeadPatch,
     loadLeads,
     loadingLeads,
     loadMsg,

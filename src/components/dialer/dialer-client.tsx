@@ -75,6 +75,7 @@ export function DialerClient({
     myLeadsOnly,
     setMyLeadsOnly,
     campaigns: ctxCampaigns,
+    applyLeadPatch,
     loadLeads,
     loadingLeads,
     loadMsg,
@@ -557,6 +558,8 @@ export function DialerClient({
             fields={config.leadFields}
             showCallHistory={layout?.callHistory !== false}
             showUpNext={layout?.upNext !== false}
+            canReverseSearch={config.permissions?.includes("leads.reverseSearch") ?? false}
+            onLeadPatched={applyLeadPatch}
           />
         </Card>
 

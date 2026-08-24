@@ -1,9 +1,11 @@
 "use client";
 
 import {
+  AlertTriangle,
   BatteryCharging,
   Bot,
   Car,
+  Check,
   CheckCircle2,
   ChevronLeft,
   ChevronRight,
@@ -15,6 +17,7 @@ import {
   NotebookPen,
   Phone,
   PhoneCall,
+  ScanSearch,
   Search,
   Users,
   Sun,
@@ -24,6 +27,7 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { CallDetailModal } from "@/components/calls/call-detail-modal";
+import { useVocabulary } from "@/components/layout/vocabulary";
 import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -63,6 +67,8 @@ export function LeadPanel({
   fields,
   showCallHistory = true,
   showUpNext = true,
+  canReverseSearch = false,
+  onLeadPatched,
 }: {
   lead: Lead | null;
   upNext: Lead[];
@@ -81,6 +87,11 @@ export function LeadPanel({
   /** Layout toggles (Admin → Dialer layout). */
   showCallHistory?: boolean;
   showUpNext?: boolean;
+  /** Viewer holds `leads.reverseSearch` (managers+). Draws the skip-trace
+   *  control; the API re-checks the permission regardless. */
+  canReverseSearch?: boolean;
+  /** Merge a patch into the queued lead so an applied number shows at once. */
+  onLeadPatched?: (leadId: string, patch: Partial<Lead>) => void;
 }) {
   const [browseOpen, setBrowseOpen] = useState(false);
 
@@ -154,6 +165,8 @@ export function LeadPanel({
           upNext={showUpNext ? upNext : []}
           fields={fields ?? CORE_LEAD_FIELDS}
           showCallHistory={showCallHistory}
+          canReverseSearch={canReverseSearch}
+          onLeadPatched={onLeadPatched}
         />
       )}
 
@@ -172,6 +185,237 @@ export function LeadPanel({
   );
 }
 
+interface ReverseSearchCandidate {
+  phone: string;
+  lineType: "mobile" | "landline" | "voip" | "unknown";
+  confidence: number | null;
+  matchedName: string | null;
+  isCurrent: boolean;
+}
+
+const LINE_TYPE_LABEL: Record<ReverseSearchCandidate["lineType"], string> = {
+  mobile: "Mobile",
+  landline: "Landline",
+  voip: "VoIP",
+  unknown: "Unknown",
+};
+
+/**
+ * Skip trace: the lead's name/address → candidate phone numbers, for leads
+ * whose number is missing or dead. Managers+ only (`leads.reverseSearch`).
+ *
+ * Results are PROPOSED, never auto-applied. A skip-trace hit is a broker's
+ * probabilistic match on a person, so applying one is an explicit click that
+ * shows what it would overwrite — auto-filling would quietly discard a
+ * known-good number and aim the dialer at whoever the vendor guessed.
+ */
+function ReverseSearchCard({
+  lead,
+  onApplied,
+}: {
+  lead: Lead;
+  onApplied: (phone: string) => void;
+}) {
+  const [status, setStatus] = useState<"idle" | "searching" | "done">("idle");
+  const [candidates, setCandidates] = useState<ReverseSearchCandidate[]>([]);
+  const [suppressed, setSuppressed] = useState(0);
+  const [source, setSource] = useState<"provider" | "demo" | null>(null);
+  const [provider, setProvider] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const [applying, setApplying] = useState<string | null>(null);
+  // "homeowner" / "policyholder" / "lead" — this control talks about the person
+  // being looked up, so it has to use the workspace's own noun.
+  const vocab = useVocabulary();
+
+  // Reset when the rep moves to another lead — stale results next to a
+  // different person's name is exactly how a wrong number gets dialed.
+  useEffect(() => {
+    setStatus("idle");
+    setCandidates([]);
+    setSuppressed(0);
+    setErr(null);
+    setSource(null);
+  }, [lead.id]);
+
+  // Cheap client-side guard so an obviously unsearchable lead doesn't spend a
+  // metered vendor query. The server's hasSearchableIdentity() is the real
+  // rule and is stricter; this only catches the empty case.
+  const searchable = Boolean(
+    (lead.address ?? "").trim() ||
+      (lead.city ?? "").trim() ||
+      (lead.zip ?? "").trim() ||
+      `${lead.firstName ?? ""}${lead.lastName ?? ""}`.trim(),
+  );
+
+  async function run() {
+    setStatus("searching");
+    setErr(null);
+    try {
+      const res = await fetch("/api/leads/reverse-search", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ leadId: lead.id }),
+      });
+      const json = (await res.json().catch(() => ({}))) as {
+        candidates?: ReverseSearchCandidate[];
+        suppressed?: number;
+        source?: "provider" | "demo";
+        provider?: string | null;
+        error?: string | null;
+      };
+      if (!res.ok) {
+        setErr(json.error ?? "That lookup didn't go through.");
+        setStatus("idle");
+        return;
+      }
+      setCandidates(json.candidates ?? []);
+      setSuppressed(json.suppressed ?? 0);
+      setSource(json.source ?? null);
+      setProvider(json.provider ?? null);
+      // A vendor-side error still returns 200 with an empty list — surface it
+      // so "found nothing" and "the lookup broke" don't look identical.
+      setErr(json.error ?? null);
+      setStatus("done");
+    } catch {
+      setErr("Couldn't reach the server.");
+      setStatus("idle");
+    }
+  }
+
+  async function apply(phone: string) {
+    setApplying(phone);
+    setErr(null);
+    try {
+      const res = await fetch("/api/leads/update", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ id: lead.id, phone }),
+      });
+      const json = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string };
+      if (!res.ok || !json.ok) {
+        setErr(json.error ?? "Couldn't save that number to the lead.");
+        return;
+      }
+      onApplied(phone);
+      setStatus("idle");
+      setCandidates([]);
+    } catch {
+      setErr("Network error while saving that number.");
+    } finally {
+      setApplying(null);
+    }
+  }
+
+  return (
+    <div className="mt-4 rounded-xl border border-border/70 bg-muted/30 p-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <ScanSearch className="h-4 w-4 shrink-0 text-muted-foreground" />
+        <div className="min-w-0 flex-1">
+          <p className="text-xs font-semibold">Reverse search</p>
+          <p className="text-[11px] text-muted-foreground">
+            Look up a number from this {vocab.leadNoun}&apos;s name &amp; address
+          </p>
+        </div>
+        <Button
+          size="sm"
+          variant="outline"
+          className="gap-1.5"
+          disabled={status === "searching" || !searchable}
+          onClick={run}
+          title={
+            searchable
+              ? `Skip-trace this ${vocab.leadNoun} for a phone number`
+              : `This ${vocab.leadNoun} has no name or address to search on`
+          }
+        >
+          {status === "searching" ? (
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          ) : (
+            <ScanSearch className="h-3.5 w-3.5" />
+          )}
+          {status === "done" ? "Search again" : "Search"}
+        </Button>
+      </div>
+
+      {err && (
+        <p className="mt-2 flex items-start gap-1.5 text-[11px] text-danger">
+          <AlertTriangle className="mt-px h-3 w-3 shrink-0" />
+          {err}
+        </p>
+      )}
+
+      {status === "done" && (
+        <div className="mt-3 space-y-1.5">
+          {source === "demo" && (
+            <p className="text-[11px] text-warning">
+              Demo result — no lookup provider is configured, so this is a reserved
+              555 number, not a real listing.
+            </p>
+          )}
+          {candidates.length === 0 && !err && (
+            <p className="text-[11px] text-muted-foreground">
+              No numbers found for this name and address.
+            </p>
+          )}
+          {candidates.map((c) => (
+            <div
+              key={c.phone}
+              className="flex flex-wrap items-center gap-2 rounded-lg border border-border/70 bg-background/60 px-2.5 py-1.5"
+            >
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-xs font-semibold tabular">
+                  {formatPhone(c.phone)}
+                </p>
+                <p className="truncate text-[11px] text-muted-foreground">
+                  {[
+                    LINE_TYPE_LABEL[c.lineType],
+                    c.confidence != null ? `${c.confidence}% match` : null,
+                    c.matchedName,
+                  ]
+                    .filter(Boolean)
+                    .join(" · ")}
+                </p>
+              </div>
+              {c.isCurrent ? (
+                <Badge tone="success">On file</Badge>
+              ) : (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="gap-1"
+                  disabled={applying !== null}
+                  onClick={() => apply(c.phone)}
+                  title={
+                    lead.phone
+                      ? `Replaces ${formatPhone(lead.phone)} on this ${vocab.leadNoun}`
+                      : `Save this number to the ${vocab.leadNoun}`
+                  }
+                >
+                  {applying === c.phone ? (
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                  ) : (
+                    <Check className="h-3 w-3" />
+                  )}
+                  Use
+                </Button>
+              )}
+            </div>
+          ))}
+          {suppressed > 0 && (
+            <p className="text-[11px] text-muted-foreground">
+              {suppressed} result{suppressed === 1 ? "" : "s"} hidden — on your
+              Do-Not-Call list.
+            </p>
+          )}
+          {provider && source === "provider" && (
+            <p className="text-[11px] text-muted-foreground">via {provider}</p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /** The solar-era chips keep their icons; other labels get a neutral check. */
 function chipIcon(label: string): typeof Car {
   if (label === "EV") return Car;
@@ -185,11 +429,15 @@ function LeadDetail({
   upNext,
   fields,
   showCallHistory,
+  canReverseSearch,
+  onLeadPatched,
 }: {
   lead: Lead;
   upNext: Lead[];
   fields: LeadFieldDef[];
   showCallHistory: boolean;
+  canReverseSearch: boolean;
+  onLeadPatched?: (leadId: string, patch: Partial<Lead>) => void;
 }) {
   const name = `${lead.firstName} ${lead.lastName}`;
   // Stat tiles: the schema's first two money/number fields (solar: Utility
@@ -268,6 +516,13 @@ function LeadDetail({
             </div>
           )}
         </div>
+
+        {canReverseSearch && (
+          <ReverseSearchCard
+            lead={lead}
+            onApplied={(phone) => onLeadPatched?.(lead.id, { phone })}
+          />
+        )}
 
         {tiles.length > 0 && (
           <div className={cn("mt-4 grid gap-2", tiles.length > 1 ? "grid-cols-2" : "grid-cols-1")}>

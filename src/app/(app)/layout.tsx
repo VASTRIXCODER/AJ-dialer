@@ -197,6 +197,9 @@ export default async function AppGroupLayout({
     // Per-org "dropbox" label overrides (display only).
     leadGroupLabels: viewer.org?.settings.leadGroupLabels ?? {},
     leadGroups: orgLeadGroups,
+    // Gates supervisor-only dialer affordances (reverse search). Every one is
+    // re-checked server-side — this only decides what gets drawn.
+    permissions: viewer.permissions,
   };
 
   return (

@@ -48,6 +48,7 @@ export const PERMISSIONS = [
   "companies.manage",
   "reports.view",
   "leads.import",
+  "leads.reverseSearch", // skip-trace a lead's name/address for a phone number
   "dialer.ai", // launch AI agent calls (reps are manual-only by default)
   "monitor.view", // open the Live Monitor (see in-progress AI + rep calls)
   "monitor.listen", // listen to live audio of in-progress calls
@@ -72,6 +73,7 @@ export const ROLE_PERMISSIONS: Record<OrgRole, Permission[]> = {
     "members.role",
     "reports.view",
     "leads.import",
+    "leads.reverseSearch",
     "companies.manage",
     "dialer.ai",
     "monitor.view",
@@ -109,6 +111,7 @@ export const PERMISSION_LABEL: Record<Permission, string> = {
   "companies.manage": "Manage companies / teams",
   "reports.view": "View reports & analytics",
   "leads.import": "Import leads",
+  "leads.reverseSearch": "Reverse-search a lead for a phone number",
   "dialer.ai": "Use the AI dialer",
   "monitor.view": "Open the Live Monitor",
   "monitor.listen": "Listen to live calls",
