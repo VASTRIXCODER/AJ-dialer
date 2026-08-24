@@ -59,9 +59,21 @@ describe("reverseSearchConfigProblem", () => {
     ).toBeNull();
   });
 
-  it("tells a deployed whitepages setup it needs the worker url", async () => {
+  it("does NOT demand a worker — whitepages runs on a direct request", async () => {
+    // The worker is an opt-in upgrade, not a prerequisite. With a Claude key
+    // and nothing else, the provider is usable.
+    expect(
+      await problemWith({
+        ...BASE,
+        REVERSE_SEARCH_PROVIDER: "whitepages",
+        ANTHROPIC_API_KEY: "sk-ant-x",
+      }),
+    ).toBeNull();
+  });
+
+  it("still asks for a Claude key, which does the extraction", async () => {
     const p = await problemWith({ ...BASE, REVERSE_SEARCH_PROVIDER: "whitepages" });
-    expect(p).toMatch(/SCRAPE_WORKER_URL/);
+    expect(p).toMatch(/ANTHROPIC_API_KEY/);
   });
 
   it("catches worker url set but secret missing — the 401 trap", async () => {

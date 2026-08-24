@@ -124,20 +124,43 @@ selectors against a site you don't control break silently on every redesign,
 whereas "here is a page, find the phone numbers" survives them. There is not one
 selector in `src/lib/leads/whitepages.ts`.
 
-It needs somewhere to run a browser, which **is not Vercel** — a serverless
-function has no persistent process and Chromium blows the bundle limit. Deploy
-`server/scrape-server.mjs` (a second Render service, already in `render.yaml`)
-and point the app at it:
+**Setup is two variables**, one of which you already have:
+
+```
+REVERSE_SEARCH_PROVIDER=whitepages
+ANTHROPIC_API_KEY=...            # Claude does the extraction
+```
+
+No worker, no browser to install, no secret. The lookup is a plain HTTPS
+request from the Next app, and Claude reads the numbers out of the returned
+page.
+
+<details>
+<summary><b>Optional:</b> the scrape worker, for when direct lookups get blocked</summary>
+
+The direct request executes no JavaScript and comes from Vercel's datacenter
+IP, so it gets refused sooner than a real browser would. If that starts
+happening, deploy `server/scrape-server.mjs` — a second Render service, already
+defined in `render.yaml` — which drives a real headless Chromium and gets
+through more often. Then set **both**:
 
 | Variable | Value |
 | --- | --- |
 | `SCRAPE_WORKER_URL` | `https://aj-dialer-scrape-worker.onrender.com` |
 | `SCRAPE_SECRET` | Any long random string — identical on both services |
-| `ANTHROPIC_API_KEY` | Required — Claude does the extraction |
 
-Locally you can skip the worker: leave `SCRAPE_WORKER_URL` unset and install
-Playwright (`npm i -D playwright && npx playwright install chromium`) and it
-runs the browser in-process.
+The secret is not ceremony: the worker is a public URL that will fetch any page
+you hand it, so without one, anyone who finds it can scrape through your Render
+box, on your IP, at your expense. Setting `SCRAPE_WORKER_URL` without
+`SCRAPE_SECRET` is refused with a message saying so, rather than 401-ing every
+lookup silently.
+
+Two more worker settings matter at volume: `SCRAPE_PROXY_URL` (point at a
+rotating residential proxy — a datacenter IP gets refused long before a
+residential one) and `SCRAPE_CHROMIUM_PATH` (only if your image ships its own
+Chromium).
+
+</details>
 
 **Know what you're signing up for.** Whitepages forbids automated access in its
 terms and actively blocks it, so expect bot challenges — more of them as volume
@@ -149,13 +172,14 @@ a scraper rots in production without anyone noticing. Claude judges the page
 state as well (`blocked` / `paywalled` / `no_results` / `results`), since it
 recognises a challenge screen far more reliably than a keyword list.
 
-Two optional worker settings matter once you're running at volume:
-`SCRAPE_PROXY_URL` (Render's egress is a datacenter IP, which gets refused long
-before a residential one — point this at a rotating proxy when blocks start) and
-`SCRAPE_CHROMIUM_PATH` (only if your image ships its own Chromium).
+**When a lookup can't be read automatically** — blocked, paywalled, or nothing
+listed — the card offers the exact Whitepages URL to open in your own browser,
+with a box to type the number straight onto the lead. Your browser has a real
+IP and a real session and isn't being challenged, so this path keeps working
+when automation doesn't.
 
-The API providers above stay available and are what to switch to when the
-scraped path starts getting blocked — it is one env var.
+The API providers above stay available and are what to switch to if the scraped
+path stops being worth it — it is one env var.
 
 Leave them unset and the button still works in demo mode, returning a reserved
 `555-01xx` number (the NANP block set aside for fiction) clearly labelled as

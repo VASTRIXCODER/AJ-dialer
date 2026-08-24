@@ -108,54 +108,68 @@ export function looksBlocked(page: ScrapedPage): boolean {
   ].some((needle) => haystack.includes(needle));
 }
 
-/** Escape hatch for bundlers: `playwright` is an optional peer dep that must
- *  never be traced into the Next build (it isn't installed on Vercel at all).
- *  A plain dynamic import() would be resolved at build time and fail there. */
-const hiddenImport = new Function("s", "return import(s)") as (
-  s: string,
-) => Promise<Record<string, unknown>>;
+/** Strip an HTML document down to readable text before it goes to Claude:
+ *  script/style bodies are pure token cost, and tags carry nothing the
+ *  extraction needs (which is the point of not using selectors). */
+function htmlToText(html: string): string {
+  return html
+    .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, " ")
+    .replace(/<noscript\b[^>]*>[\s\S]*?<\/noscript>/gi, " ")
+    .replace(/<br\s*\/?>|<\/(p|div|li|tr|h[1-6])>/gi, "\n")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&quot;/g, '"')
+    .replace(/&#0?39;|&apos;/g, "'")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/[ \t ]+/g, " ")
+    .replace(/\n\s*\n\s*\n+/g, "\n\n")
+    .trim();
+}
 
-/** Fetch the page in-process. Dev and self-hosted only — see the worker path. */
-async function fetchInProcess(url: string): Promise<ScrapedPage> {
-  let chromium: {
-    launch: (o: unknown) => Promise<Record<string, (...a: unknown[]) => Promise<unknown>>>;
-  };
-  try {
-    const mod = await hiddenImport("playwright");
-    chromium = (mod as { chromium: typeof chromium }).chromium;
-    if (!chromium) throw new Error("no chromium export");
-  } catch {
-    throw new Error(
-      "No scrape backend available. Set SCRAPE_WORKER_URL to a running " +
-        "server/scrape-server.mjs, or install Playwright locally " +
-        "(npm i -D playwright && npx playwright install chromium).",
-    );
-  }
-  /* eslint-disable @typescript-eslint/no-explicit-any */
-  const browser: any = await chromium.launch({
-    args: ["--no-sandbox", "--disable-dev-shm-usage"],
-  });
-  try {
-    const context = await browser.newContext({
-      userAgent:
+/**
+ * Fetch the page with a plain HTTP request — THE DEFAULT PATH.
+ *
+ * No browser, no worker, no extra service to deploy or secret to share: this
+ * runs inside the Next app on Vercel like any other route. It sends
+ * browser-shaped headers because a bare fetch with no Accept-Language and no
+ * UA is refused instantly, and Whitepages server-renders enough of a listing
+ * that Claude can usually read it out of the raw HTML.
+ *
+ * It is more block-prone than a real browser — no JS execution, and a
+ * datacenter IP. That's the trade for needing zero infrastructure, and it's
+ * why SCRAPE_WORKER_URL exists as an opt-in upgrade rather than a requirement.
+ */
+async function fetchDirect(url: string): Promise<ScrapedPage> {
+  const res = await fetch(url, {
+    headers: {
+      "user-agent":
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 " +
         "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-      viewport: { width: 1440, height: 900 },
-      locale: "en-US",
-    });
-    const page = await context.newPage();
-    const res = await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30_000 });
-    await page.waitForLoadState("networkidle", { timeout: 8000 }).catch(() => {});
-    return {
-      status: res ? res.status() : 0,
-      finalUrl: page.url(),
-      title: await page.title().catch(() => ""),
-      text: String(await page.evaluate(() => document.body?.innerText ?? "")).slice(0, 40_000),
-    };
-  } finally {
-    await browser.close().catch(() => {});
-  }
-  /* eslint-enable @typescript-eslint/no-explicit-any */
+      accept:
+        "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+      "accept-language": "en-US,en;q=0.9",
+      "sec-ch-ua": '"Chromium";v="131", "Not_A Brand";v="24"',
+      "sec-ch-ua-mobile": "?0",
+      "sec-ch-ua-platform": '"macOS"',
+      "sec-fetch-dest": "document",
+      "sec-fetch-mode": "navigate",
+      "sec-fetch-site": "none",
+      "upgrade-insecure-requests": "1",
+    },
+    redirect: "follow",
+    signal: AbortSignal.timeout(25_000),
+  });
+  const html = await res.text().catch(() => "");
+  const title = /<title[^>]*>([\s\S]*?)<\/title>/i.exec(html)?.[1]?.trim() ?? "";
+  return {
+    status: res.status,
+    finalUrl: res.url || url,
+    title,
+    text: htmlToText(html).slice(0, 40_000),
+  };
 }
 
 /** Fetch the page via the Render scrape worker — the production path. */
@@ -195,19 +209,15 @@ export function isWhitepagesConfigured(): boolean {
  * not a generic "not configured".
  */
 export function whitepagesConfigProblem(): string | null {
-  const deployed = process.env.NODE_ENV === "production";
-  if (!WORKER_URL) {
-    // Locally the in-process Playwright path stands in for the worker; in a
-    // deployed app there is no such fallback (Vercel can't run Chromium).
-    if (deployed) {
-      return (
-        "REVERSE_SEARCH_PROVIDER=whitepages needs SCRAPE_WORKER_URL — the " +
-        "browser can't run in a serverless function. Deploy " +
-        "server/scrape-server.mjs (see render.yaml) and point this at it."
-      );
-    }
-  } else if (!WORKER_SECRET) {
-    return "SCRAPE_WORKER_URL is set but SCRAPE_SECRET is empty — the worker will reject every request with 401.";
+  // The worker is OPTIONAL. With no SCRAPE_WORKER_URL the direct-fetch path
+  // runs, which needs nothing beyond a Claude key — so the only setup for
+  // whitepages is the one variable naming it, plus the key you already have.
+  if (WORKER_URL && !WORKER_SECRET) {
+    return (
+      "SCRAPE_WORKER_URL is set but SCRAPE_SECRET is empty — the worker will " +
+      "reject every request with 401. Set both, or unset SCRAPE_WORKER_URL to " +
+      "use the built-in direct lookup instead."
+    );
   }
   if (!isAIConfigured()) {
     return "REVERSE_SEARCH_PROVIDER=whitepages needs ANTHROPIC_API_KEY — Claude does the extraction from the page.";
@@ -299,7 +309,9 @@ export async function whitepagesReverseSearch(
     );
   }
 
-  const page = WORKER_URL ? await fetchViaWorker(url) : await fetchInProcess(url);
+  // Worker when one is configured (a real browser gets through more often),
+  // otherwise the zero-setup direct fetch.
+  const page = WORKER_URL ? await fetchViaWorker(url) : await fetchDirect(url);
 
   // Fast path: don't spend a Claude call on an obvious challenge page.
   if (looksBlocked(page)) {

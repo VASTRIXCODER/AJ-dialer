@@ -25,10 +25,12 @@ services:
         sync: false
       # PORT is injected by Render automatically; the relay honors it. Don't set it.
 
-  # ── Reverse-search scrape worker (server/scrape-server.mjs) ────────────────
-  # Runs a headless Chromium for the Whitepages reverse-search path. Vercel
-  # can't host this (no persistent process, and Chromium blows the bundle
-  # limit), so the Next app calls out to it via SCRAPE_WORKER_URL.
+  # ── Reverse-search scrape worker (server/scrape-server.mjs) — OPTIONAL ─────
+  # NOT required for reverse search. REVERSE_SEARCH_PROVIDER=whitepages works
+  # out of the box with a plain HTTPS request from the Next app; this exists
+  # only as an upgrade for when those start getting blocked, because a real
+  # headless Chromium (JS execution, browser TLS fingerprint) gets through more
+  # often. Skip this service until you need it.
   #
   # A SEPARATE service from the relay above on purpose: Chromium's memory
   # spikes and GC pauses have no business sharing a process with live call

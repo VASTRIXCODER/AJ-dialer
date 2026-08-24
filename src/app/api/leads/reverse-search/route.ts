@@ -121,5 +121,8 @@ export async function POST(req: Request) {
     // "no numbers found". See the note on ReverseSearchResult.pageState.
     pageState: result.pageState,
     note: result.note,
+    // Lets the UI hand the rep the page to open themselves when automation is
+    // refused — their browser isn't fighting a bot check.
+    searchUrl: result.searchUrl,
   });
 }

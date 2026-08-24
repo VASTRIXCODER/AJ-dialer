@@ -9,6 +9,7 @@ import {
   CheckCircle2,
   ChevronLeft,
   ChevronRight,
+  ExternalLink,
   FileText,
   Headphones,
   Loader2,
@@ -51,6 +52,7 @@ import {
   formatPhone,
   initials,
   isValidPhone,
+  normalizePhone,
   relativeTime,
 } from "@/lib/utils";
 
@@ -230,6 +232,9 @@ function ReverseSearchCard({
   const [pageState, setPageState] = useState<PageState>("results");
   const [note, setNote] = useState<string | null>(null);
   const [configProblem, setConfigProblem] = useState<string | null>(null);
+  const [searchUrl, setSearchUrl] = useState<string | null>(null);
+  /** Number typed in by hand after opening the page in a real browser. */
+  const [manual, setManual] = useState("");
   const [err, setErr] = useState<string | null>(null);
   const [applying, setApplying] = useState<string | null>(null);
   // "homeowner" / "policyholder" / "lead" — this control talks about the person
@@ -247,6 +252,8 @@ function ReverseSearchCard({
     setPageState("results");
     setNote(null);
     setConfigProblem(null);
+    setSearchUrl(null);
+    setManual("");
   }, [lead.id]);
 
   // No dialable number on file — the case this feature exists for, so the
@@ -281,6 +288,7 @@ function ReverseSearchCard({
         pageState?: PageState;
         note?: string | null;
         configProblem?: string | null;
+        searchUrl?: string | null;
       };
       if (!res.ok) {
         setErr(json.error ?? "That lookup didn't go through.");
@@ -294,6 +302,7 @@ function ReverseSearchCard({
       setPageState(json.pageState ?? "results");
       setNote(json.note ?? null);
       setConfigProblem(json.configProblem ?? null);
+      setSearchUrl(json.searchUrl ?? null);
       // A vendor-side error still returns 200 with an empty list — surface it
       // so "found nothing" and "the lookup broke" don't look identical.
       setErr(json.error ?? null);
@@ -304,8 +313,12 @@ function ReverseSearchCard({
     }
   }
 
-  async function apply(phone: string) {
-    setApplying(phone);
+  async function apply(raw: string) {
+    // Normalize BEFORE both the write and the local patch: a hand-typed
+    // "(559) 555-0143" must land on the lead as E.164 like every other number,
+    // and the card must show what was actually stored, not what was typed.
+    const phone = normalizePhone(raw) || raw;
+    setApplying(raw);
     setErr(null);
     try {
       const res = await fetch("/api/leads/update", {
@@ -457,6 +470,52 @@ function ReverseSearchCard({
               )}
             </div>
           ))}
+          {/* When the automated read comes back empty — blocked, paywalled or
+              genuinely nothing — the rep's OWN browser is the thing that isn't
+              being challenged: real IP, real session, already trusted. Handing
+              over the exact page beats any amount of effort spent trying to
+              look less like a robot, and the input closes the loop so they
+              never leave the dialer to save what they read. */}
+          {candidates.length === 0 && searchUrl && (
+            <div className="space-y-1.5 rounded-lg border border-border/70 bg-background/60 p-2">
+              <a
+                href={searchUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center gap-1.5 text-[11px] font-semibold text-primary hover:underline"
+              >
+                <ExternalLink className="h-3 w-3 shrink-0" />
+                Open this search in your browser
+              </a>
+              <p className="text-[11px] text-muted-foreground">
+                Your browser isn&apos;t blocked the way the server is. Read the
+                number off the page and put it here:
+              </p>
+              <div className="flex items-center gap-1.5">
+                <input
+                  value={manual}
+                  onChange={(e) => setManual(e.target.value)}
+                  placeholder="(559) 555-0143"
+                  inputMode="tel"
+                  className="h-7 min-w-0 flex-1 rounded-md border border-border bg-background px-2 text-xs tabular outline-none focus-visible:border-primary/50"
+                />
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="gap-1 px-2"
+                  disabled={applying !== null || digitsOnly(manual).length < 10}
+                  onClick={() => apply(manual)}
+                >
+                  {applying === manual ? (
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                  ) : (
+                    <Check className="h-3 w-3" />
+                  )}
+                  Save
+                </Button>
+              </div>
+            </div>
+          )}
           {suppressed > 0 && (
             <p className="text-[11px] text-muted-foreground">
               {suppressed} result{suppressed === 1 ? "" : "s"} hidden — on your

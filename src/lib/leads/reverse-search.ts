@@ -5,23 +5,25 @@ import {
   isWhitepagesConfigured,
   whitepagesConfigProblem,
   whitepagesReverseSearch,
+  whitepagesUrl,
 } from "./whitepages";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Reverse search (skip trace) — name and/or address → phone number.
 //
-// WHY THIS CALLS AN API AND DOES NOT SCRAPE whitepages.com:
-// The consumer site is behind bot protection, forbids automated access in its
-// terms, and changes its markup freely. A scraper would work in dev, pass
-// review, and then start silently returning zero results in production — the
-// worst failure mode for a dialer, because "no number found" looks identical
-// to "the lead genuinely has no listed number". It also puts the ORG's legal
-// exposure on the line, not ours.
+// A thin provider layer: pick whichever source the org has, and the dialer
+// treats them identically. Two kinds sit behind one interface:
 //
-// Whitepages' own data is sold through Ekata (now Mastercard) — the same
-// records, via a supported API with a contract behind it. So this module is a
-// thin provider layer: pick whichever skip-trace vendor the org has an account
-// with, and the dialer treats them identically.
+//   • CONTRACTED APIs — Ekata (which is where Whitepages' own data is sold,
+//     under Mastercard), Endato, BatchData. Keyed, billed, reliable.
+//   • whitepages — reads the public site directly and has Claude pull the
+//     numbers out of the page (see ./whitepages.ts). No account needed, and
+//     no infrastructure in its default form. It is also the one that can be
+//     BLOCKED, because the site forbids automated access and enforces it.
+//
+// The blocked case is why ReverseSearchResult carries `pageState` rather than
+// just an empty array: on a dialer, "blocked" reported as "no results" reads
+// as "this person has no listed number", and the feature rots unnoticed.
 //
 // SHAPE DRIFT: each adapter below builds its request from the vendor's
 // published API docs (auth headers and body shape must be exact or the call
@@ -144,6 +146,14 @@ export interface ReverseSearchResult {
   pageState: "results" | "no_results" | "blocked" | "paywalled";
   /** Short human explanation for a non-"results" state. */
   note: string | null;
+  /**
+   * The page a human could open to see this themselves. Automation gets
+   * blocked; a rep's own browser — real IP, real session, already trusted —
+   * does not. So when the automated read fails, handing over the exact URL
+   * turns a dead end into one click, which beats any amount of cleverness
+   * spent trying to look less like a robot.
+   */
+  searchUrl: string | null;
 }
 
 /** Enough to search on? A bare first name would match half a state. */
@@ -425,6 +435,7 @@ export async function reverseSearch(
       error: null,
       pageState: "results",
       note: null,
+      searchUrl: null,
     };
   }
 
@@ -441,6 +452,7 @@ export async function reverseSearch(
         error: null,
         pageState: wp.pageState,
         note: wp.note,
+        searchUrl: wp.url,
       };
     } catch (e) {
       return {
@@ -453,6 +465,7 @@ export async function reverseSearch(
             : "Whitepages lookup failed.",
         pageState: "no_results",
         note: null,
+        searchUrl: whitepagesUrl(input),
       };
     }
   }
@@ -485,6 +498,7 @@ export async function reverseSearch(
       error: null,
       pageState: candidates.length ? "results" : "no_results",
       note: null,
+      searchUrl: null,
     };
   } catch (e) {
     return {
@@ -497,6 +511,7 @@ export async function reverseSearch(
           : `${PROVIDER_LABEL[provider]} lookup failed.`,
       pageState: "no_results",
       note: null,
+      searchUrl: null,
     };
   }
 }
