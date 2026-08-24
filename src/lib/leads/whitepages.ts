@@ -57,15 +57,27 @@ interface Unlocker {
   endpoint: (target: string) => string;
 }
 
-/** Encoded ScraperAPI request for a target page.
- *  `ultra_premium=true` is not optional for a Cloudflare-protected people-search
- *  site: the default (datacenter proxies) is blocked exactly like a raw request,
- *  so basic `render=true` would just reproduce the block. ultra_premium uses
- *  residential IPs and the heaviest anti-bot, which is what actually gets
- *  through — at a higher credit cost per request (see README). Override the
- *  whole request via the SCRAPE_API_URL template if you want to tune that. */
-const scraperApiEndpoint = (key: string) => (target: string) =>
-  `https://api.scraperapi.com/?api_key=${encodeURIComponent(key)}&render=true&ultra_premium=true&country_code=us&url=${encodeURIComponent(target)}`;
+// Which ScraperAPI proxy tier to request. A Cloudflare-protected people-search
+// site needs "ultra_premium" (residential IPs + heaviest anti-bot) — the
+// default datacenter proxies are blocked exactly like a raw request. BUT that
+// tier is a paid/trial feature: on a plan that doesn't include it the request
+// 403s. So it's switchable — set SCRAPERAPI_MODE to match your plan:
+//   ultra_premium (default) — residential, beats Cloudflare, ~30 credits/req
+//   premium                 — residential, cheaper, ~10 credits/req
+//   basic                   — datacenter, ~1 credit, usually still blocked here
+const SCRAPERAPI_MODE = (process.env.SCRAPERAPI_MODE ?? "ultra_premium").trim().toLowerCase();
+
+/** Encoded ScraperAPI request for a target page, at the configured tier.
+ *  Override the whole request via SCRAPE_API_URL if you need finer control. */
+const scraperApiEndpoint = (key: string) => (target: string) => {
+  const tier =
+    SCRAPERAPI_MODE === "basic"
+      ? ""
+      : SCRAPERAPI_MODE === "premium"
+        ? "&premium=true"
+        : "&ultra_premium=true";
+  return `https://api.scraperapi.com/?api_key=${encodeURIComponent(key)}&render=true${tier}&country_code=us&url=${encodeURIComponent(target)}`;
+};
 
 /** Encoded ScrapingBee request for a target page. */
 const scrapingBeeEndpoint = (key: string) => (target: string) =>
