@@ -1,6 +1,7 @@
 import "server-only";
 
 import { normalizePhone } from "../utils";
+import { isWhitepagesConfigured, whitepagesReverseSearch } from "./whitepages";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Reverse search (skip trace) — name and/or address → phone number.
@@ -32,7 +33,7 @@ import { normalizePhone } from "../utils";
 // been consented to the way a number a homeowner typed into a form has.
 // ─────────────────────────────────────────────────────────────────────────────
 
-export type ReverseSearchProvider = "ekata" | "endato" | "batchdata";
+export type ReverseSearchProvider = "ekata" | "endato" | "batchdata" | "whitepages";
 
 const PROVIDER = (process.env.REVERSE_SEARCH_PROVIDER ?? "").trim().toLowerCase();
 const API_KEY = (process.env.REVERSE_SEARCH_API_KEY ?? "").trim();
@@ -42,6 +43,11 @@ const API_SECRET = (process.env.REVERSE_SEARCH_API_SECRET ?? "").trim();
 const NEEDS_SECRET: ReverseSearchProvider[] = ["endato"];
 
 function activeProvider(): ReverseSearchProvider | null {
+  // Whitepages is the browser-driven path — it has no API key of its own; what
+  // it needs is a scrape backend and a Claude key, checked in ./whitepages.ts.
+  if (PROVIDER === "whitepages") {
+    return isWhitepagesConfigured() ? "whitepages" : null;
+  }
   if (PROVIDER !== "ekata" && PROVIDER !== "endato" && PROVIDER !== "batchdata") {
     return null;
   }
@@ -65,6 +71,7 @@ const PROVIDER_LABEL: Record<ReverseSearchProvider, string> = {
   ekata: "Ekata",
   endato: "Endato",
   batchdata: "BatchData",
+  whitepages: "Whitepages",
 };
 
 export interface ReverseSearchInput {
@@ -96,6 +103,17 @@ export interface ReverseSearchResult {
   source: "provider" | "demo";
   provider: string | null;
   error: string | null;
+  /**
+   * Why the list is empty, when it is. THE POINT of this field is that
+   * "blocked" and "no_results" must never look alike: on a dialer, a bot
+   * challenge reported as "no numbers found" reads as "this person has no
+   * listing", and the feature rots in production with nobody noticing.
+   * API providers only ever answer "results"/"no_results"; the browser-driven
+   * Whitepages path is the one that can be blocked or paywalled.
+   */
+  pageState: "results" | "no_results" | "blocked" | "paywalled";
+  /** Short human explanation for a non-"results" state. */
+  note: string | null;
 }
 
 /** Enough to search on? A bare first name would match half a state. */
@@ -375,7 +393,38 @@ export async function reverseSearch(
       source: "demo",
       provider: null,
       error: null,
+      pageState: "results",
+      note: null,
     };
+  }
+
+  // The browser-driven path has its own result shape (it can be blocked or
+  // paywalled, which no API provider can be), so it returns separately rather
+  // than being squeezed through harvestPhones.
+  if (provider === "whitepages") {
+    try {
+      const wp = await whitepagesReverseSearch(input);
+      return {
+        candidates: wp.phones.slice(0, MAX_CANDIDATES),
+        source: "provider",
+        provider: PROVIDER_LABEL.whitepages,
+        error: null,
+        pageState: wp.pageState,
+        note: wp.note,
+      };
+    } catch (e) {
+      return {
+        candidates: [],
+        source: "provider",
+        provider: PROVIDER_LABEL.whitepages,
+        error:
+          e instanceof Error
+            ? `Whitepages lookup failed: ${e.message}`
+            : "Whitepages lookup failed.",
+        pageState: "no_results",
+        note: null,
+      };
+    }
   }
 
   try {
@@ -404,6 +453,8 @@ export async function reverseSearch(
       source: "provider",
       provider: PROVIDER_LABEL[provider],
       error: null,
+      pageState: candidates.length ? "results" : "no_results",
+      note: null,
     };
   } catch (e) {
     return {
@@ -414,6 +465,8 @@ export async function reverseSearch(
         e instanceof Error
           ? `${PROVIDER_LABEL[provider]} lookup failed: ${e.message}`
           : `${PROVIDER_LABEL[provider]} lookup failed.`,
+      pageState: "no_results",
+      note: null,
     };
   }
 }

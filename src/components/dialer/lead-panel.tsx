@@ -18,6 +18,7 @@ import {
   Phone,
   PhoneCall,
   ScanSearch,
+  ShieldAlert,
   Search,
   Users,
   Sun,
@@ -194,6 +195,10 @@ interface ReverseSearchCandidate {
   isCurrent: boolean;
 }
 
+/** Why a lookup came back empty. "blocked" and "no_results" get deliberately
+ *  different treatment — see the note on ReverseSearchResult.pageState. */
+type PageState = "results" | "no_results" | "blocked" | "paywalled";
+
 const LINE_TYPE_LABEL: Record<ReverseSearchCandidate["lineType"], string> = {
   mobile: "Mobile",
   landline: "Landline",
@@ -222,6 +227,8 @@ function ReverseSearchCard({
   const [suppressed, setSuppressed] = useState(0);
   const [source, setSource] = useState<"provider" | "demo" | null>(null);
   const [provider, setProvider] = useState<string | null>(null);
+  const [pageState, setPageState] = useState<PageState>("results");
+  const [note, setNote] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [applying, setApplying] = useState<string | null>(null);
   // "homeowner" / "policyholder" / "lead" — this control talks about the person
@@ -236,6 +243,8 @@ function ReverseSearchCard({
     setSuppressed(0);
     setErr(null);
     setSource(null);
+    setPageState("results");
+    setNote(null);
   }, [lead.id]);
 
   // No dialable number on file — the case this feature exists for, so the
@@ -267,6 +276,8 @@ function ReverseSearchCard({
         source?: "provider" | "demo";
         provider?: string | null;
         error?: string | null;
+        pageState?: PageState;
+        note?: string | null;
       };
       if (!res.ok) {
         setErr(json.error ?? "That lookup didn't go through.");
@@ -277,6 +288,8 @@ function ReverseSearchCard({
       setSuppressed(json.suppressed ?? 0);
       setSource(json.source ?? null);
       setProvider(json.provider ?? null);
+      setPageState(json.pageState ?? "results");
+      setNote(json.note ?? null);
       // A vendor-side error still returns 200 with an empty list — surface it
       // so "found nothing" and "the lookup broke" don't look identical.
       setErr(json.error ?? null);
@@ -359,9 +372,33 @@ function ReverseSearchCard({
               555 number, not a real listing.
             </p>
           )}
-          {candidates.length === 0 && !err && (
+          {/* A bot challenge and a genuine no-listing look identical if both
+              render as "no numbers found" — and the first one silently reads
+              as the second, which is how a scraper dies unnoticed. Blocked and
+              paywalled get their own loud, differently-coloured treatment. */}
+          {candidates.length === 0 && !err && pageState === "blocked" && (
+            <p className="flex items-start gap-1.5 rounded-lg bg-danger/10 px-2 py-1.5 text-[11px] text-danger">
+              <ShieldAlert className="mt-px h-3 w-3 shrink-0" />
+              <span>
+                <strong>Blocked, not empty.</strong>{" "}
+                {note ?? "The site served a bot check instead of results."} This is
+                not a “no listing” — the lookup never ran. Try again shortly, or
+                switch to an API provider.
+              </span>
+            </p>
+          )}
+          {candidates.length === 0 && !err && pageState === "paywalled" && (
+            <p className="flex items-start gap-1.5 rounded-lg bg-warning/10 px-2 py-1.5 text-[11px] text-warning">
+              <AlertTriangle className="mt-px h-3 w-3 shrink-0" />
+              <span>
+                <strong>Numbers are hidden behind a paywall.</strong>{" "}
+                {note ?? "The listing exists but its numbers require an account."}
+              </span>
+            </p>
+          )}
+          {candidates.length === 0 && !err && pageState === "no_results" && (
             <p className="text-[11px] text-muted-foreground">
-              No numbers found for this name and address.
+              {note ?? `No numbers listed for this ${vocab.leadNoun}'s name and address.`}
             </p>
           )}
           {candidates.map((c) => (

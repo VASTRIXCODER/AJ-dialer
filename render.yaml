@@ -24,3 +24,39 @@ services:
       - key: MEDIA_STREAM_SECRET
         sync: false
       # PORT is injected by Render automatically; the relay honors it. Don't set it.
+
+  # ── Reverse-search scrape worker (server/scrape-server.mjs) ────────────────
+  # Runs a headless Chromium for the Whitepages reverse-search path. Vercel
+  # can't host this (no persistent process, and Chromium blows the bundle
+  # limit), so the Next app calls out to it via SCRAPE_WORKER_URL.
+  #
+  # A SEPARATE service from the relay above on purpose: Chromium's memory
+  # spikes and GC pauses have no business sharing a process with live call
+  # audio. Only needed if REVERSE_SEARCH_PROVIDER=whitepages — the API
+  # providers (Ekata/Endato/BatchData) need no worker at all.
+  #
+  # Needs ~1GB to run Chromium comfortably; "starter" is the practical floor.
+  - type: web
+    name: aj-dialer-scrape-worker
+    runtime: node
+    plan: starter
+    buildCommand: npm install && npm install playwright && npx playwright install --with-deps chromium
+    startCommand: node server/scrape-server.mjs
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      # Must be IDENTICAL to SCRAPE_SECRET in your Next app (Vercel).
+      - key: SCRAPE_SECRET
+        sync: false
+      # Chromium is memory-hungry; 2 concurrent pages is right for starter.
+      - key: SCRAPE_CONCURRENCY
+        value: "2"
+      # Optional. A people-search site refuses a datacenter IP long before a
+      # residential one, so point this at a rotating proxy once lookups start
+      # coming back "Blocked, not empty". Render's egress IP is a datacenter IP.
+      - key: SCRAPE_PROXY_URL
+        sync: false
+      # Optional. Only needed if the image ships its own Chromium, or after a
+      # Playwright upgrade without a matching `playwright install`.
+      - key: SCRAPE_CHROMIUM_PATH
+        sync: false

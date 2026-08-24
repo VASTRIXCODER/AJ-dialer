@@ -19,7 +19,8 @@
     "verify:live-states": "tsx scripts/verify-live-states.ts",
     "e2e:live-states": "node scripts/e2e-live-states.mjs",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "scrape-worker": "node server/scrape-server.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.105.0",

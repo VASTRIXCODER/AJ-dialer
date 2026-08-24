@@ -111,9 +111,51 @@ of the supported providers below.
 
 | Variable | Value |
 | --- | --- |
-| `REVERSE_SEARCH_PROVIDER` | `ekata`, `endato` or `batchdata` |
+| `REVERSE_SEARCH_PROVIDER` | `ekata`, `endato`, `batchdata` or `whitepages` |
 | `REVERSE_SEARCH_API_KEY` | The vendor's API key (for Endato: the AP **name**) |
 | `REVERSE_SEARCH_API_SECRET` | Endato only — the AP **password** |
+
+### The `whitepages` provider (browser + Claude)
+
+`REVERSE_SEARCH_PROVIDER=whitepages` drives a headless Chromium to the
+Whitepages results page for the lead, then hands the **rendered page text to
+Claude** to pull the numbers out. Claude does the extraction deliberately: CSS
+selectors against a site you don't control break silently on every redesign,
+whereas "here is a page, find the phone numbers" survives them. There is not one
+selector in `src/lib/leads/whitepages.ts`.
+
+It needs somewhere to run a browser, which **is not Vercel** — a serverless
+function has no persistent process and Chromium blows the bundle limit. Deploy
+`server/scrape-server.mjs` (a second Render service, already in `render.yaml`)
+and point the app at it:
+
+| Variable | Value |
+| --- | --- |
+| `SCRAPE_WORKER_URL` | `https://aj-dialer-scrape-worker.onrender.com` |
+| `SCRAPE_SECRET` | Any long random string — identical on both services |
+| `ANTHROPIC_API_KEY` | Required — Claude does the extraction |
+
+Locally you can skip the worker: leave `SCRAPE_WORKER_URL` unset and install
+Playwright (`npm i -D playwright && npx playwright install chromium`) and it
+runs the browser in-process.
+
+**Know what you're signing up for.** Whitepages forbids automated access in its
+terms and actively blocks it, so expect bot challenges — more of them as volume
+from one IP goes up. The design's one non-negotiable is that **being blocked is
+reported as being blocked**: a challenge page renders as a red "Blocked, not
+empty" notice, never as "no numbers found". Those two are indistinguishable to a
+rep, and the second quietly reads as "this person has no listing" — which is how
+a scraper rots in production without anyone noticing. Claude judges the page
+state as well (`blocked` / `paywalled` / `no_results` / `results`), since it
+recognises a challenge screen far more reliably than a keyword list.
+
+Two optional worker settings matter once you're running at volume:
+`SCRAPE_PROXY_URL` (Render's egress is a datacenter IP, which gets refused long
+before a residential one — point this at a rotating proxy when blocks start) and
+`SCRAPE_CHROMIUM_PATH` (only if your image ships its own Chromium).
+
+The API providers above stay available and are what to switch to when the
+scraped path starts getting blocked — it is one env var.
 
 Leave them unset and the button still works in demo mode, returning a reserved
 `555-01xx` number (the NANP block set aside for fiction) clearly labelled as

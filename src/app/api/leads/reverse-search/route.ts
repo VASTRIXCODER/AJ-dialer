@@ -113,5 +113,9 @@ export async function POST(req: Request) {
     provider: result.provider ?? reverseSearchProviderName(),
     configured: isReverseSearchConfigured(),
     error: result.error,
+    // Carried all the way to the UI on purpose: "blocked" must never render as
+    // "no numbers found". See the note on ReverseSearchResult.pageState.
+    pageState: result.pageState,
+    note: result.note,
   });
 }
