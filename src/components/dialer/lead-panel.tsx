@@ -49,6 +49,7 @@ import {
   formatDuration,
   formatPhone,
   initials,
+  isValidPhone,
   relativeTime,
 } from "@/lib/utils";
 
@@ -237,6 +238,10 @@ function ReverseSearchCard({
     setSource(null);
   }, [lead.id]);
 
+  // No dialable number on file — the case this feature exists for, so the
+  // button goes solid instead of outline to call it out.
+  const needsNumber = !isValidPhone(lead.phone ?? "");
+
   // Cheap client-side guard so an obviously unsearchable lead doesn't spend a
   // metered vendor query. The server's hasSearchableIdentity() is the real
   // rule and is stricter; this only catches the empty case.
@@ -307,35 +312,37 @@ function ReverseSearchCard({
   }
 
   return (
-    <div className="mt-4 rounded-xl border border-border/70 bg-muted/30 p-3">
-      <div className="flex flex-wrap items-center gap-2">
-        <ScanSearch className="h-4 w-4 shrink-0 text-muted-foreground" />
-        <div className="min-w-0 flex-1">
-          <p className="text-xs font-semibold">Reverse search</p>
-          <p className="text-[11px] text-muted-foreground">
-            Look up a number from this {vocab.leadNoun}&apos;s name &amp; address
-          </p>
-        </div>
-        <Button
-          size="sm"
-          variant="outline"
-          className="gap-1.5"
-          disabled={status === "searching" || !searchable}
-          onClick={run}
-          title={
-            searchable
-              ? `Skip-trace this ${vocab.leadNoun} for a phone number`
-              : `This ${vocab.leadNoun} has no name or address to search on`
-          }
-        >
-          {status === "searching" ? (
-            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-          ) : (
-            <ScanSearch className="h-3.5 w-3.5" />
-          )}
-          {status === "done" ? "Search again" : "Search"}
-        </Button>
-      </div>
+    <div className="mt-3">
+      {/* A full-width, plainly-labelled button rather than a bordered box with
+          a sentence of explanation: this column is ~280px wide, where that
+          prose wrapped to six lines and squeezed the control into a corner
+          nobody found. The label is the feature's NAME — it read "Search"
+          before, which is indistinguishable from the dialer's other search
+          affordances. Promoted to a solid button when the lead has no number
+          on file, since that is exactly when this is the next thing to do. */}
+      <Button
+        size="sm"
+        variant={needsNumber ? "primary" : "outline"}
+        className="w-full gap-1.5"
+        disabled={status === "searching" || !searchable}
+        onClick={run}
+        title={
+          searchable
+            ? `Look up a phone number from this ${vocab.leadNoun}'s name and address`
+            : `This ${vocab.leadNoun} has no name or address to search on`
+        }
+      >
+        {status === "searching" ? (
+          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+        ) : (
+          <ScanSearch className="h-3.5 w-3.5" />
+        )}
+        {status === "searching"
+          ? "Searching…"
+          : status === "done"
+            ? "Reverse search again"
+            : "Reverse search"}
+      </Button>
 
       {err && (
         <p className="mt-2 flex items-start gap-1.5 text-[11px] text-danger">
@@ -471,8 +478,20 @@ function LeadDetail({
           <Avatar initials={initials(name)} tone={lead.assignedRepId ? "chart-1" : "chart-2"} size="lg" />
           <div className="min-w-0 flex-1">
             <h3 className="truncate text-lg font-bold leading-tight">{name}</h3>
-            <p className="truncate text-sm text-muted-foreground tabular">
-              {formatPhone(lead.phone)}
+            {/* An empty phone rendered as a blank line, which read as a layout
+                bug rather than as missing data — and gave no hint that the
+                reverse-search button below is what fixes it. */}
+            <p
+              className={cn(
+                "truncate text-sm tabular",
+                isValidPhone(lead.phone ?? "")
+                  ? "text-muted-foreground"
+                  : "italic text-warning",
+              )}
+            >
+              {isValidPhone(lead.phone ?? "")
+                ? formatPhone(lead.phone)
+                : "No number on file"}
             </p>
             <div className="mt-1.5 flex flex-wrap gap-1.5">
               <Badge tone="primary" className="capitalize">
@@ -487,6 +506,16 @@ function LeadDetail({
             </Ring>
           )}
         </div>
+
+        {/* Directly under the number it replaces — this used to sit below the
+            address and provider rows, ~215px down, which is not where anyone
+            looks when they notice the phone is missing or dead. */}
+        {canReverseSearch && (
+          <ReverseSearchCard
+            lead={lead}
+            onApplied={(phone) => onLeadPatched?.(lead.id, { phone })}
+          />
+        )}
 
         <div className="mt-4 space-y-2 text-sm">
           {formatAddress(lead) && (
@@ -516,13 +545,6 @@ function LeadDetail({
             </div>
           )}
         </div>
-
-        {canReverseSearch && (
-          <ReverseSearchCard
-            lead={lead}
-            onApplied={(phone) => onLeadPatched?.(lead.id, { phone })}
-          />
-        )}
 
         {tiles.length > 0 && (
           <div className={cn("mt-4 grid gap-2", tiles.length > 1 ? "grid-cols-2" : "grid-cols-1")}>
