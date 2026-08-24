@@ -1,7 +1,11 @@
 import "server-only";
 
 import { normalizePhone } from "../utils";
-import { isWhitepagesConfigured, whitepagesReverseSearch } from "./whitepages";
+import {
+  isWhitepagesConfigured,
+  whitepagesConfigProblem,
+  whitepagesReverseSearch,
+} from "./whitepages";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Reverse search (skip trace) — name and/or address → phone number.
@@ -54,6 +58,32 @@ function activeProvider(): ReverseSearchProvider | null {
   if (!API_KEY) return null;
   if (NEEDS_SECRET.includes(PROVIDER) && !API_SECRET) return null;
   return PROVIDER;
+}
+
+/**
+ * Why the configured provider isn't usable, in words that name the exact env
+ * var to set. Null when nothing is configured at all (the demo path is then
+ * correct and expected) or when everything is in place.
+ *
+ * This exists because "no lookup provider is configured" is the same message
+ * whether you set nothing or set REVERSE_SEARCH_PROVIDER and forgot one
+ * credential — and the second case looks like the feature is broken. Half-
+ * configured has to say which half.
+ */
+export function reverseSearchConfigProblem(): string | null {
+  if (!PROVIDER) return null; // nothing set — demo is the intended behaviour
+  const known: string[] = ["ekata", "endato", "batchdata", "whitepages"];
+  if (!known.includes(PROVIDER)) {
+    return `REVERSE_SEARCH_PROVIDER is "${PROVIDER}", which isn't one of: ${known.join(", ")}.`;
+  }
+  if (PROVIDER === "whitepages") return whitepagesConfigProblem();
+  if (!API_KEY) {
+    return `REVERSE_SEARCH_PROVIDER is "${PROVIDER}" but REVERSE_SEARCH_API_KEY is empty.`;
+  }
+  if (NEEDS_SECRET.includes(PROVIDER as ReverseSearchProvider) && !API_SECRET) {
+    return `REVERSE_SEARCH_PROVIDER is "${PROVIDER}", which also needs REVERSE_SEARCH_API_SECRET.`;
+  }
+  return null;
 }
 
 /** True when a skip-trace vendor is configured. False ⇒ the demo path. */

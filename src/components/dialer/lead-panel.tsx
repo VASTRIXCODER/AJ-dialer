@@ -229,6 +229,7 @@ function ReverseSearchCard({
   const [provider, setProvider] = useState<string | null>(null);
   const [pageState, setPageState] = useState<PageState>("results");
   const [note, setNote] = useState<string | null>(null);
+  const [configProblem, setConfigProblem] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [applying, setApplying] = useState<string | null>(null);
   // "homeowner" / "policyholder" / "lead" — this control talks about the person
@@ -245,6 +246,7 @@ function ReverseSearchCard({
     setSource(null);
     setPageState("results");
     setNote(null);
+    setConfigProblem(null);
   }, [lead.id]);
 
   // No dialable number on file — the case this feature exists for, so the
@@ -278,6 +280,7 @@ function ReverseSearchCard({
         error?: string | null;
         pageState?: PageState;
         note?: string | null;
+        configProblem?: string | null;
       };
       if (!res.ok) {
         setErr(json.error ?? "That lookup didn't go through.");
@@ -290,6 +293,7 @@ function ReverseSearchCard({
       setProvider(json.provider ?? null);
       setPageState(json.pageState ?? "results");
       setNote(json.note ?? null);
+      setConfigProblem(json.configProblem ?? null);
       // A vendor-side error still returns 200 with an empty list — surface it
       // so "found nothing" and "the lookup broke" don't look identical.
       setErr(json.error ?? null);
@@ -366,10 +370,18 @@ function ReverseSearchCard({
 
       {status === "done" && (
         <div className="mt-3 space-y-1.5">
+          {/* A half-configured provider used to produce the same "nothing is
+              configured" line as an unconfigured one, which reads as the
+              feature being broken. Say which variable is missing. */}
           {source === "demo" && (
-            <p className="text-[11px] text-warning">
-              Demo result — no lookup provider is configured, so this is a reserved
-              555 number, not a real listing.
+            <p className="flex items-start gap-1.5 rounded-lg bg-warning/10 px-2 py-1.5 text-[11px] text-warning">
+              <AlertTriangle className="mt-px h-3 w-3 shrink-0" />
+              <span>
+                <strong>Demo result — not a real listing.</strong> This is a
+                reserved 555 number.{" "}
+                {configProblem ??
+                  "Set REVERSE_SEARCH_PROVIDER (whitepages, ekata, endato or batchdata) to run real lookups."}
+              </span>
             </p>
           )}
           {/* A bot challenge and a genuine no-listing look identical if both

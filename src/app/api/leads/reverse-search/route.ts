@@ -5,6 +5,7 @@ import {
   hasSearchableIdentity,
   isReverseSearchConfigured,
   reverseSearch,
+  reverseSearchConfigProblem,
   reverseSearchProviderName,
   type PhoneCandidate,
 } from "@/lib/leads/reverse-search";
@@ -112,6 +113,9 @@ export async function POST(req: Request) {
     source: result.source,
     provider: result.provider ?? reverseSearchProviderName(),
     configured: isReverseSearchConfigured(),
+    // Names the exact env var that's missing when a provider is half-set-up,
+    // so "demo result" doesn't read as "the feature is broken".
+    configProblem: reverseSearchConfigProblem(),
     error: result.error,
     // Carried all the way to the UI on purpose: "blocked" must never render as
     // "no numbers found". See the note on ReverseSearchResult.pageState.

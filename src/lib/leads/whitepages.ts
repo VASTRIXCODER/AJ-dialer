@@ -183,7 +183,36 @@ async function fetchViaWorker(url: string): Promise<ScrapedPage> {
 export function isWhitepagesConfigured(): boolean {
   // The worker is the only path that works in a deployed Next app; in-process
   // Playwright is a local convenience, so "configured" means either is possible.
-  return Boolean((WORKER_URL && WORKER_SECRET) || process.env.NODE_ENV !== "production");
+  return whitepagesConfigProblem() === null;
+}
+
+/**
+ * What's missing for the browser-driven path, naming the exact variable.
+ * Returns null when it's ready to run.
+ *
+ * The ordering matters: report the thing you'd fix FIRST. Someone who set
+ * SCRAPE_WORKER_URL and forgot SCRAPE_SECRET needs to hear about the secret,
+ * not a generic "not configured".
+ */
+export function whitepagesConfigProblem(): string | null {
+  const deployed = process.env.NODE_ENV === "production";
+  if (!WORKER_URL) {
+    // Locally the in-process Playwright path stands in for the worker; in a
+    // deployed app there is no such fallback (Vercel can't run Chromium).
+    if (deployed) {
+      return (
+        "REVERSE_SEARCH_PROVIDER=whitepages needs SCRAPE_WORKER_URL — the " +
+        "browser can't run in a serverless function. Deploy " +
+        "server/scrape-server.mjs (see render.yaml) and point this at it."
+      );
+    }
+  } else if (!WORKER_SECRET) {
+    return "SCRAPE_WORKER_URL is set but SCRAPE_SECRET is empty — the worker will reject every request with 401.";
+  }
+  if (!isAIConfigured()) {
+    return "REVERSE_SEARCH_PROVIDER=whitepages needs ANTHROPIC_API_KEY — Claude does the extraction from the page.";
+  }
+  return null;
 }
 
 export interface ExtractedPhone {
