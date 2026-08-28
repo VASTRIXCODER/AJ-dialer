@@ -50,10 +50,10 @@ export const PERMISSIONS = [
   "leads.import",
   "leads.reverseSearch", // skip-trace a lead's name/address for a phone number
   "dialer.ai", // launch AI agent calls (reps are manual-only by default)
-  "monitor.view", // open the Live Monitor (see in-progress AI + rep calls)
-  "monitor.listen", // listen to live audio of in-progress calls
+  "monitor.view", // open the Live Monitor (see in-progress AI + rep calls) — manager+ by default
+  "monitor.listen", // listen to live audio of in-progress calls — manager+ by default
   "monitor.intervene", // take over / transfer / end a live call
-  "monitor.roster", // view the live team presence roster — manager+ only, unlike monitor.view/listen which reps also hold
+  "monitor.roster", // view the live team presence roster — manager+
   "appointments.view", // open the appointments calendar
   "appointments.manage", // create, reschedule, approve & cancel appointments
   "appointments.team", // see & manage the WHOLE team's calendar, not just your own — manager+
@@ -85,8 +85,13 @@ export const ROLE_PERMISSIONS: Record<OrgRole, Permission[]> = {
     "appointments.team",
   ],
   // Reps dial and work leads. They get the MANUAL dialer; the AI dialer is gated
-  // (managers+ only) unless the workspace is AI-only. They can open the monitor
-  // and LISTEN to live calls (AI + human), but can't take over / transfer / end.
+  // (managers+ only) unless the workspace is AI-only.
+  //
+  // Reps do NOT get monitor.view / monitor.listen by default (changed Phase 1):
+  // those defaults let any rep silently listen to any teammate's live customer
+  // call, while the monitor page's own copy claimed supervisors-only. Listening
+  // is a supervisor capability; an org that wants a specific rep coaching along
+  // can still grant it with a per-member override — overrides always win.
   //
   // They DO get appointments.view + .manage — a rep books their own account
   // reviews, so revoking these would break the dialer's own disposition flow.
@@ -95,7 +100,7 @@ export const ROLE_PERMISSIONS: Record<OrgRole, Permission[]> = {
   // canActOnAppt in src/lib/db/appointments.ts), so a per-member override that
   // revokes `appointments.manage` genuinely locks that account out of every
   // calendar write — not just the buttons.
-  rep: ["monitor.view", "monitor.listen", "appointments.view", "appointments.manage"],
+  rep: ["appointments.view", "appointments.manage"],
 };
 
 export const PERMISSION_LABEL: Record<Permission, string> = {

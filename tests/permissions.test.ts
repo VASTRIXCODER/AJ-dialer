@@ -30,11 +30,16 @@ describe("can()", () => {
     expect(can("admin", "org.delete")).toBe(false); // admin lacks delete
     expect(can("manager", "reports.view")).toBe(true);
     expect(can("rep", "dialer.ai")).toBe(false);
-    expect(can("rep", "monitor.view")).toBe(true); // reps can watch
+    // Phase 1: reps no longer hold monitor.view/listen by default — live-call
+    // listening is a supervisor capability, grantable per-member via override.
+    expect(can("rep", "monitor.view")).toBe(false);
+    expect(can("rep", "monitor.listen")).toBe(false);
+    expect(can("manager", "monitor.listen")).toBe(true);
   });
 
   it("lets a per-member override win over the role default", () => {
     expect(can("rep", "dialer.ai", { "dialer.ai": true })).toBe(true);
+    expect(can("rep", "monitor.listen", { "monitor.listen": true })).toBe(true);
     expect(can("owner", "org.delete", { "org.delete": false })).toBe(false);
   });
 
@@ -46,7 +51,8 @@ describe("can()", () => {
 describe("effectivePermissions()", () => {
   it("reflects the role's defaults plus overrides", () => {
     const rep = effectivePermissions("rep");
-    expect(rep).toContain("monitor.view");
+    expect(rep).toContain("appointments.manage");
+    expect(rep).not.toContain("monitor.view");
     expect(rep).not.toContain("org.edit");
     expect(effectivePermissions("rep", { "dialer.ai": true })).toContain("dialer.ai");
   });

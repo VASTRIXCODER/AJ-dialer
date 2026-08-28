@@ -19,6 +19,7 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { SectionCard } from "@/components/shared/section-card";
 import { Button } from "@/components/ui/button";
+import { useConfirm } from "@/components/ui/confirm-dialog";
 import { Input, Label, Select, Textarea } from "@/components/ui/input";
 import { EMILY_SYSTEM_PROMPT } from "@/lib/ai/agent-prompt";
 import { describeDays, describeWindows } from "@/lib/dialer/schedule";
@@ -95,6 +96,7 @@ export function OrgSettingsForm({
   platformPoolLocked?: boolean;
 }) {
   const router = useRouter();
+  const confirmDialog = useConfirm();
   const [busy, setBusy] = useState<string | null>(null);
   const [saved, setSaved] = useState<string | null>(null);
   const [err, setErr] = useState("");
@@ -217,8 +219,13 @@ export function OrgSettingsForm({
   }
 
   async function deleteOrg() {
-    if (!confirm(`Delete ${org.name}? This removes the organization for everyone.`))
-      return;
+    const ok = await confirmDialog({
+      title: `Delete ${org.name}?`,
+      body: "This removes the organization for everyone.",
+      tone: "danger",
+      confirmLabel: "Delete organization",
+    });
+    if (!ok) return;
     setBusy("delete");
     try {
       const res = await fetch("/api/org/settings", { method: "DELETE" });

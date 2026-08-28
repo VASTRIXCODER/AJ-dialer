@@ -23,6 +23,7 @@ import { SectionCard } from "@/components/shared/section-card";
 import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { useConfirm } from "@/components/ui/confirm-dialog";
 import { Card } from "@/components/ui/card";
 import { templateLabel } from "@/lib/org/templates";
 import { cn, initials, relativeTime } from "@/lib/utils";
@@ -331,6 +332,7 @@ function AccountsTab({
   onDelete: (id: string) => void;
   onPlatform: (id: string, on: boolean) => void;
 }) {
+  const confirmDialog = useConfirm();
   const sel = "h-9 rounded-lg border border-border bg-background px-2 text-xs outline-none";
   return (
     <Card className="overflow-hidden">
@@ -416,8 +418,16 @@ function AccountsTab({
                   type="button"
                   aria-label="Delete account"
                   disabled={busy === `del-${a.id}`}
-                  onClick={() => {
-                    if (confirm(`Permanently delete ${a.email}?`)) onDelete(a.id);
+                  onClick={async () => {
+                    if (
+                      await confirmDialog({
+                        title: `Permanently delete ${a.email}?`,
+                        body: "The account and its access are removed for good.",
+                        tone: "danger",
+                        confirmLabel: "Delete account",
+                      })
+                    )
+                      onDelete(a.id);
                   }}
                   className="flex h-9 w-9 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-danger/10 hover:text-danger"
                 >

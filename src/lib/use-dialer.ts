@@ -1907,7 +1907,9 @@ export function useDialer(
             const a = await fetch("/api/twilio/answered", {
               method: "POST",
               headers: { "content-type": "application/json" },
-              body: JSON.stringify({ legs: placed }),
+              // `room` proves we own this call — the route only touches legs
+              // belonging to the live_calls row for this conference.
+              body: JSON.stringify({ room, legs: placed }),
             });
             const { answeredLeadId, done } = (await a.json()) as {
               answeredLeadId: string | null;
@@ -1930,7 +1932,7 @@ export function useDialer(
                     const w = await fetch("/api/twilio/answered", {
                       method: "POST",
                       headers: { "content-type": "application/json" },
-                      body: JSON.stringify({ legs: [winnerLeg] }),
+                      body: JSON.stringify({ room, legs: [winnerLeg] }),
                     });
                     const { done: gone } = (await w.json()) as { done?: boolean };
                     // Only wrap up if we're still on THIS bridged call.

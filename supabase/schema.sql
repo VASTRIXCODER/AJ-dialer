@@ -2077,3 +2077,24 @@ from (
 where cr.conversation_id = sub.conversation_id
   and cr.transcript_text is null
   and sub.txt is not null;
+
+-- ═════════════════════════════════════════════════════════════════════════════
+-- PART 22 — SERVICE TELEMETRY (ops_metrics)                       [Phase 1 · A2]
+-- Counters and timings from src/lib/telemetry.ts: event lag, reservation
+-- conflicts, webhook anomalies, import failures, metric drift. Service-role
+-- writes only (RLS on, no policies — same posture as notification_outbox).
+-- Trend data, not billing data: rows are disposable; a retention sweep may
+-- delete anything older than 30 days.
+-- Rollback: drop table public.ops_metrics; (the writer is fire-and-forget and
+-- tolerates the table's absence).
+-- ═════════════════════════════════════════════════════════════════════════════
+create table if not exists public.ops_metrics (
+  id     bigint generated always as identity primary key,
+  at     timestamptz not null default now(),
+  org_id uuid,
+  metric text not null,
+  value  numeric not null default 1,
+  tags   jsonb
+);
+create index if not exists ops_metrics_metric_at_idx on public.ops_metrics (metric, at desc);
+alter table public.ops_metrics enable row level security;

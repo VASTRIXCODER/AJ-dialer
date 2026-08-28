@@ -19,6 +19,7 @@ import { EditCampaignDialog } from "@/components/campaigns/edit-campaign-dialog"
 import { SpotlightCard } from "@/components/motion";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { useConfirm } from "@/components/ui/confirm-dialog";
 import { Input, Label } from "@/components/ui/input";
 import type { CampaignStats } from "@/lib/campaign-stats";
 import { campaignStatusConfig } from "@/lib/status";
@@ -40,6 +41,7 @@ type Campaign = {
 
 export function CampaignsView({ campaigns }: { campaigns: Campaign[] }) {
   const router = useRouter();
+  const confirmDialog = useConfirm();
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
   const [utility, setUtility] = useState("");
@@ -84,7 +86,13 @@ export function CampaignsView({ campaigns }: { campaigns: Campaign[] }) {
   }
 
   async function remove(c: Campaign) {
-    if (!window.confirm(`Delete "${c.name}"? Its leads stay, just un-assigned.`)) return;
+    const ok = await confirmDialog({
+      title: `Delete "${c.name}"?`,
+      body: "Its leads stay, just un-assigned.",
+      tone: "danger",
+      confirmLabel: "Delete campaign",
+    });
+    if (!ok) return;
     setPendingId(c.id);
     await fetch("/api/campaigns", {
       method: "DELETE",

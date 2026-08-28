@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { getHumanCall } from "@/lib/human-call-store";
 import { getViewer } from "@/lib/org/membership";
 import { getPublicBaseUrl, getRestClient, isRestConfigured } from "@/lib/twilio";
 
@@ -37,8 +38,29 @@ export async function POST(req: Request) {
   const sids = (body.sids ?? []).filter(Boolean);
   const hold = body.hold ?? true;
 
-  if (!room) {
+  if (!room || !/^hc-[\w-]{1,80}$/.test(room)) {
     return NextResponse.json({ ok: false, error: "room is required" }, { status: 400 });
+  }
+
+  // ORG SCOPE: auth alone still let any signed-in user in ANY org hold a
+  // conference whose name they guessed. The live_calls row for this room names
+  // the rep and org that own the call — require the caller to be that rep, or a
+  // supervisor with monitor.intervene in the same org. A conference we don't
+  // track isn't holdable.
+  const live = await getHumanCall(room.slice(3));
+  if (!live) {
+    return NextResponse.json({ ok: false, error: "Conference not found" }, { status: 404 });
+  }
+  const isOwner = Boolean(viewer.user?.id) && live.ownerId === viewer.user.id;
+  const isSupervisor =
+    Boolean(live.orgId) &&
+    live.orgId === viewer.org?.id &&
+    viewer.permissions.includes("monitor.intervene");
+  if (!isOwner && !isSupervisor) {
+    return NextResponse.json(
+      { ok: false, error: "That call belongs to someone else." },
+      { status: 403 },
+    );
   }
 
   const client = await getRestClient();

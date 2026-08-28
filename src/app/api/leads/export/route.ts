@@ -1,3 +1,4 @@
+import { csvCell } from "@/lib/csv-safety";
 import { getLeads } from "@/lib/db/leads";
 import {
   leadFieldValue,
@@ -9,28 +10,6 @@ import { templateProfile } from "@/lib/org/templates";
 import type { Lead } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
-
-/**
- * Values starting with these are executed as formulas by Excel / Google Sheets
- * when the CSV is opened — the classic CSV-injection vector. Lead data comes
- * from customer-supplied CSVs we never controlled, so it has to be neutralized
- * on the way back out.
- */
-const FORMULA_LEAD = /^[=@+\-\t\r]/;
-/** Phones ("+14155551234") and negative numbers legitimately start with + or -.
- *  Only guard values that AREN'T plain numeric/phone shapes, so a real phone
- *  isn't mangled into "'+1415..." for every single row. */
-const NUMERIC_ISH = /^[+-]?[\d\s().-]+$/;
-
-function csvCell(value: unknown): string {
-  if (value == null) return "";
-  let s = String(value);
-  if (FORMULA_LEAD.test(s) && !NUMERIC_ISH.test(s)) s = `'${s}`;
-  // Quote when the value contains a delimiter, a quote, a newline, or edge
-  // whitespace that a parser would otherwise trim.
-  if (/[",\r\n]/.test(s) || s !== s.trim()) return `"${s.replace(/"/g, '""')}"`;
-  return s;
-}
 
 const bool = (v: unknown) => (v ? "Yes" : "No");
 

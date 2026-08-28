@@ -1,6 +1,7 @@
 import "server-only";
 
 import crypto from "node:crypto";
+import { count } from "./telemetry";
 import { normalizePhone } from "./utils";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -121,17 +122,40 @@ export function getPublicBaseUrl(req?: Request): string | null {
  * candidate validates — so a proxy hop (Cloudflare → Vercel) that rewrites the
  * host can't cause a false reject and silently drop real callbacks.
  *
- * Returns true (skips) when there's no auth token (demo / unconfigured) or when
- * TWILIO_SKIP_SIGNATURE=true is set — an emergency valve in case a specific
- * edge/proxy setup makes reconstruction diverge in production.
+ * Skip semantics (tightened in Phase 1):
+ *  - WHOLLY unconfigured (no account SID at all — demo mode): returns true;
+ *    Twilio can't be sending webhooks to a workspace with no account.
+ *  - HALF-configured (account SID present, auth token missing): fails CLOSED.
+ *    That's a real account whose callbacks we cannot verify — accepting them
+ *    unsigned would let anyone forge call-status events.
+ *  - TWILIO_SKIP_SIGNATURE=true remains the emergency valve for proxy setups
+ *    that break URL reconstruction — but in production it additionally requires
+ *    TWILIO_SKIP_SIGNATURE_ACK=I_ACCEPT_UNSIGNED_WEBHOOKS so it cannot be left
+ *    on by accident. Every unsigned acceptance is counted in telemetry.
  */
 export async function verifyTwilioSignature(
   req: Request,
   params: Record<string, string>,
 ): Promise<boolean> {
   const token = twilioConfig.authToken;
-  if (!token) return true;
-  if (process.env.TWILIO_SKIP_SIGNATURE === "true") return true;
+  if (!token) {
+    if (!twilioConfig.accountSid) return true; // demo — nothing to verify
+    console.error(
+      "[twilio] webhook rejected: TWILIO_ACCOUNT_SID is set but TWILIO_AUTH_TOKEN is missing, so signatures cannot be verified.",
+    );
+    return false;
+  }
+  if (process.env.TWILIO_SKIP_SIGNATURE === "true") {
+    const allowed =
+      process.env.VERCEL_ENV !== "production" ||
+      process.env.TWILIO_SKIP_SIGNATURE_ACK === "I_ACCEPT_UNSIGNED_WEBHOOKS";
+    if (allowed) {
+      count("webhook.unsigned_accepted");
+      return true;
+    }
+    // Production without the explicit ack: the valve is ignored and normal
+    // verification proceeds below.
+  }
 
   const signature = req.headers.get("x-twilio-signature");
   if (!signature) return false;

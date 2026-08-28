@@ -23,6 +23,7 @@ import { SectionCard } from "@/components/shared/section-card";
 import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { useConfirm } from "@/components/ui/confirm-dialog";
 import { Input, Label, Select, Textarea } from "@/components/ui/input";
 import { Modal } from "@/components/ui/modal";
 import type { OrgBilling, OrgBlueprint, OrgFeatures } from "@/lib/org/settings";
@@ -94,6 +95,7 @@ export function OrganizationsTab({
   const [wizard, setWizard] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [err, setErr] = useState("");
+  const confirmDialog = useConfirm();
 
   async function setStatus(o: Org, status: "active" | "suspended") {
     setBusy(o.id);
@@ -104,7 +106,13 @@ export function OrganizationsTab({
     else setErr(j.error ?? "Failed.");
   }
   async function remove(o: Org) {
-    if (!confirm(`Delete ${o.name}? Members are unassigned.`)) return;
+    const ok = await confirmDialog({
+      title: `Delete ${o.name}?`,
+      body: "Members are unassigned.",
+      tone: "danger",
+      confirmLabel: "Delete organization",
+    });
+    if (!ok) return;
     setBusy(o.id);
     const j = await api("DELETE", undefined, `?id=${encodeURIComponent(o.id)}`);
     setBusy(null);

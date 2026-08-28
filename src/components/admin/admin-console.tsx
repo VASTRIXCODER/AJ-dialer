@@ -34,6 +34,7 @@ import { SectionCard } from "@/components/shared/section-card";
 import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { useConfirm } from "@/components/ui/confirm-dialog";
 import { Input } from "@/components/ui/input";
 import { MAX_CALLER_IDS_PER_REP } from "@/lib/dialer/rotation";
 import type { Member, OrgCompany, OrgFull } from "@/lib/org/membership";
@@ -193,6 +194,7 @@ function MembersTab({
   members: Member[];
 }) {
   const router = useRouter();
+  const confirmDialog = useConfirm();
   const [busy, setBusy] = useState<string | null>(null);
   const [err, setErr] = useState("");
   // Which field was just copied ("link" | "code" | "invite"), for the ✓ swap.
@@ -498,15 +500,24 @@ function MembersTab({
               onRole={(r) => act({ id: m.id, action: "role", role: r }, m.id)}
               onPerms={(perms) => act({ id: m.id, action: "permissions", permissions: perms }, m.id)}
               onCallerIds={(ids) => act({ id: m.id, action: "callerIds", callerIds: ids }, m.id)}
-              onRemove={() => {
-                if (confirm(`Remove ${m.name || m.email} from ${org.name}?`))
+              onRemove={async () => {
+                if (
+                  await confirmDialog({
+                    title: `Remove ${m.name || m.email}?`,
+                    body: `They lose access to ${org.name}.`,
+                    tone: "danger",
+                    confirmLabel: "Remove member",
+                  })
+                )
                   act({ id: m.id, action: "remove" }, m.id);
               }}
-              onTransfer={() => {
+              onTransfer={async () => {
                 if (
-                  confirm(
-                    `Make ${m.name || m.email} the owner of ${org.name}? You'll be demoted to admin.`,
-                  )
+                  await confirmDialog({
+                    title: `Make ${m.name || m.email} the owner of ${org.name}?`,
+                    body: "You'll be demoted to admin.",
+                    confirmLabel: "Transfer ownership",
+                  })
                 )
                   act({ id: m.id, action: "transfer" }, m.id);
               }}
