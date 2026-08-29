@@ -62,6 +62,8 @@ export interface CommandCenterData {
    *  headline counts stay exact (COUNT queries), but the per-rep table and
    *  "leads worked" are computed from the scanned window and say so. */
   scanCapped: boolean;
+  /** True when the speed-to-lead median rode a capped sample, not the day. */
+  speedSampled: boolean;
   queues: {
     overdueCallbacks: number;
     unscheduledCallbacks: number;
@@ -121,7 +123,12 @@ async function readCommandCenter(input: {
       .order("started_at", { ascending: true })
       .order("id", { ascending: true })
       .range(page * PAGE, page * PAGE + PAGE - 1);
-    if (error) break;
+    if (error) {
+      // A failed page means the scan is INCOMPLETE — saying otherwise would
+      // render a truncated rep table as if it were the whole floor.
+      scanCapped = true;
+      break;
+    }
     const rows = (data ?? []) as Row[];
     calls.push(...rows);
     if (rows.length < PAGE) break;
@@ -146,13 +153,18 @@ async function readCommandCenter(input: {
       .eq("org_id", input.orgId)
       .is("archived_at", null)
       .gte("created_at", todayStartIso),
+    // !inner join on the lead: an opportunity whose lead was archived or put on
+    // the Do-Not-Call list is not workable, so counting it as "untouched work
+    // waiting" sends a supervisor after leads nobody may dial.
     admin
       .from("opportunities")
-      .select("id", { count: "exact", head: true })
+      .select("id, leads!inner(id)", { count: "exact", head: true })
       .eq("org_id", input.orgId)
       .eq("op_status", "open")
       .in("stage", ["new", "assigned"])
-      .eq("attempt_count", 0),
+      .eq("attempt_count", 0)
+      .is("leads.archived_at", null)
+      .neq("leads.status", "dnc"),
     admin
       .from("callbacks")
       .select("id", { count: "exact", head: true })
@@ -197,12 +209,16 @@ async function readCommandCenter(input: {
       .eq("org_id", input.orgId)
       .in("status", ["active", "waiting"])
       .limit(2000),
+    // Ordered, so the sample is the first 1,000 first-attempts of the day
+    // rather than whatever order the planner happened to return — an
+    // arbitrary sample would make the median wander between refreshes.
     admin
       .from("opportunities")
       .select("first_received_at, first_attempted_at")
       .eq("org_id", input.orgId)
       .gte("first_attempted_at", todayStartIso)
       .not("first_received_at", "is", null)
+      .order("first_attempted_at", { ascending: true })
       .limit(1000),
     admin
       .from("organization_members")
@@ -237,6 +253,8 @@ async function readCommandCenter(input: {
   if (sttRows.length >= 3) {
     today.speedToLeadMin = Math.round(sttRows[Math.floor(sttRows.length / 2)]);
   }
+  // Say so when the median is over a sample rather than the whole day.
+  const speedSampled = sttRows.length >= 1000;
 
   // ── Attention queues ───────────────────────────────────────────────────────
   const queues = {
@@ -309,5 +327,5 @@ async function readCommandCenter(input: {
     }),
   );
 
-  return { today, scanCapped, queues, leaks, reps, playbooks };
+  return { today, scanCapped, speedSampled, queues, leaks, reps, playbooks };
 }

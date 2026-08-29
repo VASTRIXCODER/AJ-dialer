@@ -24,6 +24,15 @@ export const dynamic = "force-dynamic";
 export async function GET() {
   const scope = await getScope();
   if (!scope?.orgId) return NextResponse.json({ cohorts: [] });
+  // Three exact COUNT scans over the org's whole lead table per request — not
+  // free, and reachable by anyone who can load the page.
+  const rl = rateLimit(`reactivation-list:${scope.userId}`, 60, 60_000);
+  if (!rl.ok) {
+    return NextResponse.json(
+      { cohorts: [], error: "Slow down." },
+      { status: 429, headers: { "Retry-After": String(rl.retryAfter) } },
+    );
+  }
   const orgWide = scope.supervisor;
   const counts = await Promise.all(
     REACTIVATION_COHORTS.map((cohort) =>

@@ -69,7 +69,7 @@ export default async function CommandCenterPage() {
     );
   }
 
-  const { today, scanCapped, queues, leaks, reps, playbooks } = data;
+  const { today, scanCapped, speedSampled, queues, leaks, reps, playbooks } = data;
   const attentionTotal =
     queues.overdueCallbacks +
     queues.unscheduledCallbacks +
@@ -97,7 +97,7 @@ export default async function CommandCenterPage() {
             accent="success"
           />
           <MetricCard
-            label="Appointments"
+            label={vocab.AppointmentNounPlural}
             value={String(today.appointments)}
             icon={CalendarCheck}
             accent="warning"
@@ -120,7 +120,9 @@ export default async function CommandCenterPage() {
             value={today.speedToLeadMin != null ? `${today.speedToLeadMin}m` : "—"}
             sub={
               today.speedToLeadMin != null
-                ? "median · first attempts today"
+                ? speedSampled
+                  ? "median · first 1,000 attempts today"
+                  : "median · first attempts today"
                 : "not enough data today"
             }
             icon={Timer}
@@ -252,7 +254,9 @@ export default async function CommandCenterPage() {
                   <th className="py-2 pr-3 font-bold">Rep</th>
                   <th className="py-2 pr-3 text-right font-bold">Dials</th>
                   <th className="py-2 pr-3 text-right font-bold">Conversations</th>
-                  <th className="py-2 text-right font-bold">Appointments</th>
+                  <th className="py-2 text-right font-bold">
+                    {vocab.AppointmentNounPlural}
+                  </th>
                 </tr>
               </thead>
               <tbody>

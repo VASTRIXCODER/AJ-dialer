@@ -268,7 +268,7 @@ export default async function TodayPage() {
       {/* Appointments today. */}
       {appointmentsToday.count > 0 && (
         <SectionCard
-          title="Appointments today"
+          title={`${vocab.AppointmentNounPlural} today`}
           description={`${appointmentsToday.count} on your calendar · today`}
         >
           <ul className="space-y-2">
@@ -346,7 +346,7 @@ export default async function TodayPage() {
             accent="success"
           />
           <MetricCard
-            label="Appointments booked"
+            label={`${vocab.AppointmentNounPlural} booked`}
             value={String(today.appointments)}
             icon={CalendarCheck}
             accent="warning"

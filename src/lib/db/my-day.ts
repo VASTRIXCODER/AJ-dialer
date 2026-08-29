@@ -128,7 +128,12 @@ async function readMyDay(input: {
   // Floating-timestamp day window (callbacks/appointments store agreed
   // wall-clock times as-is — the Phase 1 convention).
   const dayKey = zonedDayKey(now, orgTz);
-  const nextDayKey = zonedDayKey(new Date(now.getTime() + 86_400_000), orgTz);
+  // The next calendar day is derived from the date STRING, not from now+24h:
+  // on a DST fall-back day the zone has 25 hours, so +24h can still land on
+  // the same local date and collapse the day window to zero width.
+  const nextDayKey = new Date(Date.parse(`${dayKey}T00:00:00Z`) + 86_400_000)
+    .toISOString()
+    .slice(0, 10);
   const dayStart = `${dayKey}T00:00:00`;
   const dayEnd = `${nextDayKey}T00:00:00`;
   // "Now" in the SAME frame as those bounds. callbacks.due_at and

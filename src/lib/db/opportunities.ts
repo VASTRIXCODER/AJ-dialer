@@ -466,6 +466,9 @@ export async function reserveCallWorkItems(input: {
       .eq("org_id", input.orgId)
       .in("lead_id", input.leadIds.slice(0, 200))
       .in("type", [...CALL_WORK_KINDS])
+      // Never take an item explicitly assigned to someone else — the same rule
+      // app_claim_work_items enforces (owner_id is null or the claimant).
+      .or(`owner_id.is.null,owner_id.eq.${input.repId}`)
       // Reservable: pending, or a reservation somebody let lapse.
       .or(`status.eq.pending,and(status.eq.reserved,reserved_until.lt.${nowIso})`);
   } catch {

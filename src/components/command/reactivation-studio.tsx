@@ -82,28 +82,32 @@ export function ReactivationStudio() {
         return;
       }
       const def = reactivationCohort(c.key);
+      const ex = json.excluded;
+      const skipped = ex ? ex.openCallback + ex.held + ex.badPhone : 0;
+      // The exclusion accounting has to TRAVEL with the session: this card
+      // navigates to the dialer immediately, so a note set in local state here
+      // is unmounted before anyone can read it. The dialer shows the session
+      // summary, so that is where the skipped count belongs.
+      const skippedNote =
+        skipped > 0
+          ? ` · skipped ${skipped} (${[
+              ex!.openCallback ? `${ex!.openCallback} with open callbacks` : null,
+              ex!.held ? `${ex!.held} held by a rep` : null,
+              ex!.badPhone ? `${ex!.badPhone} without a number` : null,
+            ]
+              .filter(Boolean)
+              .join(", ")})`
+          : "";
       const meta: DialSessionMeta = {
         statuses: (def?.statuses ?? c.statuses) as LeadStatus[],
         strictOrder: true,
         refill: false,
-        summary: def
-          ? reactivationSummary(def, leads.length, vocab.leadNounPlural)
-          : `Reactivation · ${leads.length} ${vocab.leadNounPlural}`,
+        summary:
+          (def
+            ? reactivationSummary(def, leads.length, vocab.leadNounPlural)
+            : `Reactivation · ${leads.length} ${vocab.leadNounPlural}`) + skippedNote,
       };
       dialer.loadSession(leads, meta);
-      const ex = json.excluded;
-      const skipped = ex ? ex.openCallback + ex.held + ex.badPhone : 0;
-      if (skipped > 0) {
-        setNote(
-          `Loaded ${leads.length}. Skipped ${skipped}: ${[
-            ex!.openCallback ? `${ex!.openCallback} with open callbacks` : null,
-            ex!.held ? `${ex!.held} held by a rep` : null,
-            ex!.badPhone ? `${ex!.badPhone} without a number` : null,
-          ]
-            .filter(Boolean)
-            .join(", ")}.`,
-        );
-      }
       router.push("/dialer");
     } catch {
       setNote("Couldn't reach the server.");
@@ -129,8 +133,16 @@ export function ReactivationStudio() {
               <div className="min-w-0 flex-1">
                 <p className="text-sm font-semibold">
                   {c.label}{" "}
-                  <Badge tone="neutral" className="ml-1 align-middle tabular">
-                    {c.count}
+                  {/* "up to": this is the cohort's raw size. The exclusions the
+                      card promises (open callbacks, held leads, missing
+                      numbers) are applied when a list is actually built, so a
+                      bare number here would contradict the sentence below. */}
+                  <Badge
+                    tone="neutral"
+                    className="ml-1 align-middle tabular"
+                    title="Before exclusions — the loaded list is usually smaller"
+                  >
+                    up to {c.count}
                   </Badge>
                 </p>
                 <p className="text-xs text-muted-foreground">{hintFor(c)}</p>
