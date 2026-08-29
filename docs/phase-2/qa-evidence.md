@@ -356,6 +356,48 @@ than idle. 954 tests at this point; 14 new covering deferral timing, the freed
 execution row, the no-caps path, reassignment, and the validator's refusal
 message for each unavailable rule.
 
+### Decoration audit (4 lenses × verifier, 52 agents, 98 candidates)
+
+**The one caught live:** everything the engine produced was unreachable. All 7
+escalation signals had `lead_id` NULL — the hot queue rendered "Unknown
+contact" with no link and My Day could never promote them into who-next. Work
+items were created with neither `lead_id` nor `owner_id`, making them invisible
+to the who-next ladder AND the pre-call brief, never reserved when the rep
+claimed the lead, never completed when the disposition was filed, and absent
+from My Day entirely (its query keys on `owner_id`/`reserved_by`). Fixed before
+the first work item was due, and the 7 live signals were repaired in place
+through their opportunity.
+
+**Refused at publish** — each validated clean and then did nothing:
+
+| Refused | Why |
+|---|---|
+| 9 of 12 trigger events | no emitter; the playbook would publish and never run once. Inverts the earlier "events are inert until emitted" contract — that contract WAS the decoration |
+| `trigger.kind: "schedule"` | nothing reads `trigger.cron`; no evaluator exists |
+| `requiresApproval` | no approval queue, so the step ran unapproved |
+| `dueAtLocalTime` | only `dueInMinutes` reaches createWorkItem, so it became no due date |
+
+**Made real:** `wait.for.timezone` (accepted and ignored — every wait used the
+lead's zone, and the fallback was a hardcoded America/Chicago rather than the
+workspace's own); work-item **priority** in My Day's ordering (it selected
+`priority` and then ordered by date alone, so a playbook's priority-95 hot
+response sat behind older routine work).
+
+**Removed:** the pre-call brief's "Hot" badge (reads `hot_until`, which nothing
+writes — it could never light) and `EngineHealth.known` (added in this session
+and never read).
+
+**Deliberately left, with reasons:** ~12 dead DB columns
+(`work_items.escalation_at`/`scheduled_at`/`timezone`,
+`opportunities.owner_team`/`original_source`/`previous_opportunity_id`,
+`signals.confidence`, `playbooks.supersedes`) — dropping columns from a live
+database is destructive and needs an explicit decision. `signals.expires_at`
+stays unwritten because nothing claims signals expire, and silently vanishing
+an unresolved breach is worse than leaving it. Three items are features rather
+than decoration and are tracked as such: `opportunity_events` has no reader (a
+lead timeline), `app_claim_work_items` has no consumer (a work-queue flow), and
+`custom.*` conditions are never populated.
+
 **Still honestly absent (not decoration — no false claim is made):**
 escalations are in-app signals only; the notification outbox is
 appointment-shaped and trigger-fed, so nothing emails a manager.
