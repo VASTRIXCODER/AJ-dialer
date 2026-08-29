@@ -266,6 +266,55 @@ false`; and always confirm the deploy status rather than assuming a push
 shipped. `npm run build` cannot be trusted locally at all while three
 concurrent `next dev` servers share `.next`.
 
+## Slice S7 — 2026-08-29 (King's pipeline: first execution test)
+
+**The finding that framed the slice:** the orchestration engine had never run.
+Production held 0 playbooks, 0 instances, 0 executions, 0 work items and 0
+signals; no org had the master switch on; and `cron.job` carried only
+auto-dial, reconcile-ai and reconcile-data — no orchestrate job. Every prior
+test covered the PURE planning helpers, so the imperative shell was entirely
+unexecuted code.
+
+**Method:** a small in-memory PostgREST stand-in
+(`tests/helpers/fake-supabase.ts`) that enforces the real UNIQUE constraints
+from schema.sql — exactly-once execution, activation dedupe and signal dedupe
+ARE those constraints, so a fake without them proves nothing. It also mirrors
+`default now()` and parses offset-less timestamps as UTC the way Postgres does
+on the service connection, so floating-time tests don't depend on the machine
+they run on. `tests/orchestration-pipeline.test.ts` then RUNS the engine: 17
+tests over all four hops (event → activation → step execution → work
+items/signals/next actions), plus stop rules and all four kill switches.
+
+**Three bugs, all found by execution rather than reading:**
+1. **Instances could freeze permanently.** The exactly-once gate inserts an
+   execution row before acting; a tick that died between that insert and the
+   step advance left every later tick re-planning the same step, hitting the
+   same 23505 and `continue`ing without advancing. Now a duplicate key means
+   "already done" — skip the action, advance the instance.
+2. **`maxAttempts` compared the wrong two numbers.** `attemptsSinceActivation`
+   was filled from the opportunity's LIFETIME `attempt_count`, so the
+   no-answer follow-up playbook (cap 4, eligible under 6 attempts) stopped
+   instantly on any lead already dialed four times — exactly the leads it
+   exists to work. Now counted from `call_records` since the instance started,
+   and only when a cap is configured.
+3. **The promised-callback sweep read floating times as instants** — the same
+   convention error as the dashboards, but on the path that ESCALATES. A
+   promise still an hour away looked hours overdue, which would nudge owners
+   and raise hot work items over promises nobody had broken. `Date.parse` on
+   an offset-less string also reads the SERVER's zone, so the error changed
+   with where the code ran (0 minutes locally, 240 on Vercel) — the reason a
+   first version of the test passed for the wrong reason.
+
+**Silent-failure fix:** switching the master switch ON did nothing until the
+orchestrate cron was scheduled by hand, with no indication why. Every tick now
+stamps `app_settings.orchestration_last_tick_at` (PART 38 — additive, applied
+to the live DB) and Admin → Playbooks states whether the engine is running,
+stalled, or has never run.
+
+**Deliberately NOT done:** no org's orchestration was enabled and no cron was
+scheduled. That starts automated follow-through against 37,878 live
+opportunities and is the operator's decision.
+
 **Not yet evidenced (honest):** perf/a11y sweeps and multi-role/multi-tenant
 walkthroughs of the Phase 2 surfaces (only the Owner role on one org was
 loaded); the opportunity-parity check riding reconcile-data; orchestrate-cron
