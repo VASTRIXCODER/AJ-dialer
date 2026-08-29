@@ -7,6 +7,7 @@ import {
   campaigns as demoCampaigns,
   getLeadById as demoLeadById,
 } from "../data";
+import { UNKNOWN_CONSENT, type ConsentSnapshot } from "../consent/state";
 import { evaluateEligibility, type IneligibleReason } from "../dialer/eligibility";
 import { inferNumberLocation, type NumberLocation } from "../leads/area-code";
 import { DIALABLE_STATUSES } from "../leads/dialable";
@@ -175,6 +176,12 @@ export interface LeadPanel {
      */
     backfilled: boolean;
   } | null;
+  /**
+   * Permission to message this number. NEVER null: an absent ledger row is a
+   * real, meaningful state ("nobody has asked"), and returning null would let a
+   * surface skip the section on exactly the records that most need it.
+   */
+  consent: ConsentSnapshot;
   recordings: {
     id: string;
     startedAt: string;
@@ -389,6 +396,9 @@ async function demoPanel(leadId: string): Promise<LeadPanelResult> {
       // Sample recordings carry a placeholder "#" URL — nothing playable, so
       // the demo shows the honest empty state instead of a dead player.
       recordings: [],
+      // The demo book has no recorded provenance either — which is the honest
+      // demonstration, since it is also true of every real imported book.
+      consent: UNKNOWN_CONSENT,
       // Derived from the demo lead's own status through the real mapping, so
       // the section shows a coherent record rather than an invented one.
       opportunity: {
@@ -487,8 +497,19 @@ export async function getLeadPanelResult(leadId: string): Promise<LeadPanelResul
 
     const memberIds = [...new Set([ownerId, assignedRepId].filter(Boolean))] as string[];
 
-    const [members, pack, campaign, group, dncRow, appt, cb, recs, summaryRec, oppRow] =
-      await Promise.all([
+    const [
+      members,
+      pack,
+      campaign,
+      group,
+      dncRow,
+      appt,
+      cb,
+      recs,
+      summaryRec,
+      consentRow,
+      oppRow,
+    ] = await Promise.all([
         memberIds.length && orgId
           ? db
               .from("organization_members")
@@ -553,6 +574,17 @@ export async function getLeadPanelResult(leadId: string): Promise<LeadPanelResul
         // open one: a CLOSED opportunity is still the truth about this lead,
         // and hiding it would make a lost or suppressed record look like one
         // that was never worked at all.
+        // Consent state for this number. Read here rather than through
+        // getConsent so it joins the panel's single round of parallel reads.
+        digits && orgId
+          ? db
+              .from("consent_state")
+              .select("status, scope, source, captured_at")
+              .eq("org_id", orgId)
+              .eq("phone_digits", digits)
+              .eq("channel", "sms")
+              .maybeSingle()
+          : Promise.resolve({ data: null }),
         orgId
           ? db
               .from("opportunities")
@@ -591,6 +623,7 @@ export async function getLeadPanelResult(leadId: string): Promise<LeadPanelResul
     const cbData = one(cb);
     const sumData = one(summaryRec);
     const oppData = one(oppRow);
+    const consentData = one(consentRow);
 
     const panel: LeadPanel = {
       lead,
@@ -667,6 +700,17 @@ export async function getLeadPanelResult(leadId: string): Promise<LeadPanelResul
           url: playableRecordingUrl(str(r.recording_url)) ?? "",
         }))
         .filter((r) => Boolean(r.url)),
+      // No row is not "no data" — it is the answer "nobody has asked", which
+      // the send gate treats exactly like a refusal.
+      consent: consentData
+        ? {
+            status: String(consentData.status) === "granted" ? "granted" : "revoked",
+            scope:
+              String(consentData.scope) === "promotional" ? "promotional" : "transactional",
+            source: String(consentData.source ?? ""),
+            capturedAt: str(consentData.captured_at),
+          }
+        : UNKNOWN_CONSENT,
       opportunity: oppData
         ? {
             id: String(oppData.id),

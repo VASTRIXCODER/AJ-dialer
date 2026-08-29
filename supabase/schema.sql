@@ -4166,4 +4166,148 @@ alter table public.signals
   add column if not exists audience text not null default 'owner'
   check (audience in ('owner','managers'));
 
+-- ─────────────────────────────────────────────────────────────────────────────
+-- PART 40 — CONSENT LEDGER                                        [Phase 2 · W1]
+--
+-- Consent is keyed on the NUMBER, not the lead. leads.phone changes, the book
+-- contains duplicates of the same human, and consent can arrive before a lead
+-- row exists at all (someone texts in). lead_id is attribution, never identity.
+--
+-- THE RULE THIS SCHEMA EXISTS TO ENFORCE: absence of a row means `unknown`, and
+-- unknown is treated exactly like `revoked` for anything promotional. There is
+-- deliberately NO backfill. Consent provenance for the existing book is not
+-- known, and inventing a row for 37,000 people would be manufacturing evidence
+-- of permission nobody can point at. No row = no evidence = no promotional
+-- send, by construction, with zero migration risk.
+--
+-- DNC and consent both gate and neither replaces the other: DNC is suppression
+-- ("never contact this number"), consent is affirmative permission ("they said
+-- yes, here is what they said"). A number can be absent from DNC and still have
+-- no consent, which is the state almost every imported record is in.
+-- ─────────────────────────────────────────────────────────────────────────────
+
+-- The ledger. Append-only, like opportunity_events and for the same reason: it
+-- is the artifact you produce when someone asks you to prove permission.
+create table if not exists public.consent_events (
+  id            bigint generated always as identity primary key,
+  org_id        uuid not null,
+  -- Last 10 digits, matching dnc_numbers.phone_digits so the two agree about
+  -- what "the same number" means.
+  phone_digits  text not null,
+  channel       text not null check (channel in ('sms','voice','email')),
+  action        text not null check (action in ('granted','revoked')),
+  -- What they agreed to. An inbound-initiated conversation grants
+  -- 'transactional' only: they texted us, we may answer. It is never promoted
+  -- to 'promotional' by anything other than an explicit opt-in.
+  scope         text not null default 'transactional'
+                check (scope in ('transactional','promotional')),
+  source        text not null,
+  -- The words, AS SHOWN OR SAID. Not a pointer to a settings row: settings
+  -- change, and the artifact must not change with them.
+  evidence      text not null default '',
+  -- Where to find the original: a call record, a message, a form submission.
+  evidence_ref  text,
+  lead_id       uuid,
+  actor_id      uuid,
+  captured_at   timestamptz not null default now(),
+  created_at    timestamptz not null default now()
+);
+create index if not exists consent_events_key_idx
+  on public.consent_events (org_id, phone_digits, channel, captured_at desc);
+create index if not exists consent_events_lead_idx
+  on public.consent_events (lead_id) where (lead_id is not null);
+
+create or replace function public.app_consent_events_immutable() returns trigger
+language plpgsql as $fn$ begin raise exception 'consent_events is append-only'; end $fn$;
+drop trigger if exists consent_events_immutable on public.consent_events;
+create trigger consent_events_immutable
+  before update or delete on public.consent_events
+  for each row execute function public.app_consent_events_immutable();
+
+alter table public.consent_events enable row level security;
+drop policy if exists "consent_events org read" on public.consent_events;
+create policy "consent_events org read" on public.consent_events for select using (
+  public.app_is_superadmin() or (public.app_is_active() and public.app_is_org_member(org_id))
+);
+
+-- The projection the send gate point-reads. One row per (org, number, channel),
+-- always reflecting the most recent event. Revocation is a NEW EVENT plus an
+-- update here — never a delete: internal do-not-contact retention runs five
+-- years from the request, so the ledger has to keep the revocation itself.
+create table if not exists public.consent_state (
+  org_id       uuid not null,
+  phone_digits text not null,
+  channel      text not null check (channel in ('sms','voice','email')),
+  status       text not null check (status in ('granted','revoked')),
+  scope        text not null default 'transactional'
+               check (scope in ('transactional','promotional')),
+  source       text not null default '',
+  captured_at  timestamptz not null,
+  -- The ledger row this state was projected from, so any state can be traced
+  -- back to the words behind it.
+  event_id     bigint not null,
+  updated_at   timestamptz not null default now(),
+  primary key (org_id, phone_digits, channel)
+);
+create index if not exists consent_state_status_idx
+  on public.consent_state (org_id, channel, status);
+
+alter table public.consent_state enable row level security;
+drop policy if exists "consent_state org read" on public.consent_state;
+create policy "consent_state org read" on public.consent_state for select using (
+  public.app_is_superadmin() or (public.app_is_active() and public.app_is_org_member(org_id))
+);
+
+-- Record consent and project it in one statement, so the two can never
+-- disagree. A LATER captured_at always wins; an out-of-order arrival (a webhook
+-- retry, a backdated import) cannot demote a newer decision. Application code
+-- calls this rather than writing either table directly.
+create or replace function public.app_record_consent(
+  p_org uuid,
+  p_digits text,
+  p_channel text,
+  p_action text,
+  p_scope text,
+  p_source text,
+  p_evidence text default '',
+  p_evidence_ref text default null,
+  p_lead uuid default null,
+  p_actor uuid default null,
+  p_captured_at timestamptz default now()
+) returns bigint
+language plpgsql security definer set search_path = public as $$
+declare
+  v_id bigint;
+begin
+  insert into public.consent_events (
+    org_id, phone_digits, channel, action, scope, source,
+    evidence, evidence_ref, lead_id, actor_id, captured_at
+  ) values (
+    p_org, p_digits, p_channel, p_action, p_scope, p_source,
+    coalesce(p_evidence, ''), p_evidence_ref, p_lead, p_actor,
+    coalesce(p_captured_at, now())
+  ) returning id into v_id;
+
+  insert into public.consent_state (
+    org_id, phone_digits, channel, status, scope, source, captured_at, event_id, updated_at
+  ) values (
+    p_org, p_digits, p_channel, p_action, p_scope, p_source,
+    coalesce(p_captured_at, now()), v_id, now()
+  )
+  on conflict (org_id, phone_digits, channel) do update
+    set status      = excluded.status,
+        scope       = excluded.scope,
+        source      = excluded.source,
+        captured_at = excluded.captured_at,
+        event_id    = excluded.event_id,
+        updated_at  = now()
+    where excluded.captured_at >= public.consent_state.captured_at;
+
+  return v_id;
+end;
+$$;
+revoke all on function public.app_record_consent(
+  uuid, text, text, text, text, text, text, text, uuid, uuid, timestamptz
+) from public, anon, authenticated;
+
 notify pgrst, 'reload schema';

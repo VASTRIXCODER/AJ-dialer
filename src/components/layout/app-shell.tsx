@@ -13,6 +13,8 @@ import { DEFAULT_VOCABULARY, type OrgVocabulary } from "@/lib/org/vocabulary";
 import { AmbientBackground } from "./ambient-background";
 import { Sidebar } from "./sidebar";
 import { Topbar } from "./topbar";
+import type { Permission } from "@/lib/permissions";
+import { PermissionsProvider } from "./permissions";
 import { VocabularyProvider } from "./vocabulary";
 
 type Account = { name: string; email: string; initials: string };
@@ -72,6 +74,10 @@ export function AppShell({
 
   return (
     <VocabularyProvider value={vocabulary}>
+    {/* Outside Lead 360 so the drawer's sections can ask what the viewer may
+        do without every host threading a prop down to them. Display only —
+        every route re-checks server-side. */}
+    <PermissionsProvider value={permissions as Permission[]}>
     <DialerProvider config={dialerConfig}>
     {/* Inside Vocabulary + Dialer so the Lead 360 drawer reads the org's nouns
         and can be opened mid-call from any dialer surface without a remount. */}
@@ -137,6 +143,7 @@ export function AppShell({
     </div>
     </Lead360Provider>
     </DialerProvider>
+    </PermissionsProvider>
     </VocabularyProvider>
   );
 }

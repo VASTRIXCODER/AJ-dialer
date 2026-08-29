@@ -5,7 +5,9 @@ import { Tab, TabList, TabPanel, Tabs } from "@/components/ui/tabs";
 import type { LeadPanel } from "@/lib/db/lead-360";
 import type { TimelineItem } from "@/lib/db/lead-timeline";
 import { AiSummarySection } from "./ai-summary-section";
+import { useCan } from "@/components/layout/permissions";
 import { AutomationSection } from "./automation-section";
+import { ConsentSection } from "./consent-section";
 import { CustomFieldsSection } from "./custom-fields-section";
 import { DncSection } from "./dnc-section";
 import { OpportunitySection } from "./opportunity-section";
@@ -33,6 +35,7 @@ export function Lead360Content({
   onRefresh?: () => void;
 }) {
   const [tab, setTab] = useState("overview");
+  const canRecordConsent = useCan("consent.record");
   const dncHistory = timeline.filter((t) => t.kind === "dnc");
 
   return (
@@ -48,7 +51,16 @@ export function Lead360Content({
         <div className="space-y-4">
           <OwnershipSection panel={panel} />
           <OpportunitySection opportunity={panel.opportunity} />
+          {/* Consent sits beside DNC because the two are constantly confused:
+              one is suppression, the other is permission, and a number can be
+              clean on the first while having nothing recorded on the second. */}
           <DncSection panel={panel} history={dncHistory} />
+          <ConsentSection
+            leadId={panel.lead.id}
+            consent={panel.consent}
+            canRecord={canRecordConsent}
+            onRecorded={onRefresh}
+          />
           <LocationSection panel={panel} />
           <AiSummarySection summary={panel.aiSummary} />
           <CustomFieldsSection fields={panel.fields} />

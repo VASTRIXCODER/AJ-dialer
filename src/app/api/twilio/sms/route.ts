@@ -3,6 +3,7 @@ import {
   CUSTOMER_REVERSIBLE_SOURCES,
   removeFromDnc,
 } from "@/lib/db/dnc";
+import { recordConsent } from "@/lib/db/consent";
 import { suppressOpportunitiesForPhone } from "@/lib/db/opportunities";
 import { orgIdForCallerId } from "@/lib/org/membership";
 import { readVerifiedTwilioForm } from "@/lib/twilio";
@@ -73,6 +74,23 @@ export async function POST(req: Request) {
       } catch {
         /* the suppression above already stands on its own */
       }
+      // The withdrawal goes in the ledger too. dnc_numbers records THAT they
+      // are suppressed; the ledger records that they asked, when, and in whose
+      // words — which is what you produce when someone disputes it. Retention
+      // runs five years from the request, so this row is never deleted.
+      try {
+        await recordConsent({
+          orgId,
+          phone: from,
+          channel: "sms",
+          action: "revoked",
+          scope: "transactional",
+          source: "inbound_sms",
+          evidence: text.slice(0, 200),
+        });
+      } catch {
+        /* never allowed to block the opt-out */
+      }
     }
     return twiml(
       "You have been unsubscribed and will no longer be contacted. Reply START to opt back in.",
@@ -84,6 +102,23 @@ export async function POST(req: Request) {
   // re-open dialing on someone a rep marked Do Not Call on a call.
   if (orgId) {
     await removeFromDnc(orgId, from, { onlySources: CUSTOMER_REVERSIBLE_SOURCES });
+    // START grants TRANSACTIONAL only, never promotional. They asked us to stop
+    // ignoring them; they did not ask for marketing, and a one-word reply is
+    // not the affirmative express consent a promotional send requires. Moving
+    // to promotional takes its own capture, with its own evidence.
+    try {
+      await recordConsent({
+        orgId,
+        phone: from,
+        channel: "sms",
+        action: "granted",
+        scope: "transactional",
+        source: "inbound_sms",
+        evidence: text.slice(0, 200),
+      });
+    } catch {
+      /* the un-suppression above already stands on its own */
+    }
   }
   return twiml("You have been re-subscribed.");
 }

@@ -62,6 +62,7 @@ export const PERMISSIONS = [
   "crm.view", // open the CRM workspace (pipeline board, shared queue, audiences)
   "work.claim", // take unowned work off the shared queue — every role, or the queue is scenery
   "crm.pipeline.manage", // move a record's stage BY HAND — manager+, see the note below
+  "consent.record", // capture or withdraw permission to contact — every role
 ] as const;
 export type Permission = (typeof PERMISSIONS)[number];
 
@@ -93,6 +94,7 @@ export const ROLE_PERMISSIONS: Record<OrgRole, Permission[]> = {
     "crm.view",
     "work.claim",
     "crm.pipeline.manage",
+    "consent.record",
   ],
   // Reps dial and work leads. They get the MANUAL dialer; the AI dialer is gated
   // (managers+ only) unless the workspace is AI-only.
@@ -121,7 +123,17 @@ export const ROLE_PERMISSIONS: Record<OrgRole, Permission[]> = {
   // evidence behind it, which would make opportunity_events describe a sales
   // process that didn't happen. A manager correcting a mis-staged record is a
   // deliberate, attributable exception; a rep tidying their board is not.
-  rep: ["appointments.view", "appointments.manage", "crm.view", "work.claim"],
+  // consent.record is a REP permission on purpose. The moment someone agrees to
+  // be contacted is a moment on a phone call, and the rep is the only person
+  // there. Routing that through a manager guarantees it never gets captured,
+  // and an uncaptured yes is indistinguishable from a no.
+  rep: [
+    "appointments.view",
+    "appointments.manage",
+    "crm.view",
+    "work.claim",
+    "consent.record",
+  ],
 };
 
 export const PERMISSION_LABEL: Record<Permission, string> = {
@@ -151,6 +163,7 @@ export const PERMISSION_LABEL: Record<Permission, string> = {
   "crm.view": "Open the CRM workspace",
   "work.claim": "Claim work from the shared queue",
   "crm.pipeline.manage": "Move records between pipeline stages by hand",
+  "consent.record": "Record whether someone agreed to be contacted",
 };
 
 export function rolePermissions(role: OrgRole | null | undefined): Permission[] {
