@@ -31,7 +31,9 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { DncManager } from "@/components/admin/dnc-manager";
+import { MessageTemplates } from "@/components/admin/message-templates";
 import { MessagingReadiness } from "@/components/admin/messaging-readiness";
+import { MessagingSettingsPanel } from "@/components/admin/messaging-settings";
 import { PlaybooksPanel } from "@/components/admin/playbooks-panel";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
@@ -170,7 +172,18 @@ export function AdminConsole({
       </div>
 
       {tab === "playbooks" && <PlaybooksPanel />}
-      {tab === "messaging" && <MessagingReadiness canFix={has("org.edit")} />}
+      {tab === "messaging" && (
+        <div className="space-y-5">
+          <MessagingSettingsPanel
+            initial={org.settings.messaging}
+            canEdit={has("org.edit")}
+          />
+          <MessageTemplates canEdit={has("org.edit")} />
+          {/* The check goes LAST: it verifies what the two panels above claim,
+              and reading them in that order is the point. */}
+          <MessagingReadiness canFix={has("org.edit")} />
+        </div>
+      )}
       {tab === "dnc" && <DncManager canManage={has("org.edit")} />}
       {tab === "members" && (
         <MembersTab org={org} role={role} permissions={permissions} members={members} />

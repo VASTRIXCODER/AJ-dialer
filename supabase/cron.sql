@@ -155,6 +155,44 @@ begin
     $job$ select public.app_fire_cron('/api/cron/orchestrate') $job$);
 end $$;
 
+-- Phase 2 · messages — the send drain. NOT SCHEDULED YET, on purpose.
+--
+-- Its own job rather than a ride on reconcile-ai for two reasons: that job's
+-- 60-second budget already has about seven seconds spare, and a messaging
+-- incident has to be stoppable without also stopping the AI reconciler. One
+-- `select cron.unschedule('messages')` should silence exactly one thing.
+--
+-- THREE PRECONDITIONS, in this order, and the third is the one that bites:
+--
+--   1. /api/cron/messages has deployed.
+--   2. An org has turned settings.messaging.enabled on.
+--   3. Every SMS-capable number's MESSAGING webhook points at
+--      {app}/api/twilio/sms.
+--
+-- Number three is not a formality. Those webhooks currently point at
+-- ElevenLabs, which 404s inbound SMS — which is why `dnc_numbers` holds zero
+-- rows sourced from a text message across the platform's whole history. Send
+-- before fixing it and STOP replies are dropped on the floor while messages
+-- keep going out. Admin → Messaging checks all three against Twilio and will
+-- tell you which numbers are wrong.
+--
+-- The statusCallback route must also be live BEFORE the first send: Twilio does
+-- not replay delivery receipts, so anything sent earlier loses its outcome
+-- permanently. It ships in the same deploy as the drain, so this is satisfied
+-- by precondition 1 — worth knowing if either is ever deployed separately.
+--
+-- Then:
+-- do $$
+-- begin
+--   perform cron.unschedule('messages') where exists (select 1 from cron.job where jobname = 'messages');
+--   perform cron.schedule('messages', '* * * * *',
+--     $job$ select public.app_fire_cron('/api/cron/messages') $job$);
+-- end $$;
+--
+-- To stop it:  select cron.unschedule('messages');
+-- To pause without unscheduling (keeps approved rows intact, drain refuses):
+--   update public.app_settings set messaging_paused = true where id = 'global';
+
 -- ───────────────────────────────────────────────────────────────────────────
 -- Diagnostics (copy-paste)
 -- ───────────────────────────────────────────────────────────────────────────
