@@ -142,7 +142,7 @@ export class FakeSupabase {
 
 class FakeQuery implements PromiseLike<{ data: unknown; error: unknown; count?: number }> {
   private filters: Filter[] = [];
-  private mode: "select" | "insert" | "update" = "select";
+  private mode: "select" | "insert" | "update" | "delete" = "select";
   private payload: Row[] = [];
   private patch: Row = {};
   private wantSingle = false;
@@ -181,6 +181,13 @@ class FakeQuery implements PromiseLike<{ data: unknown; error: unknown; count?: 
     return this;
   }
 
+  delete() {
+    this.mode = "delete";
+    this.selected = false;
+    this.db.log.push({ table: this.table, op: "delete" });
+    return this;
+  }
+
   eq(col: string, val: unknown) {
     this.filters.push((r) => String(r[col] ?? "") === String(val ?? ""));
     return this;
@@ -211,6 +218,17 @@ class FakeQuery implements PromiseLike<{ data: unknown; error: unknown; count?: 
     } else {
       throw new Error(`FakeSupabase: unsupported not(${op})`);
     }
+    return this;
+  }
+  /** `%` is the only wildcard the codebase uses; `_` is not modelled. */
+  ilike(col: string, pattern: string) {
+    const rx = new RegExp(
+      `^${String(pattern)
+        .replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+        .replace(/%/g, ".*")}$`,
+      "i",
+    );
+    this.filters.push((r) => rx.test(String(r[col] ?? "")));
     return this;
   }
   lte(col: string, val: unknown) {
@@ -305,6 +323,13 @@ class FakeQuery implements PromiseLike<{ data: unknown; error: unknown; count?: 
       }
       const data = this.wantSingle ? (inserted[0] ?? null) : inserted;
       return { data: this.selected ? data : null, error: null };
+    }
+
+    if (this.mode === "delete") {
+      const hit = this.matching();
+      const keep = this.db.rows(this.table).filter((r) => !hit.includes(r));
+      this.db.tables.set(this.table, keep);
+      return { data: this.selected ? hit : null, error: null };
     }
 
     if (this.mode === "update") {

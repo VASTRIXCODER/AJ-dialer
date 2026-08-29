@@ -398,6 +398,73 @@ export async function createWorkItem(input: {
   }
 }
 
+/**
+ * Close every open opportunity carrying this number, because the person asked
+ * us to stop.
+ *
+ * `addToDnc` only writes the suppression list, which stops future DIALS — the
+ * dial paths scrub against it. It does not touch the opportunity, and a running
+ * playbook reads `opportunities.stage`. So before this existed, a customer who
+ * texted STOP was blocked from being called while every live playbook kept
+ * escalating them and kept creating call tasks about them.
+ *
+ * Suppresses ALL matching leads, not the first: a number legitimately appears
+ * on several rows in an imported book, and stopping one of them is not stopping.
+ * Never throws — an opt-out must not fail because of bookkeeping.
+ */
+export async function suppressOpportunitiesForPhone(input: {
+  orgId: string;
+  phone: string;
+  reason?: string;
+}): Promise<number> {
+  if (!isAdminConfigured() || !input.orgId) return 0;
+  const digits = String(input.phone ?? "").replace(/\D/g, "").slice(-10);
+  if (digits.length < 10) return 0;
+  try {
+    const admin = createAdminClient();
+    // ilike is a coarse prefilter; the exact last-10 comparison happens here so
+    // "5551234567" can't match "19995551234567".
+    const { data: leadRows } = await admin
+      .from("leads")
+      .select("id, phone")
+      .eq("org_id", input.orgId)
+      .ilike("phone", `%${digits}%`)
+      .limit(50);
+    const leadIds = ((leadRows ?? []) as Record<string, unknown>[])
+      .filter(
+        (l) => String(l.phone ?? "").replace(/\D/g, "").slice(-10) === digits,
+      )
+      .map((l) => String(l.id));
+    if (!leadIds.length) return 0;
+
+    const { data: opps } = await admin
+      .from("opportunities")
+      .select("id, stage")
+      .eq("org_id", input.orgId)
+      .in("lead_id", leadIds)
+      .neq("op_status", "closed");
+
+    let closed = 0;
+    for (const o of (opps ?? []) as Record<string, unknown>[]) {
+      const from = String(o.stage ?? "new");
+      if (from === "dnc_suppressed") continue;
+      const ok = await transitionOpportunityStage({
+        opportunityId: String(o.id),
+        orgId: input.orgId,
+        from: from as OpportunityStage,
+        to: "dnc_suppressed",
+        actor: "system",
+        reason: input.reason ?? "opt_out",
+      });
+      if (ok) closed += 1;
+    }
+    return closed;
+  } catch {
+    count("opportunity.suppress_fail", 1, { orgId: input.orgId });
+    return 0;
+  }
+}
+
 /** The work-item kinds a phone call satisfies. */
 export const CALL_WORK_KINDS = [
   "first_call",

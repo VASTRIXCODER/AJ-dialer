@@ -1,4 +1,9 @@
-import { addToDnc, removeFromDnc } from "@/lib/db/dnc";
+import {
+  addToDnc,
+  CUSTOMER_REVERSIBLE_SOURCES,
+  removeFromDnc,
+} from "@/lib/db/dnc";
+import { suppressOpportunitiesForPhone } from "@/lib/db/opportunities";
 import { orgIdForCallerId } from "@/lib/org/membership";
 import { readVerifiedTwilioForm } from "@/lib/twilio";
 
@@ -51,14 +56,34 @@ export async function POST(req: Request) {
 
   if (isStop) {
     if (orgId) {
+      // Suppression FIRST and on its own — the legally required half must not
+      // be able to fail because of anything that follows it.
       await addToDnc({ orgId, phone: from, reason: "Inbound SMS STOP", source: "sms_stop" });
+      // Then stop the automation. addToDnc only writes the suppression list,
+      // which stops future dials; a running playbook reads the opportunity's
+      // stage, so without this a customer who just said stop keeps generating
+      // escalations and call tasks. Deliberately awaited (an opt-out that only
+      // half-lands is the one race worth paying for) but never allowed to throw.
+      try {
+        await suppressOpportunitiesForPhone({
+          orgId,
+          phone: from,
+          reason: "sms_stop",
+        });
+      } catch {
+        /* the suppression above already stands on its own */
+      }
     }
     return twiml(
       "You have been unsubscribed and will no longer be contacted. Reply START to opt back in.",
     );
   }
 
-  // START / opt back in.
-  if (orgId) await removeFromDnc(orgId, from);
+  // START / opt back in — but only from a texting opt-out. See
+  // CUSTOMER_REVERSIBLE_SOURCES: "YES" is a START word, and it must not
+  // re-open dialing on someone a rep marked Do Not Call on a call.
+  if (orgId) {
+    await removeFromDnc(orgId, from, { onlySources: CUSTOMER_REVERSIBLE_SOURCES });
+  }
   return twiml("You have been re-subscribed.");
 }

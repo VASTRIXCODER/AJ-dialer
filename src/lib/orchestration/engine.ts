@@ -1,5 +1,6 @@
 import "server-only";
 
+import { dncKey, getDncDigits } from "@/lib/db/dnc";
 import { createWorkItem } from "@/lib/db/opportunities";
 import { mergeSettings } from "@/lib/org/settings";
 import { createAdminClient, isAdminConfigured } from "@/lib/supabase/admin";
@@ -93,7 +94,7 @@ async function callbackState(
 async function stopSnapshot(
   admin: ReturnType<typeof createAdminClient>,
   inst: InstanceRow,
-  opts?: { maxAttempts?: number; needsCallbackState?: boolean },
+  opts?: { maxAttempts?: number; needsCallbackState?: boolean; suppressed?: boolean },
 ): Promise<(StopSnapshot & { leadId: string | null; ownerId: string | null }) | null> {
   const { data: opp } = await admin
     .from("opportunities")
@@ -111,7 +112,9 @@ async function stopSnapshot(
   return {
     leadId: opp.lead_id ? String(opp.lead_id) : null,
     ownerId: opp.owner_id ? String(opp.owner_id) : null,
-    dncOrOptOut: stage === "dnc_suppressed",
+    // Either the stage says so, or the org's suppression list does. The
+    // second half is what makes an inbound STOP stop a running playbook.
+    dncOrOptOut: stage === "dnc_suppressed" || opts?.suppressed === true,
     opportunityClosed: String(opp.op_status) === "closed",
     managerPause: String(opp.op_status) === "paused",
     contacted: touchedSince(opp.first_contacted_at),
@@ -328,6 +331,40 @@ export async function orchestrationTick(now = new Date()): Promise<TickResult> {
     const orgTz = new Map(
       (orgs ?? []).map((o) => [String(o.id), String(o.timezone ?? "") || "America/Chicago"]),
     );
+    // Suppression, batched. `dnc_or_opt_out` is ALWAYS enforced, so this is
+    // needed for every instance — but it resolves to two reads per tick rather
+    // than two per instance.
+    //
+    // Why it exists at all: addToDnc writes dnc_numbers and nothing else, while
+    // the snapshot below derived opt-out purely from opportunities.stage. A
+    // customer who texted STOP was therefore blocked from being DIALED while
+    // every running playbook kept escalating them. Reading the suppression list
+    // itself makes the rule hold for any opt-out path, including ones that
+    // forget the stage transition.
+    const oppIds = [...new Set(instances.map((i) => String(i.opportunity_id)))];
+    const { data: oppLeads } = await admin
+      .from("opportunities")
+      .select("id, lead_id")
+      .in("id", oppIds);
+    const leadIdByOpp = new Map(
+      ((oppLeads ?? []) as Record<string, unknown>[])
+        .filter((o) => o.lead_id != null)
+        .map((o) => [String(o.id), String(o.lead_id)]),
+    );
+    const leadIds = [...new Set(leadIdByOpp.values())];
+    const phoneByLead = new Map<string, string>();
+    if (leadIds.length) {
+      const { data: leadRows } = await admin
+        .from("leads")
+        .select("id, phone")
+        .in("id", leadIds);
+      for (const l of (leadRows ?? []) as Record<string, unknown>[]) {
+        phoneByLead.set(String(l.id), String(l.phone ?? ""));
+      }
+    }
+    const dncByOrg = new Map<string, Set<string>>();
+    for (const orgId of orgIds) dncByOrg.set(orgId, await getDncDigits(orgId));
+
     const pbIds = [...new Set(instances.map((i) => String(i.playbook_id)))];
     const { data: pbs } = await admin
       .from("playbooks")
@@ -362,10 +399,18 @@ export async function orchestrationTick(now = new Date()): Promise<TickResult> {
 
         // Kill switch 4 — stop rules, before EVERY action.
         const rules = resolveStopRules(def);
+        const leadPhone = phoneByLead.get(
+          leadIdByOpp.get(String(inst.opportunity_id)) ?? "",
+        );
+        const suppressed =
+          leadPhone != null &&
+          Boolean(dncKey(leadPhone)) &&
+          (dncByOrg.get(String(inst.org_id))?.has(dncKey(leadPhone)) ?? false);
         const snap = await stopSnapshot(admin, inst, {
           maxAttempts: def.stop?.maxAttempts,
           needsCallbackState:
             rules.has("callback_completed") || rules.has("callback_set"),
+          suppressed,
         });
         if (!snap) {
           await endInstance(admin, inst, "stopped", "opportunity_missing");

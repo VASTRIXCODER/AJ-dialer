@@ -128,16 +128,32 @@ export async function addManyToDnc(input: {
 }
 
 /** Remove one number from the org's suppression list. */
-export async function removeFromDnc(orgId: string, phone: string): Promise<boolean> {
+/**
+ * Sources a customer's own "START" may lift. Texting START undoes a texting
+ * opt-out — it does not undo a rep marking someone Do Not Call on a phone
+ * call. Those are different requests from different conversations, and
+ * "YES" is in START_WORDS, so a one-word reply could otherwise silently
+ * re-open dialing on someone who asked a human to stop calling them.
+ * A manual removal (no restriction) is still available in Admin.
+ */
+export const CUSTOMER_REVERSIBLE_SOURCES = ["sms_stop", "twilio_opt_out"];
+
+export async function removeFromDnc(
+  orgId: string,
+  phone: string,
+  opts?: { onlySources?: string[] },
+): Promise<boolean> {
   const key = dncKey(phone);
   if (!orgId || !key || !isAdminConfigured()) return false;
   try {
     const admin = createAdminClient();
-    const { error } = await admin
+    let q = admin
       .from("dnc_numbers")
       .delete()
       .eq("org_id", orgId)
       .eq("phone_digits", key);
+    if (opts?.onlySources?.length) q = q.in("source", opts.onlySources);
+    const { error } = await q;
     if (!error) {
       logDncEventForPhone({ orgId, phone, action: "removed", source: "manual" });
     }
