@@ -7,7 +7,9 @@ import {
   stampOpportunityTouch,
   transitionOpportunityStage,
 } from "@/lib/db/opportunities";
+import { floatingToUtcIso } from "@/lib/appointments/time";
 import { emitOrchestrationEvent } from "@/lib/orchestration/events";
+import { createAdminClient, isAdminConfigured } from "@/lib/supabase/admin";
 import { nextActionForOutcome } from "./next-action";
 import { stageForLeadStatus, type OpportunityStage } from "./stage-machine";
 import type { CallOutcome, LeadStatus } from "@/lib/types";
@@ -43,6 +45,33 @@ function stageForOutcome(outcome: CallOutcome | null): OpportunityStage | null {
     default:
       return null;
   }
+}
+
+// The org's timezone, cached briefly: the agreed callback/appointment times
+// arrive as FLOATING wall clocks and next_action_due_at is a genuinely-UTC
+// column (app_pipeline_leaks compares it against now()), so converting needs
+// the zone. Cheap indexed read, and a stale-by-minutes zone is harmless.
+const tzCache = new Map<string, { tz: string; at: number }>();
+const TZ_TTL_MS = 300_000;
+
+async function orgTimezoneFor(orgId: string): Promise<string> {
+  const hit = tzCache.get(orgId);
+  if (hit && Date.now() - hit.at < TZ_TTL_MS) return hit.tz;
+  let tz = "America/Chicago";
+  if (isAdminConfigured()) {
+    try {
+      const { data } = await createAdminClient()
+        .from("organizations")
+        .select("timezone")
+        .eq("id", orgId)
+        .maybeSingle();
+      if (data?.timezone) tz = String(data.timezone);
+    } catch {
+      /* default zone is a fine fallback for a bookkeeping stamp */
+    }
+  }
+  tzCache.set(orgId, { tz, at: Date.now() });
+  return tz;
 }
 
 export async function syncOpportunityAfterCall(input: {
@@ -103,9 +132,15 @@ export async function syncOpportunityAfterCall(input: {
     // P2.3: every disposition leaves an explicit "what happens next, when" —
     // callback/appointment times when they were agreed, deterministic
     // follow-up windows otherwise, cleared on closing outcomes.
+    // The agreed times arrive FLOATING; next_action_due_at is compared against
+    // now() by app_pipeline_leaks, so it must hold a real UTC instant. Mixing
+    // the two conventions in one column made a 5pm promise read as overdue —
+    // and a leak — from midday.
+    const needsTz = Boolean(input.callbackAt || input.appointmentAt);
+    const tz = needsTz ? await orgTimezoneFor(input.orgId) : "UTC";
     const nextAction = nextActionForOutcome(input.outcome, {
-      callbackAt: input.callbackAt ?? null,
-      appointmentAt: input.appointmentAt ?? null,
+      callbackAt: floatingToUtcIso(input.callbackAt, tz),
+      appointmentAt: floatingToUtcIso(input.appointmentAt, tz),
     });
     if (nextAction) {
       await setOpportunityNextAction({

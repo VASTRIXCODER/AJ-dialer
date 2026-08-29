@@ -17,6 +17,7 @@ import { PageContainer, PageHeader } from "@/components/shared/page-header";
 import { Badge } from "@/components/ui/badge";
 import { buttonVariants } from "@/components/ui/button";
 import { SectionCard } from "@/components/shared/section-card";
+import { floatingRelativeTime } from "@/lib/appointments/time";
 import { dialDeepLink } from "@/lib/dialer/deep-link";
 import { getMyDay, type MyDayData } from "@/lib/db/my-day";
 import { getScope } from "@/lib/db/scope";
@@ -65,8 +66,16 @@ export default async function TodayPage() {
     );
   }
 
-  const { callbacks, workItems, signals, appointmentsToday, today, assignments, whoNext } =
-    data;
+  const {
+    callbacks,
+    workItems,
+    signals,
+    appointmentsToday,
+    today,
+    assignments,
+    whoNext,
+    nowFloating,
+  } = data;
   // Only link to destinations this workspace actually has turned on — a link
   // into a disabled feature is a dead end, not a shortcut.
   const features = viewer.org?.settings.features;
@@ -183,7 +192,11 @@ export default async function TodayPage() {
                       {cb.name || formatPhone(cb.phone)}
                     </span>
                     <span className="shrink-0 text-xs text-muted-foreground tabular">
-                      {cb.dueAt ? relativeTime(cb.dueAt) : "no time set"}
+                      {/* Floating wall clock vs floating now — see
+                          floatingRelativeTime. */}
+                      {cb.dueAt
+                        ? floatingRelativeTime(cb.dueAt, nowFloating)
+                        : "no time set"}
                     </span>
                   </li>
                 ))}
@@ -265,7 +278,9 @@ export default async function TodayPage() {
                 <span className="min-w-0 flex-1 truncate font-medium">{a.name || "—"}</span>
                 <span className="shrink-0 text-xs text-muted-foreground">
                   {a.scheduledLabel ||
-                    (a.scheduledAt ? relativeTime(a.scheduledAt) : "no time")}
+                    (a.scheduledAt
+                      ? floatingRelativeTime(a.scheduledAt, nowFloating)
+                      : "no time")}
                 </span>
               </li>
             ))}

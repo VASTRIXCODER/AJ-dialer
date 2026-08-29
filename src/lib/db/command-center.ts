@@ -1,7 +1,7 @@
 import "server-only";
 
 import { CONNECTED_OUTCOMES } from "../call-analytics";
-import { zonedDayStartMs } from "../dialer/schedule";
+import { zonedDayStartMs, zonedFloatingNow } from "../dialer/schedule";
 import { createAdminClient, isAdminConfigured } from "../supabase/admin";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -158,7 +158,9 @@ async function readCommandCenter(input: {
       .select("id", { count: "exact", head: true })
       .eq("org_id", input.orgId)
       .not("status", "in", '("completed","cancelled")')
-      .lte("due_at", nowIso),
+      // Floating-against-floating: due_at holds an offset-less wall clock, so
+      // a real UTC instant here would call a 5pm promise overdue at midday.
+      .lte("due_at", zonedFloatingNow(new Date(), input.orgTz)),
     admin
       .from("callbacks")
       .select("id", { count: "exact", head: true })

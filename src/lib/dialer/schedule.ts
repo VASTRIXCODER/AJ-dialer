@@ -22,6 +22,46 @@ const DAY_LABEL = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 // UTC and is cached under its own key so the fallback path is paid at most once.
 const dayHourFmts = new Map<string, Intl.DateTimeFormat>();
 const dayKeyFmts = new Map<string, Intl.DateTimeFormat>();
+const floatingFmts = new Map<string, Intl.DateTimeFormat>();
+
+function floatingFmt(timezone: string): Intl.DateTimeFormat {
+  const tz = timezone || "America/Chicago";
+  let f = floatingFmts.get(tz);
+  if (!f) {
+    // sv-SE renders "YYYY-MM-DD HH:mm:ss" — one space away from the floating
+    // wall-clock shape the app stores.
+    const opts: Intl.DateTimeFormatOptions = {
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: false,
+    };
+    try {
+      f = new Intl.DateTimeFormat("sv-SE", { timeZone: tz, ...opts });
+    } catch {
+      f = new Intl.DateTimeFormat("sv-SE", { timeZone: "UTC", ...opts });
+    }
+    floatingFmts.set(tz, f);
+  }
+  return f;
+}
+
+/**
+ * "Now" as a FLOATING wall-clock string in `timezone` — "2026-08-29T15:00:00".
+ *
+ * This is the only correct right-hand side for a comparison against
+ * `callbacks.due_at` or `appointments.scheduled_at`, which store offset-less
+ * wall-clock strings (see src/lib/appointments/time.ts and the offset guard in
+ * db/callbacks.ts `rescheduleCallback`). Comparing those columns against
+ * `new Date().toISOString()` instead shifts every verdict by the zone's UTC
+ * offset, which reads a promise due at 5pm as overdue from midday.
+ */
+export function zonedFloatingNow(at: Date, timezone: string): string {
+  return floatingFmt(timezone).format(at).replace(" ", "T");
+}
 
 function dayHourFmt(timezone: string): Intl.DateTimeFormat {
   const tz = timezone || "America/Chicago";

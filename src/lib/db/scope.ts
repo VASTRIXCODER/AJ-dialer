@@ -1,6 +1,7 @@
 import "server-only";
 
 import { cache } from "react";
+import { isSupabaseConfigured } from "../supabase/config";
 import { createClient } from "../supabase/server";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -20,6 +21,11 @@ export interface Scope {
 // call getScope() during one render — cache() collapses the repeated auth +
 // profiles lookups to one.
 export const getScope = cache(async (): Promise<Scope | null> => {
+  // Demo mode: createServerClient THROWS on empty credentials ("Your project's
+  // URL and Key are required"), so calling through would take down every page
+  // that resolves a scope during render. No Supabase means no scope — every
+  // caller already handles null.
+  if (!isSupabaseConfigured()) return null;
   const supabase = await createClient();
   const {
     data: { user },

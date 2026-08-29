@@ -61,6 +61,106 @@ export function parseFloating(value: string | null | undefined): Date | null {
   return Number.isNaN(d.getTime()) ? null : d;
 }
 
+/**
+ * "in 2 hours" / "3 hours ago" for a FLOATING value, judged against a floating
+ * "now" in the same zone (see zonedFloatingNow in dialer/schedule.ts).
+ *
+ * Both sides are wall-clock strings in one zone, so parsing each as if it were
+ * UTC cancels the zone out and leaves the true signed difference. Passing a
+ * floating value to the plain `relativeTime()` instead reads it in the
+ * server's zone, which shifts every promise by the org's UTC offset — the
+ * reason a callback due at 5pm rendered as "1 hour ago" at midday.
+ */
+export function floatingRelativeTime(
+  value: string | null | undefined,
+  floatingNow: string,
+): string {
+  const asUtc = (v: string): number => {
+    const m = /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::(\d{2}))?/.exec(v);
+    if (!m) return Number.NaN;
+    return Date.UTC(
+      Number(m[1]),
+      Number(m[2]) - 1,
+      Number(m[3]),
+      Number(m[4]),
+      Number(m[5]),
+      Number(m[6] ?? 0),
+    );
+  };
+  const then = value ? asUtc(String(value)) : Number.NaN;
+  const now = asUtc(floatingNow);
+  if (Number.isNaN(then) || Number.isNaN(now)) return "";
+  const diffMs = then - now;
+  const abs = Math.abs(diffMs);
+  const mins = Math.round(abs / 60_000);
+  const hours = Math.round(abs / 3_600_000);
+  const days = Math.round(abs / 86_400_000);
+  const rtf = new Intl.RelativeTimeFormat("en", { numeric: "auto" });
+  if (mins < 1) return "now";
+  const sign = diffMs < 0 ? -1 : 1;
+  if (mins < 60) return rtf.format(sign * mins, "minute");
+  if (hours < 24) return rtf.format(sign * hours, "hour");
+  return rtf.format(sign * days, "day");
+}
+
+/** Wall-clock parts of a floating string as if they were UTC. NaN when unparseable. */
+function floatingAsUtcMs(value: string): number {
+  const m = /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::(\d{2}))?/.exec(value);
+  if (!m) return Number.NaN;
+  return Date.UTC(
+    Number(m[1]),
+    Number(m[2]) - 1,
+    Number(m[3]),
+    Number(m[4]),
+    Number(m[5]),
+    Number(m[6] ?? 0),
+  );
+}
+
+/**
+ * FLOATING wall clock in `timezone` → the real UTC instant it names.
+ *
+ * The inverse of the storage convention, needed wherever a promised time has
+ * to live in a genuinely-UTC column (opportunities.next_action_due_at, which
+ * Postgres compares against now() inside app_pipeline_leaks). Storing the
+ * floating digits there instead makes a 5pm promise look overdue from midday.
+ *
+ * Two passes so DST boundaries land correctly: the offset is sampled at the
+ * naive guess, then re-sampled at the corrected instant, which is the standard
+ * fix for the hour where the offset itself changes.
+ */
+export function floatingToUtcIso(
+  value: string | null | undefined,
+  timezone: string,
+): string | null {
+  if (!value) return null;
+  const wallMs = floatingAsUtcMs(String(value));
+  if (Number.isNaN(wallMs)) return null;
+  const fmt = (ms: number): number => {
+    // What wall clock does this instant show in `timezone`?
+    const parts = new Intl.DateTimeFormat("sv-SE", {
+      timeZone: timezone || "UTC",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: false,
+    }).format(new Date(ms));
+    return floatingAsUtcMs(parts.replace(" ", "T"));
+  };
+  try {
+    const offset1 = fmt(wallMs) - wallMs;
+    let ts = wallMs - offset1;
+    const offset2 = fmt(ts) - ts;
+    if (offset2 !== offset1) ts = wallMs - offset2;
+    return new Date(ts).toISOString();
+  } catch {
+    return null;
+  }
+}
+
 /** Serialize a Date's LOCAL wall clock back to the offset-less storage form. */
 export function toFloatingString(d: Date): string {
   return (

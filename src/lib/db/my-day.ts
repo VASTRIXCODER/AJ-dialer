@@ -5,6 +5,7 @@ import {
   isWithinOrgHours,
   zonedDayKey,
   zonedDayStartMs,
+  zonedFloatingNow,
   type OrgHours,
 } from "../dialer/schedule";
 import { createAdminClient, isAdminConfigured } from "../supabase/admin";
@@ -92,6 +93,12 @@ export interface MyDayData {
   today: { dials: number; conversations: number; appointments: number; talkSec: number };
   assignments: { id: string; label: string; worked: number; total: number }[];
   whoNext: WhoNext | null;
+  /**
+   * "Now" as a floating wall clock in the org's zone. The page renders callback
+   * and appointment times against THIS, not against a real UTC instant — those
+   * columns store offset-less wall clocks (see floatingRelativeTime).
+   */
+  nowFloating: string;
 }
 
 export async function getMyDay(input: {
@@ -124,6 +131,12 @@ async function readMyDay(input: {
   const nextDayKey = zonedDayKey(new Date(now.getTime() + 86_400_000), orgTz);
   const dayStart = `${dayKey}T00:00:00`;
   const dayEnd = `${nextDayKey}T00:00:00`;
+  // "Now" in the SAME frame as those bounds. callbacks.due_at and
+  // appointments.scheduled_at hold offset-less wall-clock strings, so the only
+  // correct comparison is floating-against-floating; using the real UTC instant
+  // here reads a 5pm promise as overdue from midday (and, after the day's UTC
+  // rollover, makes the "due later today" range empty every evening).
+  const floatingNow = zonedFloatingNow(now, orgTz);
   // Real-UTC day bound for call_records.started_at.
   const todayStartIso = new Date(zonedDayStartMs(now.getTime(), orgTz)).toISOString();
 
@@ -153,8 +166,8 @@ async function readMyDay(input: {
 
   const [cbOverdueRes, cbTodayRes, cbUnschedRes, dialsRes, convosRes, apptDoneRes] =
     await Promise.all([
-      openMine().lte("due_at", nowIso),
-      openMine().gt("due_at", nowIso).lt("due_at", dayEnd),
+      openMine().lte("due_at", floatingNow),
+      openMine().gt("due_at", floatingNow).lt("due_at", dayEnd),
       openMine().is("due_at", null),
       myCallsToday(),
       myCallsToday().or(
@@ -162,6 +175,25 @@ async function readMyDay(input: {
       ),
       myCallsToday().eq("outcome", "appointment_booked"),
     ]);
+
+  // The other two headline counts, for the same reason: a page limit is not a
+  // total, and "+N more open tasks" derived from a saturated value lies twice.
+  const [openWorkRes, apptTodayRes] = await Promise.all([
+    admin
+      .from("work_items")
+      .select("id", { count: "exact", head: true })
+      .eq("org_id", scope.orgId)
+      .in("status", ["pending", "reserved", "in_progress", "waiting"])
+      .or(`owner_id.eq.${scope.userId},reserved_by.eq.${scope.userId}`),
+    admin
+      .from("appointments")
+      .select("id", { count: "exact", head: true })
+      .eq("org_id", scope.orgId)
+      .neq("status", "cancelled")
+      .or(mineCallback)
+      .gte("scheduled_at", dayStart)
+      .lt("scheduled_at", dayEnd),
+  ]);
 
   const [cbRes, wiRes, sigRes, apptRes, callsRes, assignments] = await Promise.all([
     admin
@@ -188,7 +220,11 @@ async function readMyDay(input: {
       .or(`expires_at.is.null,expires_at.gt.${nowIso}`)
       .order("severity", { ascending: false })
       .order("detected_at", { ascending: false })
-      .limit(25),
+      // Ownership can only be resolved through opportunities (signals carry no
+      // owner column), so the filter happens after the fetch. The page is
+      // therefore generous: a small page could be entirely other reps' signals
+      // and leave this rep seeing none of their own.
+      .limit(200),
     admin
       .from("appointments")
       .select("id, lead_id, lead_name, scheduled_at, scheduled_label, status")
@@ -229,7 +265,7 @@ async function readMyDay(input: {
 
   const wiRows = (wiRes.data ?? []) as Row[];
   const workItems = {
-    open: wiRows.length,
+    open: openWorkRes.count ?? wiRows.length,
     items: wiRows.slice(0, 5).map(
       (r): MyDayWorkItem => ({
         id: s(r.id),
@@ -286,7 +322,7 @@ async function readMyDay(input: {
 
   const apptRows = (apptRes.data ?? []) as Row[];
   const appointmentsToday = {
-    count: apptRows.length,
+    count: apptTodayRes.count ?? apptRows.length,
     items: apptRows.slice(0, 5).map(
       (r): MyDayAppointment => ({
         id: s(r.id),
@@ -330,7 +366,7 @@ async function readMyDay(input: {
     callbackId: string | null;
   }
   const candidates: Candidate[] = [];
-  for (const r of cbRows.filter((r) => r.lead_id && r.due_at && s(r.due_at) <= nowIso)) {
+  for (const r of cbRows.filter((r) => r.lead_id && r.due_at && s(r.due_at) <= floatingNow)) {
     candidates.push({
       leadId: s(r.lead_id),
       reason: "You promised this call back — it's due now.",
@@ -357,7 +393,7 @@ async function readMyDay(input: {
     });
   }
   for (const r of cbRows.filter(
-    (r) => r.lead_id && r.due_at && s(r.due_at) > nowIso && s(r.due_at) < dayEnd,
+    (r) => r.lead_id && r.due_at && s(r.due_at) > floatingNow && s(r.due_at) < dayEnd,
   )) {
     candidates.push({
       leadId: s(r.lead_id),
@@ -428,5 +464,6 @@ async function readMyDay(input: {
     today,
     assignments: myAssignments,
     whoNext,
+    nowFloating: floatingNow,
   };
 }
