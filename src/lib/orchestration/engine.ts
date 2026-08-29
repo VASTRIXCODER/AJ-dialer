@@ -47,10 +47,51 @@ interface InstanceRow {
   started_at: string;
 }
 
+/**
+ * Whether a callback was SET or COMPLETED since this instance activated.
+ *
+ * These two facts were hardcoded false, which quietly made `callback_completed`
+ * an inert stop rule — and that rule is the natural "we're done here" for the
+ * promised-callback playbook, whose whole job is chasing an overdue callback.
+ * With it inert, a rep who called the person back but did not reach them still
+ * got escalated to managers an hour later for a breach they had already worked.
+ *
+ * Only queried when the playbook actually lists one of the two rules.
+ */
+async function callbackState(
+  admin: ReturnType<typeof createAdminClient>,
+  inst: InstanceRow,
+  leadId: unknown,
+  since: (v: unknown) => boolean,
+  opts?: { needsCallbackState?: boolean },
+): Promise<{ callbackSet: boolean; callbackCompleted: boolean }> {
+  const out = { callbackSet: false, callbackCompleted: false };
+  if (!opts?.needsCallbackState || !leadId) return out;
+  try {
+    const { data } = await admin
+      .from("callbacks")
+      .select("status, created_at, last_attempt_at")
+      .eq("org_id", inst.org_id)
+      .eq("lead_id", String(leadId))
+      .limit(20);
+    for (const cb of (data ?? []) as Record<string, unknown>[]) {
+      const status = String(cb.status ?? "");
+      if (status === "completed") {
+        if (since(cb.last_attempt_at)) out.callbackCompleted = true;
+      } else if (status !== "cancelled" && since(cb.created_at)) {
+        out.callbackSet = true;
+      }
+    }
+  } catch {
+    /* keep both false — a read failure must not fake a stop condition */
+  }
+  return out;
+}
+
 async function stopSnapshot(
   admin: ReturnType<typeof createAdminClient>,
   inst: InstanceRow,
-  opts?: { maxAttempts?: number },
+  opts?: { maxAttempts?: number; needsCallbackState?: boolean },
 ): Promise<StopSnapshot | null> {
   const { data: opp } = await admin
     .from("opportunities")
@@ -76,8 +117,7 @@ async function stopSnapshot(
     replied: false,
     complaint: false,
     openIssue: false,
-    callbackSet: false,
-    callbackCompleted: false,
+    ...(await callbackState(admin, inst, opp.lead_id, touchedSince, opts)),
     appointmentBooked: stage === "appointment_booked" || stage === "appointment_completed",
     sold: stage === "sold",
     reassigned: false,
@@ -245,15 +285,18 @@ export async function orchestrationTick(now = new Date()): Promise<TickResult> {
         }
 
         // Kill switch 4 — stop rules, before EVERY action.
+        const rules = resolveStopRules(def);
         const snap = await stopSnapshot(admin, inst, {
           maxAttempts: def.stop?.maxAttempts,
+          needsCallbackState:
+            rules.has("callback_completed") || rules.has("callback_set"),
         });
         if (!snap) {
           await endInstance(admin, inst, "stopped", "opportunity_missing");
           out.stopped++;
           continue;
         }
-        const tripped = firstTrippedStopRule(resolveStopRules(def), snap, {
+        const tripped = firstTrippedStopRule(rules, snap, {
           maxAttempts: def.stop?.maxAttempts,
           stopOnReassign: def.stop?.stopOnReassign,
         });

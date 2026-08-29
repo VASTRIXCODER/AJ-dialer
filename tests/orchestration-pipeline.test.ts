@@ -401,6 +401,37 @@ describe("sweep trigger", () => {
     expect(instances()).toHaveLength(0);
   });
 
+  it("a callback the rep actually worked stops the chase before managers hear about it", async () => {
+    // The promised-callback playbook lists `callback_completed` as a stop
+    // rule. When that fact was hardcoded false the rule was inert, so a rep
+    // who called back — and simply did not reach the person — still got
+    // escalated to their manager an hour later for a breach already worked.
+    world(PROMISED_CALLBACK_PROTECTION);
+    db.seed("callbacks", [
+      {
+        id: "cb-4",
+        org_id: ORG,
+        lead_id: LEAD,
+        status: "due",
+        due_at: "2026-08-29T09:00:00",
+      },
+    ]);
+    await runOrchestrationSweeps(NOW);
+    expect(instances()).toHaveLength(1);
+
+    // The rep works it: the callback closes, but they never connected, so
+    // `contacted` does not trip.
+    const worked = new Date(NOW.getTime() + 5 * 60_000);
+    const cb = db.rows("callbacks")[0];
+    cb.status = "completed";
+    cb.last_attempt_at = worked.toISOString();
+
+    const r = await orchestrationTick(worked);
+    expect(r.stopped).toBe(1);
+    expect(instances()[0].stopped_reason).toBe("callback_completed");
+    expect(signals()).toHaveLength(0);
+  });
+
   it("sweeps respect the org kill switch", async () => {
     world(PROMISED_CALLBACK_PROTECTION, { orgEnabled: false });
     db.seed("callbacks", [
