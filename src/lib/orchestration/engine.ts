@@ -94,7 +94,7 @@ async function stopSnapshot(
   admin: ReturnType<typeof createAdminClient>,
   inst: InstanceRow,
   opts?: { maxAttempts?: number; needsCallbackState?: boolean },
-): Promise<(StopSnapshot & { leadId: string | null }) | null> {
+): Promise<(StopSnapshot & { leadId: string | null; ownerId: string | null }) | null> {
   const { data: opp } = await admin
     .from("opportunities")
     .select(
@@ -110,6 +110,7 @@ async function stopSnapshot(
     v != null && Number.isFinite(Date.parse(String(v))) && Date.parse(String(v)) >= since;
   return {
     leadId: opp.lead_id ? String(opp.lead_id) : null,
+    ownerId: opp.owner_id ? String(opp.owner_id) : null,
     dncOrOptOut: stage === "dnc_suppressed",
     opportunityClosed: String(opp.op_status) === "closed",
     managerPause: String(opp.op_status) === "paused",
@@ -466,6 +467,14 @@ export async function orchestrationTick(now = new Date()): Promise<TickResult> {
           await createWorkItem({
             orgId: inst.org_id,
             opportunityId: inst.opportunity_id,
+            // Both of these were omitted, and every consumer keys on them: a
+            // task with no lead_id is invisible to the who-next ladder and the
+            // pre-call brief, is never reserved when the rep claims the lead,
+            // and is never completed when the disposition is filed. With no
+            // owner_id it never appears in anyone's My Day either. A task
+            // nobody can see is not follow-through.
+            leadId: snap.leadId,
+            ownerId: snap.ownerId,
             type: step.type,
             reason: step.reason,
             dedupeKey: `${inst.id}:${step.id}`,
@@ -497,6 +506,9 @@ export async function orchestrationTick(now = new Date()): Promise<TickResult> {
           await admin.from("signals").insert({
             org_id: inst.org_id,
             opportunity_id: inst.opportunity_id,
+            // Without this the hot queue shows "Unknown contact" with no link,
+            // and My Day can never promote the signal into who-next.
+            lead_id: snap.leadId,
             type: `escalation:${step.reason}`,
             severity: 4,
             // WHO this rung is for. `queue` has no queue-membership model yet,

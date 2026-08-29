@@ -324,6 +324,44 @@ describe("stop rules", () => {
   });
 });
 
+describe("what the engine creates is reachable", () => {
+  // Everything a playbook produces is keyed on lead_id by its consumers: the
+  // who-next ladder, the pre-call brief, work-item reservation, work-item
+  // completion, and the hot queue's link to the person. Created without it,
+  // the work exists in a table nobody reads and never closes — and the
+  // escalation renders as "Unknown contact".
+  it("attributes work items to the lead AND the owner", async () => {
+    world(SPEED_TO_LEAD, { opp: { owner_id: "rep-1" } });
+    await emitOrchestrationEvent({ orgId: ORG, leadId: LEAD, event: "lead.received" });
+    await orchestrationTick(NOW);
+    expect(workItems()[0]).toMatchObject({
+      lead_id: LEAD,
+      owner_id: "rep-1",
+      opportunity_id: OPP,
+    });
+  });
+
+  it("attributes escalation signals to the lead", async () => {
+    world({
+      ...SPEED_TO_LEAD,
+      steps: [{ id: "alert", kind: "escalate", to: "managers", reason: "breach" }],
+    });
+    await emitOrchestrationEvent({ orgId: ORG, leadId: LEAD, event: "lead.received" });
+    await orchestrationTick(NOW);
+    expect(signals()[0]).toMatchObject({ lead_id: LEAD, audience: "managers" });
+  });
+
+  it("routes an owner-addressed escalation to the owner audience", async () => {
+    world({
+      ...SPEED_TO_LEAD,
+      steps: [{ id: "nudge", kind: "escalate", to: "owner", reason: "overdue" }],
+    });
+    await emitOrchestrationEvent({ orgId: ORG, leadId: LEAD, event: "lead.received" });
+    await orchestrationTick(NOW);
+    expect(signals()[0].audience).toBe("owner");
+  });
+});
+
 describe("frequency caps are real", () => {
   // caps.touchesPerDay / touchesPer7Days were declared in the grammar,
   // validated on publish, set on a seed template — and read by nothing. An
