@@ -15,6 +15,13 @@ type Row = Record<string, unknown>;
 const s = (v: unknown) => (v == null ? "" : String(v));
 const n = (v: unknown) => Number(v ?? 0) || 0;
 
+/** PostgREST's per-response ceiling. */
+const PAGE = 1000;
+/** Row-scan bound for the per-rep breakdown (12 pages = 12,000 calls/day). */
+const SCAN_PAGES = 12;
+/** Conversation-grade outcomes, as a PostgREST in() list. */
+const CONNECTED_LIST = `(${[...CONNECTED_OUTCOMES].join(",")})`;
+
 export interface LeakRow {
   id: string;
   leadId: string | null;
@@ -51,6 +58,10 @@ export interface CommandCenterData {
      *  attempted today. Null = no valid denominator ("not enough data"). */
     speedToLeadMin: number | null;
   };
+  /** True when today's call volume exceeded the row-scan bound — the three
+   *  headline counts stay exact (COUNT queries), but the per-rep table and
+   *  "leads worked" are computed from the scanned window and say so. */
+  scanCapped: boolean;
   queues: {
     overdueCallbacks: number;
     unscheduledCallbacks: number;
@@ -71,8 +82,41 @@ export async function getCommandCenter(input: {
   const nowIso = new Date().toISOString();
   const todayStartIso = new Date(zonedDayStartMs(Date.now(), input.orgTz)).toISOString();
 
+  // Headline counts: head+exact COUNT queries, immune to any row cap.
+  const callsToday = () =>
+    admin
+      .from("call_records")
+      .select("id", { count: "exact", head: true })
+      .eq("org_id", input.orgId)
+      .gte("started_at", todayStartIso);
+
+  const [dialsRes, convosRes, apptCountRes] = await Promise.all([
+    callsToday(),
+    callsToday().or(`human_connected.is.true,outcome.in.${CONNECTED_LIST}`),
+    callsToday().eq("outcome", "appointment_booked"),
+  ]);
+
+  // Per-rep breakdown needs the rows themselves (PostgREST can't GROUP BY),
+  // so it pages within a bound and reports honestly when it hits it.
+  const calls: Row[] = [];
+  let scanCapped = false;
+  for (let page = 0; page < SCAN_PAGES; page++) {
+    const { data, error } = await admin
+      .from("call_records")
+      .select("owner_id, lead_id, outcome, human_connected")
+      .eq("org_id", input.orgId)
+      .gte("started_at", todayStartIso)
+      .order("started_at", { ascending: true })
+      .order("id", { ascending: true })
+      .range(page * PAGE, page * PAGE + PAGE - 1);
+    if (error) break;
+    const rows = (data ?? []) as Row[];
+    calls.push(...rows);
+    if (rows.length < PAGE) break;
+    if (page === SCAN_PAGES - 1) scanCapped = true;
+  }
+
   const [
-    callsRes,
     newLeadsRes,
     untouchedRes,
     overdueCbRes,
@@ -84,12 +128,6 @@ export async function getCommandCenter(input: {
     sttRes,
     membersRes,
   ] = await Promise.all([
-    admin
-      .from("call_records")
-      .select("owner_id, lead_id, outcome, human_connected")
-      .eq("org_id", input.orgId)
-      .gte("started_at", todayStartIso)
-      .limit(5000),
     admin
       .from("leads")
       .select("id", { count: "exact", head: true })
@@ -153,13 +191,14 @@ export async function getCommandCenter(input: {
   ]);
 
   // ── Today strip ────────────────────────────────────────────────────────────
-  const calls = (callsRes.data ?? []) as Row[];
   const isConversation = (r: Row) =>
     r.human_connected === true || (CONNECTED_OUTCOMES as Set<string>).has(s(r.outcome));
   const today = {
-    dials: calls.length,
-    conversations: calls.filter(isConversation).length,
-    appointments: calls.filter((r) => s(r.outcome) === "appointment_booked").length,
+    dials: dialsRes.count ?? 0,
+    conversations: convosRes.count ?? 0,
+    appointments: apptCountRes.count ?? 0,
+    // Distinct-count isn't expressible in PostgREST — this one rides the
+    // bounded scan and is labeled when the scan capped.
     leadsWorked: new Set(calls.map((r) => s(r.lead_id)).filter(Boolean)).size,
     newLeads: newLeadsRes.count ?? 0,
     speedToLeadMin: null as number | null,
@@ -250,5 +289,5 @@ export async function getCommandCenter(input: {
     }),
   );
 
-  return { today, queues, leaks, reps, playbooks };
+  return { today, scanCapped, queues, leaks, reps, playbooks };
 }

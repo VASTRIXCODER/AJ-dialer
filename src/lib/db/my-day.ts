@@ -108,6 +108,24 @@ export async function getMyDay(input: {
 
   const mineCallback = `assigned_to.eq.${scope.userId},and(assigned_to.is.null,owner_id.eq.${scope.userId})`;
 
+  // Counts come from head+exact COUNT queries, NEVER from the length of a
+  // fetched page — PostgREST caps arrays at 1,000 rows, and a count that
+  // silently saturates is exactly the class of bug the session builder was
+  // fixed for. The row fetch below exists only to LIST the first few.
+  const openMine = () =>
+    admin
+      .from("callbacks")
+      .select("id", { count: "exact", head: true })
+      .eq("org_id", scope.orgId as string)
+      .not("status", "in", '("completed","cancelled")')
+      .or(mineCallback);
+
+  const [cbOverdueRes, cbTodayRes, cbUnschedRes] = await Promise.all([
+    openMine().lte("due_at", nowIso),
+    openMine().gt("due_at", nowIso).lt("due_at", dayEnd),
+    openMine().is("due_at", null),
+  ]);
+
   const [cbRes, wiRes, sigRes, apptRes, callsRes, assignments] = await Promise.all([
     admin
       .from("callbacks")
@@ -156,11 +174,10 @@ export async function getMyDay(input: {
 
   const cbRows = (cbRes.data ?? []) as Row[];
   const callbacks = {
-    overdue: cbRows.filter((r) => r.due_at && s(r.due_at) <= nowIso).length,
-    dueToday: cbRows.filter((r) => r.due_at && s(r.due_at) > nowIso && s(r.due_at) < dayEnd)
-      .length,
+    overdue: cbOverdueRes.count ?? 0,
+    dueToday: cbTodayRes.count ?? 0,
     // The spec's rule: an item with no time is UNSCHEDULED, never "due now".
-    unscheduled: cbRows.filter((r) => !r.due_at).length,
+    unscheduled: cbUnschedRes.count ?? 0,
     items: cbRows.slice(0, 5).map(
       (r): MyDayCallback => ({
         id: s(r.id),
@@ -279,7 +296,7 @@ export async function getMyDay(input: {
   for (const r of cbRows.filter((r) => r.lead_id && r.due_at && s(r.due_at) <= nowIso)) {
     candidates.push({
       leadId: s(r.lead_id),
-      reason: `Promised callback — due ${s(r.due_at) < nowIso ? "and overdue" : "now"}.`,
+      reason: "You promised this call back — it's due now.",
       source: "callback",
     });
   }

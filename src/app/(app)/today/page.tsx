@@ -66,6 +66,13 @@ export default async function TodayPage() {
 
   const { callbacks, workItems, signals, appointmentsToday, today, assignments, whoNext } =
     data;
+  // Only link to destinations this workspace actually has turned on — a link
+  // into a disabled feature is a dead end, not a shortcut.
+  const features = viewer.org?.settings.features;
+  const canOpenCallbacks = features?.callbacks !== false;
+  const canOpenAppointments =
+    features?.appointments !== false && viewer.permissions.includes("appointments.view");
+  const canOpenAssignments = features?.leads !== false;
   const nothingWaiting =
     !whoNext &&
     callbacks.overdue + callbacks.dueToday + callbacks.unscheduled === 0 &&
@@ -174,12 +181,14 @@ export default async function TodayPage() {
                   </li>
                 ))}
               </ul>
-              <Link
-                href="/callbacks"
-                className="mt-3 inline-block text-xs font-semibold text-primary hover:underline"
-              >
-                Work the callback queue →
-              </Link>
+              {canOpenCallbacks && (
+                <Link
+                  href="/callbacks"
+                  className="mt-3 inline-block text-xs font-semibold text-primary hover:underline"
+                >
+                  Work the callback queue →
+                </Link>
+              )}
             </SectionCard>
           )}
 
@@ -254,12 +263,14 @@ export default async function TodayPage() {
               </li>
             ))}
           </ul>
-          <Link
-            href="/appointments"
-            className="mt-3 inline-block text-xs font-semibold text-primary hover:underline"
-          >
-            Open the calendar →
-          </Link>
+          {canOpenAppointments && (
+            <Link
+              href="/appointments"
+              className="mt-3 inline-block text-xs font-semibold text-primary hover:underline"
+            >
+              Open the calendar →
+            </Link>
+          )}
         </SectionCard>
       )}
 
@@ -287,12 +298,14 @@ export default async function TodayPage() {
               );
             })}
           </ul>
-          <Link
-            href="/assignments"
-            className="mt-3 inline-block text-xs font-semibold text-primary hover:underline"
-          >
-            All assignments →
-          </Link>
+          {canOpenAssignments && (
+            <Link
+              href="/assignments"
+              className="mt-3 inline-block text-xs font-semibold text-primary hover:underline"
+            >
+              All assignments →
+            </Link>
+          )}
         </SectionCard>
       )}
 

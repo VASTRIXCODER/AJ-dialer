@@ -3,7 +3,7 @@
 Statuses: **Done** · **Partial** · **Blocked** · **Deferred** · **Not started**.
 Never promoted merely because a screen exists (phase_two.md §2). Sections map
 to docs/phase_two.md; evidence = file paths / tests. Last updated: 2026-08-29
-(P2.1 slice).
+(Phase 2 H slice, commit cbd90ce).
 
 ## Pre-flight (this session, outside the numbered workstreams)
 
@@ -35,9 +35,9 @@ to docs/phase_two.md; evidence = file paths / tests. Last updated: 2026-08-29
 | Opportunity model + events (audit, immutable) | **Done** — applied to the live DB 2026-08-29 (verified counts in migration-and-rollback.md) | supabase/schema.sql PART 37 |
 | One-open-per-lead uniqueness policy | Done (in DDL) | partial unique index `opportunities_one_open_per_lead` |
 | Sales lifecycle state machine (sold/DNC/regress gates) | Done | src/lib/opportunities/stage-machine.ts; tests/opportunity-stage.test.ts (exhaustive matrix) |
-| Operational work state + leak detector | Partial — `app_pipeline_leaks` shipped; no UI/metric consumes it | PART 37 |
-| Work items (dedupe, claim RPC) | Partial — table + `app_claim_work_items`; no rep-facing queue UI yet (P2.2/P2.6) | PART 37; db/opportunities.ts |
-| Signals (dedupe, seen-count, TTL) | Partial — table + engine writes escalation signals; no hot queue UI (P2.6) | PART 37; orchestration/engine.ts |
+| Operational work state + leak detector | Done — `app_pipeline_leaks` consumed by the Command Center (true count + sample) | PART 37; db/command-center.ts; app/(app)/command |
+| Work items (dedupe, claim RPC) | Partial — dial claims now reserve/release the matching call items (TTL lease) and My Day lists the rep's open items; `app_claim_work_items` itself has no UI consumer yet | PART 37; db/opportunities.ts reserveCallWorkItems; api/dialer/claim+release; db/my-day.ts |
+| Signals (dedupe, seen-count, TTL) | Done — dashboard Hot signals card, /api/signals (ack/dismiss), My Day, Command Center count, dialer WhyNow card | PART 37; api/signals; components/dashboard/hot-queue.tsx; db/my-day.ts |
 | Touch model | **Partial by design** — `touches_v` view over call_records; table lands with the first message channel | PART 37; design doc §2 |
 | Playbook definitions: versioned, validated, human-publish-only | Partial — contract + strict validator + 3 seed templates; publish API & Studio are P2.10 | orchestration/definition.ts, templates.ts; tests/playbook-definition.test.ts |
 | Orchestration engine: deterministic, idempotent, kill-switched | **Partial** — v0 executes existing instances (wake/stop-rules/allow-list steps, exactly-once via UNIQUE key); NO activation path yet (event emitters + condition compiler are P2.2/P2.3); escalate lands as a signal, not an email | orchestration/engine.ts, plan.ts; api/cron/orchestrate |
@@ -58,18 +58,19 @@ to docs/phase_two.md; evidence = file paths / tests. Last updated: 2026-08-29
 | Playbook admin (install/publish/pause/retire + org master switch) | Done — Studio-lite; strict validation is the publish gate; all mutations audited | api/playbooks; components/admin/playbooks-panel.tsx |
 | Configurable routing policies (territory/skill/round-robin/capacity) | Not started | — |
 | SLA escalation beyond the speed-to-lead template | Partial — the template escalates via signals; manager notification templates Not started | orchestration/templates.ts |
-| King's intake view (volume, ownership, untouched, SLA drill-down) | Not started (P2.10) | — |
-| Speed-to-lead metrics (percentiles) | Not started | metric-glossary definitions only |
+| King's intake view (volume, ownership, untouched, SLA drill-down) | Partial — Command Center today strip covers new-lead volume, untouched count and speed-to-first-call; per-source/ownership drill-down Not started | app/(app)/command; db/command-center.ts |
+| Speed-to-lead metrics (percentiles) | Partial — median (today, org) on the Command Center with a min-denominator floor; percentile series Not started | db/command-center.ts |
 
 ## P2.3 — Outbound opportunity automation (§8)
 
 | Item | Status | Evidence |
 |---|---|---|
-| Pre-call context / "why this person now" | Not started | — |
-| Structured post-call extraction | Partial (pre-existing F1 pipeline + new wrap-up suggestion; no timeline/commitment extraction schemas) | ai/analyze-call.ts; api/ai/wrapup-suggest |
-| Post-call → work item completion | Done (loose lead-match v0; id-threading is the P2.3 upgrade) | opportunities/sync.ts completeCallWorkItems |
-| No-answer follow-up sequence | Partial — seed template validates; cannot ACTIVATE until event emitters land | orchestration/templates.ts |
-| Everything else in §8 | Not started | — |
+| Pre-call context / "why this person now" | Done — /api/opportunities/context + the dialer's WhyNow card (stage, urgency line, next action, open work, signals, running playbooks); renders nothing when there's nothing | api/opportunities/context; components/dialer/why-now.tsx; lib/opportunities/why-now.ts; tests/next-action.test.ts |
+| Structured post-call extraction | Partial (pre-existing F1 pipeline + wrap-up suggestion; no timeline/commitment extraction schemas) | ai/analyze-call.ts; api/ai/wrapup-suggest |
+| Post-call → work item completion | Done — claims reserve the call items behind the claimed leads (TTL lease, released with the claim); the filed disposition completes them | opportunities/sync.ts; db/opportunities.ts reserveCallWorkItems; api/dialer/claim+release |
+| Next-action generation on every disposition | Done — deterministic pure mapping (agreed callback/appointment times ride through; closing outcomes clear), stamped on open opportunities only | lib/opportunities/next-action.ts; tests/next-action.test.ts |
+| No-answer follow-up sequence | Done (activation-ready) — event emitters + condition evaluator landed in P2.2; runs once an org opts in and the orchestrate cron is scheduled | orchestration/templates.ts, events.ts |
+| AI-drafted outreach / messaging steps in §8 | Blocked — no outbound SMS/email channel (see channel-and-provider-capabilities.md) | — |
 
 ## P2.4 — AI inbound reception (§9)
 
@@ -85,30 +86,51 @@ confirmation channel itself is Blocked until messaging lands.
 
 ## P2.6 — Rep assistant & hot opportunities (§12–§13)
 
-**Not started.** The signals table (P2.1) is the landing zone for the hot
-queue; escalation signals already accumulate there once orchestration runs.
+| Item | Status | Evidence |
+|---|---|---|
+| Hot queue (signals surfaced, ack/dismiss, self-explaining) | Done | api/signals; components/dashboard/hot-queue.tsx |
+| My Day page (start-here queues, appointments, assignment progress) | Done — personal by design; "no time set" callbacks are counted as unscheduled, never due | app/(app)/today; db/my-day.ts |
+| "Who should I call next?" | Done — deterministic ladder (overdue callback → hot signal → due work item → callback later today) hard-filtered against DNC list + status, archived, missing/short numbers, another rep's hold, and the org calling window in the lead's timezone | db/my-day.ts (whoNext) |
+| End-of-day summary | Done — "you · today · org time" readout (dials, conversations, appointments, talk time) | app/(app)/today |
+| In-call whisper/live coach | Not started (distinct from the existing copilot surfaces) | — |
 
 ## P2.7 — Sold/install mirror (§14)
 
 **Blocked** on naming a trusted external source. The stage machine already
 hard-gates `sold` to manager/system_fulfillment actors (tested).
 
-## P2.8 — Post-install lifecycle (§15) · P2.9 — Reactivation (§16)
+## P2.8 — Post-install lifecycle (§15)
 
-**Not started.** (Reactivation's eligibility engine will reuse the claim
-RPC + FilterSpec grammar per the contracts doc.)
+**Blocked** — depends on P2.7's trusted fulfillment source and an outbound
+message channel; neither exists.
+
+## P2.9 — Reactivation (§16)
+
+| Item | Status | Evidence |
+|---|---|---|
+| Rule-based cohorts (aged, explainable, DNC-impossible) | Done — gone-quiet 30d / no-need 60d / never-called 45d; attempt caps; statuses can never include a blocked segment (tested) | lib/dialer/reactivation.ts; tests/reactivation.test.ts |
+| Hard exclusions (open callback, held lead, bad number) | Done — with honest skip accounting surfaced to the operator | db/reactivation.ts; components/command/reactivation-studio.tsx |
+| Load as a strict dial session | Done — materialised via buildSession({leadIds}) (re-fences scope/org, blocks DNC status, scrubs numbers, preserves order); loads strict/no-refill | api/reactivation; dialer-context loadSession |
+| Control groups / experiment measurement | Not started | — |
+| Multi-channel re-engagement (SMS/email) | Blocked — no outbound message channel; not simulated | channel-and-provider-capabilities.md |
 
 ## P2.10 — Command Center & Playbook Studio (§17–§18)
 
-**Not started.** The validator's error strings are written operator-facing so
-the Studio can surface them verbatim.
+| Item | Status | Evidence |
+|---|---|---|
+| Today strip (org · today, labeled scope/window) | Done — dials, conversations, appointments, leads worked, new leads, speed-to-first-call median (min-denominator floor → "not enough data") | app/(app)/command; db/command-center.ts |
+| Needs-attention queues (each count a door) | Done — overdue/unscheduled callbacks, untouched new, hot signals; empty ones collapse | app/(app)/command |
+| Pipeline-leak queue | Done — app_pipeline_leaks true count + sample with owner/stage/last-touch | db/command-center.ts |
+| Rep performance (today) | Done — a table, not a podium | app/(app)/command |
+| Playbook oversight | Partial — status + live instance counts on /command; publish/pause/retire Studio-lite in Admin; a visual drag-drop Studio is Deferred (the validator's operator-facing errors are its foundation) | components/admin/playbooks-panel.tsx |
 
 ## P2.11 — Hardening & release readiness
 
-Per-slice testing only so far: 74 files / 860 tests green at this slice
-(tests/opportunity-stage.test.ts, tests/playbook-definition.test.ts,
-tests/org-config-wiring.test.ts new). Full regression/e2e/perf/a11y for
-Phase 2 surfaces: Not started.
+78 files / 896 tests green at this slice (new: tests/next-action.test.ts,
+tests/reactivation.test.ts). Adversarial review (4 find-lenses × 2 refuters
+per finding) run on every substantial commit — see qa-evidence.md for the
+per-cycle confirmed/fixed counts. Remaining: e2e/perf/a11y sweeps for the
+Phase 2 surfaces and the opportunity-parity check riding reconcile-data.
 
 ## Cross-cutting honesty notes
 

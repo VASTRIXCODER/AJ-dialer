@@ -18,16 +18,24 @@ import { cn, relativeTime } from "@/lib/utils";
 // nothing at all when there is none (no fake zeros, no reserved space).
 // ─────────────────────────────────────────────────────────────────────────────
 
+/** How long a fetched brief stays trustworthy. A disposition changes the
+ *  opportunity, so paging back to a lead after working others must re-read —
+ *  a forever-cache would show yesterday's "why" next to today's person. */
+const CACHE_TTL_MS = 60_000;
+
 export function WhyNowCard({ leadId }: { leadId: string }) {
   const vocab = useVocabulary();
   const [ctx, setCtx] = useState<OpportunityContext | null>(null);
-  // Session-lived cache: paging back to a lead must not refetch or flash.
-  const cacheRef = useRef<Map<string, OpportunityContext | null>>(new Map());
+  // Short-lived cache: quick prev/next paging must not refetch or flash, but
+  // stale entries expire (see CACHE_TTL_MS).
+  const cacheRef = useRef<Map<string, { value: OpportunityContext | null; at: number }>>(
+    new Map(),
+  );
 
   useEffect(() => {
     const cached = cacheRef.current.get(leadId);
-    if (cached !== undefined) {
-      setCtx(cached);
+    if (cached && Date.now() - cached.at < CACHE_TTL_MS) {
+      setCtx(cached.value);
       return;
     }
     setCtx(null);
@@ -38,7 +46,7 @@ export function WhyNowCard({ leadId }: { leadId: string }) {
       .then((r) => (r.ok ? r.json() : { context: null }))
       .then((j: { context?: OpportunityContext | null }) => {
         const value = j.context ?? null;
-        cacheRef.current.set(leadId, value);
+        cacheRef.current.set(leadId, { value, at: Date.now() });
         setCtx(value);
       })
       .catch(() => {});

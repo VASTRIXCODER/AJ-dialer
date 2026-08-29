@@ -69,7 +69,7 @@ export default async function CommandCenterPage() {
     );
   }
 
-  const { today, queues, leaks, reps, playbooks } = data;
+  const { today, scanCapped, queues, leaks, reps, playbooks } = data;
   const attentionTotal =
     queues.overdueCallbacks +
     queues.unscheduledCallbacks +
@@ -104,7 +104,8 @@ export default async function CommandCenterPage() {
           />
           <MetricCard
             label={`${vocab.LeadNounPlural} worked`}
-            value={String(today.leadsWorked)}
+            value={`${scanCapped ? "≥" : ""}${today.leadsWorked}`}
+            sub={scanCapped ? "at least — very high call volume today" : undefined}
             icon={Users}
             accent="accent"
           />
@@ -236,7 +237,14 @@ export default async function CommandCenterPage() {
 
       {/* Rep performance — today, org time. A table, not a podium. */}
       {reps.length > 0 && (
-        <SectionCard title="Floor today" description="Per rep · today · org time">
+        <SectionCard
+          title="Floor today"
+          description={
+            scanCapped
+              ? "Per rep · today · org time · from the first 12,000 calls today"
+              : "Per rep · today · org time"
+          }
+        >
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
