@@ -1,10 +1,17 @@
 "use client";
 
-import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { useToast } from "@/components/ui/toast";
+import { mergeClaimedLeads } from "@/lib/dialer/claims";
 import type { LeadFieldDef } from "@/lib/leads/field-schema";
 import type { AiLockReason, DialerLayout } from "@/lib/org/settings";
+import { useOrgChannel } from "@/lib/realtime/use-org-channel";
 import type { Lead, LeadGroup } from "@/lib/types";
-import { MAX_PARALLEL_HUMAN, useDialer } from "@/lib/use-dialer";
+import {
+  MAX_PARALLEL_HUMAN,
+  useDialer,
+  type DialerEngineOptions,
+} from "@/lib/use-dialer";
 
 /** "all" = no filter, "unsorted" = leadGroup is null, else an exact LeadGroup. */
 export type GroupFilter = "all" | "unsorted" | LeadGroup;
@@ -20,6 +27,18 @@ export type GroupFilter = "all" | "unsorted" | LeadGroup;
 
 export interface DialerConfig {
   userId?: string;
+  /** The viewer's display name — what the dialer tracks as channel presence
+   *  so the floor roster shows a human, not a uuid. */
+  displayName?: string;
+  /** The viewer's active org — names the private realtime floor channel the
+   *  dialer subscribes to (answered fast-path). Null/absent = demo, no channel. */
+  orgId?: string | null;
+  /** Org policy `settings.dialing.recording` — what the rep leg passes to the
+   *  conference record flag, and what the RecordingIndicator reports. */
+  recordingEnabled?: boolean;
+  /** Lease-based dial reservations (`settings.dialing.reservations`), already
+   *  gated server-side on a configured database — false = legacy local queue. */
+  reservationsEnabled?: boolean;
   voiceConfigured: boolean;
   aiAgentConfigured: boolean;
   /** A distinct second AI agent is configured — reveals the dialer's agent picker. */
@@ -79,6 +98,9 @@ export type DialerCampaign = {
   /** The campaign's wrap-up subset (`disposition_keys`). Empty/absent = every
    *  enabled disposition; non-empty narrows the OutcomeGrid to these keys. */
   dispositionKeys?: string[];
+  /** The campaign's stated goal — the AI session header shows it so the
+   *  operator can see WHAT the agent is trying to achieve. "" = none set. */
+  objective?: string;
 };
 
 type Campaign = DialerCampaign;
@@ -194,6 +216,70 @@ export function DialerProvider({
   };
   const queueForDialer = queue.filter(matchesFilters);
 
+  // Assignment scope for queue fetches — a ref, not state: auto-dial's lap
+  // refetch runs from an effect closure and must always see the CURRENT scope.
+  // Declared BEFORE the engine so the claim context below can read it lazily.
+  const assignmentRef = useRef<string | null>(null);
+  const setAssignmentScope = useCallback((id: string | null) => {
+    assignmentRef.current = id;
+  }, []);
+  // Campaign filter mirror for the same reason — claims read it at dial time.
+  const campaignFilterRef = useRef(campaignFilter);
+  campaignFilterRef.current = campaignFilter;
+
+  // Claimed leads may not be in the locally-loaded queue (another page of the
+  // book, a fresher server view) — merge them in so the UI shows what's
+  // actually being dialed. The queue PANEL renders this same display queue.
+  const onClaimed = useCallback((claimed: Lead[]) => {
+    setQueue((q) => mergeClaimedLeads(q, claimed));
+  }, []);
+
+  // The engine dropped phone-duplicate lanes before dialing (lane-dedupe.ts) —
+  // say so out loud (a lane the rep queued that silently never rings reads as
+  // "the dialer skipped my lead") and count it server-side for trend data.
+  const { toast } = useToast();
+  const onDuplicateLanesDropped = useCallback(
+    (dropped: Lead[]) => {
+      const names = dropped
+        .map((l) => `${l.firstName} ${l.lastName}`.trim() || l.phone)
+        .join(", ");
+      toast({
+        title:
+          dropped.length === 1
+            ? "Duplicate number skipped"
+            : `${dropped.length} duplicate numbers skipped`,
+        description: `${names} share${dropped.length === 1 ? "s" : ""} a phone number with another line in this round — the number is only being dialed once.`,
+      });
+      fetch("/api/telemetry", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ metric: "lane.dup_dropped", value: dropped.length }),
+        keepalive: true,
+      }).catch(() => {});
+    },
+    [toast],
+  );
+
+  const engineOptions = useMemo<DialerEngineOptions>(
+    () => ({
+      recordingEnabled: config.recordingEnabled ?? true,
+      reservations: {
+        enabled: Boolean(config.reservationsEnabled),
+        // Lazy: read at dial time so mid-session filter changes are honored.
+        // No session-builder statuses are wired into the dialer queue yet, so
+        // claims use the server's default segment set (new/no_answer/callback)
+        // — the same set /api/leads/queue loads.
+        getContext: () => ({
+          campaignId: campaignFilterRef.current || undefined,
+          packId: assignmentRef.current || undefined,
+        }),
+        onClaimed,
+      },
+      onDuplicateLanesDropped,
+    }),
+    [config.recordingEnabled, config.reservationsEnabled, onClaimed, onDuplicateLanesDropped],
+  );
+
   const dialer = useDialer(
     queueForDialer,
     aiUsable,
@@ -203,18 +289,34 @@ export function DialerProvider({
     config.doubleDial ?? false,
     config.doubleDialGapSec ?? 15,
     config.maxHumanLines ?? MAX_PARALLEL_HUMAN,
+    engineOptions,
   );
   const { state } = dialer;
 
+  // ── Org floor channel: the answered fast-path ──────────────────────────────
+  // One shared socket per org (the monitors/roster ride the same one). When the
+  // server broadcasts `call.answered` for OUR conference room, run the dialer's
+  // existing answered-resolution immediately instead of waiting out its poll —
+  // pickup→"connected" drops from worst-case 1.5–5s to ~broadcast latency. The
+  // handler lives in a ref inside useOrgChannel, so reading `state.room` here
+  // always sees the current attempt. Everything else (health) just tells the
+  // engine it may relax the poll; demo mode reports "unavailable" and the
+  // dialer keeps its 1.5s poll exactly as before.
+  const { health: floorHealth } = useOrgChannel({
+    orgId: config.orgId ?? null,
+    on: {
+      "call.answered": (p) => {
+        if (p.room && p.room === state.room) dialer.onAnsweredHint(p.answeredLeadId);
+      },
+    },
+  });
+  const { setRealtimeLive } = dialer;
+  useEffect(() => {
+    setRealtimeLive(floorHealth === "live");
+  }, [floorHealth, setRealtimeLive]);
+
   const applyLeadPatch = useCallback((leadId: string, patch: Partial<Lead>) => {
     setQueue((q) => q.map((l) => (l.id === leadId ? { ...l, ...patch } : l)));
-  }, []);
-
-  // Assignment scope for queue fetches — a ref, not state: auto-dial's lap
-  // refetch runs from an effect closure and must always see the CURRENT scope.
-  const assignmentRef = useRef<string | null>(null);
-  const setAssignmentScope = useCallback((id: string | null) => {
-    assignmentRef.current = id;
   }, []);
 
   async function loadLeads(): Promise<Lead[]> {

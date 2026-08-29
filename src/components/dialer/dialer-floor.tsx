@@ -1,9 +1,11 @@
 "use client";
 
 import { ChevronDown, PhoneCall, Radio } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { useDialerContextOptional } from "@/components/dialer/dialer-context";
 import { Avatar } from "@/components/ui/avatar";
 import { Card } from "@/components/ui/card";
+import { useOrgChannel } from "@/lib/realtime/use-org-channel";
 import { useVisiblePoll } from "@/lib/use-visible-poll";
 import { cn, initials } from "@/lib/utils";
 
@@ -29,6 +31,9 @@ interface Snapshot {
 export function DialerFloor() {
   const [data, setData] = useState<Snapshot | null>(null);
   const [open, setOpen] = useState(false);
+  // Rendered under DialerProvider on the dialer page; optional so the strip
+  // stays harmless if it's ever mounted outside the shell (no org → no channel).
+  const orgId = useDialerContextOptional()?.config.orgId ?? null;
 
   const alive = useRef(true);
   useEffect(() => {
@@ -37,9 +42,7 @@ export function DialerFloor() {
       alive.current = false;
     };
   }, []);
-  // Display-only poll — paused while the tab is hidden (the dial engine's own
-  // intervals in use-dialer.ts are untouched and keep running during calls).
-  useVisiblePoll(() => {
+  const load = useCallback(() => {
     void (async () => {
       try {
         const r = await fetch("/api/floor", { cache: "no-store" });
@@ -50,7 +53,34 @@ export function DialerFloor() {
         /* transient — keep the last snapshot */
       }
     })();
-  }, 5000);
+  }, []);
+
+  // Realtime-first: every call.state / leaderboard.delta broadcast refetches
+  // the strip (debounced — a parallel round fires several in one second).
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const scheduleLoad = useCallback(() => {
+    if (debounceRef.current) return;
+    debounceRef.current = setTimeout(() => {
+      debounceRef.current = null;
+      load();
+    }, 1000);
+  }, [load]);
+  useEffect(
+    () => () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+    },
+    [],
+  );
+  const { health } = useOrgChannel({
+    orgId,
+    on: { "call.state": scheduleLoad, "leaderboard.delta": scheduleLoad },
+    onResync: load,
+  });
+
+  // Display-only poll — a 60s safety net while the channel is live, the old 5s
+  // cadence otherwise. Paused while the tab is hidden (the dial engine's own
+  // intervals in use-dialer.ts are untouched and keep running during calls).
+  useVisiblePoll(load, health === "live" ? 60_000 : 5000);
 
   // Nothing to show until there's activity today (keeps a fresh org's dialer clean).
   if (!data || (data.dialers.length === 0 && data.totalCallsToday === 0)) return null;

@@ -5,6 +5,7 @@ import { Headphones, Loader2, Phone, User } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
+import { useOrgChannel } from "@/lib/realtime/use-org-channel";
 import { useVisiblePoll } from "@/lib/use-visible-poll";
 import { cn, formatDuration, formatPhone } from "@/lib/utils";
 
@@ -44,11 +45,14 @@ const humanStateMeta = {
 export function HumanLiveMonitor({
   canListen = false,
   primary = false,
+  orgId = null,
 }: {
   canListen?: boolean;
   /** When true this is the only live view (manual-only org) — always render,
    *  showing an idle state instead of disappearing when no call is live. */
   primary?: boolean;
+  /** The viewer's org — subscribes this board to the org floor channel. */
+  orgId?: string | null;
 }) {
   const [calls, setCalls] = useState<HumanCall[]>([]);
   const [now, setNow] = useState(() => Date.now());
@@ -97,11 +101,35 @@ export function HumanLiveMonitor({
       .then((j) => setCalls(j.active ?? []))
       .catch(() => {});
   }, []);
-  // 2s, matching the AI monitor. Twilio drives these states now, so the feed is
-  // a plain DB read and polling harder is cheap. Paused in hidden tabs — EXCEPT
-  // while listening in, because the poll is what notices the call ended and
-  // stops the supervisor's live audio (see the effect below).
-  useVisiblePoll(load, 2000, { ignoreHidden: listeningId !== null });
+  // Realtime-first: `call.state` pushes refetch the feed (debounced — a 3X
+  // round fires several events at once); every (re)subscribe refetches too.
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const scheduleLoad = useCallback(() => {
+    if (debounceRef.current) return;
+    debounceRef.current = setTimeout(() => {
+      debounceRef.current = null;
+      load();
+    }, 1000);
+  }, [load]);
+  useEffect(
+    () => () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+    },
+    [],
+  );
+  const { health } = useOrgChannel({
+    orgId,
+    on: { "call.state": scheduleLoad },
+    onResync: load,
+  });
+
+  // With a live channel the poll is only a safety net (30s); without one it
+  // keeps the old 2s cadence. Paused in hidden tabs — EXCEPT while listening
+  // in, because the poll is what notices the call ended and stops the
+  // supervisor's live audio (see the effect below).
+  useVisiblePoll(load, health === "live" ? 30_000 : 2000, {
+    ignoreHidden: listeningId !== null,
+  });
 
   useEffect(() => {
     const tick = setInterval(() => setNow(Date.now()), 1000);

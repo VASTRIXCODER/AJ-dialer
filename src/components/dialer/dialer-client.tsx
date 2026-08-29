@@ -3,12 +3,10 @@
 import {
   AlertTriangle,
   CalendarCheck2,
-  ChevronDown,
   ListFilter,
   Loader2,
   Phone,
   PhoneCall,
-  ScrollText,
   Settings,
   UserCheck,
   Users,
@@ -30,6 +28,8 @@ import {
   persistDisposition,
   replayQueuedDispositions,
 } from "@/lib/dialer/disposition-queue";
+import { browserWrapupStore, clearWrapupDraft } from "@/lib/dialer/wrapup-draft";
+import { filterOutcomeOptionsByKeys, resolveOutcomeOptions } from "@/lib/status";
 import { useVisiblePoll } from "@/lib/use-visible-poll";
 import { cn } from "@/lib/utils";
 import type { BookedLead } from "@/lib/db/leads";
@@ -40,12 +40,14 @@ import {
   type ScheduledCallback,
 } from "./schedule-callback-dialog";
 import { BookedLeadsPanel } from "./booked-leads-panel";
-import { CallStage } from "./call-stage";
+import { CallCockpit } from "./call-cockpit";
 import { useDialerContext, type DialerCampaign } from "./dialer-context";
 import { DialerFloor } from "./dialer-floor";
+import { DialerShell } from "./dialer-shell";
 import { LeadPanel } from "./lead-panel";
 import { groupLabel, LoadLeadsDialog } from "./load-leads-dialog";
 import { QualifyPanel } from "./qualify-panel";
+import { Teleprompter } from "./teleprompter";
 
 export function DialerClient({
   queue: initialQueue,
@@ -310,10 +312,26 @@ export function DialerClient({
     focusLead && focusScripts ? scriptVariantForLead(focusLead, focusScripts) : null;
   const scriptText = focusScripts ? scriptTextForVariant(focusScripts, scriptVariant) : "";
   const scriptTestRunning = focusScripts ? isScriptTestRunning(focusScripts) : false;
-  const [scriptOpen, setScriptOpen] = useState(true);
+  // The campaign's OTHER script — the teleprompter's objection branch.
+  const branchText = focusScripts
+    ? (scriptVariant === "b" ? focusScripts.scriptA : focusScripts.scriptB).trim()
+    : "";
   useEffect(() => {
     scriptVariantRef.current = scriptVariant;
   }, [scriptVariant]);
+
+  // Teleprompter "copy to notes": append one "Label — value" line to the same
+  // in-call note the qualify panel and wrap-up edit (notesRef holds the latest).
+  const focusLeadIdRef = useRef<string | null>(null);
+  focusLeadIdRef.current = focusLeadId ?? null;
+  const appendNote = useCallback(
+    (line: string) => {
+      const cur = notesRef.current;
+      if (cur.includes(line)) return; // double-tap shouldn't duplicate the line
+      updateNotes(cur ? `${cur}\n${line}` : line, focusLeadIdRef.current);
+    },
+    [updateNotes],
+  );
 
   // ── Disposition ────────────────────────────────────────────────────────────
   // Two outcomes pause here to ask WHEN, because filing the disposition is a
@@ -382,6 +400,11 @@ export function DialerClient({
           callbackId: pendingCallbackIdRef.current ?? undefined,
         });
         pendingCallbackIdRef.current = null;
+        // The disposition is filed — the crash-recovery draft for this attempt
+        // has served its purpose and must not resurrect on a future wrap-up.
+        const store = browserWrapupStore();
+        const attemptId = state.attemptIds[lead.id] ?? state.callSid;
+        if (store && attemptId) clearWrapupDraft(store, attemptId);
       }
       dialer.selectOutcome(o);
     },
@@ -403,8 +426,47 @@ export function DialerClient({
     [focusLead, fileOutcome],
   );
 
+  // ── Keyboard shortcuts (registered by DialerShell while this page lives) ──
+  // The SAME resolution the OutcomeGrid renders, so 1..9 press exactly the
+  // buttons on screen, in grid order. Every handler self-gates on status —
+  // and every one of them has a visible button equivalent.
+  const outcomeOptions = useMemo(
+    () =>
+      filterOutcomeOptionsByKeys(
+        resolveOutcomeOptions(vocab, dispositions),
+        focusCampaign?.dispositionKeys,
+      ),
+    [vocab, dispositions, focusCampaign?.dispositionKeys],
+  );
+  const kbdHandlers = useMemo(
+    () => ({
+      onStartCall: () => {
+        if (state.status === "idle") dialer.startCall();
+      },
+      onToggleMute: () => {
+        if (state.status === "dialing" || state.status === "live") dialer.toggleMute();
+      },
+      onSkip: () => {
+        if (state.status === "dialing" || state.status === "wrapup") dialer.skip();
+      },
+      onFocusNotes: () => {
+        document.querySelector<HTMLElement>("[data-dialer-notes]")?.focus();
+      },
+      onDigit: (n: number) => {
+        if (state.status !== "wrapup") return;
+        const opt = outcomeOptions[n - 1];
+        if (opt) onOutcome(opt.value, opt.key);
+      },
+    }),
+    [dialer, state.status, outcomeOptions, onOutcome],
+  );
+
   return (
-    <div className="space-y-4">
+    <DialerShell
+      assignmentLabel={assignmentLabel}
+      kbd={kbdHandlers}
+      dispositionLabels={outcomeOptions.map((o) => o.label)}
+    >
       {/* Manual mode needs Twilio; AI mode places calls server-side without it. */}
       {config.manualEnabled && !config.voiceConfigured && !state.aiMode && (
         <Card className="flex flex-col items-start gap-3 border-warning/30 bg-warning/5 p-4 sm:flex-row sm:items-center">
@@ -576,16 +638,7 @@ export function DialerClient({
             </Badge>
           </button>
         )}
-        {assignmentLabel && (
-          <Badge
-            tone="primary"
-            className="max-w-[220px] gap-1"
-            title={`This queue is scoped to the assignment "${assignmentLabel}".`}
-          >
-            <ListFilter className="h-3 w-3 shrink-0" />
-            <span className="truncate">Working: {assignmentLabel}</span>
-          </Badge>
-        )}
+        {/* The assignment chip moved into the shell header (with progress). */}
         <span
           className="text-xs font-medium text-muted-foreground tabular"
           title={
@@ -627,7 +680,7 @@ export function DialerClient({
         </Card>
 
         <Card className="overflow-hidden lg:col-span-5 lg:min-h-[640px]">
-          <CallStage
+          <CallCockpit
             state={state}
             focusLead={focusLead}
             hasQueue={queueForDialer.length > 0}
@@ -652,13 +705,12 @@ export function DialerClient({
             onOutcome={onOutcome}
             dispositions={dispositions}
             allowedDispositionKeys={focusCampaign?.dispositionKeys}
+            reviewEnabled={Boolean(config.orgId)}
             onToggleMute={dialer.toggleMute}
             onToggleHold={dialer.toggleHold}
-            onToggleRecording={dialer.toggleRecording}
             onDigit={dialer.sendDigit}
             onSetParallel={dialer.setParallelCount}
             onSetAutoDial={dialer.setAutoDial}
-            onSetAiMode={dialer.setAiMode}
             onLaunchNextAI={dialer.launchNextAI}
             onStopAICampaign={dialer.stopAICampaign}
             onEndAISession={dialer.endAISession}
@@ -666,7 +718,9 @@ export function DialerClient({
           />
         </Card>
 
-        <Card className="overflow-hidden lg:col-span-4">
+        {/* data-dialer-teleprompter: the live cockpit's "Script" reach button
+            scrolls this card into view (it can sit below the fold mid-call). */}
+        <Card className="overflow-hidden lg:col-span-4" data-dialer-teleprompter="">
           <div className="border-b border-border px-5 py-3">
             <h3 className="font-semibold">
               {/* Two things vary here. An org can switch every qualify field off
@@ -685,36 +739,19 @@ export function DialerClient({
                 : "Context for this call & your notes"}
             </p>
           </div>
+          {/* Teleprompter replaces the static script card whenever a campaign
+              script exists: sections, {{field}} interpolation against the
+              current lead, objection branch, copy-to-notes. */}
           {showScriptCard && scriptText.length > 0 && (
-            <div className="border-b border-border">
-              <button
-                type="button"
-                onClick={() => setScriptOpen((v) => !v)}
-                aria-expanded={scriptOpen}
-                className="flex w-full items-center gap-2 px-5 py-3 text-left transition-colors hover:bg-muted/50"
-              >
-                <ScrollText className="h-4 w-4 text-muted-foreground" />
-                <span className="text-sm font-semibold">Script</span>
-                {scriptTestRunning && scriptVariant && (
-                  <Badge tone={scriptVariant === "a" ? "primary" : "accent"}>
-                    Variant {scriptVariant.toUpperCase()}
-                  </Badge>
-                )}
-                <ChevronDown
-                  className={cn(
-                    "ml-auto h-4 w-4 text-muted-foreground transition-transform",
-                    scriptOpen && "rotate-180",
-                  )}
-                />
-              </button>
-              {scriptOpen && (
-                <div className="max-h-56 overflow-y-auto px-5 pb-4">
-                  <p className="whitespace-pre-wrap text-sm leading-relaxed text-muted-foreground">
-                    {scriptText}
-                  </p>
-                </div>
-              )}
-            </div>
+            <Teleprompter
+              scriptText={scriptText}
+              branchText={branchText || null}
+              variant={scriptVariant}
+              testRunning={scriptTestRunning}
+              lead={focusLead}
+              fields={config.leadFields ?? []}
+              onCopyToNotes={appendNote}
+            />
           )}
           <div className="p-5">
             <QualifyPanel
@@ -794,6 +831,6 @@ export function DialerClient({
           leadGroups={config.leadGroups}
         />
       )}
-    </div>
+    </DialerShell>
   );
 }

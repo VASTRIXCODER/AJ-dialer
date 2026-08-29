@@ -33,7 +33,7 @@ export default async function TeamStatusPage() {
         title="Team Status"
         description="Every active rep, their current call state, and who they're talking to — updating live."
       />
-      <TeamRoster />
+      <TeamRoster orgId={viewer.org?.id ?? null} />
     </PageContainer>
   );
 }

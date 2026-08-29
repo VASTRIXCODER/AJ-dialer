@@ -51,8 +51,15 @@ interface UpsertInput {
 const TABLE = "user_presence";
 /** Hard cutoff for garbage-collecting rows an unclean disconnect never cleared. */
 const HARD_TTL_MS = 30 * 60_000;
-/** Default "still active" window for the roster read — see listPresenceForOrg. */
-const DEFAULT_STALE_MS = 45_000;
+/**
+ * Default "still active" window for the roster read — see listPresenceForOrg.
+ * MUST track the dialer's HTTP heartbeat cadence (use-dialer.ts, 60s since the
+ * realtime floor channel became the primary liveness signal): the window
+ * tolerates one dropped beat plus network slack, exactly the ratio the old
+ * 20s-beat/45s-window pair had. A window shorter than one beat would blink
+ * every genuinely-present rep off the roster between heartbeats.
+ */
+const DEFAULT_STALE_MS = 130_000;
 
 type Row = Record<string, unknown>;
 

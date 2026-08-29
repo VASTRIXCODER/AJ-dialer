@@ -194,6 +194,14 @@ export interface OrgSettings {
     doubleDial: boolean;
     /** Seconds to wait after a no-answer before the second (double-tap) dial. */
     doubleDialGapSec: number;
+    /**
+     * Lease-based dial reservations (claim/heartbeat/release — see
+     * src/lib/db/reservations.ts): two reps can never pull the same lead into
+     * their queues at once. ON by default; this is the org-level kill switch
+     * for rolling the reservation engine back to first-writer-wins dialing if
+     * it ever misbehaves in production.
+     */
+    reservations: boolean;
   };
   /**
    * Unattended AI calling schedule. When enabled, a server-side cron places AI
@@ -365,6 +373,9 @@ export const DEFAULT_ORG_SETTINGS: OrgSettings = {
     localPresence: true,
     doubleDial: false,
     doubleDialGapSec: 15,
+    // The reservation engine is the default; orgs saved before it existed pick
+    // it up here via mergeSettings (absent key → this default → ON).
+    reservations: true,
   },
   automation: {
     enabled: false,

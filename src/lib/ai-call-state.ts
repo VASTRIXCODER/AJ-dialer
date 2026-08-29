@@ -7,6 +7,8 @@ import {
   markAIConversationActive,
   markAIConversationRinging,
 } from "./db/records";
+import { publishOrgEvent } from "./realtime/publish";
+import { createAdminClient, isAdminConfigured } from "./supabase/admin";
 import { getRestClient } from "./twilio";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -68,6 +70,39 @@ export type AppliedTransition =
   | "ignored";
 
 /**
+ * Floor broadcast for a successful AI transition. One cheap row read resolves
+ * where to publish (the conversation row carries org/owner/lead — stamped at
+ * seed time); best-effort by contract, and the terminal "ended" is published
+ * by finalizeAIConversation, not here.
+ */
+async function publishAiState(
+  conversationId: string,
+  state: "ringing" | "connected",
+): Promise<void> {
+  if (!isAdminConfigured()) return;
+  try {
+    const { data } = await createAdminClient()
+      .from("ai_conversations")
+      .select("org_id, owner_id, lead_id, lead_name")
+      .eq("conversation_id", conversationId)
+      .maybeSingle();
+    if (!data?.org_id) return;
+    publishOrgEvent(String(data.org_id), "call.state", {
+      kind: "ai",
+      id: conversationId,
+      ownerId: data.owner_id ? String(data.owner_id) : null,
+      leadId: data.lead_id ? String(data.lead_id) : null,
+      leadName: String(data.lead_name ?? ""),
+      state,
+      stateSince: new Date().toISOString(),
+      terminationReason: null,
+    });
+  } catch {
+    /* best-effort — monitors poll as fallback */
+  }
+}
+
+/**
  * Apply Twilio's verdict on the homeowner's leg to the conversation.
  *
  * Returns what it actually did, which is not always what it was told — losing a
@@ -83,6 +118,7 @@ export async function applyTwilioCallStatus(
     // because nothing ever told it.
     await markAIConversationRinging(conversationId);
     updateAICall(conversationId, { state: "ringing", ringingAt: Date.now() });
+    await publishAiState(conversationId, "ringing");
     return "ringing";
   }
 
@@ -94,6 +130,7 @@ export async function applyTwilioCallStatus(
       state: "in_progress",
       connectedAt: Date.now(),
     });
+    await publishAiState(conversationId, "connected");
     return "connected";
   }
 

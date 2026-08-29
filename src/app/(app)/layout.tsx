@@ -20,6 +20,7 @@ import {
 import { templateProfile } from "@/lib/org/templates";
 import { orgVocabulary } from "@/lib/org/vocabulary";
 import { isSuperadmin } from "@/lib/superadmin";
+import { isSupabaseConfigured } from "@/lib/supabase/config";
 import { isVoiceConfigured } from "@/lib/twilio";
 import { MAX_PARALLEL_HUMAN } from "@/lib/use-dialer";
 import { initials } from "@/lib/utils";
@@ -166,6 +167,21 @@ export default async function AppGroupLayout({
 
   const dialerConfig = {
     userId: viewer.user?.id,
+    // Presence on the org floor channel tracks a human-readable name.
+    displayName: viewer.displayName,
+    // Names the org's private realtime floor channel (answered fast-path, live
+    // floor). Absent in demo — every realtime consumer then reports offline
+    // and falls back to polling.
+    orgId: viewer.org?.id ?? null,
+    // Org policy: record manual conference calls. The rep leg passes exactly
+    // this to Twilio, and the dialer's RecordingIndicator reports exactly this.
+    recordingEnabled: viewer.org?.settings.dialing.recording ?? true,
+    // Lease-based dial claims (two-reps-same-lead fix). Needs a database —
+    // demo mode stays on the legacy local queue path.
+    reservationsEnabled:
+      isSupabaseConfigured() &&
+      Boolean(viewer.org?.id) &&
+      (viewer.org?.settings.dialing.reservations ?? true),
     voiceConfigured: isVoiceConfigured(),
     aiAgentConfigured: isElevenLabsConfigured(),
     // A second AI persona the rep can pick in the dialer (feature is hidden unless set).

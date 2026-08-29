@@ -62,6 +62,8 @@ export default async function DialerPage({
       scriptA: c.scriptA,
       scriptB: c.scriptB,
       dispositionKeys: c.dispositionKeys,
+      // The AI session header shows the campaign's goal while the agent dials.
+      objective: c.objective,
     }));
 
   // Sanitise callback params — only digits/+ allowed in phone to prevent injection.

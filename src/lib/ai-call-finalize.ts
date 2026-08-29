@@ -14,6 +14,8 @@ import {
   enrichLeadFromAI,
   getConversationLeadRef,
 } from "./db/records";
+import { publishOrgEvent } from "./realtime/publish";
+import { createAdminClient, isAdminConfigured } from "./supabase/admin";
 import type { CallOutcome, Lead } from "./types";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -344,6 +346,33 @@ export async function finalizeAIConversation(input: {
       }))
       .filter((t) => t.message.trim().length > 0),
   });
+
+  // Floor broadcast: this conversation is OVER, whatever the outcome. One cheap
+  // row read resolves where to publish (the org was stamped at seed time);
+  // best-effort — the monitors' fallback poll is the backstop.
+  if (isAdminConfigured()) {
+    try {
+      const { data: convRow } = await createAdminClient()
+        .from("ai_conversations")
+        .select("org_id, owner_id, lead_id, lead_name")
+        .eq("conversation_id", conversationId)
+        .maybeSingle();
+      if (convRow?.org_id) {
+        publishOrgEvent(String(convRow.org_id), "call.state", {
+          kind: "ai",
+          id: conversationId,
+          ownerId: convRow.owner_id ? String(convRow.owner_id) : null,
+          leadId: convRow.lead_id ? String(convRow.lead_id) : null,
+          leadName: String(convRow.lead_name ?? ""),
+          state: "ended",
+          stateSince: new Date().toISOString(),
+          terminationReason: input.terminationReason ?? input.status ?? null,
+        });
+      }
+    } catch {
+      /* best-effort */
+    }
+  }
 
   // Process the extracted data back onto the lead (bill, solar, EV/pool/battery,
   // score, status) so the CRM reflects what the AI learned on the call.

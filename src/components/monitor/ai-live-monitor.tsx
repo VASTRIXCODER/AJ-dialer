@@ -21,6 +21,7 @@ import { SpotlightCard } from "@/components/motion";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { useOrgChannel } from "@/lib/realtime/use-org-channel";
 import type { AILiveState, CallOutcome } from "@/lib/types";
 import { liveStateConfig, outcomeConfig } from "@/lib/status";
 import { useVisiblePoll } from "@/lib/use-visible-poll";
@@ -110,11 +111,14 @@ function StatCard({
 
 export function AiLiveMonitor({
   configured,
+  orgId = null,
   initialCall = null,
   canListen = false,
   canIntervene = false,
 }: {
   configured: boolean;
+  /** The viewer's org — subscribes this board to the org floor channel. */
+  orgId?: string | null;
   initialCall?: string | null;
   canListen?: boolean;
   canIntervene?: boolean;
@@ -168,12 +172,35 @@ export function AiLiveMonitor({
       .catch(() => {});
   }, []);
 
-  // 2s, down from 4s. The feed is now a plain DB read — Twilio has already
-  // pushed the truth into the row by the time we ask — so polling harder is
-  // cheap, and halves the worst-case lag between a phone ringing and the
-  // monitor saying so. Paused while the tab is hidden; refreshes the moment
-  // the supervisor comes back.
-  useVisiblePoll(load, 2000);
+  // Realtime-first: the org floor channel pushes `call.state` the moment a leg
+  // moves, and each push refetches the same feed (debounced — a parallel batch
+  // fires several events in the same second). (Re)subscribing refetches too, so
+  // a reconnect can never leave a gap on the board.
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const scheduleLoad = useCallback(() => {
+    if (debounceRef.current) return;
+    debounceRef.current = setTimeout(() => {
+      debounceRef.current = null;
+      load();
+    }, 1000);
+  }, [load]);
+  useEffect(
+    () => () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+    },
+    [],
+  );
+  const { health } = useOrgChannel({
+    orgId,
+    on: { "call.state": scheduleLoad },
+    onResync: load,
+  });
+
+  // With a live channel the poll is only a safety net (30s). Without one —
+  // demo, outage, reconnecting — it drops back to the old 2s cadence, so the
+  // board is never worse than it was before realtime existed. Paused while the
+  // tab is hidden; refreshes the moment the supervisor comes back.
+  useVisiblePoll(load, health === "live" ? 30_000 : 2000);
 
   useEffect(() => {
     const tick = setInterval(() => {

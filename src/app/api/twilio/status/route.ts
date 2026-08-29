@@ -14,8 +14,10 @@ import {
 import {
   connectHumanCall,
   endHumanCallForLeg,
+  getHumanCall,
   ringHumanCall,
 } from "@/lib/human-call-store";
+import { publishOrgEvent } from "@/lib/realtime/publish";
 import { createAdminClient, isAdminConfigured } from "@/lib/supabase/admin";
 import { getRestClient, readVerifiedTwilioForm } from "@/lib/twilio";
 
@@ -137,6 +139,16 @@ export async function POST(req: Request) {
         await ringHumanCall(humanId);
       } else if (ANSWERED_STATUSES.has(callStatus)) {
         await connectHumanCall(humanId, leadId);
+        // ANSWERED FAST-PATH: tell the rep's browser WHICH leg picked up, now,
+        // instead of waiting for its next /api/twilio/answered poll. The dialer
+        // matches on `room` and runs its existing resolution immediately; the
+        // poll (slowed while the channel is live) remains the backstop.
+        const hc = await getHumanCall(humanId);
+        publishOrgEvent(hc?.orgId, "call.answered", {
+          humanId,
+          room,
+          answeredLeadId: leadId ?? null,
+        });
       } else if (TERMINAL_STATUSES.has(callStatus) && leadId) {
         // Only ends the row if THIS is the leg that answered — a losing parallel
         // leg terminating must not yank a live call off the monitor.

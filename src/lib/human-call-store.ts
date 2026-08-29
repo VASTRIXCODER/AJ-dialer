@@ -1,5 +1,6 @@
 import "server-only";
 
+import { publishOrgEvent } from "@/lib/realtime/publish";
 import { createAdminClient, isAdminConfigured } from "@/lib/supabase/admin";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -58,6 +59,34 @@ const RING_TTL_MS = 90_000;
 
 type Row = Record<string, unknown>;
 
+/**
+ * Floor broadcast for a human call's lifecycle. Best-effort by contract
+ * (publishOrgEvent never throws) — the monitors keep a poll fallback, so a
+ * dropped broadcast costs latency, never truth.
+ */
+function publishHumanState(
+  row: {
+    id: string;
+    orgId: string | null;
+    ownerId?: string | null;
+    leadId?: string | null;
+    leadName?: string;
+  },
+  state: "calling" | "ringing" | "connected" | "ended",
+  terminationReason?: string | null,
+): void {
+  publishOrgEvent(row.orgId, "call.state", {
+    kind: "human",
+    id: row.id,
+    ownerId: row.ownerId ?? null,
+    leadId: row.leadId ?? null,
+    leadName: row.leadName ?? "",
+    state,
+    stateSince: new Date().toISOString(),
+    terminationReason: terminationReason ?? null,
+  });
+}
+
 function toState(v: unknown): HumanCallState {
   return v === "connected" ? "connected" : v === "ringing" ? "ringing" : "calling";
 }
@@ -111,6 +140,15 @@ export async function startHumanCall(input: StartInput): Promise<void> {
           connected_at: null,
           answered_lead_id: null,
         });
+      publishHumanState(
+        {
+          id: input.id,
+          orgId: input.orgId ?? null,
+          ownerId: input.ownerId ?? null,
+          leadName: input.leadName || "Manual call",
+        },
+        "calling",
+      );
       return;
     } catch {
       /* fall back to memory so a call is never blocked by presence */
@@ -139,11 +177,27 @@ export async function startHumanCall(input: StartInput): Promise<void> {
 export async function ringHumanCall(id: string): Promise<void> {
   if (isAdminConfigured()) {
     try {
-      await createAdminClient()
+      // `.select()` returns the rows the guarded update actually advanced, so
+      // the broadcast fires only when the transition really happened (a losing
+      // late `ringing` publishes nothing) — and hands us the org to publish to.
+      const { data } = await createAdminClient()
         .from(TABLE)
         .update({ state: "ringing" })
         .eq("id", id)
-        .eq("state", "calling");
+        .eq("state", "calling")
+        .select("org_id, owner_id, lead_name");
+      const row = (data ?? [])[0] as Row | undefined;
+      if (row) {
+        publishHumanState(
+          {
+            id,
+            orgId: row.org_id ? String(row.org_id) : null,
+            ownerId: row.owner_id ? String(row.owner_id) : null,
+            leadName: String(row.lead_name ?? ""),
+          },
+          "ringing",
+        );
+      }
       return;
     } catch {
       /* fall through */
@@ -166,9 +220,11 @@ export async function connectHumanCall(
   if (isAdminConfigured()) {
     try {
       const admin = createAdminClient();
+      // org/owner/lead ride the same row read the connected_at guard already
+      // needs — no extra query to learn where to broadcast.
       const { data } = await admin
         .from(TABLE)
-        .select("connected_at")
+        .select("connected_at, org_id, owner_id, lead_name")
         .eq("id", id)
         .maybeSingle();
       await admin
@@ -179,6 +235,18 @@ export async function connectHumanCall(
           ...(answeredLeadId ? { answered_lead_id: answeredLeadId } : {}),
         })
         .eq("id", id);
+      if (data) {
+        publishHumanState(
+          {
+            id,
+            orgId: data.org_id ? String(data.org_id) : null,
+            ownerId: data.owner_id ? String(data.owner_id) : null,
+            leadId: answeredLeadId ?? null,
+            leadName: String(data.lead_name ?? ""),
+          },
+          "connected",
+        );
+      }
       return;
     } catch {
       /* fall through */
@@ -194,7 +262,25 @@ export async function connectHumanCall(
 export async function endHumanCall(id: string): Promise<void> {
   if (isAdminConfigured()) {
     try {
-      await createAdminClient().from(TABLE).delete().eq("id", id);
+      // `.select()` on the delete returns the removed row — the one place its
+      // org/owner can still be read — so the floor hears about the hang-up.
+      const { data } = await createAdminClient()
+        .from(TABLE)
+        .delete()
+        .eq("id", id)
+        .select("org_id, owner_id, lead_name");
+      const row = (data ?? [])[0] as Row | undefined;
+      if (row) {
+        publishHumanState(
+          {
+            id,
+            orgId: row.org_id ? String(row.org_id) : null,
+            ownerId: row.owner_id ? String(row.owner_id) : null,
+            leadName: String(row.lead_name ?? ""),
+          },
+          "ended",
+        );
+      }
       return;
     } catch {
       /* fall through */
@@ -228,12 +314,23 @@ export async function endHumanCallForLeg(
     const admin = createAdminClient();
     const { data } = await admin
       .from(TABLE)
-      .select("answered_lead_id")
+      .select("answered_lead_id, org_id, owner_id, lead_name")
       .eq("id", id)
       .maybeSingle();
     const answered = data?.answered_lead_id ? String(data.answered_lead_id) : null;
     if (answered && answered === leadId) {
       await admin.from(TABLE).delete().eq("id", id);
+      publishHumanState(
+        {
+          id,
+          orgId: data?.org_id ? String(data.org_id) : null,
+          ownerId: data?.owner_id ? String(data.owner_id) : null,
+          leadId,
+          leadName: String(data?.lead_name ?? ""),
+        },
+        "ended",
+        "completed",
+      );
     }
   } catch {
     /* best-effort — the TTL sweep is the backstop */

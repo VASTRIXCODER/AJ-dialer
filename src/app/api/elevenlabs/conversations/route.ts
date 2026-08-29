@@ -1,69 +1,21 @@
 import { NextResponse } from "next/server";
 import { reconcileActiveCalls, reconcileViaTwilio } from "@/lib/ai-call-reconcile";
 import {
-  type AICall,
   listActiveAICalls,
   listRecentAICalls,
 } from "@/lib/ai-call-store";
 import { getAIConversationsForMonitor, getAITodayStats } from "@/lib/db/records";
 import { isElevenLabsConfigured } from "@/lib/elevenlabs";
+import { mergeMonitorAICalls as merge } from "@/lib/monitor/floor-data";
 import { viewerCan, viewerOrgId } from "@/lib/org/membership";
-import { isTerminalLiveState, liveStateRank } from "@/lib/types";
+import { isTerminalLiveState } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
-type DbCall = Awaited<
-  ReturnType<typeof getAIConversationsForMonitor>
->["active"][number];
-type Loose = AICall | DbCall;
-
-/**
- * Merge the durable Supabase rows with the in-memory store.
- *
- * The DATABASE WINS ON STATE. That inversion is a bug fix, not a preference.
- *
- * The old merge let the in-memory entry overwrite the DB row wholesale, on the
- * theory that memory is "freshest". It isn't — it's per-instance. Combined with a
- * sweep() that could never evict an entry lacking `endedAt`, a call that had long
- * since been finalized in Supabase would be resurrected as "active" on every
- * single poll that happened to land on the instance which placed it. No refresh
- * could clear it, because refreshing just asked the same instance again. That is
- * the "in progress forever" bug in its purest form.
- *
- * Memory is still useful — it holds fields the DB row doesn't carry (the city, the
- * conference room, the customer leg SID) — so it fills gaps. It just doesn't get
- * to argue about whether the call is over.
- */
-function merge(memory: Loose[], db: Loose[]): Loose[] {
-  const byId = new Map<string, Loose>();
-  for (const c of memory) byId.set(c.conversationId, c);
-
-  for (const dbCall of db) {
-    const mem = byId.get(dbCall.conversationId);
-    if (!mem) {
-      byId.set(dbCall.conversationId, dbCall);
-      continue;
-    }
-    // Field-wise: the DB's lifecycle facts win; memory only fills what's missing.
-    //
-    // Note the explicit `?? mem.x` restores. Spreading `...dbCall` over `...mem`
-    // copies the DB's UNDEFINED fields too, silently erasing a value memory had —
-    // so a timestamp we recorded in memory but failed to persist would vanish, and
-    // the on-call timer would sit at 0:00 for the whole conversation.
-    const dbIsAhead = liveStateRank(dbCall.state) >= liveStateRank(mem.state);
-    byId.set(dbCall.conversationId, {
-      ...mem,
-      ...dbCall,
-      city: dbCall.city || (mem as AICall).city || "",
-      state: dbIsAhead ? dbCall.state : mem.state,
-      ringingAt: dbCall.ringingAt ?? (mem as AICall).ringingAt,
-      connectedAt: dbCall.connectedAt ?? (mem as AICall).connectedAt,
-      endedAt: dbCall.endedAt ?? mem.endedAt,
-      outcome: dbCall.outcome ?? mem.outcome,
-    } as Loose);
-  }
-  return [...byId.values()];
-}
+// The store⊕DB merge ("the DATABASE WINS ON STATE" — see the history in
+// mergeMonitorAICalls' doc comment) now lives in src/lib/monitor/floor-data.ts,
+// shared with the Live Floor's /api/floor/snapshot so the two feeds can never
+// disagree about what "merged" means.
 
 /**
  * Only reconcile against ElevenLabs this often. The feed is polled every 2s per

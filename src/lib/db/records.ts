@@ -4,6 +4,7 @@ import { CONNECTED_OUTCOMES } from "../call-analytics";
 import { recordDispositionFiled } from "../calls/apply-event";
 import { zonedDayStartMs } from "../dialer/schedule";
 import { orgTimezone } from "../metrics/definitions";
+import { publishOrgEvent } from "../realtime/publish";
 import { createAdminClient, isAdminConfigured } from "../supabase/admin";
 import { isSupabaseConfigured } from "../supabase/config";
 import { createClient } from "../supabase/server";
@@ -16,6 +17,7 @@ import {
 import { completeCallbackForLead } from "./callbacks";
 import { addToDnc } from "./dnc";
 import { logLeadEvent } from "./lead-events";
+import { markLeadAttempted } from "./reservations";
 
 const UUID =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -308,15 +310,18 @@ export async function insertCallRecord(input: {
     const leadUuid = asUuid(input.leadId);
 
     // Tag the call with the lead's campaign so reports + the campaigns tab can
-    // slice performance per campaign.
+    // slice performance per campaign. org_id rides the same read — it's where
+    // the leaderboard.delta broadcast below goes.
     let campaignId: string | null = null;
+    let orgId: string | null = null;
     if (leadUuid) {
       const { data: l } = await supabase
         .from("leads")
-        .select("campaign_id")
+        .select("campaign_id, org_id")
         .eq("id", leadUuid)
         .maybeSingle();
       campaignId = (l?.campaign_id as string) ?? null;
+      orgId = (l?.org_id as string) ?? null;
     }
 
     const { data: rec, error: insErr } = await supabase.from("call_records").insert({
@@ -419,6 +424,16 @@ export async function insertCallRecord(input: {
         })
         .eq("id", leadUuid);
     }
+    // Reservation engine: the OUTCOME WRITE is the server-side release. It
+    // stamps the attempt counter + last_attempt_at and clears the dial hold in
+    // one statement, so the client never releases after a disposition (a
+    // client release racing this could hand the lead to another rep before its
+    // counter advanced). This used to run only on the cron path — a rep's
+    // filed disposition left the hold to expire on its 180s TTL instead.
+    // cooldown 0 = no re-dial gate; the counter + hold release are the point.
+    if (leadUuid && orgId) {
+      await markLeadAttempted(orgId, leadUuid, { cooldownMinutes: 0 });
+    }
     // Close the loop on a callback-launched call — and do it BEFORE
     // routeDisposition, whose "latest disposition wins" cleanup DELETES the
     // lead's open callbacks (`delete … neq status completed`). Run after it and
@@ -446,6 +461,19 @@ export async function insertCallRecord(input: {
       callRecordId: recordId,
       source: input.channel === "ai" ? "ai" : "rep",
     });
+
+    // Floor broadcast: this rep's numbers just changed. Ad-hoc manual dials have
+    // no lead row, so fall back to the rep's own profile for the org. The event
+    // carries no math — consumers refetch the leaderboard/floor endpoints.
+    if (!orgId) {
+      const { data: prof } = await supabase
+        .from("profiles")
+        .select("org_id")
+        .eq("id", user.id)
+        .maybeSingle();
+      orgId = (prof?.org_id as string) ?? null;
+    }
+    publishOrgEvent(orgId, "leaderboard.delta", { ownerId: user.id });
 
     // Canonical machine: mark the attempt dispositioned + link the projection
     // row. Resolution: client key, else (room, lead) — attemptRoom covers the
@@ -686,7 +714,7 @@ export async function completeAIConversation(input: {
     const admin = createAdminClient();
     const { data: existing } = await admin
       .from("ai_conversations")
-      .select("owner_id, lead_id, lead_name, phone, call_sid, state, outcome, started_at, agent_key")
+      .select("owner_id, org_id, lead_id, lead_name, phone, call_sid, state, outcome, started_at, agent_key")
       .eq("conversation_id", input.conversationId)
       .maybeSingle();
 
@@ -833,6 +861,13 @@ export async function completeAIConversation(input: {
       source: "ai",
       agentKey: (existing?.agent_key as string) ?? null,
     });
+
+    // Floor broadcast: an AI outcome just landed on this owner's numbers.
+    publishOrgEvent(
+      existing?.org_id ? String(existing.org_id) : null,
+      "leaderboard.delta",
+      { ownerId },
+    );
 
     // Canonical machine: mark the attempt dispositioned + link the projection.
     const filed = await recordDispositionFiled({

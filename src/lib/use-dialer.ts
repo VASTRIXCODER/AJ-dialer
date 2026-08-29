@@ -7,13 +7,57 @@ import {
   decideCallEvent,
   describeCallError,
 } from "./dialer/call-events";
+import {
+  claimEmptyMessage,
+  computeReleaseSet,
+  type ClaimReleaseAction,
+} from "./dialer/claims";
+import { dedupeLeadsByPhone } from "./dialer/lane-dedupe";
 import { persistDisposition } from "./dialer/disposition-queue";
+import { decideMuteToggle, type MuteCapability } from "./dialer/mute-intent";
 import type { AgentKey } from "./elevenlabs";
 import type { CallOutcome, Lead } from "./types";
 import { formatPhone, toE164 } from "./utils";
 
 export type DialerStatus = "idle" | "dialing" | "live" | "wrapup" | "ai";
 export type DialerMode = "connecting" | "live" | "offline";
+/** The dialer's explicit mode — one word the whole shell can reason about.
+ *  Derived from (and kept in sync with) aiMode + parallelCount, the two knobs
+ *  the engine actually runs on; setSessionMode() moves both together. */
+export type SessionMode = "manual" | "ai" | "parallel";
+export type { MuteCapability } from "./dialer/mute-intent";
+
+/** Claim scope at dial time — what /api/dialer/claim narrows eligibility by. */
+export interface DialerClaimContext {
+  /** Segment statuses of the loaded session (absent = server default set). */
+  statuses?: string[];
+  campaignId?: string;
+  /** Assignment (lead pack) id when the queue is scoped to one. */
+  packId?: string;
+}
+
+/** Optional engine behaviors threaded from org settings via DialerProvider. */
+export interface DialerEngineOptions {
+  /** Org policy `settings.dialing.recording` — the conference record flag the
+   *  rep leg passes to Twilio. There is deliberately NO client toggle. */
+  recordingEnabled?: boolean;
+  /** Lease-based dial reservations (`settings.dialing.reservations`). When on,
+   *  startHumanCall claims leads server-side instead of slicing the local
+   *  queue — the two-reps-same-lead fix. Off/absent = the legacy local path
+   *  (also the demo-mode path — claims need a database). */
+  reservations?: {
+    enabled: boolean;
+    getContext: () => DialerClaimContext;
+    /** Claimed leads may be absent from the local queue — the provider merges
+     *  them into display state so the UI shows what's actually being dialed. */
+    onClaimed?: (leads: Lead[]) => void;
+  };
+  /** A dial round contained two leads sharing one phone number, so the later
+   *  duplicates were dropped before anything rang (first occurrence kept —
+   *  see src/lib/dialer/lane-dedupe.ts). The provider surfaces this (toast)
+   *  and counts it (`lane.dup_dropped`). */
+  onDuplicateLanesDropped?: (dropped: Lead[]) => void;
+}
 
 export interface DialLine {
   id: string;
@@ -55,11 +99,20 @@ export interface CallerIdInfo {
 
 export interface DialerState {
   status: DialerStatus;
+  /** Explicit mode word derived from aiMode + parallelCount (see SessionMode). */
+  sessionMode: SessionMode;
   lines: DialLine[];
   connectedLead: Lead | null;
   durationSec: number;
   muted: boolean;
+  /** What the mute control can honestly do for the CURRENT attempt — "arming"
+   *  covers the sub-second window between Start and device.connect() resolving,
+   *  where a toggle is queued and applied the instant the rep leg exists. */
+  muteCapability: MuteCapability;
   onHold: boolean;
+  /** Org policy (settings.dialing.recording) — NOT a client toggle. This is
+   *  what the rep leg actually passes to Twilio's conference record flag, so
+   *  the REC indicator can never claim a recording that isn't being made. */
   recording: boolean;
   autoDial: boolean;
   parallelCount: number;
@@ -242,6 +295,12 @@ export const MAX_PARALLEL_HUMAN = 3;
 /** Platform ceiling for AI concurrency; the org's plan limit applies on top. */
 export const MAX_PARALLEL_AI = 30;
 
+/** One derivation for the mode word, so every setter that moves aiMode or
+ *  parallelCount computes sessionMode identically and the two can't drift. */
+function deriveSessionMode(aiMode: boolean, parallelCount: number): SessionMode {
+  return aiMode ? "ai" : parallelCount > 1 ? "parallel" : "manual";
+}
+
 export function useDialer(
   queue: Lead[],
   aiConfigured = false,
@@ -267,19 +326,24 @@ export function useDialer(
    * more than a few answered calls without abandoning someone.
    */
   maxHumanLines = MAX_PARALLEL_HUMAN,
+  /** Org-policy behaviors (recording flag, dial reservations). See the type. */
+  options: DialerEngineOptions = {},
 ) {
   const humanCeiling = Math.max(
     1,
     Math.min(MAX_PARALLEL_HUMAN, Math.floor(maxHumanLines) || MAX_PARALLEL_HUMAN),
   );
+  const recordingEnabled = options.recordingEnabled ?? true;
   const [state, setState] = useState<DialerState>({
     status: "idle",
+    sessionMode: deriveSessionMode(aiConfigured, 1),
     lines: [],
     connectedLead: null,
     durationSec: 0,
     muted: false,
+    muteCapability: "unsupported",
     onHold: false,
-    recording: true,
+    recording: recordingEnabled,
     autoDial: false,
     parallelCount: 1,
     maxParallel: aiConfigured ? maxAiConcurrency : humanCeiling,
@@ -322,6 +386,21 @@ export function useDialer(
   // the rep's leg — without this the rep would sit on "live" talking to nobody.
   const customerWatchRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const presenceTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  /**
+   * The CURRENT attempt's answered-poll body, exposed so the org realtime
+   * channel (DialerProvider) can run one resolution pass the instant a
+   * `call.answered` broadcast arrives instead of waiting out the interval.
+   * Null whenever no answered-poll is active — a stray hint then does nothing.
+   */
+  const answeredPollFnRef = useRef<(() => Promise<void>) | null>(null);
+  /**
+   * Whether the org floor channel is live (set by DialerProvider). While it is,
+   * the answered poll relaxes 1.5s → 5s: the broadcast is the fast path and the
+   * poll is only the safety net. Read at poll START (dial time) — a mid-call
+   * health flip keeps the interval it started with, which at worst costs one
+   * 5s detection until the next dial.
+   */
+  const realtimeLiveRef = useRef(false);
   const presenceSnapshotRef = useRef<{
     status: DialerStatus;
     lead: { name?: string; city?: string; phone?: string } | null;
@@ -362,9 +441,75 @@ export function useDialer(
       const clamped = Math.min(s.parallelCount, humanCeiling);
       if (s.parallelCount === clamped && s.maxParallel === humanCeiling) return s;
       parallelRef.current = clamped;
-      return { ...s, parallelCount: clamped, maxParallel: humanCeiling };
+      return {
+        ...s,
+        parallelCount: clamped,
+        maxParallel: humanCeiling,
+        sessionMode: deriveSessionMode(false, clamped),
+      };
     });
   }, [humanCeiling]);
+
+  // ── Engine options (org policy) ────────────────────────────────────────────
+  // Mirrored to refs so dial-time code reads the CURRENT values without being
+  // re-created; the reservation callbacks close over nothing stale.
+  const optionsRef = useRef(options);
+  optionsRef.current = options;
+  const recordingRef = useRef(recordingEnabled);
+  useEffect(() => {
+    recordingRef.current = recordingEnabled;
+    // Keep the display flag honest if the org's policy changes mid-session.
+    setState((s) => (s.recording === recordingEnabled ? s : { ...s, recording: recordingEnabled }));
+  }, [recordingEnabled]);
+  /** Lead ids this rep currently HOLDS via /api/dialer/claim (on-screen round). */
+  const claimedIdsRef = useRef<Set<string>>(new Set());
+  /** state.status mirror for interval callbacks (heartbeat). */
+  const statusRef = useRef<DialerStatus>("idle");
+  useEffect(() => {
+    statusRef.current = state.status;
+  }, [state.status]);
+  /** A mute toggle pressed before device.connect() resolved — applied by
+   *  attachCallHandlers the moment the rep leg exists (pre-answer mute). */
+  const pendingMuteRef = useRef<boolean | null>(null);
+
+  /**
+   * Let go of the held claims for the current round. Skip/reset release them
+   * client-side (nothing was filed — the leads must be claimable again NOW);
+   * a disposition releases nothing here because the server clears the hold
+   * itself when the outcome write lands (markLeadAttempted in insertCallRecord)
+   * — a client release racing that write could hand the lead to another rep
+   * before its attempt counter advanced.
+   */
+  const releaseClaimedLeads = useCallback((action: ClaimReleaseAction) => {
+    const ids = computeReleaseSet(action, claimedIdsRef.current);
+    claimedIdsRef.current.clear();
+    if (!ids.length || !optionsRef.current.reservations?.enabled) return;
+    fetch("/api/dialer/release", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ leadIds: ids }),
+      keepalive: true,
+    }).catch(() => {});
+  }, []);
+
+  // Renew the holds for on-screen leads every 60s while a session is active —
+  // the reservation TTL is 180s, so one missed beat is survivable and two are
+  // not, which is exactly the behavior we want when a tab actually died.
+  useEffect(() => {
+    if (!enabled) return;
+    const id = setInterval(() => {
+      if (!optionsRef.current.reservations?.enabled) return;
+      if (statusRef.current === "idle") return;
+      const ids = [...claimedIdsRef.current];
+      if (!ids.length) return;
+      fetch("/api/dialer/heartbeat", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ leadIds: ids }),
+      }).catch(() => {});
+    }, 60_000);
+    return () => clearInterval(id);
+  }, [enabled]);
   // ── AI double-dial (double-tap) ────────────────────────────────────────────
   const doubleDialRef = useRef(doubleDial);
   const doubleDialGapMsRef = useRef(Math.max(5, doubleDialGapSec) * 1000);
@@ -591,6 +736,8 @@ export function useDialer(
     pollRef.current = null;
     if (customerWatchRef.current) clearInterval(customerWatchRef.current);
     customerWatchRef.current = null;
+    // No poll running ⇒ nothing for a realtime answered-hint to trigger.
+    answeredPollFnRef.current = null;
   }, []);
 
   const stopAITimer = useCallback(() => {
@@ -953,10 +1100,13 @@ export function useDialer(
 
   useEffect(() => {
     if (!enabled) return;
+    // 60s, up from 20s: channel presence on the org floor (E1/E3) is the
+    // primary liveness signal now — this HTTP heartbeat is the fallback that
+    // keeps the roster working in demo mode and across channel outages.
     presenceTimerRef.current = setInterval(() => {
       const snap = presenceSnapshotRef.current;
       postPresence(snap.status, snap.lead, snap.aiActiveCount);
-    }, 20_000);
+    }, 60_000);
     return () => {
       if (presenceTimerRef.current) clearInterval(presenceTimerRef.current);
       presenceTimerRef.current = null;
@@ -1120,9 +1270,13 @@ export function useDialer(
       stopPoll();
       clearHumanPresence();
       releaseActiveLegs();
+      // Nothing was filed for this round — free the reservation holds so the
+      // leads are immediately claimable again (by us or anyone else).
+      releaseClaimedLeads("reset");
       dialInFlightRef.current = false;
       bridgedRef.current = false;
       intentionalEndRef.current = false;
+      pendingMuteRef.current = null;
       // Detach FIRST, then hang up: the disconnect below can re-enter these
       // handlers, and a null ref is what makes them recognise the event as
       // belonging to a call the dialer has already finished with.
@@ -1141,11 +1295,20 @@ export function useDialer(
         connectedLead: null,
         durationSec: 0,
         reconnecting: false,
+        muteCapability: "unsupported",
         ...(reason ? { error: reason } : {}),
       });
       consumePendingRebuild();
     },
-    [clearHumanPresence, consumePendingRebuild, patch, releaseActiveLegs, stopTick, stopPoll],
+    [
+      clearHumanPresence,
+      consumePendingRebuild,
+      patch,
+      releaseActiveLegs,
+      releaseClaimedLeads,
+      stopTick,
+      stopPoll,
+    ],
   );
 
   const endCall = useCallback(() => {
@@ -1171,13 +1334,30 @@ export function useDialer(
     }
     bridgedRef.current = false;
     intentionalEndRef.current = false;
-    patch({ status: "wrapup", callSid: sid, reconnecting: false });
+    pendingMuteRef.current = null;
+    // The claims for this round stay HELD through wrap-up (the heartbeat keeps
+    // renewing them) — the disposition or skip decides how they're released.
+    patch({ status: "wrapup", callSid: sid, reconnecting: false, muteCapability: "unsupported" });
     consumePendingRebuild();
   }, [clearHumanPresence, consumePendingRebuild, patch, releaseActiveLegs, stopTick, stopPoll]);
 
   const attachCallHandlers = useCallback(
     (call: Call, onAccept?: () => void) => {
       callRef.current = call;
+
+      // PRE-ANSWER MUTE: the rep leg exists from this moment (connect() has
+      // resolved; the customer may still be ringing), so mute is live — and a
+      // toggle pressed during the sub-second "arming" window before this ran
+      // was queued as an intent that must be honored now, not dropped.
+      if (pendingMuteRef.current !== null) {
+        try {
+          call.mute(pendingMuteRef.current);
+        } catch {
+          /* the call teardown races this — muted state resets with the call */
+        }
+        pendingMuteRef.current = null;
+      }
+      patch({ muteCapability: "ready" });
 
       /**
        * THE fix for "it rings, then boots me back to Start session."
@@ -1716,11 +1896,83 @@ export function useDialer(
         return;
       }
 
-      const leads = override ?? nextLeads(parallelRef.current);
+      // ── Who gets dialed ──────────────────────────────────────────────────
+      // Reservations ON: claim the next N leads server-side — an exclusive,
+      // TTL'd hold per lead, so two reps (or a rep and the AI cron) can never
+      // pull the same lead at the same moment. The local queue stays what it
+      // always was: the DISPLAY. Reservations OFF (and demo mode, and explicit
+      // overrides like redial/callback): the legacy local-cursor path, intact.
+      let leads: Lead[];
+      const reservations = optionsRef.current.reservations;
+      if (!override && reservations?.enabled) {
+        // In-flight guard goes up BEFORE the claim round-trip — mashing Start
+        // during the network wait must not stack a second claim + dial.
+        dialInFlightRef.current = true;
+        let claimed: Lead[] = [];
+        try {
+          const ctx = reservations.getContext();
+          const res = await fetch("/api/dialer/claim", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              count: parallelRef.current,
+              statuses: ctx.statuses,
+              campaignId: ctx.campaignId,
+              packId: ctx.packId,
+            }),
+          });
+          const json = (await res.json().catch(() => ({}))) as { leads?: Lead[] };
+          if (res.ok && Array.isArray(json.leads)) claimed = json.leads;
+        } catch {
+          claimed = [];
+        }
+        if (!claimed.length) {
+          // Honest: an empty claim means the eligible pool is HELD or cooling
+          // down, not that the book is empty — say so, with the queue for scale.
+          dialInFlightRef.current = false;
+          patch({ error: claimEmptyMessage(queue.length), status: "idle", lines: [] });
+          return;
+        }
+        for (const l of claimed) claimedIdsRef.current.add(l.id);
+        // Claimed leads may not be in the local queue array — let the provider
+        // merge them into display state so the UI shows the actual round.
+        reservations.onClaimed?.(claimed);
+        leads = claimed;
+      } else {
+        leads = override ?? nextLeads(parallelRef.current);
+      }
+
+      // ── Phone-duplicate guard ────────────────────────────────────────────
+      // The claim guarantees lead-level exclusivity, but two DIFFERENT lead
+      // rows can carry one phone number (re-imports, shared landlines) — and a
+      // round that dials both rings the same phone on two lanes at once. Keep
+      // the first occurrence, drop the rest BEFORE anything is on the wire,
+      // and tell the provider (it toasts + counts `lane.dup_dropped`).
+      const dedupe = dedupeLeadsByPhone(leads);
+      if (dedupe.dropped.length) {
+        const droppedClaimIds = dedupe.dropped
+          .map((l) => l.id)
+          .filter((id) => claimedIdsRef.current.has(id));
+        for (const id of droppedClaimIds) claimedIdsRef.current.delete(id);
+        // Free the dropped duplicates' holds NOW — nothing will ever be filed
+        // for them this round, and letting the TTL run out just locks a lead
+        // no phone is going to ring.
+        if (droppedClaimIds.length && optionsRef.current.reservations?.enabled) {
+          fetch("/api/dialer/release", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ leadIds: droppedClaimIds }),
+            keepalive: true,
+          }).catch(() => {});
+        }
+        optionsRef.current.onDuplicateLanesDropped?.(dedupe.dropped);
+        leads = dedupe.kept;
+      }
       // Never fail silently here. This used to `return` with no state change and
       // no message, so pressing "Start session" looked like the dialer had
       // started and instantly quit — with nothing on screen explaining why.
       if (!leads.length) {
+        dialInFlightRef.current = false;
         patch({
           error: queue.length
             ? "Couldn't line up the next lead to dial. Reload your leads and try again."
@@ -1750,6 +2002,10 @@ export function useDialer(
         connectedLead: null,
         durationSec: 0,
         muted: false,
+        // The rep leg joins the conference when connect() resolves (below) —
+        // BEFORE the customer answers — so mute is armed from dialing onward.
+        // A toggle in this window queues its intent; attachCallHandlers applies.
+        muteCapability: "arming",
         onHold: false,
         lastOutcome: null,
         error: null,
@@ -1873,6 +2129,9 @@ export function useDialer(
           clearHumanPresence();
           dialInFlightRef.current = false;
           activeLegsRef.current = { sids: [], dialed: [] };
+          // Nothing was dialed — free the claims NOW rather than letting the
+          // holds run out their TTL while the rep retries into "all claimed".
+          releaseClaimedLeads("reset");
           // Surface the real Twilio rejection (e.g. unverified number on trial
           // account, invalid caller ID, geographic restriction, etc.) so the
           // team knows exactly what to fix rather than getting a generic message.
@@ -1887,6 +2146,7 @@ export function useDialer(
                   : `The dialer service returned ${res.status}. Try again in a moment.`,
             status: "idle",
             lines: [],
+            muteCapability: "unsupported",
           });
           return;
         }
@@ -1899,9 +2159,16 @@ export function useDialer(
         activeLegsRef.current = { sids: placedSids, dialed };
         patch({ outboundSids: placedSids });
 
-        // Join the rep's browser into the same room (and record the conference).
+        // Join the rep's browser into the same room. `record` is the ORG's
+        // recording policy (settings.dialing.recording) — it used to be a
+        // hardcoded "true", which made the on-screen REC indicator (and the
+        // recording disclosure) a lie for any org that switched recording off.
         const call = await device.connect({
-          params: { Conference: room, record: "true", MonitorId: humanId },
+          params: {
+            Conference: room,
+            record: String(Boolean(recordingRef.current)),
+            MonitorId: humanId,
+          },
         });
 
         // The rep's browser is now in the conference, but the CALL is NOT
@@ -1912,13 +2179,18 @@ export function useDialer(
         // the real answer, and a no-answer cleanly wraps the attempt up.
         attachCallHandlers(call);
         stopPoll();
+        // Cadence: 1.5s alone, 5s when the org floor channel is live — the
+        // `call.answered` broadcast then runs this same body within ~1s of
+        // pickup (see onAnsweredHint), and the poll is only the safety net.
+        // The give-up cap scales with the interval so the backstop stays a
+        // constant ~3 minutes either way.
+        const pollIntervalMs = realtimeLiveRef.current ? 5_000 : 1_500;
+        const maxPollAttempts = Math.max(1, Math.round(180_000 / pollIntervalMs));
         let pollAttempts = 0;
         const pollAnswered = async () => {
-          // 120 polls × 1.5 s = 3 minutes max. Faster cadence flips the UI to
-          // "live" within ~1.5 s of pickup (it was up to 2 s), tightening the gap
-          // reps hit as "I'm on a call but it still says dialing." Treats a hung
-          // Twilio response as no-answer so the rep isn't left waiting.
-          if (++pollAttempts > 120) {
+          // ~3 minutes max (see the cap above). Treats a hung Twilio response
+          // as no-answer so the rep isn't left waiting.
+          if (++pollAttempts > maxPollAttempts) {
             stopPoll();
             intentionalEndRef.current = true;
             try { callRef.current?.disconnect(); } catch { /* noop */ }
@@ -1991,7 +2263,8 @@ export function useDialer(
             /* keep polling */
           }
         };
-        pollRef.current = setInterval(pollAnswered, 1500);
+        answeredPollFnRef.current = pollAnswered;
+        pollRef.current = setInterval(pollAnswered, pollIntervalMs);
       } catch (err) {
         // device.connect() throws on a destroyed Device or when a Call is already
         // active (see Device.connect in @twilio/voice-sdk), and the dial fetch
@@ -2018,6 +2291,7 @@ export function useDialer(
       recordDials,
       recordNonWinners,
       recoverPlacedLegs,
+      releaseClaimedLeads,
       releaseLegs,
       resetToIdle,
       stopPoll,
@@ -2090,9 +2364,15 @@ export function useDialer(
       // still on the wire (a losing parallel leg, a leg that outlived the rep's
       // side), it goes now. No-op once bridged — see connectLine.
       releaseActiveLegs();
+      // Claims: FORGET, don't release. The disposition write releases the hold
+      // server-side (markLeadAttempted inside insertCallRecord) — a client
+      // release here would race it and could hand the lead to another rep
+      // before its attempt counter advanced.
+      releaseClaimedLeads("disposition");
       dialInFlightRef.current = false;
       bridgedRef.current = false;
       intentionalEndRef.current = false;
+      pendingMuteRef.current = null;
       const completingLap = isCompletingLap();
       patch({ lastOutcome: outcome, status: "idle", lines: [], connectedLead: null });
       advanceQueue();
@@ -2118,6 +2398,7 @@ export function useDialer(
       patch,
       queue.length,
       releaseActiveLegs,
+      releaseClaimedLeads,
       startCall,
     ],
   );
@@ -2131,9 +2412,13 @@ export function useDialer(
     // leg and left the homeowner's phone ringing an empty conference until it
     // rang out. Release it. (No-op once a call is bridged — see connectLine.)
     releaseActiveLegs();
+    // No disposition was filed, so nothing will release the claims server-side
+    // — free them here or the leads sit locked for the rest of the TTL.
+    releaseClaimedLeads("skip");
     dialInFlightRef.current = false;
     bridgedRef.current = false;
     intentionalEndRef.current = false;
+    pendingMuteRef.current = null;
     // Detach before hanging up — skip() decides where the rep goes next (idle,
     // or straight into the next auto-dial), so the `disconnect` this fires must
     // not be handled at all.
@@ -2149,12 +2434,12 @@ export function useDialer(
     if (autoDialRef.current && queue.length) {
       if (completingLap) {
         queueLapRef.current += 1;
-        patch({ status: "idle", lines: [], connectedLead: null, durationSec: 0, queueLap: queueLapRef.current });
+        patch({ status: "idle", lines: [], connectedLead: null, durationSec: 0, muteCapability: "unsupported", queueLap: queueLapRef.current });
       } else {
         setTimeout(() => startCall(), 400);
       }
     } else {
-      patch({ status: "idle", lines: [], connectedLead: null, durationSec: 0 });
+      patch({ status: "idle", lines: [], connectedLead: null, durationSec: 0, muteCapability: "unsupported" });
     }
   }, [
     advanceQueue,
@@ -2163,6 +2448,7 @@ export function useDialer(
     patch,
     queue.length,
     releaseActiveLegs,
+    releaseClaimedLeads,
     startCall,
     stopPoll,
     stopTick,
@@ -2193,9 +2479,12 @@ export function useDialer(
       stopPoll();
       clearHumanPresence();
       releaseActiveLegs();
+      // Keep the claim: redial dials the SAME lead again, so the hold is still
+      // ours to use (and the heartbeat keeps renewing it through the attempt).
       dialInFlightRef.current = false;
       bridgedRef.current = false;
       intentionalEndRef.current = false;
+      pendingMuteRef.current = null;
       const call = callRef.current;
       callRef.current = null;
       try {
@@ -2246,13 +2535,27 @@ export function useDialer(
 
   const toggleMute = useCallback(() => {
     setState((s) => {
-      const next = !s.muted;
-      try {
-        callRef.current?.mute(next);
-      } catch {
-        /* noop */
+      // Pure verdict (see dialer/mute-intent.ts): apply to the live Call,
+      // QUEUE during the arming window (connect() not yet resolved — the
+      // intent is honored in attachCallHandlers), or ignore when there's
+      // nothing in flight at all — no optimistic pill over a dead control.
+      const decision = decideMuteToggle({
+        muted: s.muted,
+        hasCall: Boolean(callRef.current),
+        dialInFlight: dialInFlightRef.current,
+      });
+      if (decision.action === "ignore") return s;
+      if (decision.action === "apply") {
+        pendingMuteRef.current = null;
+        try {
+          callRef.current?.mute(decision.muted);
+        } catch {
+          /* torn-down call — the state resets with it */
+        }
+      } else {
+        pendingMuteRef.current = decision.muted;
       }
-      return { ...s, muted: next };
+      return { ...s, muted: decision.muted };
     });
   }, []);
 
@@ -2272,9 +2575,10 @@ export function useDialer(
     });
   }, []);
 
-  const toggleRecording = useCallback(() => {
-    setState((s) => ({ ...s, recording: !s.recording }));
-  }, []);
+  // toggleRecording is GONE on purpose: it flipped a client-side boolean that
+  // controlled nothing (the connect param was hardcoded), so the button was a
+  // dead control wearing a live look. Recording is org policy now — see
+  // state.recording and the `record` param on device.connect().
 
   const sendDigit = useCallback((digit: string) => {
     try {
@@ -2282,6 +2586,23 @@ export function useDialer(
     } catch {
       /* noop */
     }
+  }, []);
+
+  /**
+   * ANSWERED FAST-PATH (realtime): a `call.answered` broadcast for our room
+   * just arrived — run the existing answered-poll body ONCE, immediately,
+   * instead of waiting out the interval. Exactly the same fetch-and-resolve
+   * the poll runs, so push and poll can never disagree; a hint with no active
+   * poll (already connected / wrapped up) is a no-op by construction.
+   */
+  const onAnsweredHint = useCallback((_answeredLeadId?: string | null) => {
+    void answeredPollFnRef.current?.();
+  }, []);
+
+  /** DialerProvider reports the org floor channel's health here — while live,
+   *  the NEXT dial's answered poll relaxes to 5s (the broadcast is primary). */
+  const setRealtimeLive = useCallback((live: boolean) => {
+    realtimeLiveRef.current = live;
   }, []);
 
   const setAutoDial = useCallback(
@@ -2315,7 +2636,11 @@ export function useDialer(
     (value: number) => {
       const clamped = Math.min(maxParallel(), Math.max(1, value));
       parallelRef.current = clamped;
-      patch({ parallelCount: clamped, maxParallel: maxParallel() });
+      patch({
+        parallelCount: clamped,
+        maxParallel: maxParallel(),
+        sessionMode: deriveSessionMode(aiModeRef.current, clamped),
+      });
     },
     [maxParallel, patch],
   );
@@ -2344,6 +2669,7 @@ export function useDialer(
 
       patch({
         aiMode: next,
+        sessionMode: deriveSessionMode(next, parallelRef.current),
         status: "idle",
         aiCalls: [],
         aiCampaign: "idle",
@@ -2353,6 +2679,29 @@ export function useDialer(
     },
     [clearHumanPresence, patch, stopAITimer],
   );
+
+  /**
+   * Move the whole dialer to one explicit mode. This is a coordinator over the
+   * two real knobs (aiMode + parallelCount) — not a third source of truth:
+   * "ai" turns AI mode on (a no-op when AI isn't usable for this viewer);
+   * "parallel" is human dialing at 2+ lines (kept if already higher, clamped
+   * by the org ceiling); "manual" is human dialing at exactly one line.
+   */
+  const setSessionMode = useCallback(
+    (mode: SessionMode) => {
+      if (mode === "ai") {
+        setAiMode(true);
+        return;
+      }
+      if (aiModeRef.current) setAiMode(false);
+      setParallelCount(mode === "parallel" ? Math.max(2, parallelRef.current) : 1);
+    },
+    [setAiMode, setParallelCount],
+  );
+
+  /** The live Twilio Device (null in demo / before setup) — read-only access
+   *  for the audio-device hook; the device lifecycle stays fully in here. */
+  const getDevice = useCallback(() => deviceRef.current, []);
 
   /** Pick which AI persona AI calls dial as. Mirrored to a ref so in-flight
    *  launches read the current value. */
@@ -2394,11 +2743,12 @@ export function useDialer(
     redial,
     toggleMute,
     toggleHold,
-    toggleRecording,
     sendDigit,
     setAutoDial,
     setParallelCount,
     setAiMode,
+    setSessionMode,
+    getDevice,
     setActiveAgent,
     toggleExcludedCallerId,
     launchNextAI,
@@ -2408,5 +2758,7 @@ export function useDialer(
     prevLead,
     selectLead,
     reconnect,
+    onAnsweredHint,
+    setRealtimeLive,
   };
 }
