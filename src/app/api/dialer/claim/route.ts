@@ -41,6 +41,11 @@ export async function POST(req: Request) {
     leadIds?: string[];
   };
 
+  // Org-wide dial policy (Admin → Dialing): a max-attempts ceiling and a
+  // re-dial cooldown, both 0 (off) unless the admin set them. They ride the
+  // same claim-RPC knobs the cron and assignments use, so due callbacks keep
+  // their sanctioned cooldown bypass.
+  const dialing = viewer.org?.settings.dialing;
   const leads = await claimDialLeads({
     orgId: scope.orgId,
     userId: scope.userId,
@@ -50,6 +55,8 @@ export async function POST(req: Request) {
     campaignId: typeof body.campaignId === "string" ? body.campaignId : null,
     packId: typeof body.packId === "string" ? body.packId : null,
     leadIds: Array.isArray(body.leadIds) ? body.leadIds.slice(0, 200) : null,
+    maxAttempts: Math.max(0, Math.round(Number(dialing?.maxAttemptsPerLead) || 0)),
+    cooldownMinutes: Math.max(0, Math.round(Number(dialing?.redialCooldownMin) || 0)),
   });
   return NextResponse.json({ leads, ttlSeconds: RESERVATION_TTL_SEC });
 }

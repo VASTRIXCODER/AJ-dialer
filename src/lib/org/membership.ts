@@ -853,7 +853,18 @@ export async function setMemberPermissions(
     .from("organization_members")
     .update({ permissions })
     .eq("id", memberId);
-  return error ? { ok: false, error: error.message } : { ok: true };
+  if (error) return { ok: false, error: error.message };
+  // Permission overrides are access-control changes — they get the same audit
+  // trail as role changes (this was the one member mutation with no entry).
+  await writeAudit({
+    action: "member.permissions",
+    actorId: auth.actor.userId,
+    targetId: target.userId,
+    targetKind: "member",
+    orgId: target.orgId,
+    detail: { permissions },
+  });
+  return { ok: true };
 }
 
 /**

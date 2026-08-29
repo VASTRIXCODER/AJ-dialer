@@ -125,7 +125,16 @@ export function WrapupPanel({
         </p>
       </div>
 
-      <AiCallSummary leadId={lead?.id ?? null} notes={notes} durationSec={durationSec} />
+      {/* The wrap-up copilot: an actionable, org-taxonomy-aware disposition
+          suggestion (clicking it files through the SAME onOutcome the grid
+          uses, appointment/callback dialogs included). */}
+      <AiCallSummary
+        leadId={lead?.id ?? null}
+        notes={notes}
+        durationSec={durationSec}
+        allowedKeys={allowedKeys}
+        onPick={onOutcome}
+      />
 
       {/* Notes belong HERE, at the moment the rep is judging the call — the
           same note the qualify panel edits; the value is owned by the page. */}

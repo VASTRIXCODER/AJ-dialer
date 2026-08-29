@@ -2,7 +2,9 @@ import { NextResponse } from "next/server";
 import { registerRoom } from "@/lib/call-registry";
 import { recordDialRequested } from "@/lib/calls/apply-event";
 import { dncKey, getDncDigits } from "@/lib/db/dnc";
+import { resolveLeadTimezone } from "@/lib/dialer/lead-timezone";
 import { type CallerIdInfo, nextCallerIdWithInfo } from "@/lib/dialer/rotation-server";
+import { describeOrgHours, isWithinOrgHours } from "@/lib/dialer/schedule";
 import { getViewer } from "@/lib/org/membership";
 import {
   getPublicBaseUrl,
@@ -116,7 +118,37 @@ export async function POST(req: Request) {
   const SERVER_MAX_PARALLEL = 3;
   const orgMaxLines = Math.floor(Number(orgSettings?.dialing.maxLines) || SERVER_MAX_PARALLEL);
   const lineCap = Math.min(Math.max(1, orgMaxLines), SERVER_MAX_PARALLEL);
-  const dialLeads = leads.slice(0, lineCap);
+  let dialLeads = leads.slice(0, lineCap);
+
+  // Enforced calling hours (Admin → Calling hours → "Block dialing outside
+  // these hours"). Evaluated in each LEAD's own timezone (area-code inference,
+  // org timezone fallback) — calling-time rules follow the called party's
+  // clock, not the office's. Advisory-only orgs never reach this branch.
+  const hours = orgSettings?.hours;
+  if (hours?.enforced) {
+    const orgTz = viewer.org?.timezone || "America/Chicago";
+    const now = new Date();
+    const inHours = dialLeads.filter((leg) =>
+      isWithinOrgHours(now, hours, resolveLeadTimezone(leg.to, null, orgTz)),
+    );
+    if (dialLeads.length && !inHours.length) {
+      return NextResponse.json(
+        {
+          error: `It's outside this workspace's calling hours (${describeOrgHours(hours)}, in each contact's local time). An admin can change or un-enforce the hours in Admin → Calling hours.`,
+        },
+        { status: 400 },
+      );
+    }
+    dialLeads = inHours;
+  }
+
+  // Admin → Dialing → "Ring timeout": how long an outbound leg rings before
+  // Twilio gives up. Clamped so a stored blob can't set an unringable 1s or
+  // a 10-minute zombie leg.
+  const ringTimeout = Math.min(
+    60,
+    Math.max(5, Math.round(Number(orgSettings?.dialing.ringTimeoutSec) || 25)),
+  );
 
   // Only attach a StatusCallback when we have a publicly-reachable origin —
   // an unreachable/relative URL makes Twilio reject the request (21609 / 11200).
@@ -182,7 +214,7 @@ export async function POST(req: Request) {
           to: leg.to,
           from,
           twiml: conferenceTwiml,
-          timeout: 30,
+          timeout: ringTimeout,
           ...(base
             ? {
                 statusCallback: `${base}/api/twilio/status?room=${encodeURIComponent(room)}&leadId=${encodeURIComponent(leg.leadId)}`,

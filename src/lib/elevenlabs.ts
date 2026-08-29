@@ -41,8 +41,13 @@ export const elevenLabsConfig = {
   agentName: process.env.ELEVENLABS_AGENT_NAME || "Emily",
   agentName2: process.env.ELEVENLABS_AGENT_NAME_2 || "Emily (Sunrun)",
   webhookSecret: process.env.ELEVENLABS_WEBHOOK_SECRET ?? "",
-  /** E.164 rep number the "Transfer" button reroutes a live call to. */
-  transferNumber: process.env.ELEVENLABS_TRANSFER_NUMBER || "+14693018199",
+  /**
+   * Platform-wide FALLBACK for the number the "Transfer" button reroutes a
+   * live call to — an org's own `settings.ai.transferNumber` wins when set.
+   * Empty both ⇒ the transfer action is unavailable. (This used to default to
+   * a hardcoded personal number; a phone number is tenant config, not code.)
+   */
+  transferNumber: process.env.ELEVENLABS_TRANSFER_NUMBER || "",
   /**
    * A Twilio number we own whose Voice webhook points at /api/twilio/voice.
    * When set, AI calls are placed into a Twilio conference (the agent dials this
@@ -82,16 +87,23 @@ export function isSecondAgentConfigured() {
  * The display labels reps see in the dialer's agent picker and on the
  * appointments tabs. These are UI labels only — the name the AI actually says on
  * a call comes from org.settings.ai.agentName (the prompt), so relabeling here
- * never changes what a homeowner hears. "primary" is Agent 1 (the Emily agent);
- * "secondary" is Agent 2 (the Emily/Sunrun agent).
+ * never changes what a homeowner hears. The configured ELEVENLABS_AGENT_NAME(_2)
+ * envs drive the labels (they previously fed only resolveElevenLabsAgent, so
+ * the picker showed anonymous "Agent 1/2" chips whatever was configured);
+ * unset envs keep a neutral generic label.
  */
 export function agentLabels(): { primary: string; secondary: string } {
-  return { primary: "Agent 1", secondary: "Agent 2" };
+  const c = elevenLabsConfig;
+  return {
+    primary: process.env.ELEVENLABS_AGENT_NAME ? c.agentName : "Agent 1",
+    secondary: process.env.ELEVENLABS_AGENT_NAME_2 ? c.agentName2 : "Agent 2",
+  };
 }
 
-/** Map an internal agent key to its human label (Agent 1 / Agent 2). */
+/** Map an internal agent key to its human label. */
 export function agentLabelFor(key: AgentKey | string | null | undefined): string {
-  return key === "secondary" ? "Agent 2" : "Agent 1";
+  const labels = agentLabels();
+  return key === "secondary" ? labels.secondary : labels.primary;
 }
 
 /**
@@ -489,6 +501,8 @@ export interface OverridePolicy {
   firstMessage: boolean;
   language: boolean;
   ttsSpeed: boolean;
+  /** May we pick the TTS voice per call (tts.voice_id on the allow-list)? */
+  ttsVoiceId: boolean;
 }
 
 export const NO_OVERRIDES: OverridePolicy = {
@@ -496,6 +510,7 @@ export const NO_OVERRIDES: OverridePolicy = {
   firstMessage: false,
   language: false,
   ttsSpeed: false,
+  ttsVoiceId: false,
 };
 
 const POLICY_TTL_MS = 5 * 60_000;
@@ -548,6 +563,7 @@ export async function fetchOverridePolicy(
         firstMessage: Boolean(agent.first_message),
         language: Boolean(agent.language),
         ttsSpeed: Boolean(tts.speed),
+        ttsVoiceId: Boolean(tts.voice_id),
       };
       _policyCache.set(agentId, { value: policy, expiresAt: Date.now() + POLICY_TTL_MS });
       return policy;
@@ -596,6 +612,8 @@ export function buildOverridePayload(
     firstMessage?: string;
     language?: string;
     voiceSpeed?: number;
+    /** ElevenLabs voice ID for this call (org `settings.ai.voice`). */
+    voiceId?: string;
   },
   policy: OverridePolicy | null,
 ): OverrideBuild {
@@ -639,7 +657,19 @@ export function buildOverridePayload(
       key: "tts.speed",
       allowed: Boolean(policy?.ttsSpeed),
       apply: (o) => {
-        o.tts = { speed: opts.voiceSpeed };
+        o.tts = { ...((o.tts as Record<string, unknown>) ?? {}), speed: opts.voiceSpeed };
+      },
+    });
+  }
+  if (opts.voiceId?.trim()) {
+    wanted.push({
+      key: "tts.voice_id",
+      allowed: Boolean(policy?.ttsVoiceId),
+      apply: (o) => {
+        o.tts = {
+          ...((o.tts as Record<string, unknown>) ?? {}),
+          voice_id: opts.voiceId!.trim(),
+        };
       },
     });
   }
@@ -688,6 +718,8 @@ export async function placeOutboundCall(opts: {
   language?: string;
   /** TTS speed 0.7–1.2 (lower = slower/calmer). */
   voiceSpeed?: number;
+  /** ElevenLabs voice ID for this call (org `settings.ai.voice`); allow-list gated. */
+  voiceId?: string;
   /**
    * Outbound caller number for THIS call (rotation). An ElevenLabs phone-number
    * ID or a raw E.164 we resolve to one. Falls back to the env default number

@@ -647,6 +647,45 @@ export async function listStuckAIConversations(opts: {
   }
 }
 
+/** A live, CONNECTED AI conversation — the max-talk-time watchdog's unit. */
+export interface ConnectedLiveConversation {
+  conversationId: string;
+  orgId: string | null;
+  callSid: string | null;
+  customerCallSid: string | null;
+  connectedAt: number;
+}
+
+/**
+ * Every live AI conversation whose callee has actually answered (connected_at
+ * stamped), oldest first — the population the org `ai.maxTalkMin` watchdog
+ * measures against. Capped: the watchdog runs every cron tick, so anything it
+ * misses this minute it catches the next.
+ */
+export async function listConnectedLiveAIConversations(
+  limit = 100,
+): Promise<ConnectedLiveConversation[]> {
+  if (!isAdminConfigured()) return [];
+  try {
+    const { data } = await createAdminClient()
+      .from("ai_conversations")
+      .select("conversation_id, org_id, call_sid, customer_call_sid, connected_at")
+      .in("state", LIVE_STATES as unknown as string[])
+      .not("connected_at", "is", null)
+      .order("connected_at", { ascending: true })
+      .limit(limit);
+    return ((data ?? []) as Record<string, unknown>[]).map((r) => ({
+      conversationId: String(r.conversation_id),
+      orgId: r.org_id ? String(r.org_id) : null,
+      callSid: r.call_sid ? String(r.call_sid) : null,
+      customerCallSid: r.customer_call_sid ? String(r.customer_call_sid) : null,
+      connectedAt: Date.parse(String(r.connected_at)),
+    }));
+  } catch {
+    return [];
+  }
+}
+
 /** How many AI conversations are stuck mid-flight (for the health endpoint). */
 export async function countStuckAIConversations(): Promise<number> {
   if (!isAdminConfigured()) return 0;

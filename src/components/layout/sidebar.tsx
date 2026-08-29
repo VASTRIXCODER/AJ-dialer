@@ -24,6 +24,7 @@ export function Sidebar({
   orgName = null,
   productName = null,
   brandColor = null,
+  logoUrl = null,
   role = null,
   superadmin = false,
   vocabulary = DEFAULT_VOCABULARY,
@@ -35,6 +36,8 @@ export function Sidebar({
   orgName?: string | null;
   productName?: string | null;
   brandColor?: string | null;
+  /** Org logo (Admin → Identity) — replaces the identity tile's generic icon. */
+  logoUrl?: string | null;
   role?: string | null;
   superadmin?: boolean;
   /** The workspace's own nouns — nav labels follow them. */
@@ -77,14 +80,29 @@ export function Sidebar({
           <div className="rounded-xl border border-border/60 bg-surface/40 p-2.5">
             <div className="flex items-center gap-2.5">
               <span
-                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-white shadow-soft"
+                className="flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-lg text-white shadow-soft"
                 style={{
                   background: brandColor
                     ? `linear-gradient(135deg, ${brandColor}, ${brandColor}cc)`
                     : "linear-gradient(135deg, hsl(var(--primary)), hsl(var(--accent)))",
                 }}
               >
-                <Building2 className="h-4 w-4" />
+                {logoUrl ? (
+                  // Plain <img>, not next/image: the URL is arbitrary tenant
+                  // config and can't be enumerated in next.config remotePatterns.
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={logoUrl}
+                    alt=""
+                    className="h-full w-full object-cover"
+                    onError={(e) => {
+                      // A dead URL falls back to the branded tile, not a broken image.
+                      e.currentTarget.style.display = "none";
+                    }}
+                  />
+                ) : (
+                  <Building2 className="h-4 w-4" />
+                )}
               </span>
               <div className="min-w-0 flex-1">
                 <p className="truncate text-sm font-semibold leading-tight">{orgName}</p>

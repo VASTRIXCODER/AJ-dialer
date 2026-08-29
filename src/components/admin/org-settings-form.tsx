@@ -78,14 +78,22 @@ const LAYOUT_TOGGLES: { key: keyof DialerLayout; label: string; hint: string }[]
     label: "Up-next list",
     hint: "Preview of the next few leads in the queue.",
   },
+  {
+    key: "closerNotes",
+    label: "Closer notes",
+    hint: "Handoff-notes slot at the bottom of the qualify column (under construction).",
+  },
 ];
 
 const FEATURE_FLAGS: { key: keyof OrgSettings["features"]; label: string }[] = [
-  { key: "aiDialer", label: "Power dialer" },
+  { key: "aiDialer", label: "AI calling" },
   { key: "manualDialer", label: "Manual dialing" },
   { key: "leads", label: "Leads" },
   { key: "appointments", label: "Appointments" },
   { key: "callbacks", label: "Callbacks" },
+  // The "set aside for later" workspace (/bills-fine). Was consumed by the nav
+  // but had no admin control — the one flag you couldn't reach.
+  { key: "billsFine", label: "Set-aside list" },
   { key: "liveMonitor", label: "Live monitor" },
   { key: "leaderboard", label: "Leaderboard" },
   { key: "campaigns", label: "Campaigns" },
@@ -504,17 +512,24 @@ export function OrgSettingsForm({
         description="How the power dialer places and paces calls."
       >
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <Field label="Dialing mode">
+          <Field label="Default dialer mode">
             <Select
-              value={dialing.mode}
+              value={dialing.defaultMode}
               onChange={(e) =>
-                setDialing({ ...dialing, mode: e.target.value as typeof dialing.mode })
+                setDialing({
+                  ...dialing,
+                  defaultMode: e.target.value as typeof dialing.defaultMode,
+                })
               }
             >
-              <option value="preview">Preview</option>
-              <option value="progressive">Progressive</option>
-              <option value="predictive">Predictive</option>
+              <option value="ai">AI (when available)</option>
+              <option value="manual">Manual</option>
+              <option value="parallel">Parallel (multi-line)</option>
             </Select>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Which mode the dialer opens in. Reps can still switch modes they have
+              access to; AI falls back to manual for anyone who can’t use it.
+            </p>
           </Field>
           <Field label="Caller ID">
             <Input
@@ -530,18 +545,21 @@ export function OrgSettingsForm({
           />
           <NumberField
             label="Ring timeout (sec)"
+            hint="How long an outbound call rings before giving up (5–60)."
             value={dialing.ringTimeoutSec}
             onChange={(n) => setDialing({ ...dialing, ringTimeoutSec: n })}
           />
           <NumberField
-            label="Retry attempts"
-            value={dialing.retryAttempts}
-            onChange={(n) => setDialing({ ...dialing, retryAttempts: n })}
+            label="Max attempts per lead (0 = unlimited)"
+            hint="Claimed dialing skips leads already dialed this many times."
+            value={dialing.maxAttemptsPerLead}
+            onChange={(n) => setDialing({ ...dialing, maxAttemptsPerLead: Math.max(0, n) })}
           />
           <NumberField
-            label="Retry delay (min)"
-            value={dialing.retryDelayMin}
-            onChange={(n) => setDialing({ ...dialing, retryDelayMin: n })}
+            label="Re-dial cooldown (min, 0 = none)"
+            hint="Claimed dialing holds a lead out this long after any attempt. Due callbacks bypass it."
+            value={dialing.redialCooldownMin}
+            onChange={(n) => setDialing({ ...dialing, redialCooldownMin: Math.max(0, n) })}
           />
           <NumberField
             label="Rotate caller ID every (calls)"
@@ -569,8 +587,8 @@ export function OrgSettingsForm({
                 Rotates every{" "}
                 <span className="font-semibold">{Math.max(1, platformRotateEvery)}</span>{" "}
                 call{platformRotateEvery === 1 ? "" : "s"} per rep — spreading volume across the
-                pool to protect deliverability. Contact{" "}
-                <span className="font-semibold">anasupalle17@gmail.com</span> to modify the pool.
+                pool to protect deliverability. Contact your platform administrator to modify
+                the pool.
               </p>
             </div>
           ) : (
@@ -664,10 +682,28 @@ export function OrgSettingsForm({
             </div>
           )}
           <Toggle
-            label="Respect Do-Not-Call list"
-            checked={dialing.respectDnc}
-            onChange={(v) => setDialing({ ...dialing, respectDnc: v })}
+            label="Lead claims (prevent double-dialing)"
+            hint="Two reps (or a rep and the AI scheduler) can never pull the same lead at once. Leave on — this is the org-level rollback switch for the reservation engine, not a preference."
+            checked={dialing.reservations ?? true}
+            onChange={(v) => setDialing({ ...dialing, reservations: v })}
           />
+          {/* Not a toggle on purpose: DNC is enforced unconditionally on every
+              dial path. The old "Respect Do-Not-Call" switch was a placebo —
+              it persisted a value nothing read, and a control that LOOKS like
+              it can turn DNC off is worse than no control. */}
+          <div className="flex items-center justify-between gap-3 rounded-xl border border-border/70 bg-surface/50 px-4 py-3">
+            <span>
+              <span className="block text-sm font-medium">Do-Not-Call list</span>
+              <span className="block text-xs text-muted-foreground">
+                Always enforced — every manual, parallel, AI, and scheduled dial is
+                scrubbed against your DNC list. This cannot be switched off.
+              </span>
+            </span>
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-success/10 px-2.5 py-1 text-[11px] font-semibold text-success">
+              <CheckCircle2 className="h-3.5 w-3.5" />
+              Enforced
+            </span>
+          </div>
         </div>
         <div className="mt-4 flex justify-end">
           <SaveBtn k="dialing" onClick={() => save({ settings: { dialing } }, "dialing")} />
@@ -829,7 +865,7 @@ export function OrgSettingsForm({
       {/* Business hours */}
       <SectionCard
         title="Calling hours"
-        description="When the dialer is allowed to call, in the org timezone."
+        description="Your floor's calling window. Advisory by default (the dialer shows an outside-hours banner); turn on enforcement to actually block dialing."
       >
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
           <Field label="Timezone" className="sm:col-span-3">
@@ -876,6 +912,14 @@ export function OrgSettingsForm({
             })}
           </div>
         </div>
+        <div className="mt-3">
+          <Toggle
+            label="Block dialing outside these hours"
+            hint="When on, manual and AI dials outside the window are refused server-side — evaluated in each contact's own timezone (area code), falling back to the org's. When off, the hours are advisory: reps see a banner but calls go through."
+            checked={hours.enforced ?? false}
+            onChange={(v) => setHours({ ...hours, enforced: v })}
+          />
+        </div>
         <div className="mt-4 flex justify-end">
           <SaveBtn
             k="hours"
@@ -890,31 +934,50 @@ export function OrgSettingsForm({
         description="The voice, persona, and behavior of your AI caller."
       >
         {!features.aiDialer || !hasAiPermission ? (
-          /* Locked when the org has aiDialer off (premium gate) or the viewer lacks dialer.ai */
+          /* Locked when the org has aiDialer off (feature gate) or the viewer lacks dialer.ai */
           <div className="flex flex-col items-center gap-4 rounded-xl border border-dashed border-border/70 px-6 py-10 text-center">
             <span className="flex h-14 w-14 items-center justify-center rounded-2xl border border-border bg-muted/40">
               <Lock className="h-6 w-6 text-muted-foreground" />
             </span>
             <div>
               <p className="text-sm font-semibold">
-                {!features.aiDialer ? "AI calling — Premium Feature" : "AI calling is not enabled for your organization"}
+                {!features.aiDialer
+                  ? "AI calling is switched off for this workspace"
+                  : "AI calling is not enabled for your account"}
               </p>
               <p className="mt-1 text-xs text-muted-foreground">
                 {!features.aiDialer ? (
                   <>
-                    Your organization does not have access to AI calling. Contact{" "}
-                    <span className="font-semibold text-foreground">anasupalle17@gmail.com</span> to
-                    unlock AI calling for your account.
+                    The <span className="font-semibold">AI calling</span> feature flag is off. Turn
+                    it on below to unlock AI calls, the AI dialer mode, and this configuration
+                    panel — reps still need the AI-dialer permission individually.
                   </>
                 ) : (
                   <>
-                    AI agent configuration requires the <span className="font-semibold">AI Dialer</span>{" "}
-                    permission. Contact your organization owner or platform administrator to unlock AI
-                    calling for this account.
+                    AI agent configuration requires the{" "}
+                    <span className="font-semibold">AI Dialer</span> permission. An admin can grant
+                    it to your account from Admin → Members → the shield icon.
                   </>
                 )}
               </p>
             </div>
+            {!features.aiDialer && (
+              <Button
+                size="sm"
+                disabled={busy === "features"}
+                onClick={async () => {
+                  const next = { ...features, aiDialer: true };
+                  setFeatures(next);
+                  await save({ settings: { features: next } }, "features");
+                }}
+              >
+                {busy === "features" ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  "Enable AI calling"
+                )}
+              </Button>
+            )}
           </div>
         ) : (
           <>
@@ -922,8 +985,16 @@ export function OrgSettingsForm({
               <Field label="Agent name">
                 <Input value={ai.agentName} onChange={(e) => setAi({ ...ai, agentName: e.target.value })} />
               </Field>
-              <Field label="Voice">
-                <Input value={ai.voice} onChange={(e) => setAi({ ...ai, voice: e.target.value })} />
+              <Field label="Voice (ElevenLabs voice ID)">
+                <Input
+                  value={ai.voice}
+                  placeholder="Blank = the voice set on the ElevenLabs agent"
+                  onChange={(e) => setAi({ ...ai, voice: e.target.value })}
+                />
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Sent per call as a voice override. The agent must allow voice
+                  overrides (ElevenLabs → Agent → Security), or this is safely ignored.
+                </p>
               </Field>
               <Field label="Transfer number">
                 <Input
@@ -931,14 +1002,27 @@ export function OrgSettingsForm({
                   placeholder="+1…"
                   onChange={(e) => setAi({ ...ai, transferNumber: e.target.value })}
                 />
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Where the Live Monitor’s Transfer button sends a caller. Blank falls
+                  back to the platform default; blank both disables Transfer.
+                </p>
               </Field>
               <Field label="Language">
                 <Input value={ai.language} onChange={(e) => setAi({ ...ai, language: e.target.value })} />
               </Field>
               <NumberField
-                label="Max AI talk time (min)"
+                label="Max AI talk time (min, 0 = no limit)"
+                hint="A connected AI call running past this is ended automatically (within ~1 minute)."
                 value={ai.maxTalkMin}
-                onChange={(n) => setAi({ ...ai, maxTalkMin: n })}
+                onChange={(n) => setAi({ ...ai, maxTalkMin: Math.max(0, n) })}
+              />
+              <NumberField
+                label="Max simultaneous AI calls"
+                hint="Your voice plan's live-call allowance — the dialer holds itself to it."
+                value={ai.maxConcurrentCalls}
+                onChange={(n) =>
+                  setAi({ ...ai, maxConcurrentCalls: Math.max(1, Math.min(30, n)) })
+                }
               />
               <Field label="Voice speed (0.7 slow – 1.2 fast)">
                 <Input
@@ -980,13 +1064,102 @@ export function OrgSettingsForm({
                 />
               </div>
             </div>
-            <div className="mt-3">
-              <Toggle
-                label="AI-first dialing"
-                hint="The AI agent calls first; reps take over on request."
-                checked={ai.aiFirst}
-                onChange={(v) => setAi({ ...ai, aiFirst: v })}
-              />
+            {/* AI disposition policy — what an AI-proposed disposition may do to
+                a call record. This was a live policy with no UI: analyze-call has
+                enforced it since F1, but only a hand-edited settings blob could
+                change it. */}
+            <div className="mt-5 rounded-xl border border-border/70 bg-surface/50 p-4">
+              <p className="text-sm font-semibold">AI dispositions</p>
+              <p className="mt-0.5 text-xs text-muted-foreground">
+                After each analyzed call the AI proposes a disposition. Confident,
+                transcript-backed proposals can fill an <em>empty</em> slot silently;
+                everything else goes to the Needs Review lane. A human’s choice is
+                never overwritten.
+              </p>
+              <div className="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <Field label="Auto-apply confidence (%)">
+                  <Input
+                    type="number"
+                    min={0}
+                    max={100}
+                    value={Math.round(ai.dispositionPolicy.autoApplyMin * 100)}
+                    onChange={(e) =>
+                      setAi({
+                        ...ai,
+                        dispositionPolicy: {
+                          ...ai.dispositionPolicy,
+                          autoApplyMin: Math.min(100, Math.max(0, Number(e.target.value))) / 100,
+                        },
+                      })
+                    }
+                  />
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Below this the proposal goes to review instead. 100 = never
+                    auto-apply.
+                  </p>
+                </Field>
+                <div>
+                  <Label>Always require review</Label>
+                  <div className="flex flex-wrap gap-1.5">
+                    {dispositions
+                      .filter((d) => d.enabled !== false)
+                      .map((d) => {
+                        const key = d.key ?? "";
+                        const pinned = key === "do_not_call";
+                        const on =
+                          pinned || ai.dispositionPolicy.alwaysReview.includes(key);
+                        return (
+                          <button
+                            key={key}
+                            type="button"
+                            disabled={pinned}
+                            aria-pressed={on}
+                            title={
+                              pinned
+                                ? "Do-Not-Call always requires a human — this can't be unpinned."
+                                : undefined
+                            }
+                            onClick={() =>
+                              setAi({
+                                ...ai,
+                                dispositionPolicy: {
+                                  ...ai.dispositionPolicy,
+                                  alwaysReview: on
+                                    ? ai.dispositionPolicy.alwaysReview.filter(
+                                        (k) => k !== key,
+                                      )
+                                    : [...ai.dispositionPolicy.alwaysReview, key],
+                                },
+                              })
+                            }
+                            className={cn(
+                              "rounded-lg border px-2.5 py-1.5 text-xs font-semibold transition-colors",
+                              on
+                                ? "border-primary bg-primary-soft text-primary"
+                                : "border-border text-muted-foreground hover:bg-muted/60",
+                              pinned && "cursor-not-allowed opacity-80",
+                            )}
+                          >
+                            {d.label}
+                          </button>
+                        );
+                      })}
+                  </div>
+                </div>
+              </div>
+              <div className="mt-3">
+                <Toggle
+                  label="Review proposals with no transcript"
+                  hint="A proposal nobody can verify against a transcript never auto-applies; off sends it nowhere at all (artifact only)."
+                  checked={ai.dispositionPolicy.reviewOnMissingTranscript}
+                  onChange={(v) =>
+                    setAi({
+                      ...ai,
+                      dispositionPolicy: { ...ai.dispositionPolicy, reviewOnMissingTranscript: v },
+                    })
+                  }
+                />
+              </div>
             </div>
             <div className="mt-4 flex justify-end">
               <SaveBtn k="ai" onClick={() => save({ settings: { ai } }, "ai")} />
@@ -998,14 +1171,9 @@ export function OrgSettingsForm({
       {/* Compliance */}
       <SectionCard
         title="Compliance"
-        description="Recording disclosure, consent & DNC enforcement."
+        description="Recording disclosure & consent. (DNC is always enforced — see Dialing.)"
       >
         <div className="space-y-3">
-          <Toggle
-            label="Enforce Do-Not-Call"
-            checked={compliance.dncEnforced}
-            onChange={(v) => setCompliance({ ...compliance, dncEnforced: v })}
-          />
           <Toggle
             label="Require consent before recording"
             checked={compliance.consentRequired}
@@ -1628,10 +1796,12 @@ function Field({
 
 function NumberField({
   label,
+  hint,
   value,
   onChange,
 }: {
   label: string;
+  hint?: string;
   value: number;
   onChange: (n: number) => void;
 }) {
@@ -1642,6 +1812,7 @@ function NumberField({
         value={value}
         onChange={(e) => onChange(Number(e.target.value))}
       />
+      {hint && <p className="mt-1 text-xs text-muted-foreground">{hint}</p>}
     </Field>
   );
 }

@@ -115,6 +115,45 @@ export function isWithinCallingWindow(
   );
 }
 
+/** The shape of `settings.hours` this module needs (kept structural so the
+ *  pure client bundle doesn't have to import the whole OrgSettings type). */
+export interface OrgHours {
+  startHour: number;
+  endHour: number;
+  days: number[];
+}
+
+/**
+ * Is `now` inside the org's calling hours, evaluated in `timezone`? Used both
+ * ways `settings.hours` can act: advisory (the dialer's outside-hours banner)
+ * and enforced (`hours.enforced` — the call routes refuse the dial).
+ *
+ * Degenerate configs never block: equal start/end hours or non-finite numbers
+ * read as "always open", and an empty day list means every day — a half-saved
+ * blob must not brick a floor's dialing.
+ */
+export function isWithinOrgHours(
+  now: Date,
+  hours: OrgHours | null | undefined,
+  timezone: string,
+): boolean {
+  if (!hours) return true;
+  const start = Number(hours.startHour);
+  const end = Number(hours.endHour);
+  if (!Number.isFinite(start) || !Number.isFinite(end) || start === end) return true;
+  const { day, hour } = zonedDayHour(now, timezone);
+  if (Array.isArray(hours.days) && hours.days.length && !hours.days.includes(day)) {
+    return false;
+  }
+  // Overnight windows wrap: 20 → 6 means 8pm through 5:59am.
+  return start < end ? hour >= start && hour < end : hour >= start || hour < end;
+}
+
+/** Human-readable org-hours line, e.g. "Mon–Fri, 8am–8pm". */
+export function describeOrgHours(hours: OrgHours): string {
+  return `${describeDays(hours.days?.length ? hours.days : [0, 1, 2, 3, 4, 5, 6])}, ${fmtHour(hours.startHour)}–${fmtHour(hours.endHour)}`;
+}
+
 /** Is `now` inside an enabled day + hour window in the ORG's timezone? */
 export function isAutoDialActive(
   now: Date,

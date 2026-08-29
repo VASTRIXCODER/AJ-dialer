@@ -1,12 +1,14 @@
 import { SettingsView } from "@/components/settings/settings-view";
 import { PageContainer, PageHeader } from "@/components/shared/page-header";
+import { getMyProfileSettings } from "@/lib/db/team";
+import { parseDialerUserPrefs } from "@/lib/dialer/user-prefs";
 import { getViewer } from "@/lib/org/membership";
 
 export const metadata = { title: "Settings" };
 export const dynamic = "force-dynamic";
 
 export default async function SettingsPage() {
-  const viewer = await getViewer();
+  const [viewer, profile] = await Promise.all([getViewer(), getMyProfileSettings()]);
 
   return (
     <PageContainer>
@@ -21,6 +23,8 @@ export default async function SettingsPage() {
         productName={viewer.org?.productName || null}
         membershipStatus={viewer.membershipStatus}
         permissions={viewer.permissions}
+        team={profile.team}
+        dialerPrefs={parseDialerUserPrefs(profile.preferences)}
       />
     </PageContainer>
   );

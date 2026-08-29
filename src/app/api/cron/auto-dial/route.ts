@@ -133,7 +133,14 @@ async function runAutoDial(req: Request) {
     // governs the called party's local time, so a Central-time org must not dial a
     // California lead at 6am PT just because it's 8am in the org's zone.
     if (!a?.enabled || !Array.isArray(a.windows) || a.windows.length === 0) continue;
-    // Respect the AI-agent feature flag (premium / plan gate).
+    // Respect BOTH AI feature flags. `aiDialer` is the AI-calling capability
+    // itself — everything interactive gates on it, and unattended calling must
+    // not slip past an org whose AI calling is switched off. `aiAgent` is the
+    // AI command-center flag this cron has always honored.
+    if (org.settings.features.aiDialer === false) {
+      results.push({ org: org.name, skipped: "aiDialer disabled" });
+      continue;
+    }
     if (!org.settings.features.aiAgent) {
       results.push({ org: org.name, skipped: "aiAgent disabled" });
       continue;
@@ -155,6 +162,12 @@ async function runAutoDial(req: Request) {
       limit: poolSize,
       ttlSeconds: 300,
       cooldownMinutes: Math.max(0, a.cooldownHours) * 60,
+      // The org-wide attempts ceiling (Admin → Dialing) applies to the cron
+      // exactly like claimed manual dialing. 0 = unlimited.
+      maxAttempts: Math.max(
+        0,
+        Math.round(Number(org.settings.dialing.maxAttemptsPerLead) || 0),
+      ),
       window: a,
       now,
     });

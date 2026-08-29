@@ -62,6 +62,13 @@ export interface AnalyzeCallInput {
   /** The rep's wrap-up notes — the main evidence a manual call leaves. */
   notes?: string;
   durationSec?: number;
+  /**
+   * Persist the summary artifact + backfill call_records.summary. Product
+   * policy: AI summaries are appointment-only, so callers pass
+   * `outcome === "appointment_booked"`. Default true (callers that predate
+   * the policy keep their behavior); every other artifact kind always writes.
+   */
+  includeSummary?: boolean;
 }
 
 export interface AnalyzeCallResult {
@@ -214,7 +221,10 @@ export async function analyzeCall(input: AnalyzeCallInput): Promise<AnalyzeCallR
 
     // ── Override chain: a human's corrections are final against AI writers ───
     const blocked = await humanAuthoredKinds(input.callRecordId);
-    const writableKinds = ARTIFACT_KINDS.filter((k) => !blocked.has(k));
+    const includeSummary = input.includeSummary !== false;
+    const writableKinds = ARTIFACT_KINDS.filter(
+      (k) => !blocked.has(k) && (includeSummary || k !== "summary"),
+    );
     if (writableKinds.length === 0) {
       return { status: "skipped", reason: "all_kinds_human_authored" };
     }
@@ -254,8 +264,14 @@ export async function analyzeCall(input: AnalyzeCallInput): Promise<AnalyzeCallR
 
     // The summary artifact's text backfills call_records.summary so the archive
     // can SEARCH it — but only into an empty slot (an existing summary, human
-    // or earlier-AI, is a record we don't rewrite from a background job).
-    if (rec && !String(rec.summary ?? "").trim() && analysis.summary.text.trim()) {
+    // or earlier-AI, is a record we don't rewrite from a background job), and
+    // only when this call is one that gets a summary at all (appointment-only).
+    if (
+      includeSummary &&
+      rec &&
+      !String(rec.summary ?? "").trim() &&
+      analysis.summary.text.trim()
+    ) {
       await admin
         .from("call_records")
         .update({ summary: analysis.summary.text })

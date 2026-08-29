@@ -30,6 +30,9 @@ type Membership = {
   productName: string;
   tagline: string;
   industry: string;
+  description: string;
+  website: string;
+  logoUrl: string;
   brandColor: string;
   dialerTemplate: string;
   role: OrgRole;
@@ -151,19 +154,46 @@ export function HubView({
               >
                 <div className="flex items-center gap-3">
                   <span
-                    className="flex h-11 w-11 items-center justify-center rounded-xl text-white shadow-soft"
+                    className="flex h-11 w-11 items-center justify-center overflow-hidden rounded-xl text-white shadow-soft"
                     style={{ background: brandGradient(m.brandColor) }}
                   >
-                    <Building2 className="h-5 w-5" />
+                    {m.logoUrl ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        src={m.logoUrl}
+                        alt=""
+                        className="h-full w-full object-cover"
+                        onError={(e) => {
+                          e.currentTarget.style.display = "none";
+                        }}
+                      />
+                    ) : (
+                      <Building2 className="h-5 w-5" />
+                    )}
                   </span>
                   <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] font-semibold capitalize text-muted-foreground">
                     {ROLE_LABEL[m.role]}
                   </span>
+                  {m.industry ? (
+                    <span className="truncate rounded-full bg-muted px-2 py-0.5 text-[11px] font-semibold text-muted-foreground">
+                      {m.industry}
+                    </span>
+                  ) : null}
                 </div>
                 <p className="mt-3 truncate text-base font-bold tracking-tight">{m.name}</p>
                 <p className="truncate text-xs text-muted-foreground">
-                  {m.productName || templateLabel(m.dialerTemplate)}
+                  {m.tagline || m.productName || templateLabel(m.dialerTemplate)}
                 </p>
+                {m.description ? (
+                  <p className="mt-1.5 line-clamp-2 text-xs text-muted-foreground/80">
+                    {m.description}
+                  </p>
+                ) : null}
+                {m.website ? (
+                  <p className="mt-1 truncate text-[11px] text-muted-foreground/70">
+                    {m.website.replace(/^https?:\/\//, "")}
+                  </p>
+                ) : null}
                 <span className="mt-4 inline-flex items-center gap-1 text-sm font-semibold text-primary">
                   {entering === m.id ? (
                     <Loader2 className="h-4 w-4 animate-spin" />

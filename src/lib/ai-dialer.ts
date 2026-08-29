@@ -257,6 +257,9 @@ export async function placeAiCallForLead(opts: {
       firstMessage: agent.firstMessage,
       language: agent.language,
       voiceSpeed: agent.voiceSpeed,
+      // Org voice pick (Admin → AI agent → Voice). Allow-list gated like every
+      // override field — dropped harmlessly when the agent doesn't permit it.
+      voiceId: agent.voiceId || undefined,
       // Direct mode: prefer the second agent's dedicated number when it has one,
       // else the normal rotation. Bridge mode dials the bridge (number unused here).
       agentPhoneNumberId: bridge

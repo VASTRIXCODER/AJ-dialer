@@ -47,13 +47,17 @@ export const DEFAULT_AI_DISPOSITION_POLICY: AiDispositionPolicy = {
 export function mergeAiDispositionPolicy(raw: unknown): AiDispositionPolicy {
   const s = (raw ?? {}) as Partial<AiDispositionPolicy>;
   const min = Number(s.autoApplyMin);
+  const alwaysReview = Array.isArray(s.alwaysReview)
+    ? s.alwaysReview.filter((k): k is string => typeof k === "string" && k.length > 0)
+    : [...DEFAULT_AI_DISPOSITION_POLICY.alwaysReview];
+  // do_not_call is pinned: an AI proposal that suppresses a number forever gets
+  // a human look regardless of what any stored blob (or admin editor) says.
+  if (!alwaysReview.includes("do_not_call")) alwaysReview.push("do_not_call");
   return {
     autoApplyMin: Number.isFinite(min)
       ? Math.min(1, Math.max(0, min))
       : DEFAULT_AI_DISPOSITION_POLICY.autoApplyMin,
-    alwaysReview: Array.isArray(s.alwaysReview)
-      ? s.alwaysReview.filter((k): k is string => typeof k === "string" && k.length > 0)
-      : [...DEFAULT_AI_DISPOSITION_POLICY.alwaysReview],
+    alwaysReview,
     reviewOnMissingTranscript:
       typeof s.reviewOnMissingTranscript === "boolean"
         ? s.reviewOnMissingTranscript

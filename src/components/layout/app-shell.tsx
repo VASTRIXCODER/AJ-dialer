@@ -7,6 +7,7 @@ import { CommandPalette } from "@/components/ai/command-palette";
 import { type DialerConfig, DialerProvider } from "@/components/dialer/dialer-context";
 import { GlobalCallBar } from "@/components/dialer/global-call-bar";
 import { Lead360Provider } from "@/components/leads/lead-360/lead-360-provider";
+import { orgAccentCss } from "@/lib/org/accent";
 import type { OrgFeatures } from "@/lib/org/settings";
 import { DEFAULT_VOCABULARY, type OrgVocabulary } from "@/lib/org/vocabulary";
 import { AmbientBackground } from "./ambient-background";
@@ -26,6 +27,8 @@ export function AppShell({
   orgName = null,
   productName = null,
   brandColor = null,
+  accentColor = null,
+  logoUrl = null,
   role = null,
   superadmin = false,
   vocabulary = DEFAULT_VOCABULARY,
@@ -40,6 +43,10 @@ export function AppShell({
   orgName?: string | null;
   productName?: string | null;
   brandColor?: string | null;
+  /** Org accent (Admin → Identity) — recolors the accent token family. */
+  accentColor?: string | null;
+  /** Org logo (Admin → Identity) — shown on the sidebar identity tile. */
+  logoUrl?: string | null;
   role?: string | null;
   superadmin?: boolean;
   /** The org's own nouns, resolved server-side. See useVocabulary(). */
@@ -48,7 +55,20 @@ export function AppShell({
   dialerConfig: DialerConfig;
 }) {
   const [mobileOpen, setMobileOpen] = useState(false);
-  const sidebarProps = { permissions, features, orgName, productName, brandColor, role, superadmin, vocabulary };
+  const sidebarProps = {
+    permissions,
+    features,
+    orgName,
+    productName,
+    brandColor,
+    logoUrl,
+    role,
+    superadmin,
+    vocabulary,
+  };
+  // Org accent override (Admin → Identity → Accent color): a scoped stylesheet
+  // that retunes the accent token family for both themes. "" = default accent.
+  const accentCss = orgAccentCss(accentColor);
 
   return (
     <VocabularyProvider value={vocabulary}>
@@ -56,7 +76,8 @@ export function AppShell({
     {/* Inside Vocabulary + Dialer so the Lead 360 drawer reads the org's nouns
         and can be opened mid-call from any dialer surface without a remount. */}
     <Lead360Provider>
-    <div className="relative flex min-h-screen">
+    {accentCss ? <style dangerouslySetInnerHTML={{ __html: accentCss }} /> : null}
+    <div className="relative flex min-h-screen" {...(accentCss ? { "data-org-accent": "" } : {})}>
       <AmbientBackground />
       <CommandPalette />
 

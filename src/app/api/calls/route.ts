@@ -189,6 +189,9 @@ export async function POST(req: Request) {
             typeof body.durationSec === "number" && Number.isFinite(body.durationSec)
               ? Math.max(0, Math.round(body.durationSec))
               : undefined,
+          // AI summaries are appointment-only (product policy): a manual call
+          // gets its summary generated & persisted exactly when it booked.
+          includeSummary: body.outcome === "appointment_booked",
         });
       } catch {
         /* best-effort */

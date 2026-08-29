@@ -3,6 +3,7 @@
 import {
   AlertTriangle,
   CalendarCheck2,
+  Hammer,
   ListFilter,
   Loader2,
   Phone,
@@ -28,6 +29,7 @@ import {
   persistDisposition,
   replayQueuedDispositions,
 } from "@/lib/dialer/disposition-queue";
+import { describeOrgHours, isWithinOrgHours } from "@/lib/dialer/schedule";
 import { browserWrapupStore, clearWrapupDraft } from "@/lib/dialer/wrapup-draft";
 import { filterOutcomeOptionsByKeys, resolveOutcomeOptions } from "@/lib/status";
 import { useVisiblePoll } from "@/lib/use-visible-poll";
@@ -116,6 +118,23 @@ export function DialerClient({
   // ── Booked tab ────────────────────────────────────────────────────────────
   // Leads with an appointment already on the calendar. getDialQueue already
   // excludes them from the dial queue (status "appointment" isn't in DIALABLE),
+  // Outside-hours banner clock: re-evaluate the org calling window once a
+  // minute so the banner appears/disappears on schedule, not only on renders
+  // something else happened to cause. Mounted after hydration (starts false)
+  // so server and client first paints agree.
+  const [outsideOrgHours, setOutsideOrgHours] = useState(false);
+  useEffect(() => {
+    const hours = config.callingHours;
+    if (!hours) return;
+    const evaluate = () =>
+      setOutsideOrgHours(
+        !isWithinOrgHours(new Date(), hours, config.orgTimezone || "America/Chicago"),
+      );
+    evaluate();
+    const t = setInterval(evaluate, 60_000);
+    return () => clearInterval(t);
+  }, [config.callingHours, config.orgTimezone]);
+
   // so this is purely a visibility tab — polling independently of the dial
   // engine, the same pattern DialerFloor uses.
   const [tab, setTab] = useState<"queue" | "booked">("queue");
@@ -490,6 +509,31 @@ export function DialerClient({
         </Card>
       )}
 
+      {/* Outside-calling-hours banner (Admin → Calling hours). Advisory by
+          default; when the org enforces the hours, the server refuses the dial
+          too — evaluated per-lead in the LEAD's timezone, so this org-clock
+          banner is a heads-up, not the authority. */}
+      {outsideOrgHours && (
+        <Card
+          role="status"
+          className="flex flex-col items-start gap-3 border-warning/30 bg-warning/5 p-4 sm:flex-row sm:items-center"
+        >
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-warning/15 text-warning">
+            <AlertTriangle className="h-5 w-5" />
+          </div>
+          <div className="flex-1">
+            <p className="text-sm font-semibold">
+              Outside calling hours ({describeOrgHours(config.callingHours!)})
+            </p>
+            <p className="text-sm text-muted-foreground">
+              {config.callingHours?.enforced
+                ? "Dialing is blocked until the window opens — contacts are checked in their own local time."
+                : "Your workspace's calling window is closed. Calls still go through — this is a heads-up, not a block."}
+            </p>
+          </div>
+        </Card>
+      )}
+
       {/* Callback auto-dial banner — shown until the call fires */}
       {callbackPhone && !callbackFiredRef.current && state.status === "idle" && (
         <Card className="flex flex-col items-start gap-3 border-accent/30 bg-accent/5 p-4 sm:flex-row sm:items-center">
@@ -763,6 +807,33 @@ export function DialerClient({
               onNotesChange={(n) => updateNotes(n, focusLead?.id ?? null)}
             />
           </div>
+          {/* Closer notes — deliberately a visible placeholder, not a hidden
+              stub: the panel is planned (notes a setter leaves for the closer
+              who runs the appointment), and the slot it will occupy should
+              exist on the floor before the feature does. Toggle:
+              Admin → Dialer layout → "Closer notes". */}
+          {layout?.closerNotes !== false && (
+            <div className="border-t border-border p-5" aria-labelledby="closer-notes-heading">
+              <p
+                id="closer-notes-heading"
+                className="mb-2.5 text-xs font-bold uppercase tracking-wide text-muted-foreground"
+              >
+                Closer notes
+              </p>
+              <div className="flex items-center gap-3 rounded-xl border border-dashed border-border/80 bg-muted/30 px-4 py-3.5">
+                <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-primary-soft text-primary">
+                  <Hammer className="h-4 w-4" aria-hidden />
+                </span>
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold">Under construction</p>
+                  <p className="text-xs text-muted-foreground">
+                    Handoff notes for the closer will live here. For now, keep
+                    anything the closer needs in the call notes above.
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
         </Card>
       </div>
         </>

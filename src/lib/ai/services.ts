@@ -277,6 +277,107 @@ export function getCallSummary(
   );
 }
 
+// ── Wrap-up disposition copilot (manual dialing) ─────────────────────────────
+
+/** One wrap-up button the model may recommend (org taxonomy, resolved). */
+export interface SuggestionOption {
+  key: string;
+  outcome: CallOutcome;
+  label: string;
+  description: string;
+}
+
+/**
+ * Suggest which disposition button fits the call that just ended, from the
+ * org's OWN wrap-up taxonomy (custom `x_*` rows included) — the AI-disposition
+ * surface for manual dialing, where the only evidence is the rep's notes and
+ * the duration. Deliberately tiny (effort low, four fields): it runs at every
+ * manual wrap-up, so its cost profile matters. The rep's click files it —
+ * this never writes anything.
+ */
+export function getWrapupSuggestion(
+  lead: Lead,
+  evidence: CallEvidence,
+  options: SuggestionOption[],
+  ctx?: OrgAIContext,
+): Promise<
+  AIResult<{
+    recommendedKey: string;
+    rationale: string;
+    quickSummary: string;
+    confidence: number;
+  }>
+> {
+  const c = ctx ?? defaultAIContext(true);
+  const menu = options
+    .map((o) => `- ${o.key}: "${o.label}" (${o.description})`)
+    .join("\n");
+  const evidenceBlock = [
+    evidence.durationSec != null ? `Call duration: ${evidence.durationSec}s.` : "",
+    evidence.notes?.trim()
+      ? `Rep's in-call notes:\n${evidence.notes.trim().slice(0, 2000)}`
+      : "No notes were typed.",
+  ]
+    .filter(Boolean)
+    .join("\n");
+  return runAI(
+    () =>
+      generateJSON({
+        system: systemPrompt(c),
+        prompt:
+          "A rep just ended a manual call and must pick ONE disposition button. " +
+          "Recommend the button that best matches the evidence. recommendedKey MUST be " +
+          "exactly one of the keys below (or \"\" if the evidence is too thin to call). " +
+          "quickSummary is one factual sentence about the call; rationale is one short " +
+          "sentence of why this button; confidence is your honest 0..1.\n\n" +
+          `Buttons:\n${menu}\n\n` +
+          `Lead: ${leadContext(lead, c)}\n\n${evidenceBlock}`,
+        schemaName: "wrapup_suggestion",
+        effort: "low",
+        maxTokens: 400,
+        schema: obj({
+          recommendedKey: str,
+          rationale: str,
+          quickSummary: str,
+          confidence: num,
+        }),
+      }),
+    // Demo fallback: a transparent keyword heuristic over the same evidence —
+    // never presented as a model read (source: "demo" rides the AIResult).
+    () => {
+      const notes = (evidence.notes ?? "").toLowerCase();
+      const dur = evidence.durationSec ?? 0;
+      const byOutcome = (o: CallOutcome) => options.find((x) => x.outcome === o);
+      const pick =
+        /appointment|booked|meeting|scheduled/.test(notes)
+          ? byOutcome("appointment_booked")
+          : /call.?back|call me|try again/.test(notes)
+            ? byOutcome("callback_scheduled")
+            : /not interested|no thanks|stop calling|remove/.test(notes)
+              ? /stop calling|remove|do not call|dnc/.test(notes)
+                ? (byOutcome("do_not_call") ?? byOutcome("not_interested"))
+                : byOutcome("not_interested")
+              : /voicemail|left a message/.test(notes)
+                ? byOutcome("voicemail")
+                : !notes && dur < 20
+                  ? byOutcome("no_answer")
+                  : dur >= 90
+                    ? byOutcome("qualified")
+                    : undefined;
+      return {
+        recommendedKey: pick?.key ?? "",
+        rationale: pick
+          ? "Keyword match on your notes (demo heuristic)."
+          : "Not enough evidence for a suggestion.",
+        quickSummary: notes
+          ? "Call documented from the rep's notes."
+          : `Call lasted ${Math.round(dur)}s with no notes captured.`,
+        confidence: pick ? 0.4 : 0.1,
+      };
+    },
+  );
+}
+
 // ── Natural-language lead search (stage 2: rerank retrieved candidates) ─────
 export function getSemanticSearch(
   query: string,

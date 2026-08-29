@@ -222,6 +222,33 @@ export async function updateProfile(input: {
   }
 }
 
+/** The signed-in user's own editable profile bits (the Settings page). */
+export async function getMyProfileSettings(): Promise<{
+  team: string;
+  preferences: Record<string, unknown>;
+}> {
+  const empty = { team: "", preferences: {} as Record<string, unknown> };
+  if (!isSupabaseConfigured()) return empty;
+  try {
+    const supabase = await createClient();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) return empty;
+    const { data } = await supabase
+      .from("profiles")
+      .select("team, preferences")
+      .eq("id", user.id)
+      .maybeSingle();
+    return {
+      team: String(data?.team ?? ""),
+      preferences: (data?.preferences as Record<string, unknown>) ?? {},
+    };
+  } catch {
+    return empty;
+  }
+}
+
 /** Read the signed-in user's UI preferences (saved views, density, …). */
 export async function getUiPreferences(): Promise<Record<string, unknown>> {
   if (!isSupabaseConfigured()) return {};

@@ -74,9 +74,11 @@ export function NotificationsSettings({
     setErr("");
     setSaved(false);
     try {
-      // Send the COMPLETE notifications block. updateOrganizationSettings merges
-      // one level deep, so a partial object here would silently drop the keys it
-      // didn't mention.
+      // Send the COMPLETE notifications block (updateOrganizationSettings merges
+      // one level deep, so a partial object would drop unmentioned keys) — but
+      // ONLY the notifications block. This used to spread the entire org.settings
+      // snapshot from page load, silently reverting any section a colleague had
+      // saved since (a concurrent-editor clobber that reached every section).
       const notifications: NotificationSettings = {
         appointmentEmail: enabled,
         appointmentEmails: emails,
@@ -86,7 +88,7 @@ export function NotificationsSettings({
       const res = await fetch("/api/org/settings", {
         method: "PATCH",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ settings: { ...org.settings, notifications } }),
+        body: JSON.stringify({ settings: { notifications } }),
       });
       const j = await res.json().catch(() => ({}));
       if (!res.ok || !j.ok) {

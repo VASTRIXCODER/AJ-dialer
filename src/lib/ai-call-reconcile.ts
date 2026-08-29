@@ -4,6 +4,7 @@ import { finalizeAIConversation } from "./ai-call-finalize";
 import { applyTwilioCallStatus } from "./ai-call-state";
 import {
   getAIConversationsForMonitor,
+  listConnectedLiveAIConversations,
   listStuckAIConversations,
   listUnconnectedAILegs,
 } from "./db/records";
@@ -12,6 +13,9 @@ import {
   isAIBridgeConfigured,
   isElevenLabsConfigured,
 } from "./elevenlabs";
+import { mergeSettings } from "./org/settings";
+import { createAdminClient, isAdminConfigured } from "./supabase/admin";
+import { count as countMetric } from "./telemetry";
 import { getRestClient, isRestConfigured } from "./twilio";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -322,6 +326,93 @@ async function pooled<T>(
  * outcome. It is never guessed into "no_answer": an unknown must look unknown,
  * or we recreate the exact blindness this incident was made of.
  */
+/**
+ * Org max-talk-time watchdog (`settings.ai.maxTalkMin`, 0/absent = off).
+ *
+ * A connected AI call that runs past its org's ceiling is actively ENDED —
+ * both carrier legs hung up, then finalized with its real transcript — not
+ * just re-labeled. This is the admin knob's actual consumer: without it a
+ * rambling or stuck agent call burns provider minutes until the generic
+ * 12-minute force-close, and orgs had no say in the number.
+ *
+ * Runs from the reconcile-ai cron (every minute), so enforcement lag is at
+ * most ~60s past the configured ceiling.
+ */
+export async function enforceMaxTalkTime(): Promise<{ checked: number; ended: number }> {
+  const out = { checked: 0, ended: 0 };
+  if (!isAdminConfigured() || !isRestConfigured()) return out;
+
+  const live = await listConnectedLiveAIConversations();
+  if (live.length === 0) return out;
+
+  // One settings read per distinct org in the live set.
+  const orgIds = [...new Set(live.map((c) => c.orgId).filter(Boolean))] as string[];
+  if (orgIds.length === 0) return out;
+  const limits = new Map<string, number>();
+  try {
+    const { data } = await createAdminClient()
+      .from("organizations")
+      .select("id, settings")
+      .in("id", orgIds);
+    for (const row of (data ?? []) as { id: string; settings: unknown }[]) {
+      const min = Number(mergeSettings(row.settings).ai.maxTalkMin);
+      if (Number.isFinite(min) && min > 0) limits.set(row.id, min);
+    }
+  } catch {
+    return out;
+  }
+  if (limits.size === 0) return out;
+
+  const now = Date.now();
+  const overruns = live.filter((c) => {
+    const limitMin = c.orgId ? limits.get(c.orgId) : undefined;
+    return (
+      limitMin !== undefined &&
+      Number.isFinite(c.connectedAt) &&
+      now - c.connectedAt > limitMin * 60_000 &&
+      !inFlight.has(c.conversationId)
+    );
+  });
+  out.checked = live.length;
+  if (overruns.length === 0) return out;
+
+  const client = await getRestClient();
+  await Promise.all(
+    overruns.map(async (c) => {
+      inFlight.add(c.conversationId);
+      try {
+        // Homeowner leg first (ends the conference), then the agent leg — the
+        // same order the supervisor "End" action uses.
+        for (const sid of [c.customerCallSid, c.callSid].filter(Boolean) as string[]) {
+          try {
+            await client?.calls(sid).update({ status: "completed" });
+          } catch {
+            /* leg may already be over — finalize regardless */
+          }
+        }
+        const convo = isElevenLabsConfigured()
+          ? await fetchConversation(c.conversationId)
+          : null;
+        await finalizeAIConversation({
+          conversationId: c.conversationId,
+          turns: convo?.turns ?? [],
+          status: "completed",
+          durationSec:
+            convo?.durationSec ?? Math.round((now - c.connectedAt) / 1000),
+          terminationReason: "max_talk_time",
+        });
+        out.ended++;
+        countMetric("ai.max_talk_ended", 1, { orgId: c.orgId ?? "unknown" });
+      } catch {
+        /* best-effort — the stuck-conversation drain is the backstop */
+      } finally {
+        inFlight.delete(c.conversationId);
+      }
+    }),
+  );
+  return out;
+}
+
 export async function reconcileStuckConversations(opts?: {
   budgetMs?: number;
   pageSize?: number;

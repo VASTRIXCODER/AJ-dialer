@@ -308,6 +308,16 @@ export async function finalizeAIConversation(input: {
   // A real two-way conversation means the provider is healthy again.
   if (connected) recordCallSuccess();
 
+  // AI summaries are appointment-only by policy: a Claude-written narrative is
+  // persisted ONLY for calls that actually booked. The analyzer still ran (it
+  // owns the outcome), but its prose is dropped for every other connected
+  // result. Deterministic texts stay: non-conversation verdicts ("No answer…")
+  // and the analyzer-fell-back explanation (outcome === null) aren't AI
+  // summaries — they're labels the archive needs to stay honest.
+  if (connected && outcome !== "appointment_booked" && outcome !== null) {
+    summary = "";
+  }
+
   // Live monitor (in-memory) — instant feedback.
   updateAICall(conversationId, {
     state: connected ? "completed" : "failed",
@@ -416,6 +426,10 @@ export async function finalizeAIConversation(input: {
             .filter((t) => t.message.trim().length > 0),
           outcome,
           durationSec: input.durationSec,
+          // Summary artifacts follow the same appointment-only policy as the
+          // finalize path above — the rest of the intelligence (facts,
+          // objections, compliance flags, proposed disposition) always runs.
+          includeSummary: outcome === "appointment_booked",
         }).catch(() => {});
       }
     } catch {

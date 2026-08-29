@@ -6,6 +6,8 @@ import { PaywallScreen } from "@/components/layout/paywall-screen";
 import { isAIConfigured } from "@/lib/ai/claude";
 import { getAppSettings, isAccountDisabled } from "@/lib/db/app-control";
 import { listLeadGroups } from "@/lib/db/lead-groups";
+import { getUiPreferences } from "@/lib/db/team";
+import { parseDialerUserPrefs } from "@/lib/dialer/user-prefs";
 import { getPlatformPool } from "@/lib/dialer/rotation-server";
 import { restrictToAssignedNumbers } from "@/lib/dialer/rotation";
 import { agentLabels, isElevenLabsConfigured, isSecondAgentConfigured } from "@/lib/elevenlabs";
@@ -101,9 +103,14 @@ export default async function AppGroupLayout({
     viewer.role,
     viewer.callerIds,
   );
-  // The org's intake groups drive the dialer's group filter. Labels only — the
-  // dialer never needs the AI rule text.
-  const orgLeadGroups = (await listLeadGroups(viewer.org?.id ?? null)).map((g) => ({
+  // The org's intake groups drive the dialer's group filter (labels only — the
+  // dialer never needs the AI rule text), and the viewer's own dialer prefs
+  // come off their profile. No data dependency between the two.
+  const [orgLeadGroupsRaw, uiPreferences] = await Promise.all([
+    listLeadGroups(viewer.org?.id ?? null),
+    getUiPreferences(),
+  ]);
+  const orgLeadGroups = orgLeadGroupsRaw.map((g) => ({
     key: g.key,
     label: g.label,
   }));
@@ -202,6 +209,15 @@ export default async function AppGroupLayout({
     // Double-dial (double-tap): AI bot re-rings a no-answer once after a short gap.
     doubleDial: viewer.org?.settings.dialing.doubleDial ?? false,
     doubleDialGapSec: viewer.org?.settings.dialing.doubleDialGapSec ?? 15,
+    // Which mode the dialer boots into (Admin → Dialing → Default mode). The
+    // engine falls back to manual when the chosen mode isn't usable.
+    defaultDialMode: viewer.org?.settings.dialing.defaultMode ?? "ai",
+    // Admin → Calling hours: the dialer's outside-hours banner (advisory) and,
+    // when `enforced`, mirrored by the server-side refusal in the call routes.
+    callingHours: viewer.org?.settings.hours ?? null,
+    orgTimezone: viewer.org?.timezone ?? "America/Chicago",
+    // The viewer's own dialer prefs (Settings → Dialer preferences).
+    userPrefs: parseDialerUserPrefs(uiPreferences),
     // Per-tenant qualification-panel shape (solar field + third toggle label).
     // A non-solar vertical drops the solar field regardless of the qualify
     // setting, so a tenant never has to switch off solar wording in two places.
@@ -233,6 +249,8 @@ export default async function AppGroupLayout({
       orgName={viewer.org?.name ?? null}
       productName={viewer.org?.productName || null}
       brandColor={viewer.org?.brandColor || null}
+      accentColor={viewer.org?.accentColor || null}
+      logoUrl={viewer.org?.logoUrl || null}
       // Resolved once, per request, and handed to every Client Component under
       // the shell — so no screen has to hardcode "homeowner" or re-derive the
       // vertical's nouns for itself.

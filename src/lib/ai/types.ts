@@ -62,6 +62,26 @@ export interface CallSummary {
   confidence: number;
 }
 
+/**
+ * The wrap-up copilot's disposition suggestion for a just-ended MANUAL call —
+ * org-taxonomy aware (the key may be a custom `x_*` def), evidence = the rep's
+ * notes + duration. Rendered as an actionable chip in the wrap-up panel; the
+ * rep's click is what files it. Never auto-applies.
+ */
+export interface WrapupSuggestion {
+  /** The disposition-def key to press (validated server-side; "" = none). */
+  recommendedKey: string;
+  /** The canonical outcome that key lands on. */
+  recommendedOutcome: CallOutcome;
+  /** The def's human label, resolved server-side with the org's vocabulary. */
+  recommendedLabel: string;
+  /** One short sentence of why — shown under the chip. */
+  rationale: string;
+  /** One-line factual recap of the call (NOT a persisted summary). */
+  quickSummary: string;
+  confidence: number;
+}
+
 export interface SemanticMatch {
   id: string;
   reason: string;

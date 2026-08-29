@@ -13,7 +13,7 @@ import {
   isElevenLabsConfigured,
 } from "@/lib/elevenlabs";
 import { isMediaStreamConfigured } from "@/lib/media-stream";
-import { viewerCanAny, viewerOrgId } from "@/lib/org/membership";
+import { getViewer, viewerCanAny, viewerOrgId } from "@/lib/org/membership";
 import { isRestConfigured } from "@/lib/twilio";
 import { type CallOutcome, liveStateRank } from "@/lib/types";
 
@@ -273,7 +273,11 @@ export async function GET(
       state === "completed",
     transcript,
     appointment: store?.appointment ?? db?.appointment ?? null,
-    transferNumber: elevenLabsConfig.transferNumber,
+    // Org transfer number wins; env is the platform fallback. "" tells the UI
+    // the Transfer action is unavailable.
+    transferNumber:
+      (await getViewer()).org?.settings.ai.transferNumber?.trim() ||
+      elevenLabsConfig.transferNumber,
     configured: isElevenLabsConfigured(),
     liveAudioAvailable:
       isAIBridgeConfigured() || (isMediaStreamConfigured() && isRestConfigured()),

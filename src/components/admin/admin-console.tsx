@@ -2,6 +2,7 @@
 
 import {
   Ban,
+  Bot,
   Building2,
   Check,
   CheckCircle2,
@@ -47,6 +48,7 @@ import {
   ROLE_RANK,
   assignableRoles,
   can,
+  rolePermissions,
 } from "@/lib/permissions";
 import { cn, formatPhone, initials, relativeTime } from "@/lib/utils";
 
@@ -567,6 +569,21 @@ function MemberRow({
   // — owner/admin/manager always dial the full pool, so offering this picker
   // on their row would set data nothing ever reads.
   const showCallerIds = canRole && manageable && m.role === "rep" && orgPool.length > 0;
+  // One-click AI-dialer access for reps ("certain reps can use it"): the same
+  // per-member override the shield editor writes, surfaced as its own toggle so
+  // granting AI doesn't require knowing which of 23 permissions to flip.
+  const showAiToggle = canRole && manageable && m.role === "rep";
+  const aiGranted = can(m.role, "dialer.ai", m.permissions);
+  const toggleAi = () => {
+    const next: Record<string, boolean> = { ...m.permissions };
+    const wanted = !aiGranted;
+    if (rolePermissions(m.role).includes("dialer.ai") === wanted) {
+      delete next["dialer.ai"]; // back to the role default — drop the override
+    } else {
+      next["dialer.ai"] = wanted;
+    }
+    onPerms(next);
+  };
 
   return (
     <div className="rounded-xl border border-border">
@@ -598,6 +615,29 @@ function MemberRow({
             ))}
           </select>
         ) : null}
+        {showAiToggle && (
+          <button
+            type="button"
+            role="switch"
+            aria-checked={aiGranted}
+            aria-label={aiGranted ? "Revoke AI dialer access" : "Grant AI dialer access"}
+            title={
+              aiGranted
+                ? "AI dialer: granted — click to revoke"
+                : "AI dialer: off — click to let this rep place AI calls"
+            }
+            onClick={toggleAi}
+            disabled={busy}
+            className={cn(
+              "flex h-8 w-8 items-center justify-center rounded-lg border border-border transition-colors",
+              aiGranted
+                ? "bg-primary-soft text-primary"
+                : "text-muted-foreground hover:bg-muted hover:text-foreground",
+            )}
+          >
+            <Bot className="h-4 w-4" />
+          </button>
+        )}
         {canRole && manageable && (
           <button
             type="button"

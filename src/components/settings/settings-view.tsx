@@ -3,7 +3,6 @@
 import {
   Bell,
   Building2,
-  CalendarCheck,
   Check,
   Minus,
   Monitor,
@@ -21,6 +20,10 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input, Label } from "@/components/ui/input";
+import {
+  DEFAULT_DIALER_USER_PREFS,
+  type DialerUserPrefs,
+} from "@/lib/dialer/user-prefs";
 import {
   PERMISSION_LABEL,
   PERMISSIONS,
@@ -90,6 +93,8 @@ export function SettingsView({
   productName = null,
   membershipStatus = "none",
   permissions = [],
+  team: savedTeam = "",
+  dialerPrefs = DEFAULT_DIALER_USER_PREFS,
 }: {
   account?: { name: string; email: string } | null;
   role?: OrgRole | null;
@@ -97,6 +102,10 @@ export function SettingsView({
   productName?: string | null;
   membershipStatus?: "active" | "pending" | "none";
   permissions?: string[];
+  /** The saved profile team — this used to hardcode "AIATWORK" and never load. */
+  team?: string;
+  /** The saved dialer prefs (profile preferences.dialerPrefs). */
+  dialerPrefs?: DialerUserPrefs;
 }) {
   const { theme, setTheme } = useTheme();
   const [mounted, setMounted] = useState(false);
@@ -114,7 +123,10 @@ export function SettingsView({
       .toUpperCase() || "·";
 
   const [name, setName] = useState(displayName);
-  const [team, setTeam] = useState("AIATWORK");
+  // Loads the SAVED team (this field used to initialize to a hardcoded
+  // "AIATWORK" and never read what was stored — saving then overwrote the
+  // real value with the placeholder).
+  const [team, setTeam] = useState(savedTeam);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
 
@@ -133,16 +145,23 @@ export function SettingsView({
     }
   }
 
-  const [prefs, setPrefs] = useState({
-    autoDial: true,
-    recording: true,
-    parallelDefault: true,
-    desktopNotif: true,
-    emailDigest: false,
-    callbackAlerts: true,
-  });
-  const set = (k: keyof typeof prefs) => (v: boolean) =>
-    setPrefs((p) => ({ ...p, [k]: v }));
+  // Dialer prefs persist on the profile (preferences.dialerPrefs) the moment
+  // they're toggled, and the (app) layout feeds them into the dialer engine —
+  // these used to be six local-state placebos that reset on every visit.
+  const [prefs, setPrefs] = useState<DialerUserPrefs>(dialerPrefs);
+  const [prefsSaved, setPrefsSaved] = useState(false);
+  const set = (k: keyof DialerUserPrefs) => (v: boolean) => {
+    const next = { ...prefs, [k]: v };
+    setPrefs(next);
+    setPrefsSaved(false);
+    void fetch("/api/profile", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ preferences: { dialerPrefs: next } }),
+    }).then((res) => {
+      if (res.ok) setPrefsSaved(true);
+    });
+  };
 
   const themes = [
     { key: "light", label: "Light", icon: Sun },
@@ -287,60 +306,40 @@ export function SettingsView({
           </div>
         </Card>
 
-        {/* Dialer preferences */}
+        {/* Dialer preferences — real, profile-persisted, engine-wired. The old
+            "Record calls" toggle is gone on purpose: recording is org policy
+            (Admin → Dialing), and a per-rep switch that pretended otherwise was
+            a compliance placebo. Same for the notification toggles — nothing
+            sent desktop alerts or digests, so the switches were lies; org email
+            notifications live in Admin → Notifications. */}
         <Card className="p-6">
-          <h3 className="font-semibold">Dialer preferences</h3>
+          <div className="flex items-center justify-between">
+            <h3 className="font-semibold">Dialer preferences</h3>
+            {prefsSaved && <span className="text-xs font-medium text-success">Saved ✓</span>}
+          </div>
+          <p className="text-sm text-muted-foreground">
+            Your personal defaults — they follow your account on any device.
+          </p>
           <div className="mt-2 divide-y divide-border">
             <PrefRow
               icon={Radio}
               title="Auto-dial next lead"
               desc="Automatically start the next call after disposition"
-              checked={prefs.autoDial}
-              onChange={set("autoDial")}
+              checked={prefs.autoDialNext}
+              onChange={set("autoDialNext")}
             />
             <PrefRow
               icon={PhoneCall}
-              title="Default to 3X parallel"
-              desc="Start sessions with three simultaneous lines"
+              title="Default to full parallel"
+              desc="Open sessions at your organization's parallel line count"
               checked={prefs.parallelDefault}
               onChange={set("parallelDefault")}
             />
-            <PrefRow
-              icon={Radio}
-              title="Record calls"
-              desc="Capture dual-channel recordings for QA"
-              checked={prefs.recording}
-              onChange={set("recording")}
-            />
           </div>
-        </Card>
-
-        {/* Notifications */}
-        <Card className="p-6">
-          <h3 className="font-semibold">Notifications</h3>
-          <div className="mt-2 divide-y divide-border">
-            <PrefRow
-              icon={Bell}
-              title="Desktop notifications"
-              desc="Callback reminders and live alerts"
-              checked={prefs.desktopNotif}
-              onChange={set("desktopNotif")}
-            />
-            <PrefRow
-              icon={CalendarCheck}
-              title="Callback alerts"
-              desc="Notify me when a callback is due"
-              checked={prefs.callbackAlerts}
-              onChange={set("callbackAlerts")}
-            />
-            <PrefRow
-              icon={Bell}
-              title="Daily email digest"
-              desc="Performance summary every morning"
-              checked={prefs.emailDigest}
-              onChange={set("emailDigest")}
-            />
-          </div>
+          <p className="mt-3 border-t border-border pt-3 text-xs text-muted-foreground">
+            Call recording follows your organization’s policy (Admin → Dialing) and
+            appointment emails are configured in Admin → Notifications.
+          </p>
         </Card>
       </div>
     </div>

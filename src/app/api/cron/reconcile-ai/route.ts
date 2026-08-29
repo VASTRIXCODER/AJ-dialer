@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { reconcileStuckConversations } from "@/lib/ai-call-reconcile";
+import { enforceMaxTalkTime, reconcileStuckConversations } from "@/lib/ai-call-reconcile";
 import { isElevenLabsConfigured } from "@/lib/elevenlabs";
 import { drainOutbox } from "@/lib/notifications/outbox";
 import { isRestConfigured } from "@/lib/twilio";
@@ -68,6 +68,11 @@ async function runReconcile(req: Request) {
     });
   }
 
+  // Org max-talk-time watchdog: end connected AI calls that have run past their
+  // org's `ai.maxTalkMin` ceiling. Before the drain — an overrun should be
+  // ended NOW, not after a 45s backlog page-through.
+  const talkWatch = await enforceMaxTalkTime();
+
   // Leave headroom under maxDuration so we always return a real report instead of
   // being killed mid-page — `moreRemaining` tells the next tick to keep going.
   // 45s, not 50: the outbox drain above may already have spent up to 8 of the 60.
@@ -81,7 +86,13 @@ async function runReconcile(req: Request) {
     );
   }
 
-  return NextResponse.json({ ok: true, ranAt: new Date().toISOString(), ...result, outbox });
+  return NextResponse.json({
+    ok: true,
+    ranAt: new Date().toISOString(),
+    ...result,
+    talkWatch,
+    outbox,
+  });
 }
 
 // Vercel Cron issues a GET; support POST too for external schedulers / testing.

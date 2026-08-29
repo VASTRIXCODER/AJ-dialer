@@ -1,5 +1,6 @@
-import { ArrowRight, ClipboardList, Users } from "lucide-react";
+import { ArrowRight, ClipboardList, UploadCloud, Users } from "lucide-react";
 import Link from "next/link";
+import { buttonVariants } from "@/components/ui/button";
 import {
   LeadsTable,
   type LeadsTableFilters,
@@ -255,6 +256,19 @@ export default async function LeadsPage({
           403. The dialog receives the CURRENT sanitized ?f= spec (null = the
           whole scope) so what exports always matches what's on screen; the
           legacy re-import-format GET stays reachable from inside the dialog. */}
+      {/* The Import Studio's front door. Until now the ONLY paths in were
+          dropping a file on the collapsed group grid or a link buried in
+          Admin — reps with the leads.import override literally could not find
+          it. Same gate as the studio page itself, so this never 403-screens. */}
+      {canManage && (
+        <Link
+          href="/leads/import"
+          className={buttonVariants({ variant: "outline", size: "sm", className: "gap-2" })}
+        >
+          <UploadCloud className="h-4 w-4" />
+          Import
+        </Link>
+      )}
       {viewer.permissions.includes("leads.export") && (
         <ExportDialog
           filterSpec={filterSpec}

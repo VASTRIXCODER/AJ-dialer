@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { placeAiCallForLead } from "@/lib/ai-dialer";
 import { getLeadById } from "@/lib/db/leads";
+import { resolveLeadTimezone } from "@/lib/dialer/lead-timezone";
+import { describeOrgHours, isWithinOrgHours } from "@/lib/dialer/schedule";
 import { type AgentKey, isElevenLabsConfigured, isSecondAgentConfigured } from "@/lib/elevenlabs";
 import { getViewer } from "@/lib/org/membership";
 import { resolveDialerAccess } from "@/lib/org/settings";
@@ -118,6 +120,26 @@ export async function POST(req: Request) {
       { error: "Join an organization to place calls." },
       { status: 403 },
     );
+  }
+
+  // Enforced calling hours apply to interactive AI launches exactly like
+  // manual legs (the unattended cron has its own automation windows). The
+  // hours are evaluated in the LEAD's own timezone, org timezone fallback.
+  const hours = viewer.org?.settings.hours;
+  if (hours?.enforced && lead.phone) {
+    const tz = resolveLeadTimezone(
+      lead.phone,
+      lead.timezone,
+      viewer.org?.timezone || "America/Chicago",
+    );
+    if (!isWithinOrgHours(new Date(), hours, tz)) {
+      return NextResponse.json(
+        {
+          error: `It's outside this workspace's calling hours (${describeOrgHours(hours)}, in the contact's local time). An admin can change or un-enforce the hours in Admin → Calling hours.`,
+        },
+        { status: 400 },
+      );
+    }
   }
 
   const result = await placeAiCallForLead({

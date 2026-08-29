@@ -25,6 +25,8 @@ import { brandTagline, isSolarVertical } from "./vertical";
 export interface VocabularySource {
   dialerTemplate?: string | null;
   productName?: string | null;
+  /** The org's own tagline (Admin → Identity). Wins over the vertical's line. */
+  tagline?: string | null;
   settings?: {
     leadNoun?: string;
     leadNounPlural?: string;
@@ -95,7 +97,10 @@ export function orgVocabulary(
     appointmentNounPlural:
       profile.appointmentNounPlural ?? `${appointmentNoun}s`,
     noNeedLabel: profile.noNeedLabel ?? "No need right now",
-    tagline: brandTagline(template, org?.productName),
+    // Precedence matches every other vocabulary word: the org's own choice
+    // (Admin → Identity → Tagline) → the vertical's line. The admin field
+    // persisted for years while this resolver ignored it — a dead control.
+    tagline: (org?.tagline ?? "").trim() || brandTagline(template, org?.productName),
   };
 }
 

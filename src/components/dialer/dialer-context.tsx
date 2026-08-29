@@ -3,6 +3,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { useToast } from "@/components/ui/toast";
 import { mergeClaimedLeads } from "@/lib/dialer/claims";
+import type { DialerUserPrefs } from "@/lib/dialer/user-prefs";
 import type { LeadFieldDef } from "@/lib/leads/field-schema";
 import type { AiLockReason, DialerLayout } from "@/lib/org/settings";
 import { useOrgChannel } from "@/lib/realtime/use-org-channel";
@@ -63,6 +64,17 @@ export interface DialerConfig {
   /** AI double-dial: re-ring a no-answer once after `doubleDialGapSec` before moving on. */
   doubleDial?: boolean;
   doubleDialGapSec?: number;
+  /** Which mode the dialer boots into (`settings.dialing.defaultMode`). "ai"
+   *  falls back to manual for viewers who can't use the AI dialer; "parallel"
+   *  falls back when the org's line ceiling is 1. */
+  defaultDialMode?: "manual" | "parallel" | "ai";
+  /** `settings.hours` — drives the dialer's outside-hours banner. When
+   *  `enforced`, the call routes also refuse dials server-side. */
+  callingHours?: { startHour: number; endHour: number; days: number[]; enforced?: boolean } | null;
+  /** The org's IANA timezone — the banner evaluates the hours in it. */
+  orgTimezone?: string;
+  /** The viewer's own dialer prefs (profile preferences.dialerPrefs). */
+  userPrefs?: DialerUserPrefs;
   /** Show the "Solar payment" field in the qualification panel (per-tenant). */
   qualifyShowSolarPayment?: boolean;
   /** Label for the third home-profile toggle in the qualification panel. */
@@ -263,6 +275,10 @@ export function DialerProvider({
   const engineOptions = useMemo<DialerEngineOptions>(
     () => ({
       recordingEnabled: config.recordingEnabled ?? true,
+      // The org's chosen boot mode. The engine resolves fallbacks itself (AI
+      // unusable → manual; parallel with a 1-line ceiling → manual).
+      initialMode: config.defaultDialMode ?? "ai",
+      userPrefs: config.userPrefs,
       reservations: {
         enabled: Boolean(config.reservationsEnabled),
         // Lazy: read at dial time so mid-session filter changes are honored.
@@ -277,7 +293,14 @@ export function DialerProvider({
       },
       onDuplicateLanesDropped,
     }),
-    [config.recordingEnabled, config.reservationsEnabled, onClaimed, onDuplicateLanesDropped],
+    [
+      config.recordingEnabled,
+      config.reservationsEnabled,
+      config.defaultDialMode,
+      config.userPrefs,
+      onClaimed,
+      onDuplicateLanesDropped,
+    ],
   );
 
   const dialer = useDialer(

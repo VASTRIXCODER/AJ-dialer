@@ -140,13 +140,22 @@ describe("mergeAiDispositionPolicy — stored blob sanitation", () => {
     expect(mergeAiDispositionPolicy({ autoApplyMin: "high" }).autoApplyMin).toBe(0.8);
   });
 
-  it("alwaysReview replaces wholesale and drops non-string entries", () => {
+  it("alwaysReview replaces wholesale, drops non-string entries — and do_not_call is pinned", () => {
     const merged = mergeAiDispositionPolicy({
       alwaysReview: ["wrong_number", 42, ""],
     });
-    expect(merged.alwaysReview).toEqual(["wrong_number"]);
-    // An admin clearing the list means clearing it — no default resurrection.
-    expect(mergeAiDispositionPolicy({ alwaysReview: [] }).alwaysReview).toEqual([]);
+    // Custom entries replace the default list, but do_not_call rides along
+    // regardless: an AI proposal that suppresses a number forever always gets
+    // a human look, whatever a stored blob (or the admin editor) says.
+    expect(merged.alwaysReview).toEqual(["wrong_number", "do_not_call"]);
+    // "Clearing" the list still keeps the compliance pin — that's the point.
+    expect(mergeAiDispositionPolicy({ alwaysReview: [] }).alwaysReview).toEqual([
+      "do_not_call",
+    ]);
+    // A blob that already lists it doesn't get a duplicate.
+    expect(
+      mergeAiDispositionPolicy({ alwaysReview: ["do_not_call"] }).alwaysReview,
+    ).toEqual(["do_not_call"]);
   });
 
   it("reviewOnMissingTranscript keeps only a real boolean", () => {

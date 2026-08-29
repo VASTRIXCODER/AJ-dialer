@@ -15,6 +15,7 @@ import {
 import { dedupeLeadsByPhone } from "./dialer/lane-dedupe";
 import { persistDisposition } from "./dialer/disposition-queue";
 import { decideMuteToggle, type MuteCapability } from "./dialer/mute-intent";
+import type { DialerUserPrefs } from "./dialer/user-prefs";
 import type { AgentKey } from "./elevenlabs";
 import type { CallOutcome, Lead } from "./types";
 import { formatPhone, toE164 } from "./utils";
@@ -57,6 +58,19 @@ export interface DialerEngineOptions {
    *  see src/lib/dialer/lane-dedupe.ts). The provider surfaces this (toast)
    *  and counts it (`lane.dup_dropped`). */
   onDuplicateLanesDropped?: (dropped: Lead[]) => void;
+  /**
+   * Which mode the dialer BOOTS into (`settings.dialing.defaultMode`).
+   * Resolution: "ai" only when AI is actually usable (falls back to manual);
+   * "parallel" only when the line ceiling allows >1 (falls back to manual).
+   * Absent = the historical behavior: AI whenever usable, else manual.
+   */
+  initialMode?: "manual" | "parallel" | "ai";
+  /**
+   * The viewer's own dialer prefs (profile preferences.dialerPrefs), resolved
+   * server-side. Personal defaults layered on top of org policy: the parallel
+   * default only applies to a manual boot with a >1 line ceiling.
+   */
+  userPrefs?: DialerUserPrefs;
 }
 
 export interface DialLine {
@@ -334,9 +348,20 @@ export function useDialer(
     Math.min(MAX_PARALLEL_HUMAN, Math.floor(maxHumanLines) || MAX_PARALLEL_HUMAN),
   );
   const recordingEnabled = options.recordingEnabled ?? true;
+  // Resolve the org's chosen boot mode against what's actually usable. The old
+  // behavior (AI whenever usable) is exactly initialMode:"ai", which is also
+  // the absent-key default — so nothing changes until an admin picks otherwise.
+  const initialMode = options.initialMode ?? "ai";
+  const bootAiMode = aiConfigured && initialMode === "ai";
+  // Parallel at boot: the org's default mode, or the rep's own "default to
+  // full parallel" preference — either way only for a manual boot with room.
+  const bootParallelCount =
+    !bootAiMode && (initialMode === "parallel" || options.userPrefs?.parallelDefault)
+      ? Math.max(1, humanCeiling)
+      : 1;
   const [state, setState] = useState<DialerState>({
     status: "idle",
-    sessionMode: deriveSessionMode(aiConfigured, 1),
+    sessionMode: deriveSessionMode(bootAiMode, bootParallelCount),
     lines: [],
     connectedLead: null,
     durationSec: 0,
@@ -344,9 +369,9 @@ export function useDialer(
     muteCapability: "unsupported",
     onHold: false,
     recording: recordingEnabled,
-    autoDial: false,
-    parallelCount: 1,
-    maxParallel: aiConfigured ? maxAiConcurrency : humanCeiling,
+    autoDial: options.userPrefs?.autoDialNext ?? false,
+    parallelCount: bootParallelCount,
+    maxParallel: bootAiMode ? maxAiConcurrency : humanCeiling,
     lastOutcome: null,
     mode: "connecting",
     reconnecting: false,
@@ -363,7 +388,7 @@ export function useDialer(
     outboundSids: [],
     callerIdInfo: null,
     excludedCallerIds: [],
-    aiMode: aiConfigured,
+    aiMode: bootAiMode,
     activeAgent: "primary",
     aiCalls: [],
     aiCampaign: "idle",

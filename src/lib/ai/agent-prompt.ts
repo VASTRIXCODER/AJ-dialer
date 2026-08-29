@@ -402,6 +402,8 @@ export interface AgentConfig {
   firstMessage: string;
   language: string;
   voiceSpeed: number;
+  /** ElevenLabs voice ID (org `settings.ai.voice`); "" = the dashboard voice. */
+  voiceId: string;
 }
 
 function fillTokens(s: string, org: AgentOrgLike): string {
@@ -556,6 +558,11 @@ export function resolveAgentConfig(
 ): AgentConfig {
   const ai = org?.settings.ai;
   const disclosure = complianceSuffix(org);
+  // Legacy blobs stored the placeholder "default" back when this knob was a
+  // dead control — that's not a real ElevenLabs voice ID, so it means "the
+  // dashboard voice", exactly like empty.
+  const rawVoice = ai?.voice?.trim() ?? "";
+  const voiceId = rawVoice && rawVoice.toLowerCase() !== "default" ? rawVoice : "";
 
   if (agentKey === "secondary") {
     return {
@@ -563,6 +570,7 @@ export function resolveAgentConfig(
       firstMessage: AGENT2_FIRST_MESSAGE,
       language: ai?.language || "en",
       voiceSpeed: typeof ai?.voiceSpeed === "number" ? ai.voiceSpeed : 0.9,
+      voiceId,
     };
   }
 
@@ -592,5 +600,6 @@ export function resolveAgentConfig(
     firstMessage,
     language: ai?.language || "en",
     voiceSpeed: typeof ai?.voiceSpeed === "number" ? ai.voiceSpeed : 0.9,
+    voiceId: ai?.voice?.trim() ?? "",
   };
 }

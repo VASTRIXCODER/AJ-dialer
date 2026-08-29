@@ -141,6 +141,8 @@ export interface DialerLayout {
   callHistory: boolean;
   /** "Up next in queue" preview in the lead panel. */
   upNext: boolean;
+  /** Closer-notes slot at the bottom of the qualify column (placeholder today). */
+  closerNotes: boolean;
 }
 
 export const DEFAULT_DIALER_LAYOUT: DialerLayout = {
@@ -150,12 +152,20 @@ export const DEFAULT_DIALER_LAYOUT: DialerLayout = {
   aiBriefing: true,
   callHistory: true,
   upNext: true,
+  closerNotes: true,
 };
 
 export interface OrgSettings {
   dialing: {
-    mode: "preview" | "progressive" | "predictive";
+    /**
+     * Which mode the dialer OPENS in for this workspace: manual, parallel (3X),
+     * or ai. "ai" silently falls back to manual for viewers who can't use the
+     * AI dialer (no permission / feature off / ElevenLabs unconfigured), and
+     * "parallel" falls back to manual when maxLines is 1.
+     */
+    defaultMode: "manual" | "parallel" | "ai";
     maxLines: number;
+    /** Seconds an outbound leg rings before Twilio gives up (clamped 5–60). */
     ringTimeoutSec: number;
     recording: boolean;
     /**
@@ -173,9 +183,17 @@ export interface OrgSettings {
      * to a neutral default at drop time.
      */
     voicemailMessage: string;
-    retryAttempts: number;
-    retryDelayMin: number;
-    respectDnc: boolean;
+    /**
+     * Org-wide ceiling on dial attempts per lead for CLAIMED dialing (the
+     * reservation engine skips leads at/over it). 0 = unlimited. Assignment
+     * and campaign policies still apply their own caps on top.
+     */
+    maxAttemptsPerLead: number;
+    /**
+     * Minutes a lead is held out of claimed dialing after any attempt.
+     * 0 = none. Due callbacks bypass the cooldown (the claim RPC's rule).
+     */
+    redialCooldownMin: number;
     /** Primary outbound caller ID (used when the rotation pool is empty). */
     callerId: string;
     /**
@@ -219,6 +237,13 @@ export interface OrgSettings {
     startHour: number; // 0–23 local to the org timezone
     endHour: number;
     days: number[]; // 0 (Sun) – 6 (Sat)
+    /**
+     * When ON, outbound MANUAL/PARALLEL and interactive AI dials outside these
+     * hours are refused server-side (evaluated in the LEAD's own timezone,
+     * falling back to the org's). When off, the hours are advisory — the
+     * dialer shows an outside-hours banner but never blocks a call.
+     */
+    enforced: boolean;
   };
   ai: {
     agentName: string;
@@ -226,11 +251,26 @@ export interface OrgSettings {
     greeting: string;
     /** Full system prompt for the AI caller. Empty = use the vertical default. */
     systemPrompt: string;
+    /**
+     * ElevenLabs voice ID override for AI calls. Sent per-call through the
+     * override payload ONLY when the agent's dashboard allow-list permits a
+     * voice override (fail-closed, like every other override field). Empty =
+     * the voice configured on the ElevenLabs dashboard agent.
+     */
     voice: string;
     /** TTS playback speed (0.7 slow – 1.2 fast). Lower sounds calmer/slower. */
     voiceSpeed: number;
+    /**
+     * Where a live AI call is transferred when a supervisor hits Transfer.
+     * Empty falls back to the platform env `ELEVENLABS_TRANSFER_NUMBER`;
+     * empty BOTH ⇒ the transfer action is unavailable.
+     */
     transferNumber: string;
-    aiFirst: boolean;
+    /**
+     * Watchdog ceiling on a single AI call's talk time, in minutes (0 = none).
+     * The reconcile cron force-ends conversations that run past it — a stuck
+     * or rambling agent call can't burn minutes forever.
+     */
     maxTalkMin: number;
     language: string;
     /**
@@ -252,7 +292,9 @@ export interface OrgSettings {
     dispositionPolicy: AiDispositionPolicy;
   };
   compliance: {
-    dncEnforced: boolean;
+    // NOTE: there is deliberately no "enforce DNC" switch. Do-Not-Call is
+    // enforced unconditionally at every dial path (manual, parallel, AI,
+    // cron) and is not an org-configurable behavior.
     recordingDisclosure: string;
     consentRequired: boolean;
   };
@@ -447,16 +489,21 @@ export function mergeLeaderboardSettings(raw: unknown): LeaderboardSettings {
 
 export const DEFAULT_ORG_SETTINGS: OrgSettings = {
   dialing: {
-    mode: "progressive",
+    // "ai" preserves the historical boot behavior: the dialer opens in AI mode
+    // whenever the viewer can actually use it, manual otherwise. Orgs that want
+    // manual-first pick it in Admin → Dialing.
+    defaultMode: "ai",
     maxLines: 3,
     ringTimeoutSec: 25,
     recording: true,
     amd: false,
     voicemailDrop: true,
     voicemailMessage: "",
-    retryAttempts: 3,
-    retryDelayMin: 60,
-    respectDnc: true,
+    // 0 = off. These deliberately default OFF (unlike the old dead
+    // retryAttempts/retryDelayMin knobs, which persisted 3/60 that nothing
+    // read) so no org gets surprise skip behavior from a value it never chose.
+    maxAttemptsPerLead: 0,
+    redialCooldownMin: 0,
     callerId: "",
     callerIds: [],
     rotateEvery: 1,
@@ -485,17 +532,23 @@ export const DEFAULT_ORG_SETTINGS: OrgSettings = {
     dailyCap: 500,
     cooldownHours: 6,
   },
-  hours: { startHour: 8, endHour: 20, days: [1, 2, 3, 4, 5] },
+  // enforced defaults OFF: hours are advisory (dialer banner) until an admin
+  // explicitly turns the server-side block on.
+  hours: { startHour: 8, endHour: 20, days: [1, 2, 3, 4, 5], enforced: false },
   ai: {
     agentName: "Aria",
     persona: "Friendly, concise, and consultative.",
     greeting: "Hi, this is {agent} calling from {org} — do you have a quick moment?",
     systemPrompt: "",
-    voice: "default",
+    // Empty = the voice configured on the ElevenLabs dashboard agent.
+    voice: "",
     voiceSpeed: 0.9,
-    transferNumber: "+14693018199",
-    aiFirst: true,
-    maxTalkMin: 8,
+    // Empty = fall back to the ELEVENLABS_TRANSFER_NUMBER env; empty both ⇒
+    // no transfer target (the action is unavailable). The old hardcoded
+    // literal default is gone on purpose — a phone number is tenant config,
+    // not source code.
+    transferNumber: "",
+    maxTalkMin: 0,
     language: "en",
     // Matches the common ElevenLabs plan allowance. Raise if the plan does.
     maxConcurrentCalls: 10,
@@ -505,7 +558,6 @@ export const DEFAULT_ORG_SETTINGS: OrgSettings = {
     },
   },
   compliance: {
-    dncEnforced: true,
     recordingDisclosure: "This call may be recorded for quality and training.",
     consentRequired: false,
   },
@@ -570,7 +622,16 @@ export function resolveDialerAccess(
 export function mergeSettings(raw: unknown): OrgSettings {
   const s = (raw ?? {}) as Partial<OrgSettings>;
   return {
-    dialing: { ...DEFAULT_ORG_SETTINGS.dialing, ...(s.dialing ?? {}) },
+    dialing: {
+      ...DEFAULT_ORG_SETTINGS.dialing,
+      ...(s.dialing ?? {}),
+      // Sanitized on read — a hand-edited or legacy blob can hold anything.
+      defaultMode: (["manual", "parallel", "ai"] as const).includes(
+        s.dialing?.defaultMode as "manual",
+      )
+        ? s.dialing!.defaultMode
+        : DEFAULT_ORG_SETTINGS.dialing.defaultMode,
+    },
     automation: {
       ...DEFAULT_ORG_SETTINGS.automation,
       ...(s.automation ?? {}),

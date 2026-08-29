@@ -7,7 +7,7 @@ import {
   fetchConversation,
   isElevenLabsConfigured,
 } from "@/lib/elevenlabs";
-import { viewerCan, viewerOrgId } from "@/lib/org/membership";
+import { getViewer, viewerCan, viewerOrgId } from "@/lib/org/membership";
 import { getRestClient, isRestConfigured } from "@/lib/twilio";
 
 export const dynamic = "force-dynamic";
@@ -22,8 +22,9 @@ const xml = (body: string) =>
  * serverless instance).
  *   • "takeover" → drop the AI and move the homeowner into a conference room the
  *                  rep's browser joins → the human takes the call live.
- *   • "transfer" → reroute the homeowner to the rep phone line (ELEVENLABS_
- *                  TRANSFER_NUMBER, default +1 469-301-8199).
+ *   • "transfer" → reroute the homeowner to the rep phone line (org
+ *                  settings.ai.transferNumber, env ELEVENLABS_TRANSFER_NUMBER
+ *                  fallback; no number set ⇒ the action is unavailable).
  *   • "end"      → hang up the leg AND finalize + categorize the session.
  */
 export async function POST(req: Request) {
@@ -160,10 +161,17 @@ export async function POST(req: Request) {
     }
 
     // ── Transfer: reroute the homeowner to the rep phone line. ────────────────
-    const target = (to || elevenLabsConfig.transferNumber || "").trim();
+    // Precedence: explicit `to` from the caller → the org's own transfer number
+    // (Admin → AI agent → Transfer number) → the platform env fallback.
+    const viewer = await getViewer();
+    const orgTransfer = viewer.org?.settings.ai.transferNumber?.trim() ?? "";
+    const target = (to || orgTransfer || elevenLabsConfig.transferNumber || "").trim();
     if (!target) {
       return NextResponse.json(
-        { error: "No transfer number set. Configure ELEVENLABS_TRANSFER_NUMBER." },
+        {
+          error:
+            "No transfer number set. Add one in Admin → AI agent → Transfer number (or set ELEVENLABS_TRANSFER_NUMBER).",
+        },
         { status: 400 },
       );
     }
