@@ -43,6 +43,40 @@ const err = (error: string): Result => ({ ok: false, error });
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+/**
+ * Lead ids with a DUE (or overdue) open callback in this org — the sanctioned
+ * cooldown/max-attempts bypass set for claimed dialing. The claim RPC applies
+ * the org's pacing knobs unconditionally, so the claim route exempts these
+ * leads by claiming them explicitly first (mirroring the eligibility twin's
+ * `dueCallbackLeadIds` input). DNC and the calling window are NEVER bypassed.
+ */
+export async function dueCallbackLeadIds(
+  orgId: string,
+  limit = 200,
+): Promise<string[]> {
+  if (!isAdminConfigured() || !orgId) return [];
+  try {
+    const { data } = await createAdminClient()
+      .from("callbacks")
+      .select("lead_id")
+      .eq("org_id", orgId)
+      .not("status", "in", '("completed","cancelled")')
+      .not("lead_id", "is", null)
+      .lte("due_at", new Date().toISOString())
+      .order("due_at", { ascending: true })
+      .limit(limit);
+    return [
+      ...new Set(
+        ((data ?? []) as Row[])
+          .map((r) => s(r.lead_id))
+          .filter((id) => UUID.test(id)),
+      ),
+    ];
+  } catch {
+    return [];
+  }
+}
+
 /** One callback with the v2 columns resolved for display. */
 export interface CallbackBoardRow {
   id: string;

@@ -600,6 +600,6 @@ export function resolveAgentConfig(
     firstMessage,
     language: ai?.language || "en",
     voiceSpeed: typeof ai?.voiceSpeed === "number" ? ai.voiceSpeed : 0.9,
-    voiceId: ai?.voice?.trim() ?? "",
+    voiceId,
   };
 }

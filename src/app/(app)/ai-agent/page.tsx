@@ -101,11 +101,14 @@ export default async function AiAgentPage() {
             <Lock className="h-9 w-9 text-muted-foreground/60" />
           </span>
           <div className="max-w-md">
-            <p className="text-xl font-bold tracking-tight">AI Command Center — Premium Feature</p>
+            <p className="text-xl font-bold tracking-tight">
+              AI features are switched off for this workspace
+            </p>
             <p className="mt-2 text-sm text-muted-foreground">
-              Your organization does not have access to AI calling or the intelligence layer. Contact{" "}
-              <span className="font-semibold text-foreground">anasupalle17@gmail.com</span> to
-              unlock AI calling for your account.
+              The <span className="font-semibold text-foreground">AI calling</span> and{" "}
+              <span className="font-semibold text-foreground">AI agent</span> feature flags are
+              off. An owner or admin can turn them on in Admin → Features &amp; terminology —
+              or from the AI agent panel’s “Enable AI calling” button.
             </p>
           </div>
           <div className="flex flex-wrap justify-center gap-3">

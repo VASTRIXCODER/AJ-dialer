@@ -1,4 +1,3 @@
-import { nextCallerId } from "@/lib/dialer/rotation-server";
 import { elevenLabsConfig } from "@/lib/elevenlabs";
 import {
   getPublicBaseUrl,
@@ -106,33 +105,19 @@ export async function POST(req: Request) {
       );
     }
 
-    // ── Single / manual dial: bridge to the homeowner over the PSTN ───────────
+    // ── Direct `To` PSTN dial: REMOVED, deliberately ──────────────────────────
+    // This legacy branch bridged straight to any number the browser passed in
+    // `device.connect({ params: { To } })`. No app code has used it since the
+    // conference flow (/api/twilio/call) became the only dial path — but the
+    // branch itself still answered, and it sat OUTSIDE every server-side
+    // policy gate: no DNC scrub, no enforced calling hours, no max-attempts,
+    // no org feature check. Any signed-in user with a Voice token could ring
+    // any number from the org's caller ID by typing one line in the console —
+    // exactly the calls the admin was told were now impossible. Every real
+    // dial goes through /api/twilio/call, where the policy gates live.
     if (to) {
-      // Rotate the caller ID from the pool (per-caller counter) instead of always
-      // using the single number — the same spam-spreading rotation the primary
-      // conference flow (/api/twilio/call) uses. Falls back to the single env
-      // caller ID when no pool is configured. A valid caller ID is mandatory for
-      // a PSTN <Dial>; without it Twilio rejects the call ("application error"),
-      // so fail with a clear spoken message.
-      const fromId = String(form.get("From") ?? "").trim() || null;
-      const rotated = await nextCallerId(fromId, null, to).catch(() => "");
-      const callerId = (rotated || twilioConfig.callerId).trim();
-      if (!callerId) {
-        return say(
-          "This dialer has no outbound caller I D configured. Please add a Twilio caller I D to place manual calls.",
-        );
-      }
-
-      // recordingStatusCallback must be an ABSOLUTE, publicly-reachable URL — a
-      // relative path triggers Twilio 21609. Omit it if we can't build one.
-      const base = getPublicBaseUrl(req);
-      const recordAttr = record
-        ? base
-          ? ` record="record-from-answer-dual" recordingStatusCallback="${escapeXml(`${base}/api/twilio/status`)}"`
-          : ' record="record-from-answer-dual"'
-        : "";
-      return twiml(
-        `<Dial callerId="${escapeXml(callerId)}"${recordAttr} answerOnBridge="true"><Number>${escapeXml(to)}</Number></Dial>`,
+      return say(
+        "Direct dialing through this line is disabled. Please use the dialer.",
       );
     }
 
@@ -218,7 +203,7 @@ export async function GET(req: Request) {
     twimlApp,
     callerIdConfigured: isCallerIdConfigured(),
     callerIdNote: isCallerIdConfigured()
-      ? "Caller ID is set — manual PSTN dialing is enabled."
-      : "No TWILIO_CALLER_ID — manual dialing is disabled (take-over still works).",
+      ? "Caller ID is set — outbound dialing via /api/twilio/call is enabled."
+      : "No TWILIO_CALLER_ID — outbound dialing is disabled (take-over still works).",
   });
 }

@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { dueCallbackLeadIds } from "@/lib/db/callbacks";
 import { getScope } from "@/lib/db/scope";
 import { claimDialLeads, RESERVATION_TTL_SEC } from "@/lib/db/reservations";
 import { getViewer } from "@/lib/org/membership";
@@ -42,21 +43,47 @@ export async function POST(req: Request) {
   };
 
   // Org-wide dial policy (Admin → Dialing): a max-attempts ceiling and a
-  // re-dial cooldown, both 0 (off) unless the admin set them. They ride the
-  // same claim-RPC knobs the cron and assignments use, so due callbacks keep
-  // their sanctioned cooldown bypass.
+  // re-dial cooldown, both 0 (off) unless the admin set them.
   const dialing = viewer.org?.settings.dialing;
-  const leads = await claimDialLeads({
+  const maxAttempts = Math.max(0, Math.round(Number(dialing?.maxAttemptsPerLead) || 0));
+  const cooldownMinutes = Math.max(0, Math.round(Number(dialing?.redialCooldownMin) || 0));
+  const limit = Math.min(Math.max(1, Math.round(body.count ?? 1)), 10);
+  const base = {
     orgId: scope.orgId,
     userId: scope.userId,
     supervisor: scope.supervisor,
-    limit: Math.min(Math.max(1, Math.round(body.count ?? 1)), 10),
     statuses: Array.isArray(body.statuses) ? body.statuses.slice(0, 12) : [],
     campaignId: typeof body.campaignId === "string" ? body.campaignId : null,
     packId: typeof body.packId === "string" ? body.packId : null,
-    leadIds: Array.isArray(body.leadIds) ? body.leadIds.slice(0, 200) : null,
-    maxAttempts: Math.max(0, Math.round(Number(dialing?.maxAttemptsPerLead) || 0)),
-    cooldownMinutes: Math.max(0, Math.round(Number(dialing?.redialCooldownMin) || 0)),
-  });
+  };
+  const explicitIds = Array.isArray(body.leadIds) ? body.leadIds.slice(0, 200) : null;
+
+  // The claim RPC applies the pacing knobs unconditionally, but the eligibility
+  // contract (docs/phase-1/architecture-and-data-contracts.md + the TS twin)
+  // promises a DUE CALLBACK bypasses cooldown/max-attempts — a "call me back
+  // in 30 minutes" promise must not be silently starved by the org's re-dial
+  // cooldown. So due-callback leads are claimed FIRST with the knobs off, and
+  // the general pool fills the remainder with the knobs on. DNC and the
+  // calling window are enforced inside the claim either way.
+  const leads = [] as Awaited<ReturnType<typeof claimDialLeads>>;
+  if ((maxAttempts > 0 || cooldownMinutes > 0) && !explicitIds) {
+    const dueIds = await dueCallbackLeadIds(scope.orgId);
+    if (dueIds.length) {
+      leads.push(
+        ...(await claimDialLeads({ ...base, limit, leadIds: dueIds })),
+      );
+    }
+  }
+  if (leads.length < limit) {
+    const claimedIds = new Set(leads.map((l) => l.id));
+    const rest = await claimDialLeads({
+      ...base,
+      limit: limit - leads.length,
+      leadIds: explicitIds,
+      maxAttempts,
+      cooldownMinutes,
+    });
+    leads.push(...rest.filter((l) => !claimedIds.has(l.id)));
+  }
   return NextResponse.json({ leads, ttlSeconds: RESERVATION_TTL_SEC });
 }

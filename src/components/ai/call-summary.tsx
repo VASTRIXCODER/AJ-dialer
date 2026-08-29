@@ -15,6 +15,9 @@ type State = {
   data?: WrapupSuggestion;
   source?: "claude" | "demo";
   sourceError?: string;
+  /** The last fetch failed (rate limit, network) — data keeps the PREVIOUS
+   *  suggestion so a refresh hiccup never wipes a chip mid-decision. */
+  failed?: boolean;
 };
 
 /**
@@ -49,6 +52,7 @@ export function AiCallSummary({
   onPick?: (outcome: CallOutcome, dispositionKey?: string) => void;
 }) {
   const [state, setState] = useState<State>({ loading: true });
+  const [retryNonce, setRetryNonce] = useState(0);
   const lastFetchedNotes = useRef<string | null>(null);
   const allowedRef = useRef(allowedKeys);
   allowedRef.current = allowedKeys;
@@ -80,18 +84,29 @@ export function AiCallSummary({
         }),
         signal: ctrl.signal,
       })
-        .then((r) => r.json())
-        .then(
-          (j: { data?: WrapupSuggestion; source?: "claude" | "demo"; error?: string }) =>
-            setState({
-              loading: false,
-              data: j.data,
-              source: j.source,
-              sourceError: j.error,
-            }),
-        )
+        .then(async (r) => {
+          const j = (await r.json().catch(() => ({}))) as {
+            data?: WrapupSuggestion;
+            source?: "claude" | "demo";
+            error?: string;
+          };
+          if (!r.ok || !j.data) {
+            // Keep whatever suggestion was already on screen; say it's stale.
+            setState((s) => ({ ...s, loading: false, failed: true }));
+            return;
+          }
+          setState({
+            loading: false,
+            data: j.data,
+            source: j.source,
+            sourceError: j.error,
+            failed: false,
+          });
+        })
         .catch(() => {
-          if (!ctrl.signal.aborted) setState({ loading: false });
+          if (!ctrl.signal.aborted) {
+            setState((s) => ({ ...s, loading: false, failed: true }));
+          }
         });
     };
     if (isFirst) {
@@ -105,7 +120,7 @@ export function AiCallSummary({
     };
     // durationSec deliberately omitted: it's frozen once wrap-up shows.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [leadId, notes]);
+  }, [leadId, notes, retryNonce]);
 
   if (!leadId) return null;
 
@@ -132,6 +147,23 @@ export function AiCallSummary({
           <div className="skeleton h-3 w-full rounded" />
           <div className="skeleton h-8 w-2/3 rounded-lg" />
         </div>
+      ) : state.failed && !s ? (
+        <p className="mt-2 text-xs text-muted-foreground" role="status">
+          Couldn’t reach the AI just now — pick a disposition below, or{" "}
+          <button
+            type="button"
+            className="font-semibold underline underline-offset-2 hover:text-foreground"
+            onClick={() => {
+              // Nulling the marker makes the effect treat the next pass as a
+              // first (immediate) fetch; the nonce re-arms the effect.
+              lastFetchedNotes.current = null;
+              setRetryNonce((n) => n + 1);
+            }}
+          >
+            try again
+          </button>
+          .
+        </p>
       ) : s ? (
         <motion.div
           initial={{ opacity: 0, y: 6 }}
@@ -139,6 +171,11 @@ export function AiCallSummary({
           transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
           className="mt-2 space-y-2.5"
         >
+          {state.failed && (
+            <p className="text-[11px] font-medium text-warning" role="status">
+              Couldn’t refresh with your latest notes — this suggestion may be stale.
+            </p>
+          )}
           {s.quickSummary && (
             <p className="text-xs leading-relaxed text-muted-foreground">{s.quickSummary}</p>
           )}

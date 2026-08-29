@@ -233,6 +233,13 @@ export interface OrgSettings {
    * open browser required. Off by default so no org auto-dials unexpectedly.
    */
   automation: AutomationSettings;
+  /**
+   * Phase 2 playbook orchestration (the /api/cron/orchestrate tick). OFF by
+   * default — no org ever auto-orchestrates by surprise; this is level 2 of
+   * the kill-switch hierarchy (docs/phase-2/playbook-and-orchestration-
+   * contracts.md §10). No admin UI yet on purpose: it unlocks with P2.2.
+   */
+  orchestration: { enabled: boolean };
   hours: {
     startHour: number; // 0–23 local to the org timezone
     endHour: number;
@@ -270,8 +277,14 @@ export interface OrgSettings {
      * Watchdog ceiling on a single AI call's talk time, in minutes (0 = none).
      * The reconcile cron force-ends conversations that run past it — a stuck
      * or rambling agent call can't burn minutes forever.
+     *
+     * NEW KEY on purpose: the dead control this replaces stored `maxTalkMin: 8`
+     * in every org that ever saved the AI section, and waking that value up
+     * would hang up healthy calls mid-booking at minute 8 (below the old
+     * 12-minute generic force-close) — a limit nobody consciously chose. The
+     * legacy `maxTalkMin` blob key is ignored forever.
      */
-    maxTalkMin: number;
+    talkTimeLimitMin: number;
     language: string;
     /**
      * How many AI calls may be LIVE at once — the org's voice-plan concurrency
@@ -518,6 +531,7 @@ export const DEFAULT_ORG_SETTINGS: OrgSettings = {
     // it up here via mergeSettings (absent key → this default → ON).
     reservations: true,
   },
+  orchestration: { enabled: false },
   automation: {
     enabled: false,
     timezone: "America/Chicago",
@@ -548,7 +562,7 @@ export const DEFAULT_ORG_SETTINGS: OrgSettings = {
     // literal default is gone on purpose — a phone number is tenant config,
     // not source code.
     transferNumber: "",
-    maxTalkMin: 0,
+    talkTimeLimitMin: 0,
     language: "en",
     // Matches the common ElevenLabs plan allowance. Raise if the plan does.
     maxConcurrentCalls: 10,
@@ -644,6 +658,7 @@ export function mergeSettings(raw: unknown): OrgSettings {
         : DEFAULT_ORG_SETTINGS.automation.windows,
     },
     hours: { ...DEFAULT_ORG_SETTINGS.hours, ...(s.hours ?? {}) },
+    orchestration: { enabled: s.orchestration?.enabled === true },
     ai: {
       ...DEFAULT_ORG_SETTINGS.ai,
       ...(s.ai ?? {}),

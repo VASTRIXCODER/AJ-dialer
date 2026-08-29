@@ -3720,3 +3720,407 @@ create policy "review org read" on public.call_review_queue for select using (
 );
 
 notify pgrst, 'reload schema';
+
+-- ═════════════════════════════════════════════════════════════════════════════
+-- PART 37 — OPPORTUNITY & ORCHESTRATION FOUNDATION              [Phase 2 · P2.1]
+-- The canonical pursuit wrapped around a lead: ownership, lifecycle stage,
+-- SLA clocks, work items, signals, and versioned playbooks with exactly-once
+-- step execution. Design authority: docs/phase-2/opportunity-domain-and-
+-- state-machines.md. leads.status remains the Phase 1 reporting authority
+-- until the dual-write parity criterion is met — nothing here is read by any
+-- Phase 1 surface.
+-- All service-role write, org-member read. Rollback: docs/phase-2/migration-
+-- and-rollback.md (drop the seven tables + view + functions; the backfill is
+-- delete-where-backfilled).
+-- ═════════════════════════════════════════════════════════════════════════════
+
+create table if not exists public.opportunities (
+  id                       uuid primary key default gen_random_uuid(),
+  org_id                   uuid not null,
+  lead_id                  uuid not null references public.leads (id) on delete cascade,
+  previous_opportunity_id  uuid references public.opportunities (id),
+  -- attribution (history lives in opportunity_events; these are current).
+  -- campaign_id is TEXT: the Phase 1 convention on leads/call_records ("" =
+  -- none) — an opportunity attributes to whatever its lead attributes to.
+  source                   text not null default '',
+  original_source          text not null default '',
+  campaign_id              text,
+  -- ownership
+  owner_id                 uuid,
+  owner_team               text,
+  assignment_reason        text,
+  owner_assigned_at        timestamptz,
+  -- sales lifecycle (see stage-machine.ts — LOCKSTEP with STAGES there)
+  stage                    text not null default 'new' check (stage in (
+    'new','assigned','attempting','contacted','interested',
+    'appointment_booked','appointment_completed','sold',
+    'nurture','lost','invalid','dnc_suppressed','exhausted','duplicate','disqualified')),
+  stage_entered_at         timestamptz not null default now(),
+  -- operational work state (§5): open | waiting | paused | closed
+  op_status                text not null default 'open' check (op_status in ('open','waiting','paused','closed')),
+  waiting_until            timestamptz,
+  paused_reason            text,
+  next_action_kind         text,
+  next_action_due_at       timestamptz,
+  -- priority / hot signal surface
+  priority                 int not null default 0,
+  priority_reason          text,
+  hot_until                timestamptz,
+  -- speed-to-lead clocks (§7)
+  first_received_at        timestamptz,
+  eligible_at              timestamptz,
+  first_assigned_at        timestamptz,
+  first_attempted_at       timestamptz,
+  first_contacted_at       timestamptz,
+  last_touched_at          timestamptz,
+  closed_at                timestamptz,
+  close_reason             text,
+  -- counters (repaired from canonical events by reconcile, never trusted blindly)
+  attempt_count            int not null default 0,
+  contact_count            int not null default 0,
+  -- orchestration
+  active_playbook_id       uuid,
+  active_playbook_version  int,
+  -- provenance
+  backfilled               boolean not null default false,
+  created_at               timestamptz not null default now(),
+  updated_at               timestamptz not null default now()
+);
+-- Uniqueness policy (§4): at most ONE non-closed opportunity per lead.
+create unique index if not exists opportunities_one_open_per_lead
+  on public.opportunities (org_id, lead_id) where (op_status <> 'closed');
+create index if not exists opportunities_org_stage_idx
+  on public.opportunities (org_id, stage, op_status);
+create index if not exists opportunities_owner_idx
+  on public.opportunities (org_id, owner_id, op_status);
+create index if not exists opportunities_next_action_idx
+  on public.opportunities (org_id, next_action_due_at) where (op_status = 'open');
+create index if not exists opportunities_lead_idx
+  on public.opportunities (lead_id);
+alter table public.opportunities enable row level security;
+drop policy if exists "opportunities org read" on public.opportunities;
+create policy "opportunities org read" on public.opportunities for select using (
+  public.app_is_superadmin() or (public.app_is_active() and public.app_is_org_member(org_id))
+);
+
+-- Append-only transition/audit log — the §21 reconstructibility requirement.
+create table if not exists public.opportunity_events (
+  id             bigint generated always as identity primary key,
+  org_id         uuid not null,
+  opportunity_id uuid not null references public.opportunities (id) on delete cascade,
+  type           text not null,          -- stage_changed|owner_changed|clock_stamped|priority_changed|status_changed|backfilled|…
+  actor_kind     text not null default 'system',  -- rep|manager|ai|system
+  actor_id       uuid,
+  from_stage     text,
+  to_stage       text,
+  detail         jsonb not null default '{}'::jsonb,
+  created_at     timestamptz not null default now()
+);
+create index if not exists opportunity_events_opp_idx
+  on public.opportunity_events (opportunity_id, created_at);
+create or replace function public.app_opportunity_events_immutable() returns trigger
+language plpgsql as $fn$ begin raise exception 'opportunity_events is append-only'; end $fn$;
+drop trigger if exists opportunity_events_immutable on public.opportunity_events;
+create trigger opportunity_events_immutable
+  before update or delete on public.opportunity_events
+  for each row execute function public.app_opportunity_events_immutable();
+alter table public.opportunity_events enable row level security;
+drop policy if exists "opportunity_events org read" on public.opportunity_events;
+create policy "opportunity_events org read" on public.opportunity_events for select using (
+  public.app_is_superadmin() or (public.app_is_active() and public.app_is_org_member(org_id))
+);
+
+-- All actionable work, human or automated (§4). The dedupe_key partial unique
+-- is the "one trigger cannot create duplicate work" guarantee: however many
+-- times a webhook or cron replays, only one LIVE item per key exists.
+create table if not exists public.work_items (
+  id                  uuid primary key default gen_random_uuid(),
+  org_id              uuid not null,
+  opportunity_id      uuid references public.opportunities (id) on delete cascade,
+  lead_id             uuid,
+  type                text not null,
+  status              text not null default 'pending' check (status in (
+    'pending','reserved','in_progress','waiting','completed',
+    'canceled','skipped','expired','blocked','needs_review')),
+  owner_id            uuid,
+  queue               text,
+  priority            int not null default 0,
+  reason              text not null default '',
+  due_at              timestamptz,
+  scheduled_at        timestamptz,
+  timezone            text,
+  escalation_at       timestamptz,
+  source_kind         text,
+  source_id           text,
+  dedupe_key          text,
+  automation_eligible boolean not null default false,
+  requires_approval   boolean not null default false,
+  reserved_by         uuid,
+  reserved_until      timestamptz,
+  completed_by        uuid,
+  completed_at        timestamptz,
+  completion_evidence jsonb,
+  created_at          timestamptz not null default now(),
+  updated_at          timestamptz not null default now()
+);
+create unique index if not exists work_items_dedupe_live
+  on public.work_items (org_id, dedupe_key)
+  where (dedupe_key is not null
+         and status in ('pending','reserved','in_progress','waiting'));
+create index if not exists work_items_due_idx
+  on public.work_items (org_id, status, due_at);
+create index if not exists work_items_owner_idx
+  on public.work_items (org_id, owner_id, status);
+alter table public.work_items enable row level security;
+drop policy if exists "work_items org read" on public.work_items;
+create policy "work_items org read" on public.work_items for select using (
+  public.app_is_superadmin() or (public.app_is_active() and public.app_is_org_member(org_id))
+);
+
+-- Explainable, time-bound urgency facts (§13). Repeat detections bump
+-- seen_count/last_seen_at on the live row instead of stacking new ones.
+create table if not exists public.signals (
+  id              uuid primary key default gen_random_uuid(),
+  org_id          uuid not null,
+  opportunity_id  uuid references public.opportunities (id) on delete cascade,
+  lead_id         uuid,
+  type            text not null,
+  severity        int not null default 3 check (severity between 1 and 5),
+  confidence      numeric,
+  evidence        jsonb not null default '{}'::jsonb,
+  source_kind     text,
+  source_id       text,
+  dedupe_key      text,
+  detected_at     timestamptz not null default now(),
+  last_seen_at    timestamptz not null default now(),
+  seen_count      int not null default 1,
+  expires_at      timestamptz,
+  acknowledged_by uuid,
+  acknowledged_at timestamptz,
+  resolved_at     timestamptz,
+  resolution      text,             -- actioned|expired|dismissed|false_positive
+  created_at      timestamptz not null default now()
+);
+create unique index if not exists signals_dedupe_open
+  on public.signals (org_id, dedupe_key)
+  where (dedupe_key is not null and resolved_at is null);
+create index if not exists signals_open_idx
+  on public.signals (org_id, resolved_at, severity desc, detected_at desc);
+alter table public.signals enable row level security;
+drop policy if exists "signals org read" on public.signals;
+create policy "signals org read" on public.signals for select using (
+  public.app_is_superadmin() or (public.app_is_active() and public.app_is_org_member(org_id))
+);
+
+-- Versioned playbook definitions. The AI can NEVER write this table (§6);
+-- publish/pause/retire are authorized human actions through the API.
+create table if not exists public.playbooks (
+  id           uuid primary key default gen_random_uuid(),
+  org_id       uuid not null,
+  name         text not null,
+  version      int not null default 1,
+  status       text not null default 'draft' check (status in ('draft','published','paused','retired')),
+  definition   jsonb not null,
+  created_by   uuid,
+  published_by uuid,
+  published_at timestamptz,
+  supersedes   uuid references public.playbooks (id),
+  created_at   timestamptz not null default now(),
+  updated_at   timestamptz not null default now()
+);
+create index if not exists playbooks_org_idx on public.playbooks (org_id, status);
+alter table public.playbooks enable row level security;
+drop policy if exists "playbooks org read" on public.playbooks;
+create policy "playbooks org read" on public.playbooks for select using (
+  public.app_is_superadmin() or (public.app_is_active() and public.app_is_org_member(org_id))
+);
+
+-- One activation per opportunity per playbook (while active).
+create table if not exists public.playbook_instances (
+  id               uuid primary key default gen_random_uuid(),
+  org_id           uuid not null,
+  playbook_id      uuid not null references public.playbooks (id) on delete cascade,
+  playbook_version int not null,
+  opportunity_id   uuid not null references public.opportunities (id) on delete cascade,
+  status           text not null default 'active' check (status in ('active','waiting','completed','stopped','failed')),
+  current_step     int not null default 0,
+  wait_until       timestamptz,
+  stopped_reason   text,
+  started_at       timestamptz not null default now(),
+  ended_at         timestamptz,
+  updated_at       timestamptz not null default now()
+);
+create unique index if not exists playbook_instances_one_active
+  on public.playbook_instances (playbook_id, opportunity_id)
+  where (status in ('active','waiting'));
+create index if not exists playbook_instances_due_idx
+  on public.playbook_instances (org_id, status, wait_until);
+alter table public.playbook_instances enable row level security;
+drop policy if exists "playbook_instances org read" on public.playbook_instances;
+create policy "playbook_instances org read" on public.playbook_instances for select using (
+  public.app_is_superadmin() or (public.app_is_active() and public.app_is_org_member(org_id))
+);
+
+-- Append-only step execution log. The UNIQUE idempotency_key is the
+-- exactly-once gate (§6): insert first, act only if the insert won.
+create table if not exists public.playbook_executions (
+  id              bigint generated always as identity primary key,
+  org_id          uuid not null,
+  instance_id     uuid not null references public.playbook_instances (id) on delete cascade,
+  step_index      int not null,
+  action_kind     text not null,
+  idempotency_key text not null unique,
+  status          text not null default 'succeeded' check (status in ('succeeded','failed','skipped_policy')),
+  attempt         int not null default 1,
+  detail          jsonb not null default '{}'::jsonb,
+  error           text,
+  executed_at     timestamptz not null default now()
+);
+create index if not exists playbook_executions_instance_idx
+  on public.playbook_executions (instance_id, step_index);
+alter table public.playbook_executions enable row level security;
+drop policy if exists "playbook_executions org read" on public.playbook_executions;
+create policy "playbook_executions org read" on public.playbook_executions for select using (
+  public.app_is_superadmin() or (public.app_is_active() and public.app_is_org_member(org_id))
+);
+
+-- Channel-neutral TOUCH view v0 (§4 — honest Partial: becomes a table when the
+-- first non-call channel lands). security_invoker: reads ride the caller's RLS.
+create or replace view public.touches_v
+  with (security_invoker = true) as
+select
+  cr.id                       as touch_id,
+  cr.org_id                   as org_id,
+  cr.lead_id                  as lead_id,
+  'outbound'                  as direction,
+  case when cr.channel = 'ai' then 'ai_call' else 'manual_call' end as channel,
+  cr.call_sid                 as provider_id,
+  cr.conversation_id          as conversation_id,
+  cr.client_attempt_id        as idempotency_key,
+  cr.started_at               as initiated_at,
+  coalesce(cr.human_connected, false) as connected,
+  cr.duration_sec             as duration_sec,
+  cr.talk_sec                 as talk_sec,
+  cr.outcome                  as outcome,
+  cr.disposition              as disposition,
+  case when cr.channel = 'ai' then 'ai_agent' else 'rep' end as actor_kind,
+  cr.owner_id                 as actor_id,
+  cr.campaign_id              as campaign_id
+from public.call_records cr;
+
+-- The §5 leak detector: OPEN opportunities with no future next action, no live
+-- work item, and no waiting/paused hold. Plain SQL + security invoker — org
+-- members see exactly their own org's leaks through the tables' own RLS.
+create or replace function public.app_pipeline_leaks(p_org uuid)
+returns setof public.opportunities
+language sql stable security invoker as $$
+  select o.*
+  from public.opportunities o
+  where o.org_id = p_org
+    and o.op_status = 'open'
+    and (o.next_action_due_at is null or o.next_action_due_at < now())
+    and not exists (
+      select 1 from public.work_items w
+      where w.opportunity_id = o.id
+        and w.status in ('pending','reserved','in_progress','waiting')
+        and (w.due_at is null or w.due_at > now() - interval '30 days')
+    );
+$$;
+
+-- Atomic work-item claiming — the reservation engine's pattern (FOR UPDATE
+-- SKIP LOCKED + TTL lease), so two reps or two cron ticks can never grab the
+-- same item. Expired reservations are simply claimable again; no sweeper.
+create or replace function public.app_claim_work_items(
+  p_org uuid,
+  p_user uuid,
+  p_limit int default 5,
+  p_ttl_seconds int default 300,
+  p_types text[] default null,
+  p_queue text default null
+) returns setof public.work_items
+language plpgsql security definer set search_path = public as $$
+begin
+  return query
+  with candidates as (
+    select w.id from public.work_items w
+    where w.org_id = p_org
+      and (
+        w.status = 'pending'
+        or (w.status = 'reserved' and w.reserved_until < now())
+      )
+      and (w.due_at is null or w.due_at <= now())
+      and (p_types is null or w.type = any (p_types))
+      and (p_queue is null or w.queue = p_queue)
+      and (w.owner_id is null or w.owner_id = p_user)
+    order by w.priority desc, w.due_at asc nulls last, w.created_at asc
+    limit greatest(1, least(p_limit, 50))
+    for update skip locked
+  )
+  update public.work_items w
+     set status = 'reserved',
+         reserved_by = p_user,
+         reserved_until = now() + make_interval(secs => greatest(30, p_ttl_seconds)),
+         updated_at = now()
+    from candidates c
+   where w.id = c.id
+  returning w.*;
+end;
+$$;
+revoke all on function public.app_claim_work_items(uuid, uuid, int, int, text[], text) from public, anon, authenticated;
+
+-- ── Backfill: one opportunity per non-archived lead (idempotent) ─────────────
+-- Clocks are approximations from lead timestamps; `backfilled` marks them so
+-- reports can say so. Re-run safety is the NOT EXISTS guard (any opportunity
+-- for the lead, open or closed) — the partial unique alone would let CLOSED
+-- backfill rows duplicate on a second run, since they don't match its
+-- predicate. The ON CONFLICT clause then only absorbs a concurrent racer.
+insert into public.opportunities (
+  org_id, lead_id, stage, op_status, owner_id, owner_assigned_at,
+  first_received_at, first_attempted_at, last_touched_at,
+  closed_at, close_reason,
+  attempt_count, campaign_id, source, backfilled, created_at
+)
+select
+  l.org_id,
+  l.id,
+  case l.status
+    when 'new'            then case when l.assigned_rep_id is null then 'new' else 'assigned' end
+    when 'no_answer'      then 'attempting'
+    when 'contacted'      then 'contacted'
+    when 'callback'       then 'contacted'
+    when 'qualified'      then 'interested'
+    when 'appointment'    then 'appointment_booked'
+    when 'bills_fine'     then 'nurture'
+    when 'not_interested' then 'lost'
+    when 'dnc'            then 'dnc_suppressed'
+    else 'new'
+  end,
+  case when l.status in ('not_interested','dnc') then 'closed' else 'open' end,
+  coalesce(l.assigned_rep_id, l.owner_id),
+  case when l.assigned_rep_id is not null then l.created_at end,
+  l.created_at,
+  l.last_attempt_at,
+  coalesce(l.last_attempt_at, l.created_at),
+  case when l.status in ('not_interested','dnc')
+       then coalesce(l.last_attempt_at, l.created_at) end,
+  case l.status when 'not_interested' then 'lost'
+                when 'dnc'            then 'dnc_suppressed' end,
+  coalesce(l.attempt_count, 0),
+  l.campaign_id,
+  'phase1_backfill',
+  true,
+  l.created_at
+from public.leads l
+where l.org_id is not null
+  and l.archived_at is null
+  and not exists (
+    select 1 from public.opportunities o where o.lead_id = l.id
+  )
+on conflict (org_id, lead_id) where (op_status <> 'closed') do nothing;
+
+
+-- Global orchestration kill switch (superadmin; checked FIRST every tick).
+alter table public.app_settings
+  add column if not exists orchestration_paused boolean not null default false;
+
+notify pgrst, 'reload schema';

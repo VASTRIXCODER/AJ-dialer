@@ -14,7 +14,7 @@ import {
 } from "lucide-react";
 import { useTheme } from "next-themes";
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -149,18 +149,36 @@ export function SettingsView({
   // they're toggled, and the (app) layout feeds them into the dialer engine —
   // these used to be six local-state placebos that reset on every visit.
   const [prefs, setPrefs] = useState<DialerUserPrefs>(dialerPrefs);
-  const [prefsSaved, setPrefsSaved] = useState(false);
+  const [prefsStatus, setPrefsStatus] = useState<"idle" | "saved" | "error">("idle");
+  // Monotonic sequence: a slow earlier POST resolving last must never mark the
+  // UI saved (or revert it) over a newer toggle's result.
+  const prefsSeq = useRef(0);
   const set = (k: keyof DialerUserPrefs) => (v: boolean) => {
+    const prev = prefs;
     const next = { ...prefs, [k]: v };
+    const seq = ++prefsSeq.current;
     setPrefs(next);
-    setPrefsSaved(false);
-    void fetch("/api/profile", {
+    setPrefsStatus("idle");
+    fetch("/api/profile", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ preferences: { dialerPrefs: next } }),
-    }).then((res) => {
-      if (res.ok) setPrefsSaved(true);
-    });
+    })
+      .then((res) => {
+        if (seq !== prefsSeq.current) return; // superseded by a newer toggle
+        if (res.ok) {
+          setPrefsStatus("saved");
+        } else {
+          // The switch must not lie: revert it and say the save failed.
+          setPrefs(prev);
+          setPrefsStatus("error");
+        }
+      })
+      .catch(() => {
+        if (seq !== prefsSeq.current) return;
+        setPrefs(prev);
+        setPrefsStatus("error");
+      });
   };
 
   const themes = [
@@ -315,7 +333,14 @@ export function SettingsView({
         <Card className="p-6">
           <div className="flex items-center justify-between">
             <h3 className="font-semibold">Dialer preferences</h3>
-            {prefsSaved && <span className="text-xs font-medium text-success">Saved ✓</span>}
+            {prefsStatus === "saved" && (
+              <span className="text-xs font-medium text-success">Saved ✓</span>
+            )}
+            {prefsStatus === "error" && (
+              <span className="text-xs font-medium text-danger" role="status">
+                Couldn’t save — check your connection and try again.
+              </span>
+            )}
           </div>
           <p className="text-sm text-muted-foreground">
             Your personal defaults — they follow your account on any device.

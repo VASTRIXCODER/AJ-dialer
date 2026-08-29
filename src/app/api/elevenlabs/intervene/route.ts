@@ -8,6 +8,7 @@ import {
   isElevenLabsConfigured,
 } from "@/lib/elevenlabs";
 import { getViewer, viewerCan, viewerOrgId } from "@/lib/org/membership";
+import { createAdminClient, isAdminConfigured } from "@/lib/supabase/admin";
 import { getRestClient, isRestConfigured } from "@/lib/twilio";
 
 export const dynamic = "force-dynamic";
@@ -62,6 +63,25 @@ export async function POST(req: Request) {
   const rawStored = getAICall(conversationId);
   if (rawStored && rawStored.orgId !== orgId) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
+  // FAIL CLOSED on ownership, not just on the in-memory store: the fallbacks
+  // below can resolve a callSid from the SHARED ElevenLabs account, which
+  // happily returns any tenant's call. Verify against the durable row — and
+  // if no row exists anywhere, ownership is unprovable, so no control is
+  // granted. (The conversation/[id] GET closes this same hole; intervene —
+  // the route that can HANG UP a live homeowner call — must too.)
+  if (isAdminConfigured()) {
+    const { data: ownerRow } = await createAdminClient()
+      .from("ai_conversations")
+      .select("org_id")
+      .eq("conversation_id", conversationId)
+      .maybeSingle();
+    if (!ownerRow || String(ownerRow.org_id ?? "") !== orgId) {
+      return NextResponse.json(
+        { error: "That call isn't in your workspace." },
+        { status: 403 },
+      );
+    }
   }
   const stored = rawStored;
   const customerSid = stored?.customerCallSid ?? null;

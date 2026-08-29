@@ -137,6 +137,12 @@ end $$;
 -- select cron.schedule('reconcile-data', '*/15 * * * *',
 --   $job$ select public.app_fire_cron('/api/cron/reconcile-data') $job$);
 
+-- Phase 2 · P2.1 (run by hand once /api/cron/orchestrate has deployed AND an
+-- org actually wants playbooks — every tick is a no-op while all orgs keep
+-- settings.orchestration.enabled off, so scheduling early merely burns calls):
+-- select cron.schedule('orchestrate', '* * * * *',
+--   $job$ select public.app_fire_cron('/api/cron/orchestrate') $job$);
+
 -- ───────────────────────────────────────────────────────────────────────────
 -- Diagnostics (copy-paste)
 -- ───────────────────────────────────────────────────────────────────────────

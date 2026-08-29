@@ -53,7 +53,14 @@ describe("settings.dialing.defaultMode — sanitized on read", () => {
 
   it("the hardcoded personal transfer number default is gone", () => {
     expect(DEFAULT_ORG_SETTINGS.ai.transferNumber).toBe("");
-    expect(DEFAULT_ORG_SETTINGS.ai.maxTalkMin).toBe(0);
+  });
+
+  it("the talk-time watchdog uses a NEW key — stored dead maxTalkMin never wakes up", () => {
+    expect(DEFAULT_ORG_SETTINGS.ai.talkTimeLimitMin).toBe(0);
+    // Every org that ever saved the AI section has the dead control's
+    // maxTalkMin: 8 persisted; it must not become a live 8-minute hangup.
+    const merged = mergeSettings({ ai: { maxTalkMin: 8 } });
+    expect(merged.ai.talkTimeLimitMin).toBe(0);
   });
 });
 

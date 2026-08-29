@@ -355,7 +355,7 @@ export async function enforceMaxTalkTime(): Promise<{ checked: number; ended: nu
       .select("id, settings")
       .in("id", orgIds);
     for (const row of (data ?? []) as { id: string; settings: unknown }[]) {
-      const min = Number(mergeSettings(row.settings).ai.maxTalkMin);
+      const min = Number(mergeSettings(row.settings).ai.talkTimeLimitMin);
       if (Number.isFinite(min) && min > 0) limits.set(row.id, min);
     }
   } catch {
@@ -364,15 +364,22 @@ export async function enforceMaxTalkTime(): Promise<{ checked: number; ended: nu
   if (limits.size === 0) return out;
 
   const now = Date.now();
-  const overruns = live.filter((c) => {
-    const limitMin = c.orgId ? limits.get(c.orgId) : undefined;
-    return (
-      limitMin !== undefined &&
-      Number.isFinite(c.connectedAt) &&
-      now - c.connectedAt > limitMin * 60_000 &&
-      !inFlight.has(c.conversationId)
-    );
-  });
+  const overruns = live
+    .filter((c) => {
+      const limitMin = c.orgId ? limits.get(c.orgId) : undefined;
+      return (
+        limitMin !== undefined &&
+        Number.isFinite(c.connectedAt) &&
+        now - c.connectedAt > limitMin * 60_000 &&
+        !inFlight.has(c.conversationId)
+      );
+    })
+    // Budget: each overrun costs two Twilio hangups + a fetch + a Claude
+    // finalize, and this runs inside the 60s-capped reconcile tick BEFORE the
+    // drain gets its 45s. Three per tick keeps the watchdog to a bounded slice
+    // of the minute; a backlog clears at 3/min, which is fine for a ceiling
+    // whose enforcement promise is "within ~a minute".
+    .slice(0, 3);
   out.checked = live.length;
   if (overruns.length === 0) return out;
 
@@ -391,7 +398,9 @@ export async function enforceMaxTalkTime(): Promise<{ checked: number; ended: nu
           }
         }
         const convo = isElevenLabsConfigured()
-          ? await fetchConversation(c.conversationId)
+          ? await withTimeout(fetchConversation(c.conversationId), 8_000).catch(
+              () => null,
+            )
           : null;
         await finalizeAIConversation({
           conversationId: c.conversationId,

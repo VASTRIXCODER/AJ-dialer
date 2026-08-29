@@ -125,12 +125,18 @@ export async function POST(req: Request) {
   // org timezone fallback) — calling-time rules follow the called party's
   // clock, not the office's. Advisory-only orgs never reach this branch.
   const hours = orgSettings?.hours;
+  const hourBlocked: { leadId: string; to: string }[] = [];
   if (hours?.enforced) {
     const orgTz = viewer.org?.timezone || "America/Chicago";
     const now = new Date();
-    const inHours = dialLeads.filter((leg) =>
-      isWithinOrgHours(now, hours, resolveLeadTimezone(leg.to, null, orgTz)),
-    );
+    const inHours: typeof dialLeads = [];
+    for (const leg of dialLeads) {
+      if (isWithinOrgHours(now, hours, resolveLeadTimezone(leg.to, null, orgTz))) {
+        inHours.push(leg);
+      } else {
+        hourBlocked.push(leg);
+      }
+    }
     if (dialLeads.length && !inHours.length) {
       return NextResponse.json(
         {
@@ -236,6 +242,19 @@ export async function POST(req: Request) {
       }
     }),
   );
+
+  // Hour-blocked legs travel back as EXPLICIT per-leg refusals — never a
+  // silent omission. The client cancels their lanes, frees their claims, and
+  // (crucially) files no record: a call that never happened must not exist.
+  for (const leg of hourBlocked) {
+    placed.push({
+      leadId: leg.leadId,
+      to: leg.to,
+      sid: null,
+      from: null,
+      error: `Outside this contact's calling hours (${describeOrgHours(hours!)}, their local time).`,
+    });
+  }
 
   registerRoom(room, placed);
 

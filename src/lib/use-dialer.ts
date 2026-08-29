@@ -434,14 +434,25 @@ export function useDialer(
   const identityRef = useRef<string>("agent");
   /** Server-signed proof that `identityRef` was issued to us — renews it in place. */
   const identityProofRef = useRef<string>("");
-  const autoDialRef = useRef(false);
-  const parallelRef = useRef(1);
+  // Behavior refs boot from the SAME values as state — startCall() and the
+  // dial paths read the refs, not state, so a mismatch here is not cosmetic:
+  // with defaultMode "manual" and AI usable, `useRef(aiConfigured)` made the
+  // Start button silently launch an AI SESSION from a UI that said Manual.
+  // (Caught by review — the org's manual-first choice inverted into AI calls.)
+  const autoDialRef = useRef(options.userPrefs?.autoDialNext ?? false);
+  const parallelRef = useRef(bootParallelCount);
   const modeRef = useRef<DialerMode>("connecting");
-  const aiModeRef = useRef(aiConfigured);
+  const aiModeRef = useRef(bootAiMode);
   const activeAgentRef = useRef<AgentKey>("primary");
   const excludedCallerIdsRef = useRef<string[]>([]);
   const aiConfiguredRef = useRef(aiConfigured);
   const aiCursorRef = useRef(0);
+  /**
+   * Leads in the current round the SERVER refused to dial (enforced calling
+   * hours, per-leg placement failure). They never rang, so no cleanup path may
+   * fabricate a no_answer record for them — recordNonWinners skips this set.
+   */
+  const undialedRef = useRef<Set<string>>(new Set());
   /**
    * Conversations we've launched that haven't finished. THIS is what makes
    * `parallelCount` an actual concurrency limit rather than a batch size.
@@ -1251,6 +1262,10 @@ export function useDialer(
     if (dialedLeads.length < 2) return;
     for (const l of dialedLeads) {
       if (!l.id || l.id === keepLeadId) continue;
+      // The server refused this leg (enforced hours / placement failure) — the
+      // phone never rang, and a no_answer record for it would be a fabricated
+      // TCPA/audit entry AND a stealth attempt-count bump.
+      if (undialedRef.current.has(l.id)) continue;
       // Through the durable outbox (not bare fetch), each with its own per-lead
       // idempotency key from dial time — a retried batch files each loser once.
       // attemptRoom resolves the canonical attempt WITHOUT storing the round's
@@ -2092,6 +2107,7 @@ export function useDialer(
             : `ca-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
       }
       attemptIdsRef.current = attemptIds;
+      undialedRef.current = new Set();
       patch({ attemptIds });
       // Publish it immediately, so a teardown triggered from OUTSIDE this
       // function — a Call error event, Cancel, the poll giving up — can hang the
@@ -2181,7 +2197,42 @@ export function useDialer(
           patch({ callerIdInfo: data.callerIdInfo });
         }
         placedSids = placed.map((p) => p.sid);
-        activeLegsRef.current = { sids: placedSids, dialed };
+
+        // Legs the server REFUSED to place (enforced calling hours in the
+        // lead's own timezone, or a per-leg Twilio failure) never rang. They
+        // must leave this round's bookkeeping entirely: their lanes flip to
+        // canceled, their claims free NOW (not on the 180s TTL), and the
+        // undialed set stops recordNonWinners from fabricating a no_answer
+        // record — an audit entry for a call that never happened.
+        const placedIds = new Set(placed.map((p) => p.leadId));
+        const droppedIds = dialed
+          .map((d) => d.leadId)
+          .filter((id) => !placedIds.has(id));
+        const activeDialed = droppedIds.length
+          ? dialed.filter((d) => placedIds.has(d.leadId))
+          : dialed;
+        if (droppedIds.length) {
+          for (const id of droppedIds) {
+            undialedRef.current.add(id);
+            claimedIdsRef.current.delete(id);
+          }
+          if (optionsRef.current.reservations?.enabled) {
+            fetch("/api/dialer/release", {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ leadIds: droppedIds }),
+              keepalive: true,
+            }).catch(() => {});
+          }
+          const droppedSet = new Set(droppedIds);
+          setState((s) => ({
+            ...s,
+            lines: s.lines.map((ln) =>
+              droppedSet.has(ln.lead.id) ? { ...ln, status: "canceled" as const } : ln,
+            ),
+          }));
+        }
+        activeLegsRef.current = { sids: placedSids, dialed: activeDialed };
         patch({ outboundSids: placedSids });
 
         // Join the rep's browser into the same room. `record` is the ORG's

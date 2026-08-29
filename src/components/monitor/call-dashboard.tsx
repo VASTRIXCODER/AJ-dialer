@@ -820,7 +820,14 @@ export function CallDashboard({
             <Button
               variant="outline"
               className="flex-1 gap-1.5"
-              disabled={busy === "transfer"}
+              // No transfer target configured ⇒ the action is honestly
+              // unavailable — not an enabled button that 400s mid-live-call.
+              disabled={busy === "transfer" || !detail?.transferNumber}
+              title={
+                detail?.transferNumber
+                  ? undefined
+                  : "No transfer number set — add one in Admin → AI agent → Transfer number."
+              }
               onClick={doTransfer}
             >
               {busy === "transfer" ? (

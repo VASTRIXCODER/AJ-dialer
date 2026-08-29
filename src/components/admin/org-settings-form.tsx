@@ -249,7 +249,7 @@ export function OrgSettingsForm({
     return schema.filter((f) => f.showInQualify).map((f) => f.key);
   });
 
-  async function save(patch: OrgUpdate, key: string) {
+  async function save(patch: OrgUpdate, key: string): Promise<boolean> {
     setBusy(key);
     setErr("");
     setSaved(null);
@@ -262,13 +262,15 @@ export function OrgSettingsForm({
       const j = await res.json().catch(() => ({}));
       if (!res.ok || !j.ok) {
         setErr(j.error ?? "Could not save.");
-        return;
+        return false;
       }
       setSaved(key);
       router.refresh();
       setTimeout(() => setSaved((s) => (s === key ? null : s)), 2500);
+      return true;
     } catch {
       setErr("Network error.");
+      return false;
     } finally {
       setBusy(null);
     }
@@ -962,21 +964,29 @@ export function OrgSettingsForm({
               </p>
             </div>
             {!features.aiDialer && (
-              <Button
-                size="sm"
-                disabled={busy === "features"}
-                onClick={async () => {
-                  const next = { ...features, aiDialer: true };
-                  setFeatures(next);
-                  await save({ settings: { features: next } }, "features");
-                }}
-              >
-                {busy === "features" ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  "Enable AI calling"
-                )}
-              </Button>
+              <>
+                <Button
+                  size="sm"
+                  disabled={busy === "features"}
+                  onClick={async () => {
+                    // Flip local state only AFTER the server accepted — an
+                    // optimistic unlock on a failed PATCH rendered the whole
+                    // config panel over a feature that was still off.
+                    const next = { ...features, aiDialer: true };
+                    if (await save({ settings: { features: next } }, "features")) {
+                      setFeatures(next);
+                    }
+                  }}
+                >
+                  {busy === "features" ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    "Enable AI calling"
+                  )}
+                </Button>
+                {/* The page-top error banner is off-screen from down here. */}
+                {err && <p className="text-xs font-medium text-danger">{err}</p>}
+              </>
             )}
           </div>
         ) : (
@@ -1013,8 +1023,8 @@ export function OrgSettingsForm({
               <NumberField
                 label="Max AI talk time (min, 0 = no limit)"
                 hint="A connected AI call running past this is ended automatically (within ~1 minute)."
-                value={ai.maxTalkMin}
-                onChange={(n) => setAi({ ...ai, maxTalkMin: Math.max(0, n) })}
+                value={ai.talkTimeLimitMin}
+                onChange={(n) => setAi({ ...ai, talkTimeLimitMin: Math.max(0, n) })}
               />
               <NumberField
                 label="Max simultaneous AI calls"

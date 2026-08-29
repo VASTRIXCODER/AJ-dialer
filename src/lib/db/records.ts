@@ -4,6 +4,7 @@ import { CONNECTED_OUTCOMES } from "../call-analytics";
 import { recordDispositionFiled } from "../calls/apply-event";
 import { zonedDayStartMs } from "../dialer/schedule";
 import { orgTimezone } from "../metrics/definitions";
+import { syncOpportunityAfterCall } from "../opportunities/sync";
 import { publishOrgEvent } from "../realtime/publish";
 import { createAdminClient, isAdminConfigured } from "../supabase/admin";
 import { isSupabaseConfigured } from "../supabase/config";
@@ -12,6 +13,7 @@ import {
   type AILiveState,
   type CallOutcome,
   isTerminalLiveState,
+  type LeadStatus,
   LIVE_STATES,
 } from "../types";
 import { completeCallbackForLead } from "./callbacks";
@@ -54,7 +56,7 @@ export function flattenTranscript(
 }
 
 // outcome → lead status (shared by every disposition path).
-const OUTCOME_TO_STATUS: Record<CallOutcome, string> = {
+const OUTCOME_TO_STATUS: Record<CallOutcome, LeadStatus> = {
   appointment_booked: "appointment",
   callback_scheduled: "callback",
   qualified: "qualified",
@@ -474,6 +476,23 @@ export async function insertCallRecord(input: {
       orgId = (prof?.org_id as string) ?? null;
     }
     publishOrgEvent(orgId, "leaderboard.delta", { ownerId: user.id });
+
+    // Phase 2 opportunity sync (P2.1): clocks, counters, forward-only stage,
+    // work-item completion. Fire-and-forget AFTER routing — it never throws
+    // and no-ops on environments without PART 37.
+    if (leadUuid && orgId) {
+      void syncOpportunityAfterCall({
+        orgId,
+        leadId: leadUuid,
+        outcome: input.outcome,
+        // Same connect definition the metrics glossary uses for legacy rows:
+        // a conversation-grade outcome implies a human connect.
+        connected: CONNECTED_OUTCOMES.has(input.outcome),
+        channel: input.channel === "ai" ? "ai" : "human",
+        actorId: user.id,
+        leadStatus: OUTCOME_TO_STATUS[input.outcome] ?? "contacted",
+      });
+    }
 
     // Canonical machine: mark the attempt dispositioned + link the projection
     // row. Resolution: client key, else (room, lead) — attemptRoom covers the
@@ -907,6 +926,22 @@ export async function completeAIConversation(input: {
       "leaderboard.delta",
       { ownerId },
     );
+
+    // Phase 2 opportunity sync (P2.1) — same fire-and-forget contract as the
+    // manual channel. The isFinal guard above already resolved the webhook-
+    // redelivery race, so this runs once per real finalize (plus the sanctioned
+    // not-connected → connected upgrade, where re-stamping is correct).
+    if (existing?.lead_id && existing?.org_id) {
+      void syncOpportunityAfterCall({
+        orgId: String(existing.org_id),
+        leadId: String(existing.lead_id),
+        outcome: input.outcome,
+        connected: CONNECTED_OUTCOMES.has(input.outcome),
+        channel: "ai",
+        actorId: ownerId,
+        leadStatus: OUTCOME_TO_STATUS[input.outcome] ?? "contacted",
+      });
+    }
 
     // Canonical machine: mark the attempt dispositioned + link the projection.
     const filed = await recordDispositionFiled({

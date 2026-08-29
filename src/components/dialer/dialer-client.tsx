@@ -527,7 +527,7 @@ export function DialerClient({
             </p>
             <p className="text-sm text-muted-foreground">
               {config.callingHours?.enforced
-                ? "Dialing is blocked until the window opens — contacts are checked in their own local time."
+                ? "Each contact is checked in their OWN local time at dial: contacts outside their window are refused (their lane cancels), contacts still inside theirs ring normally. This banner follows the workspace clock."
                 : "Your workspace's calling window is closed. Calls still go through — this is a heads-up, not a block."}
             </p>
           </div>
