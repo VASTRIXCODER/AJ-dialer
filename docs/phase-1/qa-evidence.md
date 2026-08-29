@@ -11,6 +11,15 @@ Running log of verification evidence per slice. Baseline first; every checkpoint
 
 ## Slice log
 
+### B1–B4 — 2026-08-28 (Checkpoint 2: the data-accuracy foundation)
+
+- Tests added: `call-state-machine` (19, incl. exhaustive 14×14 transition sweep), `eligibility` (22, one per reason + boundaries + callback-bypass rules), `metrics-definitions` (11) + `metrics-timezone` (8, DST spring/fall + week-start), `filter-spec` (18) + `filter-evaluator` (43, incl. the 30-lead × 12-spec TS↔SQL parity fixture), `dialable` (6, locks DIALABLE to DEFAULT_SEGMENTS), `area-code` (9), `disposition-defs` (12), `disposition-idempotency` (5, outbox key stability), `reservation-policy` (5, claim shell + per-lead-tz window release).
+- Suite: **41 files / 488 tests** green; `tsc --noEmit` clean; build passes.
+- SQL applied to live DB (PARTs 23–27): `call_attempts`/`call_legs`/`call_events` (immutable, idempotent); call_records idempotency keys — **233 real duplicate records archived to `call_records_dupes`** (210 by conversation, 23 by room — the duplicate-disposition bug's production footprint); leads reservation columns + `app_claim_dial_leads` (FOR UPDATE SKIP LOCKED) + counters backfilled from history; `app_leads_page` recreated (avgScore → neverDialed); `app_metrics_summary`/`app_metrics_hourly`.
+- Live reconciliation probe (busiest org, last 30 days): outcome mix sums exactly to total calls (11,055 outcomes + 11 no-outcome = 11,066); connect rate 4.8% (536 human connects); 10,149 of 12,530 leads never dialed per the backfilled counters.
+- Behavior shipped: duplicate-disposition replay is now a server-side no-op (client key + unique indexes; routing skipped on 23505); every provider callback lands in the immutable event log and CAS-drives the canonical state machine; the AI auto-dial cron claims leads atomically through the reservation engine (never-dialed first; can no longer race a rep); session builder scrubs number-level DNC; the Average-AI-Score aggregate is gone (per-lead score retained); metrics.ts classifies connects through the one glossary definition; `/api/cron/reconcile-data` repairs counter drift, force-finishes stuck attempts, and logs metric drift to audit_log (scheduled every 15 min in pg_cron).
+- Deferred to E3 (recorded Partial in traceability): the manual dialer's queue→claim switchover (the claim/release/heartbeat routes are live; the cockpit rework consumes them).
+
 ### A1 + A2 — 2026-08-28 (Checkpoint 1)
 
 - Tests added: `csv-injection` (8), `answered-auth` (7), `hold-scope` (6), `ai-routes-auth` (10); `permissions` updated for the rep monitor default change.

@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 import { finalizeAIConversation, type Turn } from "@/lib/ai-call-finalize";
+import { applyCallEvent } from "@/lib/calls/apply-event";
+import { providerEventFingerprint } from "@/lib/calls/state-machine";
 import { elevenLabsConfig, verifyWebhookSignature } from "@/lib/elevenlabs";
 
 export const dynamic = "force-dynamic";
@@ -75,6 +77,24 @@ export async function POST(req: Request) {
   const error = (metadata.error ?? {}) as Record<string, unknown>;
   const errorCode = error.code == null ? null : String(error.code);
   const errorReason = error.reason == null ? null : String(error.reason);
+
+  // Canonical event log (dual-write): the post-call transcript completes the
+  // attempt. Fingerprint on the event id when EL sends one, else the
+  // conversation itself — a redelivered webhook is a duplicate, not a re-run.
+  await applyCallEvent({
+    source: "elevenlabs",
+    type: "attempt.completed",
+    providerEventId: providerEventFingerprint({
+      source: "elevenlabs",
+      eventId: String(
+        (payload as { event_id?: unknown }).event_id ??
+          `${conversationId}:post_call_transcription`,
+      ),
+    }),
+    attemptRef: { conversationId },
+    targetState: "completed",
+    payload: { terminationReason, durationSec: durationSec ?? null },
+  });
 
   await finalizeAIConversation({
     conversationId,

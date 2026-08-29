@@ -323,6 +323,9 @@ export function DialerClient({
           outcome: o,
           callSid: state.callSid,
           room: state.room,
+          // This lead's idempotency key from dial time — a replayed save is a
+          // no-op server-side instead of a duplicate record + appointment.
+          clientAttemptId: state.attemptIds[lead.id],
           notes: notesRef.current || undefined,
           appointment: extra?.appointment ?? undefined,
           callback: extra?.callback ?? undefined,
@@ -333,7 +336,7 @@ export function DialerClient({
       }
       dialer.selectOutcome(o);
     },
-    [dialer, state.durationSec, state.callSid, state.room],
+    [dialer, state.durationSec, state.callSid, state.room, state.attemptIds],
   );
 
   const onOutcome = useCallback(

@@ -4,6 +4,7 @@ import { resolveAgentConfig } from "./ai/agent-prompt";
 import { finalizeAIConversation } from "./ai-call-finalize";
 import { armProbe, breakerStatus, recordProviderFailure } from "./ai-call-breaker";
 import { registerAICall } from "./ai-call-store";
+import { recordDialRequested } from "./calls/apply-event";
 import { isQuotaMessage } from "./call-disposition";
 import { isOnDnc } from "./db/dnc";
 import { seedAIConversation } from "./db/records";
@@ -159,6 +160,8 @@ export async function placeAiCallForLead(opts: {
   record?: boolean;
   agentKey?: AgentKey;
   excludedCallerIds?: string[] | null;
+  /** Canonical attempt bookkeeping: interactive rep launch vs the unattended cron. */
+  dialMode?: "ai_interactive" | "ai_cron";
 }): Promise<PlaceAiCallResult> {
   const { org, repUserId, lead, baseUrl } = opts;
   const record = opts.record !== false;
@@ -333,6 +336,20 @@ export async function placeAiCallForLead(opts: {
       // the session first). repUserId can be a synthetic "org:<id>" rotation key,
       // so use the real org owner id here (may be null → row still records).
       ownerId: org?.ownerId ?? null,
+    });
+
+    // Canonical attempt (dual-write): keyed by conversation_id so every Twilio
+    // callback and the post-call webhook resolve this exact attempt.
+    await recordDialRequested({
+      orgId: org?.id ?? null,
+      ownerId: org?.ownerId ?? null,
+      leadId: lead.id.startsWith("manual-") ? null : lead.id,
+      phone: toNumber,
+      channel: "ai",
+      dialMode: opts.dialMode ?? "ai_interactive",
+      conversationId: result.conversationId,
+      campaignId: lead.campaignId || null,
+      providerSid: customerCallSid ?? result.callSid ?? null,
     });
 
     if (bridgeFailed) {

@@ -4,6 +4,8 @@ import {
   TERMINAL_STATUSES,
 } from "@/lib/ai-call-state";
 import { losingLegs, markAnswered } from "@/lib/call-registry";
+import { applyCallEvent, twilioEventTypeForStatus } from "@/lib/calls/apply-event";
+import { providerEventFingerprint } from "@/lib/calls/state-machine";
 import {
   type AICallRef,
   getAICallRef,
@@ -56,6 +58,33 @@ export async function POST(req: Request) {
   const recordingUrl = String(form.RecordingUrl ?? "");
   const callSid = String(form.CallSid ?? "");
   const errorCode = Number(form.ErrorCode) || null;
+  const answeredByRaw = String(form.AnsweredBy ?? "");
+
+  // ── Canonical event log (dual-write, events first) ──────────────────────────
+  // Every call-status callback is appended to the immutable call_events log and
+  // CAS-applied to the canonical call_attempts state machine. Duplicates die on
+  // the (source, provider_event_id) fingerprint; late/out-of-order events lose
+  // the CAS. The legacy writes below are untouched during the dual-write phase.
+  if (callStatus && callSid) {
+    await applyCallEvent({
+      source: "twilio",
+      type: twilioEventTypeForStatus(callStatus, answeredByRaw || null) ?? "leg.completed",
+      providerEventId: providerEventFingerprint({
+        source: "twilio",
+        sid: callSid,
+        status: callStatus,
+        sequence: String(form.SequenceNumber ?? ""),
+      }),
+      attemptRef: { room, conversationId, leadId },
+      leg: {
+        providerSid: callSid,
+        leadId,
+        rawStatus: callStatus,
+        errorCode,
+        answeredBy: answeredByRaw || null,
+      },
+    });
+  }
 
   // ── Recording complete: save URL to the matching call record ────────────────
   // Manual calls are conferences, so the webhook carries the room (passed on the

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { registerRoom } from "@/lib/call-registry";
+import { recordDialRequested } from "@/lib/calls/apply-event";
 import { dncKey, getDncDigits } from "@/lib/db/dnc";
 import { type CallerIdInfo, nextCallerIdWithInfo } from "@/lib/dialer/rotation-server";
 import { getViewer } from "@/lib/org/membership";
@@ -57,6 +58,9 @@ export async function POST(req: Request) {
      *  rotating, so a repeat call is recognizably the same number. Ignored
      *  (falls back to normal rotation) if it isn't an eligible pool member. */
     pinnedCallerId?: string;
+    /** Per-lead idempotency keys minted by the dialer for this round —
+     *  carried onto call_attempts and later matched by the disposition. */
+    attemptIds?: Record<string, string>;
   };
 
   const room = body.room?.trim();
@@ -202,6 +206,27 @@ export async function POST(req: Request) {
   );
 
   registerRoom(room, placed);
+
+  // Canonical attempts (dual-write): one call_attempts row per dialed lead,
+  // keyed (room, lead_id) so every later webhook resolves its attempt. The
+  // client's per-lead idempotency keys ride along when provided.
+  await Promise.all(
+    placed
+      .filter((p) => p.sid)
+      .map((p) =>
+        recordDialRequested({
+          orgId: viewer.org?.id ?? null,
+          ownerId: viewer.user?.id ?? null,
+          leadId: p.leadId,
+          phone: p.to,
+          channel: "human",
+          dialMode: dialLeads.length > 1 ? "parallel" : "manual",
+          clientAttemptId: body.attemptIds?.[p.leadId] ?? null,
+          room,
+          providerSid: p.sid,
+        }),
+      ),
+  );
 
   // Snapshot poolInfo to a const so TypeScript narrows it correctly below.
   const callerIdInfo: CallerIdInfo | null = poolInfo;

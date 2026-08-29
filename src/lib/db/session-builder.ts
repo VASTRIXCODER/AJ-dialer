@@ -7,6 +7,7 @@ import {
   type ContactFilter,
   type SessionSpec,
 } from "../dialer/segments";
+import { getDncDigits, scrubDnc } from "./dnc";
 import { rowToLead } from "./leads";
 import { isSupabaseConfigured } from "../supabase/config";
 import { createClient } from "../supabase/server";
@@ -213,7 +214,10 @@ export async function buildSession(spec: SessionSpec): Promise<Lead[]> {
       }
       // Preserve the order the operator picked them in.
       const rank = new Map(ids.map((id, i) => [id, i]));
-      return out.sort((a, b) => (rank.get(a.id) ?? 0) - (rank.get(b.id) ?? 0));
+      const picked = out.sort((a, b) => (rank.get(a.id) ?? 0) - (rank.get(b.id) ?? 0));
+      // Scrub the org's number-level suppression list too — status alone misses
+      // numbers added via SMS STOP / DNC import whose lead row is still dialable.
+      return orgId ? scrubDnc(picked, await getDncDigits(orgId)) : picked;
     }
 
     const statuses = sanitizeSegments(spec.statuses);
@@ -253,10 +257,16 @@ export async function buildSession(spec: SessionSpec): Promise<Lead[]> {
       if (rows.length < PAGE) break; // short page ⇒ end of the book
     }
 
+    // Number-level DNC scrub (dnc_numbers): the status filter can't see a
+    // number suppressed via SMS STOP or a DNC import when its lead row still
+    // carries a dialable status. The dial route re-scrubs at call time, but the
+    // queue the rep SEES must be honest too.
+    const scrubbed = orgId ? scrubDnc(out, await getDncDigits(orgId)) : out;
+
     // EXACTLY the requested count. The dialer's queue index wraps modulo length,
     // so handing it more than the operator asked for means dialing people they
     // never agreed to call.
-    return out.slice(0, limit);
+    return scrubbed.slice(0, limit);
   } catch {
     return [];
   }

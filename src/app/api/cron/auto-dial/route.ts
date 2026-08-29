@@ -1,10 +1,15 @@
 import { NextResponse } from "next/server";
 import { breakerStatus } from "@/lib/ai-call-breaker";
 import { placeAiCallForLead } from "@/lib/ai-dialer";
-import { getAutoDialLeadsForOrg, touchLeadContacted } from "@/lib/db/leads";
-import { resolveLeadTimezone } from "@/lib/dialer/lead-timezone";
+import { touchLeadContacted } from "@/lib/db/leads";
+import {
+  claimDialLeads,
+  markLeadAttempted,
+  releaseDialLeads,
+  SYSTEM_RESERVER,
+} from "@/lib/db/reservations";
 import { nextDialSeq } from "@/lib/dialer/rotation-server";
-import { isWithinCallingWindow, zonedDayKey } from "@/lib/dialer/schedule";
+import { zonedDayKey } from "@/lib/dialer/schedule";
 import { fetchQuota, isElevenLabsConfigured } from "@/lib/elevenlabs";
 import { listActiveOrgsWithSettings } from "@/lib/org/membership";
 import { getPublicBaseUrl } from "@/lib/twilio";
@@ -90,27 +95,26 @@ async function runAutoDial(req: Request) {
     }
 
     const dayKey = `auto:${org.id}:${zonedDayKey(now, a.timezone)}`;
-    // Fetch a CANDIDATE POOL (larger than callsPerRun) so that after dropping the
-    // leads whose local calling window is closed right now, there are still enough
-    // within-window leads to fill this tick. Oldest-contacted-first ordering could
-    // otherwise front-load the pool with leads in a closed zone and dial nothing.
+    // CLAIM a candidate pool (larger than callsPerRun) through the reservation
+    // engine — the same atomic path the manual dialer uses, so this cron can no
+    // longer race a rep onto the same lead. Never-dialed leads come first by
+    // construction; DNC + cooldown are enforced inside the claim; the per-lead
+    // local calling window (TCPA follows the CALLED party's clock) is
+    // re-checked in TS and out-of-window leads are auto-released.
     const poolSize = Math.min(Math.max(a.callsPerRun * 10, 30), 200);
-    const candidates = await getAutoDialLeadsForOrg(org.id, {
-      cooldownHours: a.cooldownHours,
+    const reserver = org.ownerId ?? SYSTEM_RESERVER;
+    const leads = await claimDialLeads({
+      orgId: org.id,
+      userId: reserver,
+      supervisor: true,
       limit: poolSize,
+      ttlSeconds: 300,
+      cooldownMinutes: Math.max(0, a.cooldownHours) * 60,
+      window: a,
+      now,
     });
-    // Keep only leads whose OWN local time is inside the org's configured window.
-    const leads = candidates.filter((lead) =>
-      isWithinCallingWindow(now, a, resolveLeadTimezone(lead.phone, lead.timezone, a.timezone)),
-    );
     if (!leads.length) {
-      results.push({
-        org: org.name,
-        placed: 0,
-        note: candidates.length
-          ? "no leads within their local calling window right now"
-          : "no eligible leads",
-      });
+      results.push({ org: org.name, placed: 0, note: "no eligible leads in-window" });
       continue;
     }
 
@@ -129,7 +133,13 @@ async function runAutoDial(req: Request) {
       }
       // Stamp contacted BEFORE placing so a mid-flight error can't cause a
       // re-dial loop on the next tick; disposition/webhook updates status later.
+      // markLeadAttempted additionally bumps attempt_count, sets the
+      // next-eligible gate, and releases this lead's reservation in one shot.
       await touchLeadContacted(org.id, lead.id, now.toISOString());
+      await markLeadAttempted(org.id, lead.id, {
+        cooldownMinutes: Math.max(0, a.cooldownHours) * 60,
+        at: now,
+      });
       const r = await placeAiCallForLead({
         org,
         // Stable, DB-backed rotation counter key for the org (owner id may be
@@ -137,6 +147,7 @@ async function runAutoDial(req: Request) {
         repUserId: org.ownerId ?? `org:${org.id}`,
         lead,
         baseUrl,
+        dialMode: "ai_cron",
       });
       // The provider refused mid-run (credits ran dry between ticks). Stop the
       // ENTIRE run, not just this org — the quota is account-wide, so every
@@ -149,6 +160,13 @@ async function runAutoDial(req: Request) {
       placed++;
       if (r.error) results.push({ org: org.name, lead: lead.id, error: r.error });
     }
+    // Release the claims we didn't consume this tick (leads beyond
+    // callsPerRun/the daily cap, or everything after a mid-run halt) so
+    // interactive dialers aren't blocked for the TTL.
+    const dialedIds = new Set(leads.slice(0, placed + (halted ? 1 : 0)).map((l) => l.id));
+    const leftover = leads.filter((l) => !dialedIds.has(l.id)).map((l) => l.id);
+    if (leftover.length) await releaseDialLeads(org.id, reserver, leftover);
+
     results.push({ org: org.name, placed, ...(capped ? { capped: true } : {}) });
     if (halted) break;
   }

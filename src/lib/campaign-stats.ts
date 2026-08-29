@@ -1,4 +1,5 @@
 import { CONNECTED_OUTCOMES } from "./call-analytics";
+import { DIALABLE_STATUSES } from "./leads/dialable";
 import type { CallOutcome } from "./types";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -9,7 +10,7 @@ import type { CallOutcome } from "./types";
 
 type Row = Record<string, unknown>;
 
-const DIALABLE = new Set(["new", "no_answer", "callback"]);
+const DIALABLE: ReadonlySet<string> = new Set(DIALABLE_STATUSES);
 const pct = (n: number, d: number) => (d > 0 ? Math.round((n / d) * 1000) / 10 : 0);
 
 export interface CampaignStats {

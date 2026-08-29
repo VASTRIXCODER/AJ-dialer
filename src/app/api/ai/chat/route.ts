@@ -54,7 +54,7 @@ async function buildContext(ai: OrgAIContext) {
       total: leads.total,
       qualified: leads.qualified,
       appointments: leads.appointments,
-      avgScore: leads.avgScore,
+      neverDialed: leads.neverDialed,
     },
     liveCalls: report.liveCalls.length,
     upcomingAppointments: report.appointments
@@ -74,7 +74,7 @@ function demoReply(ctx: Awaited<ReturnType<typeof buildContext>>, last: string):
     `Here's your floor right now:\n` +
     `- ${ctx.metrics.callsToday} calls today (${ctx.metrics.totalCalls} all-time) at a ${ctx.metrics.connectRate} connect rate\n` +
     `- ${ctx.metrics.appointmentsBooked} appointments booked\n` +
-    `- ${ctx.leads.total} leads (${ctx.leads.qualified} qualified, avg AI score ${ctx.leads.avgScore})\n` +
+    `- ${ctx.leads.total} leads (${ctx.leads.qualified} qualified, ${ctx.leads.neverDialed} never dialed)\n` +
     `- ${ctx.liveCalls} live call${ctx.liveCalls === 1 ? "" : "s"} right now`;
 
   if (/lead|call first|who/.test(q))

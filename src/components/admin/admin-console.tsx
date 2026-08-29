@@ -92,7 +92,7 @@ export function AdminConsole({
   permissions: string[];
   members: Member[];
   companies: OrgCompany[];
-  leadStats: { total: number; qualified: number; appointments: number; avgScore: number };
+  leadStats: { total: number; qualified: number; appointments: number; neverDialed: number };
   integrations: Integration[];
   audit: AuditEntry[];
   demo: boolean;
@@ -960,7 +960,7 @@ function DataTab({
   canImport,
 }: {
   integrations: Integration[];
-  leadStats: { total: number; qualified: number; appointments: number; avgScore: number };
+  leadStats: { total: number; qualified: number; appointments: number; neverDialed: number };
   canImport: boolean;
 }) {
   return (
@@ -1009,7 +1009,7 @@ function DataTab({
             ["Total", leadStats.total],
             ["Qualified", leadStats.qualified],
             ["Appointments", leadStats.appointments],
-            ["Avg AI score", leadStats.avgScore],
+            ["Never dialed", leadStats.neverDialed],
           ].map(([label, value]) => (
             <div key={label} className="rounded-xl bg-muted p-3">
               <p className="text-lg font-bold tabular">{value}</p>

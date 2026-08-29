@@ -2098,3 +2098,687 @@ create table if not exists public.ops_metrics (
 );
 create index if not exists ops_metrics_metric_at_idx on public.ops_metrics (metric, at desc);
 alter table public.ops_metrics enable row level security;
+
+-- ═════════════════════════════════════════════════════════════════════════════
+-- PART 23 — CANONICAL CALL ATTEMPTS, LEGS, EVENTS            [Phase 1 · B2]
+-- The business-level attempt (one per lead per dial decision), its provider
+-- legs (parallel dialing creates many), and an immutable, idempotent event log.
+-- call_records remains the reporting projection; these are the source of truth.
+-- See docs/phase-1/call-state-machine.md for the transition rules.
+-- Rollback: drop trigger call_events_immutable on public.call_events;
+--           drop function public.app_call_events_immutable();
+--           drop table public.call_events, public.call_legs, public.call_attempts;
+-- ═════════════════════════════════════════════════════════════════════════════
+create table if not exists public.call_attempts (
+  id                uuid primary key default gen_random_uuid(),
+  org_id            uuid references public.organizations (id) on delete cascade,
+  lead_id           uuid references public.leads (id) on delete set null,
+  owner_id          uuid references auth.users (id) on delete set null,
+  campaign_id       text,
+  channel           text not null default 'human',      -- 'human' | 'ai'
+  dial_mode         text not null default 'manual',     -- 'manual'|'parallel'|'ai_interactive'|'ai_cron'
+  client_attempt_id text,                               -- idempotency key minted by the dialer client
+  room              text,                               -- hc-<id> conference (human path)
+  conversation_id   text,                               -- ElevenLabs conversation (AI path)
+  phone             text not null default '',
+  state             text not null default 'queued',
+  -- queued|reserved|dialing|ringing|human_connected|voicemail_connected|busy|
+  -- declined|no_answer|failed|canceled|wrap_up|dispositioned|completed
+  state_changed_at  timestamptz not null default now(),
+  reserved_at       timestamptz,
+  dialing_at        timestamptz,
+  ringing_at        timestamptz,
+  connected_at      timestamptz,
+  ended_at          timestamptz,
+  wrap_started_at   timestamptz,
+  dispositioned_at  timestamptz,
+  transport_outcome text,   -- canonical terminal transport state, stamped once
+  terminal_reason   text,   -- RAW provider reason (busy|no-answer|failed|error code…)
+  disposition       text,   -- business CallOutcome key once filed — never overwrites transport_outcome
+  call_record_id    uuid references public.call_records (id) on delete set null,
+  created_at        timestamptz not null default now()
+);
+create unique index if not exists call_attempts_client_key
+  on public.call_attempts (org_id, client_attempt_id) where client_attempt_id is not null;
+-- NOT unique: a parallel (3X) round dials three leads into ONE room — three
+-- attempts share the room, resolved by (room, lead_id). The status callback URL
+-- carries both.
+create unique index if not exists call_attempts_room_lead_key
+  on public.call_attempts (room, lead_id) where room is not null and lead_id is not null;
+create index if not exists call_attempts_room_idx
+  on public.call_attempts (room) where room is not null;
+create unique index if not exists call_attempts_convo_key
+  on public.call_attempts (conversation_id) where conversation_id is not null;
+create index if not exists call_attempts_org_created_idx on public.call_attempts (org_id, created_at desc);
+create index if not exists call_attempts_lead_idx        on public.call_attempts (lead_id, created_at desc);
+create index if not exists call_attempts_live_idx        on public.call_attempts (org_id, state, state_changed_at)
+  where state in ('queued','reserved','dialing','ringing','human_connected','voicemail_connected','wrap_up');
+
+create table if not exists public.call_legs (
+  id              uuid primary key default gen_random_uuid(),
+  attempt_id      uuid not null references public.call_attempts (id) on delete cascade,
+  org_id          uuid,
+  provider        text not null default 'twilio',
+  provider_sid    text,                                 -- Twilio CallSid
+  lead_id         uuid,                                 -- parallel: which lead this leg dialed
+  role            text not null default 'customer',     -- 'customer' | 'rep' | 'agent'
+  status          text,                                 -- last raw provider status
+  answered_by     text,                                 -- AMD verdict when present
+  error_code      int,
+  ring_started_at timestamptz,
+  answered_at     timestamptz,
+  ended_at        timestamptz,
+  created_at      timestamptz not null default now()
+);
+create unique index if not exists call_legs_provider_sid_key
+  on public.call_legs (provider, provider_sid) where provider_sid is not null;
+create index if not exists call_legs_attempt_idx on public.call_legs (attempt_id);
+
+create table if not exists public.call_events (
+  id                bigint generated always as identity primary key,
+  org_id            uuid,
+  attempt_id        uuid references public.call_attempts (id) on delete cascade,
+  leg_id            uuid references public.call_legs (id) on delete set null,
+  source            text not null,        -- 'twilio' | 'elevenlabs' | 'app' | 'rep' | 'cron'
+  event_type        text not null,        -- canonical type (src/lib/calls/state-machine.ts)
+  provider_event_id text,                 -- dedupe fingerprint (providerEventFingerprint)
+  event_time        timestamptz not null default now(), -- provider clock when known
+  ingested_at       timestamptz not null default now(),
+  payload           jsonb not null default '{}'::jsonb,
+  payload_version   int not null default 1
+);
+create unique index if not exists call_events_provider_key
+  on public.call_events (source, provider_event_id) where provider_event_id is not null;
+create index if not exists call_events_attempt_idx  on public.call_events (attempt_id, event_time);
+create index if not exists call_events_org_time_idx on public.call_events (org_id, ingested_at desc);
+
+-- Immutability: append-only. Blocks UPDATE/DELETE even from the service role —
+-- raw provider history can be enriched elsewhere but never rewritten.
+create or replace function public.app_call_events_immutable() returns trigger
+language plpgsql as $fn$ begin raise exception 'call_events is append-only'; end $fn$;
+drop trigger if exists call_events_immutable on public.call_events;
+create trigger call_events_immutable
+  before update or delete on public.call_events
+  for each row execute function public.app_call_events_immutable();
+
+-- RLS: service-role writes; org members may read their own org's rows.
+alter table public.call_attempts enable row level security;
+alter table public.call_legs     enable row level security;
+alter table public.call_events   enable row level security;
+drop policy if exists "attempts org read" on public.call_attempts;
+create policy "attempts org read" on public.call_attempts for select using (
+  public.app_is_superadmin() or (public.app_is_active() and public.app_is_org_member(org_id))
+);
+drop policy if exists "legs org read" on public.call_legs;
+create policy "legs org read" on public.call_legs for select using (
+  public.app_is_superadmin() or (public.app_is_active() and public.app_is_org_member(org_id))
+);
+drop policy if exists "events org read" on public.call_events;
+create policy "events org read" on public.call_events for select using (
+  public.app_is_superadmin() or (public.app_is_active() and public.app_is_org_member(org_id))
+);
+
+-- ═════════════════════════════════════════════════════════════════════════════
+-- PART 24 — CALL RECORD IDEMPOTENCY + CONNECT PROJECTION      [Phase 1 · B2]
+-- The duplicate-disposition bug: the client outbox replays any POST whose
+-- response was lost, and insertCallRecord was a bare INSERT — every replay of a
+-- successful-but-unacknowledged save created a duplicate call_records row AND a
+-- duplicate appointment/callback via routeDisposition. Three partial unique
+-- keys make the projection idempotent; the app recovers the existing row on
+-- 23505 and skips routing.
+-- Dedupe BEFORE the indexes: existing duplicates are ARCHIVED (never deleted
+-- outright) to call_records_dupes — keep that table >= 30 days.
+-- Rollback: drop the three unique indexes; restore with
+--   insert into public.call_records select * from public.call_records_dupes
+--   on conflict do nothing;
+-- ═════════════════════════════════════════════════════════════════════════════
+alter table public.call_records add column if not exists attempt_id        uuid;
+alter table public.call_records add column if not exists client_attempt_id text;
+alter table public.call_records add column if not exists human_connected   boolean;
+alter table public.call_records add column if not exists talk_sec          int;
+
+create table if not exists public.call_records_dupes
+  (like public.call_records including defaults);
+alter table public.call_records_dupes enable row level security;
+
+-- Archive-then-delete duplicate conversation rows (best row wins: an outcome
+-- beats none, then earliest started_at). Idempotent: re-running finds nothing.
+with ranked as (
+  select id, row_number() over (
+    partition by conversation_id
+    order by (outcome is not null) desc, started_at asc, id asc
+  ) rn
+  from public.call_records where conversation_id is not null
+), moved as (
+  insert into public.call_records_dupes
+  select cr.* from public.call_records cr
+  join ranked r on r.id = cr.id where r.rn > 1
+  returning id
+)
+delete from public.call_records where id in (select id from moved);
+
+-- Same for duplicate room rows (a replayed manual disposition).
+with ranked as (
+  select id, row_number() over (
+    partition by room
+    order by (outcome is not null) desc, started_at asc, id asc
+  ) rn
+  from public.call_records where room is not null
+), moved as (
+  insert into public.call_records_dupes
+  select cr.* from public.call_records cr
+  join ranked r on r.id = cr.id where r.rn > 1
+  returning id
+)
+delete from public.call_records where id in (select id from moved);
+
+create unique index if not exists call_records_client_attempt_key
+  on public.call_records (org_id, client_attempt_id) where client_attempt_id is not null;
+create unique index if not exists call_records_room_key
+  on public.call_records (room) where room is not null;
+create unique index if not exists call_records_conversation_key
+  on public.call_records (conversation_id) where conversation_id is not null;
+create index if not exists call_records_attempt_idx
+  on public.call_records (attempt_id) where attempt_id is not null;
+
+-- ═════════════════════════════════════════════════════════════════════════════
+-- PART 25 — LEAD RESERVATION + ATTEMPT COUNTERS               [Phase 1 · B3]
+-- The eligibility/reservation engine. Reservation state lives ON the lead
+-- (single-row CAS, no join in the hot path); claims are atomic via
+-- FOR UPDATE SKIP LOCKED (the app_claim_notifications pattern); expiry is a
+-- timestamp comparison, so expired holds are simply claimable — no sweeper.
+-- TS twin: src/lib/dialer/eligibility.ts — LOCKSTEP: keep the WHERE clause and
+-- ORDER BY in sync with evaluateEligibility/compareDialOrder.
+-- Rollback: drop the four app_*_dial_* functions + leads_dial_order_idx; the
+-- columns may stay (harmless); clearing reserved_by/reserved_until restores
+-- legacy behavior instantly, as does settings.dialing.reservations=false.
+-- ═════════════════════════════════════════════════════════════════════════════
+alter table public.leads add column if not exists attempt_count    int not null default 0;
+alter table public.leads add column if not exists last_attempt_at  timestamptz;
+alter table public.leads add column if not exists next_eligible_at timestamptz;
+alter table public.leads add column if not exists reserved_by      uuid;
+alter table public.leads add column if not exists reserved_until   timestamptz;
+
+-- Backfill counters from history. Idempotent: only rows still at zero.
+update public.leads l
+set attempt_count = h.n, last_attempt_at = h.latest
+from (
+  select lead_id, count(*)::int as n, max(started_at) as latest
+  from public.call_records where lead_id is not null group by lead_id
+) h
+where l.id = h.lead_id and l.attempt_count = 0;
+
+-- Never-dialed-first queue order in one index: attempt_count ascending puts
+-- the untouched (0) leads strictly first; ties then oldest-attempted first.
+create index if not exists leads_dial_order_idx
+  on public.leads (org_id, attempt_count asc, last_attempt_at asc nulls first, created_at asc, id asc)
+  where status in ('new','no_answer','callback');
+
+-- ── Atomic claim. SERVICE-ROLE ONLY (same trust model as app_leads_page): the
+-- app validates the caller and sanitizes p_statuses ('dnc' can never pass).
+-- LOCKSTEP: WHERE mirrors evaluateEligibility, ORDER BY mirrors compareDialOrder
+-- (src/lib/dialer/eligibility.ts). The per-lead-timezone calling-window check
+-- lives in TS (area-code inference isn't in SQL) — claimDialLeads re-checks and
+-- releases out-of-window leads.
+create or replace function public.app_claim_dial_leads(
+  p_org uuid, p_user uuid, p_supervisor boolean,
+  p_limit int, p_ttl_seconds int default 180,
+  p_statuses text[] default array['new','no_answer','callback'],
+  p_campaign text default null, p_pack uuid default null,
+  p_cooldown_minutes int default 0, p_max_attempts int default 0,
+  p_lead_ids uuid[] default null
+) returns setof public.leads
+language sql volatile security definer set search_path = public as $$
+  update public.leads l
+  set reserved_by = p_user,
+      reserved_until = now() + make_interval(secs => greatest(coalesce(p_ttl_seconds, 180), 30))
+  from (
+    select x.id from public.leads x
+    where x.org_id = p_org
+      and x.status = any(p_statuses)
+      and (p_supervisor or x.owner_id = p_user or x.assigned_rep_id = p_user::text)
+      and (p_campaign is null or x.campaign_id = p_campaign)
+      and (p_pack is null or x.lead_pack_id = p_pack)
+      and (p_lead_ids is null or x.id = any(p_lead_ids))
+      and length(regexp_replace(coalesce(x.phone, ''), '\D', '', 'g')) >= 10
+      and not exists (
+        select 1 from public.dnc_numbers d
+        where d.org_id = p_org
+          and d.phone_digits = right(regexp_replace(coalesce(x.phone, ''), '\D', '', 'g'), 10))
+      and (x.reserved_until is null or x.reserved_until < now() or x.reserved_by = p_user)
+      and (x.next_eligible_at is null or x.next_eligible_at <= now())
+      and (p_cooldown_minutes <= 0 or x.last_attempt_at is null
+           or x.last_attempt_at < now() - make_interval(mins => p_cooldown_minutes))
+      and (p_max_attempts <= 0 or x.attempt_count < p_max_attempts)
+    order by x.attempt_count asc,
+             x.last_attempt_at asc nulls first,
+             x.created_at asc, x.id asc
+    limit greatest(coalesce(p_limit, 0), 0)
+    for update skip locked
+  ) picked
+  where l.id = picked.id
+  returning l.*;
+$$;
+revoke all on function public.app_claim_dial_leads(uuid, uuid, boolean, int, int, text[], text, uuid, int, int, uuid[]) from public, anon, authenticated;
+grant execute on function public.app_claim_dial_leads(uuid, uuid, boolean, int, int, text[], text, uuid, int, int, uuid[]) to service_role;
+
+create or replace function public.app_release_dial_leads(
+  p_org uuid, p_user uuid, p_lead_ids uuid[]
+) returns int language sql volatile security definer set search_path = public as $$
+  with r as (
+    update public.leads set reserved_by = null, reserved_until = null
+    where org_id = p_org and reserved_by = p_user and id = any(p_lead_ids)
+    returning id
+  )
+  select count(*)::int from r;
+$$;
+revoke all on function public.app_release_dial_leads(uuid, uuid, uuid[]) from public, anon, authenticated;
+grant execute on function public.app_release_dial_leads(uuid, uuid, uuid[]) to service_role;
+
+create or replace function public.app_renew_dial_reservations(
+  p_org uuid, p_user uuid, p_lead_ids uuid[], p_ttl_seconds int
+) returns int language sql volatile security definer set search_path = public as $$
+  with r as (
+    update public.leads
+    set reserved_until = now() + make_interval(secs => greatest(coalesce(p_ttl_seconds, 180), 30))
+    where org_id = p_org and reserved_by = p_user and id = any(p_lead_ids)
+      and reserved_until > now()   -- an expired hold cannot be revived
+    returning id
+  )
+  select count(*)::int from r;
+$$;
+revoke all on function public.app_renew_dial_reservations(uuid, uuid, uuid[], int) from public, anon, authenticated;
+grant execute on function public.app_renew_dial_reservations(uuid, uuid, uuid[], int) to service_role;
+
+-- Stamp the attempt at provider initiation: bump the counter, record the time,
+-- set the next-eligible gate, release the hold. last_contacted_at is untouched
+-- (it means "disposition filed" — a different fact).
+create or replace function public.app_mark_lead_attempted(
+  p_org uuid, p_lead uuid, p_at timestamptz, p_next_eligible timestamptz
+) returns void language sql volatile security definer set search_path = public as $$
+  update public.leads
+  set attempt_count = attempt_count + 1,
+      last_attempt_at = greatest(coalesce(last_attempt_at, p_at), p_at),
+      next_eligible_at = p_next_eligible,
+      reserved_by = null, reserved_until = null
+  where id = p_lead and org_id = p_org;
+$$;
+revoke all on function public.app_mark_lead_attempted(uuid, uuid, timestamptz, timestamptz) from public, anon, authenticated;
+grant execute on function public.app_mark_lead_attempted(uuid, uuid, timestamptz, timestamptz) to service_role;
+
+notify pgrst, 'reload schema';
+
+-- ═════════════════════════════════════════════════════════════════════════════
+-- PART 26 — app_leads_page RECREATE: Average-AI-Score aggregate removed  [B4]
+-- The spec (docs/phase_one.md §4) removes the "Average AI Score" aggregate.
+-- Per-lead ai_score is retained (dial ordering, per-lead display, export
+-- column); only the avgScore stat dies, replaced by neverDialed — the count
+-- the leads KPI row actually needs. Everything else in the function is
+-- byte-identical to the PART above; the drop/grant-by-introspection blocks
+-- are reused verbatim.
+-- Rollback: re-apply the previous function body from git history.
+-- ═════════════════════════════════════════════════════════════════════════════
+-- Every existing overload must be dropped before the CREATE: adding a parameter
+-- OVERLOADS the function rather than replacing it, and two candidates make
+-- PostgREST's rpc() resolution ambiguous once defaults are in play.
+--
+-- Done by INTROSPECTION rather than by listing signatures literally. The
+-- literal-list version silently rotted every time a parameter was added — a
+-- signature written by hand drifted out of order from the real parameter list
+-- and the whole migration died on `42883: function ... does not exist`. This
+-- form cannot drift: it drops whatever is actually there, whatever its shape.
+do $$
+declare r record;
+begin
+  for r in
+    select p.oid::regprocedure as sig
+    from pg_proc p
+    join pg_namespace n on n.oid = p.pronamespace
+    where n.nspname = 'public' and p.proname = 'app_leads_page'
+  loop
+    execute format('drop function if exists %s', r.sig);
+  end loop;
+end $$;
+
+create or replace function public.app_leads_page(
+  p_org        uuid,
+  p_user       uuid,
+  p_supervisor boolean,
+  p_q          text    default null,
+  p_status     text    default null,
+  p_group      text    default null,   -- group key; '__misc__' = ungrouped
+  p_county     text    default null,   -- 'County|ST' composite; '__none__' = no county on file
+  p_city       text    default null,   -- 'City|ST' composite;   '__none__' = no city on file
+  p_campaign   text    default null,   -- campaign id; '__none__' = unassigned
+  p_uploader   uuid    default null,
+  p_mine       boolean default false,
+  p_smart      text    default null,   -- smart-list id (src/lib/leads/smart-lists.ts)
+  p_offset     integer default 0,
+  p_limit      integer default 50,
+  p_sort       text    default null,   -- whitelisted sort key; anything else = upload order
+  p_dir        text    default 'asc'
+) returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_limit  int  := least(greatest(coalesce(p_limit, 50), 1), 200);
+  v_offset int  := greatest(coalesce(p_offset, 0), 0);
+  -- STRICT sort whitelist — p_sort arrives from a URL param and this function
+  -- trusts its callers, so anything unrecognized silently falls back to upload
+  -- order. The key is only ever matched in CASE arms below, never interpolated.
+  -- Mirrored in JS by filterLeadsPage (src/lib/db/leads.ts) — keep in lockstep.
+  v_sort   text := case when p_sort in
+    ('name', 'city', 'state', 'status', 'utility_bill', 'solar_payment',
+     'ai_score', 'last_contacted_at', 'created_at')
+    then p_sort else null end;
+  v_desc   boolean := lower(coalesce(p_dir, 'asc')) = 'desc';
+  -- Escape LIKE wildcards in the user's text; separate digits variant for phone.
+  v_q      text := nullif(replace(replace(replace(btrim(coalesce(p_q, '')), '\', '\\'), '%', '\%'), '_', '\_'), '');
+  v_digits text := nullif(regexp_replace(coalesce(p_q, ''), '\D', '', 'g'), '');
+  v_rows   jsonb;
+  v_total  bigint;
+  v_stats  jsonb;
+begin
+  -- 1-2 digit fragments match everyone — ignore (mirrors the old client rule).
+  if v_digits is not null and length(v_digits) < 3 then
+    v_digits := null;
+  end if;
+
+  with scope as (
+    select l.*, coalesce(m.name, '') as owner_name
+    from public.leads l
+    left join public.organization_members m
+      on m.org_id = l.org_id and m.user_id = l.owner_id and m.status = 'active'
+    where case
+      when p_supervisor
+        then (l.org_id = p_org or (l.owner_id = p_user and l.org_id is null))
+      else (
+        (l.owner_id = p_user or l.assigned_rep_id = p_user::text)
+        and (p_org is null or l.org_id = p_org)
+      )
+    end
+  ),
+  filtered as (
+    select * from scope
+    where (p_status is null or status = p_status)
+      and (p_group is null
+           or (case when p_group = '__misc__' then lead_group is null
+                    else lead_group = p_group end))
+      and (p_county is null
+           or (case when p_county = '__none__' then county is null
+                    else coalesce(county || '|' || state, '') = p_county end))
+      -- City is compared case- and whitespace-insensitively: unlike county
+      -- (which this app derives itself from ZIP, so it is always spelled one
+      -- way) city is free text straight off a customer CSV, where "Fresno",
+      -- "fresno " and "FRESNO" are all the same place and must land in one
+      -- bucket. Mirrors cityKey()/filterLeadsPage in src/lib/db/leads.ts.
+      -- City and state are compared as two SEPARATE equalities rather than one
+      -- concatenated key, so `lower(btrim(city))` appears standalone and can
+      -- actually be served by leads_org_city_lower_idx — a concatenation would
+      -- have made that index dead weight. Each side is trimmed independently
+      -- (a stored "Fresno " yields the key "Fresno |CA", so trimming only the
+      -- outside of the composite would match nothing). Mirrors
+      -- normalizeCityKey() in src/lib/db/leads.ts — keep the two in lockstep.
+      and (p_city is null
+           or (case when p_city = '__none__' then coalesce(btrim(city), '') = ''
+                    else lower(btrim(city)) = lower(btrim(split_part(p_city, '|', 1)))
+                     and lower(btrim(coalesce(state, ''))) = lower(btrim(split_part(p_city, '|', 2)))
+                    end))
+      and (p_campaign is null
+           or (case when p_campaign = '__none__' then coalesce(campaign_id, '') = ''
+                    else campaign_id = p_campaign end))
+      and (p_uploader is null or owner_id = p_uploader)
+      and (not p_mine or owner_id = p_user or assigned_rep_id = p_user::text)
+      and (p_smart is null or case p_smart
+        when 'high_bill'       then coalesce(utility_bill, 0) >= 200
+        when 'big_load'        then (has_ev or has_pool or has_battery or multiple_systems)
+        when 'fresh'           then (status = 'new' and last_contacted_at is null)
+        when 'going_cold'      then (status in ('new', 'no_answer', 'callback')
+                                     and last_contacted_at is not null
+                                     and last_contacted_at < now() - interval '14 days')
+        -- Mirrors isValidPhone(): 10 digits, or 11 starting with 1.
+        when 'no_phone'        then not (
+                                     length(regexp_replace(coalesce(phone, ''), '\D', '', 'g')) = 10
+                                     or (length(regexp_replace(coalesce(phone, ''), '\D', '', 'g')) = 11
+                                         and regexp_replace(coalesce(phone, ''), '\D', '', 'g') like '1%'))
+        when 'missing_address' then (coalesce(btrim(address), '') = '' and coalesce(btrim(city), '') = '')
+        else true end)
+      and (v_q is null or (
+        (first_name || ' ' || last_name) ilike ('%' || v_q || '%')
+        or city ilike ('%' || v_q || '%')
+        or utility_provider ilike ('%' || v_q || '%')
+        or (v_digits is not null
+            and regexp_replace(coalesce(phone, ''), '\D', '', 'g') like ('%' || v_digits || '%'))
+      ))
+  ),
+  -- The total is computed INDEPENDENTLY of pagination: taking max(count(*)
+  -- over ()) inside the LIMIT/OFFSET subquery reported total=0 whenever the
+  -- offset landed past the last matching row (stale ?page=N links, deleting
+  -- the last row of the last page), making the whole book look empty.
+  total as (
+    select count(*) as n from filtered
+  ),
+  -- One window, six CASE lanes (text / numeric / time × asc / desc): only the
+  -- lane matching the active sort+direction produces values; every other lane
+  -- is all-null and a no-op. Nulls sort LAST in every lane (missing scores and
+  -- never-contacted rows go to the bottom regardless of direction), and
+  -- (created_at, id) always closes the ORDER BY so ties — and therefore pages —
+  -- stay stable. With v_sort null that closing pair IS the default: upload
+  -- order, the deliberate product default (see ORDERING in src/lib/db/leads.ts).
+  page as (
+    select s.row_json, s.rn
+    from (
+      select
+        to_jsonb(f.*) as row_json,
+        row_number() over (order by
+          case when not v_desc then case v_sort
+            when 'name'   then lower(coalesce(f.last_name, '') || ' ' || coalesce(f.first_name, ''))
+            when 'city'   then lower(coalesce(f.city, ''))
+            when 'state'  then lower(coalesce(f.state, ''))
+            when 'status' then f.status
+          end end asc nulls last,
+          case when v_desc then case v_sort
+            when 'name'   then lower(coalesce(f.last_name, '') || ' ' || coalesce(f.first_name, ''))
+            when 'city'   then lower(coalesce(f.city, ''))
+            when 'state'  then lower(coalesce(f.state, ''))
+            when 'status' then f.status
+          end end desc nulls last,
+          case when not v_desc then case v_sort
+            when 'utility_bill'  then f.utility_bill
+            when 'solar_payment' then f.solar_payment
+            when 'ai_score'      then f.ai_score::numeric
+          end end asc nulls last,
+          case when v_desc then case v_sort
+            when 'utility_bill'  then f.utility_bill
+            when 'solar_payment' then f.solar_payment
+            when 'ai_score'      then f.ai_score::numeric
+          end end desc nulls last,
+          case when not v_desc then case v_sort
+            when 'last_contacted_at' then f.last_contacted_at
+            when 'created_at'        then f.created_at
+          end end asc nulls last,
+          case when v_desc then case v_sort
+            when 'last_contacted_at' then f.last_contacted_at
+            when 'created_at'        then f.created_at
+          end end desc nulls last,
+          f.created_at asc, f.id asc
+        ) as rn
+      from filtered f
+    ) s
+    order by s.rn
+    limit v_limit offset v_offset
+  )
+  select
+    coalesce((select jsonb_agg(row_json order by rn) from page), '[]'::jsonb),
+    (select n from total)
+  into v_rows, v_total;
+
+  -- Scope-wide aggregates, deliberately UNfiltered: the KPI tiles and the
+  -- smart-list chips describe the whole book, not the current filter.
+  select jsonb_build_object(
+    'total',        count(*),
+    'qualified',    count(*) filter (where status in ('qualified', 'appointment')),
+    'appointments', count(*) filter (where status = 'appointment'),
+    'neverDialed',  count(*) filter (where attempt_count = 0 and last_contacted_at is null and status in ('new', 'no_answer', 'callback')),
+    'smart', jsonb_build_object(
+      'high_bill',       count(*) filter (where coalesce(utility_bill, 0) >= 200),
+      'big_load',        count(*) filter (where has_ev or has_pool or has_battery or multiple_systems),
+      'fresh',           count(*) filter (where status = 'new' and last_contacted_at is null),
+      'going_cold',      count(*) filter (where status in ('new', 'no_answer', 'callback')
+                                          and last_contacted_at is not null
+                                          and last_contacted_at < now() - interval '14 days'),
+      'no_phone',        count(*) filter (where not (
+                           length(regexp_replace(coalesce(phone, ''), '\D', '', 'g')) = 10
+                           or (length(regexp_replace(coalesce(phone, ''), '\D', '', 'g')) = 11
+                               and regexp_replace(coalesce(phone, ''), '\D', '', 'g') like '1%'))),
+      'missing_address', count(*) filter (where coalesce(btrim(address), '') = '' and coalesce(btrim(city), '') = '')
+    )
+  )
+  into v_stats
+  from public.leads l
+  where case
+    when p_supervisor
+      then (l.org_id = p_org or (l.owner_id = p_user and l.org_id is null))
+    else (
+      (l.owner_id = p_user or l.assigned_rep_id = p_user::text)
+      and (p_org is null or l.org_id = p_org)
+    )
+  end;
+
+  return jsonb_build_object('rows', v_rows, 'total', v_total, 'stats', v_stats);
+end;
+$$;
+
+-- CREATE FUNCTION grants PUBLIC execute by default; this function trusts its
+-- p_* scope params with no auth.uid() check, so it must only ever be reachable
+-- via the service-role client. Applied by introspection for the same reason the
+-- drop above is — a hand-written signature here drifts the moment a parameter
+-- is added, and a drifted GRANT fails the migration with 42883 (or, worse,
+-- silently leaves the function callable by `anon`).
+do $$
+declare r record;
+begin
+  for r in
+    select p.oid::regprocedure as sig
+    from pg_proc p
+    join pg_namespace n on n.oid = p.pronamespace
+    where n.nspname = 'public' and p.proname = 'app_leads_page'
+  loop
+    execute format('revoke execute on function %s from public', r.sig);
+    execute format('revoke execute on function %s from anon', r.sig);
+    execute format('revoke execute on function %s from authenticated', r.sig);
+    execute format('grant  execute on function %s to service_role', r.sig);
+  end loop;
+end $$;
+
+notify pgrst, 'reload schema';
+
+-- ═════════════════════════════════════════════════════════════════════════════
+-- PART 27 — SHARED METRICS AGGREGATES                          [Phase 1 · B4]
+-- One SQL source for the numbers every surface shows, replacing per-surface
+-- 50k-row JS aggregation. Definitions live in src/lib/metrics/definitions.ts
+-- (the glossary as code) and docs/phase-1/metric-glossary.md — the TS compute
+-- twin (src/lib/metrics/compute.ts) must agree with these FILTER clauses.
+-- SERVICE-ROLE ONLY: trusts p_user/p_org/p_supervisor, same as app_leads_page.
+-- Rollback: drop function public.app_metrics_summary, public.app_metrics_hourly.
+-- ═════════════════════════════════════════════════════════════════════════════
+create or replace function public.app_metrics_summary(
+  p_org uuid, p_user uuid, p_supervisor boolean,
+  p_from timestamptz, p_to timestamptz,
+  p_campaign text default null, p_rep uuid default null, p_channel text default null
+) returns jsonb
+language sql stable security definer set search_path = public as $$
+  with rows as (
+    select * from public.call_records cr
+    where cr.started_at >= p_from and cr.started_at < p_to
+      and case when p_supervisor
+            then (cr.org_id = p_org or (cr.owner_id = p_user and cr.org_id is null))
+            else (cr.owner_id = p_user and (cr.org_id = p_org or cr.org_id is null))
+          end
+      and (p_campaign is null or cr.campaign_id = p_campaign)
+      and (p_rep is null or cr.owner_id = p_rep)
+      and (p_channel is null or coalesce(cr.channel, 'human') = p_channel)
+  ),
+  agg as (
+    select
+      count(*) as calls,
+      -- System failures (provider refused before anyone was reached) are
+      -- excluded from the connect-rate denominator — glossary: connect_rate.
+      count(*) filter (where failure_kind is not null and outcome is null) as system_failures,
+      -- Canonical connect: the human_connected projection when stamped, else
+      -- the legacy outcome-based inference — glossary: human_connects.
+      count(*) filter (where coalesce(human_connected,
+        outcome in ('appointment_booked','callback_scheduled','qualified',
+                    'not_interested','do_not_call'))) as connects,
+      count(*) filter (where outcome = 'voicemail') as voicemails,
+      sum(coalesce(talk_sec, duration_sec)) filter (where coalesce(human_connected,
+        outcome in ('appointment_booked','callback_scheduled','qualified',
+                    'not_interested','do_not_call'))) as talk_secs
+    from rows
+  )
+  select jsonb_build_object(
+    'calls',            agg.calls,
+    'eligibleAttempts', agg.calls - agg.system_failures,
+    'humanConnects',    agg.connects,
+    'voicemails',       agg.voicemails,
+    'connectRate',      case when (agg.calls - agg.system_failures) > 0
+                          then round(agg.connects::numeric * 1000
+                                     / (agg.calls - agg.system_failures)) / 10
+                          else 0 end,
+    'avgTalkSec',       case when agg.connects > 0
+                          then round(coalesce(agg.talk_secs, 0) / agg.connects)
+                          else 0 end,
+    'outcomes', (select coalesce(jsonb_object_agg(o.outcome, o.n), '{}'::jsonb)
+                 from (select outcome, count(*) as n from rows
+                       where outcome is not null group by outcome) o),
+    'noOutcome', (select count(*) from rows where outcome is null),
+    -- Appointments SET: distinct non-cancelled rows CREATED in the window —
+    -- edits/reschedules never inflate this (glossary: appointments_set).
+    'appointmentsSet', (
+      select count(*) from public.appointments a
+      where a.created_at >= p_from and a.created_at < p_to
+        and coalesce(a.status, '') not in ('cancelled', 'canceled')
+        and case when p_supervisor then a.org_id = p_org
+                 else a.owner_id = p_user end)
+  ) from agg;
+$$;
+revoke all on function public.app_metrics_summary(uuid, uuid, boolean, timestamptz, timestamptz, text, uuid, text) from public, anon, authenticated;
+grant execute on function public.app_metrics_summary(uuid, uuid, boolean, timestamptz, timestamptz, text, uuid, text) to service_role;
+
+-- Hourly productivity for ONE org-local day. p_tz shifts each call's start into
+-- local time before bucketing, so DST days bucket correctly by construction
+-- (a 23/25-hour day simply has fewer/more populated buckets).
+create or replace function public.app_metrics_hourly(
+  p_org uuid, p_user uuid, p_supervisor boolean,
+  p_day date, p_tz text, p_campaign text default null
+) returns jsonb
+language sql stable security definer set search_path = public as $$
+  with rows as (
+    select
+      extract(hour from (cr.started_at at time zone p_tz))::int as local_hour,
+      coalesce(cr.human_connected,
+        cr.outcome in ('appointment_booked','callback_scheduled','qualified',
+                       'not_interested','do_not_call')) as connected
+    from public.call_records cr
+    where (cr.started_at at time zone p_tz)::date = p_day
+      and case when p_supervisor
+            then (cr.org_id = p_org or (cr.owner_id = p_user and cr.org_id is null))
+            else (cr.owner_id = p_user and (cr.org_id = p_org or cr.org_id is null))
+          end
+      and (p_campaign is null or cr.campaign_id = p_campaign)
+  )
+  select coalesce(jsonb_agg(jsonb_build_object(
+    'hour', h.local_hour, 'calls', h.calls, 'connects', h.connects
+  ) order by h.local_hour), '[]'::jsonb)
+  from (
+    select local_hour, count(*) as calls,
+           count(*) filter (where connected) as connects
+    from rows group by local_hour
+  ) h;
+$$;
+revoke all on function public.app_metrics_hourly(uuid, uuid, boolean, date, text, text) from public, anon, authenticated;
+grant execute on function public.app_metrics_hourly(uuid, uuid, boolean, date, text, text) to service_role;
+
+notify pgrst, 'reload schema';

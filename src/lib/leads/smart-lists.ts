@@ -1,5 +1,6 @@
 import type { Lead } from "../types";
 import { isValidPhone } from "../utils";
+import { DIALABLE_STATUSES } from "./dialable";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Smart lists — auto-updating lead segments defined as pure rules over a Lead.
@@ -28,8 +29,8 @@ export interface SmartList {
 }
 
 const DAY = 86_400_000;
-// Statuses still in play for outreach (mirror of db/leads DIALABLE).
-const DIALABLE = new Set(["new", "no_answer", "callback"]);
+// Statuses still in play for outreach — the shared list, not a mirror of it.
+const DIALABLE: ReadonlySet<string> = new Set(DIALABLE_STATUSES);
 
 export const SMART_LISTS: SmartList[] = [
   {

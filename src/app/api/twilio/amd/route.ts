@@ -1,3 +1,5 @@
+import { applyCallEvent } from "@/lib/calls/apply-event";
+import { providerEventFingerprint } from "@/lib/calls/state-machine";
 import { mergeSettings } from "@/lib/org/settings";
 import { createAdminClient, isAdminConfigured } from "@/lib/supabase/admin";
 import { getRestClient, readVerifiedTwilioForm } from "@/lib/twilio";
@@ -50,12 +52,29 @@ export async function POST(req: Request) {
 
   const url = new URL(req.url);
   const room = url.searchParams.get("room") ?? "";
+  const leadId = url.searchParams.get("leadId") ?? "";
   const orgId = url.searchParams.get("org") ?? "";
   const callSid = String(form.CallSid ?? "");
   const answeredBy = String(form.AnsweredBy ?? "").toLowerCase();
 
   // Twilio parses callback responses as TwiML — always end with an empty 204.
   if (!callSid || !answeredBy) return new Response(null, { status: 204 });
+
+  // Canonical event log (dual-write): a machine verdict moves the attempt to
+  // voicemail_connected; human/unknown just logs the verdict on the leg.
+  const isMachine = MACHINE_HANGUP.has(answeredBy) || isMachineEnd(answeredBy);
+  await applyCallEvent({
+    source: "twilio",
+    type: isMachine ? "leg.machine_detected" : "leg.answered",
+    providerEventId: providerEventFingerprint({
+      source: "twilio",
+      sid: callSid,
+      status: `amd:${answeredBy}`,
+    }),
+    attemptRef: { room: room || null, leadId: leadId || null },
+    targetState: isMachine ? "voicemail_connected" : null,
+    leg: { providerSid: callSid, leadId: leadId || null, answeredBy },
+  });
 
   // Park the verdict first (best-effort): the call record is only written at
   // disposition time, so this usually lands in pending_call_verdicts and is
@@ -96,8 +115,7 @@ export async function POST(req: Request) {
     }
   }
 
-  const machine = MACHINE_HANGUP.has(answeredBy) || isMachineEnd(answeredBy);
-  if (!machine) return new Response(null, { status: 204 }); // human / unknown
+  if (!isMachine) return new Response(null, { status: 204 }); // human / unknown
 
   const client = await getRestClient();
   if (!client) return new Response(null, { status: 204 });

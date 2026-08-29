@@ -6,7 +6,7 @@ import { MetricCard } from "@/components/dashboard/metric-card";
 import { EmptyState } from "@/components/shared/empty-state";
 import { PageContainer, PageHeader } from "@/components/shared/page-header";
 import { buttonVariants } from "@/components/ui/button";
-import { CalendarCheck, Sparkles, Zap } from "lucide-react";
+import { CalendarCheck, PhoneOff, Zap } from "lucide-react";
 import {
   getLeadsPage,
   getMissingCountyCount,
@@ -16,6 +16,7 @@ import {
 import { getCampaigns } from "@/lib/db/pipeline";
 import { listLeadGroupsWithCounts } from "@/lib/db/lead-groups";
 import { resolveLeadFields, type CoreFieldOverrides } from "@/lib/leads/field-schema";
+import { isLeadSortKey } from "@/lib/leads/sort-keys";
 import { getViewer, listMembers } from "@/lib/org/membership";
 import { templateProfile } from "@/lib/org/templates";
 import { orgVocabulary } from "@/lib/org/vocabulary";
@@ -29,27 +30,15 @@ export const dynamic = "force-dynamic";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-/** The sort keys app_leads_page's CASE whitelist accepts — anything else never
- *  leaves this page. The SQL re-validates anyway (defense in depth). */
-const SORTABLE = new Set([
-  "name",
-  "city",
-  "state",
-  "status",
-  "utility_bill",
-  "solar_payment",
-  "ai_score",
-  "last_contacted_at",
-  "created_at",
-]);
-
 /** Parse `?sort=key.dir` — unknown keys and malformed values drop to undefined
- *  (upload order) rather than forwarding user input to the RPC. */
+ *  (upload order) rather than forwarding user input to the RPC. The whitelist
+ *  is LEAD_SORT_KEYS (the keys app_leads_page's CASE accepts); the SQL
+ *  re-validates anyway (defense in depth). */
 function parseSort(raw: string | undefined): LeadsSort | undefined {
   if (!raw) return undefined;
   const dot = raw.indexOf(".");
   const key = dot > 0 ? raw.slice(0, dot) : raw;
-  if (!SORTABLE.has(key)) return undefined;
+  if (!isLeadSortKey(key)) return undefined;
   return { key, dir: raw.slice(dot + 1) === "desc" ? "desc" : "asc" };
 }
 
@@ -213,7 +202,10 @@ export default async function LeadsPage({
             the Reports/Dashboard "Appointments" KPI (booked appointment ROWS).
             Three screens once showed three different "Appointments" totals. */}
         <MetricCard label="In appointment stage" value={formatNumber(stats.appointments)} icon={CalendarCheck} accent="accent" />
-        <MetricCard label="Avg AI score" value={String(stats.avgScore)} icon={Sparkles} accent="warning" />
+        {/* Glossary "Never dialed": attempt_count 0, never contacted, and a
+            still-dialable status — the untouched, workable part of the book.
+            Replaced the Avg-AI-score aggregate (per-lead ai_score stays). */}
+        <MetricCard label="Never dialed" value={formatNumber(stats.neverDialed)} sub="No attempts, still dialable" icon={PhoneOff} accent="warning" />
       </div>
 
       <LeadsTable

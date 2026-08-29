@@ -148,6 +148,36 @@ select cron.schedule(
 Running **both** is harmless: the drain claims a row by flipping its status before sending, so a
 double-fire never sends the same email twice.
 
+## reconcile-data — the Phase-1 data reconciliation job (every 15 minutes)
+
+`/api/cron/reconcile-data` is the slow-lane integrity sweep behind the Phase-1 data contracts
+(same auth contract as the others — `Authorization: Bearer $CRON_SECRET`, GET or POST). Each
+tick it runs three bounded, individually best-effort repairs:
+
+1. **Attempt-counter drift** — recounts `call_records` for leads touched in the last 48h and
+   repairs `leads.attempt_count` / `last_attempt_at` where they disagree. The counter is bumped
+   at dial time while records land at disposition time, so crashes and replays can skew it —
+   and it drives never-dialed-first queue ordering and max-attempt gates.
+2. **Stuck attempts** — `call_attempts` sitting in a non-terminal state for 30+ minutes are
+   force-finished through `attempt.reconciled` (the one sanctioned corrector in
+   `apply-event.ts`): `completed` when a `call_records` row proves the call happened,
+   `no_answer` when there's still no record after 2 hours.
+3. **Metric drift** — for each active org, re-runs `app_metrics_summary` for *yesterday*
+   (org-local day) and independently head-counts `call_records` for the same window/scope.
+   Disagreements are logged to `audit_log` as `metric_drift` with both numbers.
+
+The report JSON returned by each run breaks all three down; telemetry counters
+(`reconcile.counter_repairs`, `reconcile.stuck_reconciled`, `reconcile.metric_drift`) land in
+`ops_metrics` — zeros included, as proof the job ran.
+
+Schedule it once the endpoint has deployed (the B4 checkpoint — before that it 404s every
+15 minutes). This is the commented statement in `supabase/cron.sql`:
+
+```sql
+select cron.schedule('reconcile-data', '*/15 * * * *',
+  $job$ select public.app_fire_cron('/api/cron/reconcile-data') $job$);
+```
+
 ## If you upgrade to Vercel Pro
 
 You can move the schedule back into `vercel.json` and drop the Postgres jobs — Pro allows per-minute

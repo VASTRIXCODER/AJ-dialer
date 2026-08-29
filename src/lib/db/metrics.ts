@@ -13,15 +13,14 @@ import {
 import { reconcileAndGetMonitor } from "../ai-call-reconcile";
 import {
   channelBreakdown,
-  CONNECTED_OUTCOMES,
   dispositionBreakdown,
   funnelOf,
-  isConnectedRow,
   type ChannelRow,
   type DispositionRow,
   type Funnel,
 } from "../call-analytics";
 import { zonedDayHour, zonedDayKey } from "../dialer/schedule";
+import { isConnectedRecord, orgTimezone } from "../metrics/definitions";
 import { composeLeaderboard } from "../leaderboard";
 import { createAdminClient, isAdminConfigured } from "../supabase/admin";
 import { isSupabaseConfigured } from "../supabase/config";
@@ -73,6 +72,19 @@ function toPlayableRecording(raw: string | null): string | null {
   return m ? `/api/twilio/recording/${m[1]}` : raw;
 }
 
+/**
+ * The one "did a human answer?" test for raw call_records rows, routed through
+ * the canonical predicate (src/lib/metrics/definitions.ts): the verified
+ * `human_connected` flag when stamped, the legacy outcome-based inference
+ * otherwise. Every connect figure this file produces goes through here, so it
+ * can never drift from the dashboard tiles / RPCs (glossary: human_connects).
+ */
+const isConnected = (r: Row): boolean =>
+  isConnectedRecord({
+    humanConnected: r.human_connected as boolean | null | undefined,
+    outcome: (r.outcome as string | null | undefined) ?? null,
+  });
+
 /** Map one call_records row to the RecentCall shape (recording + transcript aware). */
 function mapRecentCall(
   r: Row,
@@ -91,10 +103,11 @@ function mapRecentCall(
   const summary = (r.summary as string) ?? null;
   // A recording only exists when the call actually connected — no-answer /
   // voicemail / failed calls have none, so don't offer a dead "Play" link.
+  // "Connected" here is the ONE canonical predicate (glossary: human_connects).
   const hasRecording =
     channel === "human"
       ? Boolean(recordingUrl)
-      : Boolean(conversationId && outcome && CONNECTED_OUTCOMES.has(outcome));
+      : Boolean(conversationId && isConnected(r));
   return {
     id: String(r.id ?? conversationId ?? `${r.owner_id}-${r.started_at}`),
     // No name on the row is a DATA gap, not a homeowner. The UI falls back to
@@ -160,7 +173,7 @@ export async function getCallHistory(opts: {
     let callHistoryQuery = reader
       .from("call_records")
       .select(
-        "id,owner_id,outcome,duration_sec,channel,started_at,lead_name,phone,conversation_id,recording_url,summary",
+        "id,owner_id,outcome,duration_sec,human_connected,channel,started_at,lead_name,phone,conversation_id,recording_url,summary",
       )
       .eq(scopeCol, scopeVal);
     // A rep's "own" scope must stay within their CURRENT org — never surface
@@ -292,7 +305,15 @@ function fmtHour(h: number): string {
   return h < 12 ? `${h}a` : `${h - 12}p`;
 }
 
-function apptWhen(a: Row): string {
+/**
+ * Human label for an appointment's time. `scheduled_at` is a FLOATING wall-clock
+ * time stored as if it were UTC (see the invariant in src/lib/appointments/time.ts)
+ * — so formatting the parsed instant with timeZone "UTC" recovers the intended
+ * wall clock exactly. The old no-timeZone call rendered it in SERVER-local time,
+ * shifting every appointment by the deploy region's offset. `created_at` IS a
+ * real instant, so its fallback date renders in the org's timezone (`tz`).
+ */
+function apptWhen(a: Row, tz: string): string {
   const label = a.scheduled_label ? String(a.scheduled_label) : "";
   if (label) return label;
   if (a.scheduled_at) {
@@ -302,10 +323,11 @@ function apptWhen(a: Row): string {
       day: "numeric",
       hour: "numeric",
       minute: "2-digit",
+      timeZone: "UTC", // floating wall clock — see the banner above
     });
   }
   return a.created_at
-    ? new Date(String(a.created_at)).toLocaleDateString()
+    ? new Date(String(a.created_at)).toLocaleDateString("en-US", { timeZone: tz })
     : "Scheduled";
 }
 
@@ -369,7 +391,7 @@ export async function getReportingData(
         let q = reader
           .from("call_records")
           .select(
-            "id,owner_id,outcome,duration_sec,channel,started_at,lead_name,phone,conversation_id,recording_url,summary",
+            "id,owner_id,outcome,duration_sec,human_connected,talk_sec,channel,started_at,lead_name,phone,conversation_id,recording_url,summary",
           )
           .eq(scopeCol, scopeVal);
         if (ownScoped) q = q.eq("org_id", orgId as string);
@@ -448,10 +470,11 @@ export async function getReportingData(
     const nameById = new Map(
       ((memberRes.data ?? []) as Row[]).map((m) => [String(m.user_id), String(m.name ?? "")]),
     );
-    const timezone = (orgRes.data?.timezone as string) || "UTC";
+    // The ONE timezone fallback (America/Chicago) — same as the dialing/TCPA
+    // path, so "today" can't roll over at a different hour than dialing windows.
+    const timezone = orgTimezone(orgRes.data);
 
     const outcomeOf = (r: Row) => (r.outcome as CallOutcome) ?? null;
-    const isConnected = isConnectedRow;
 
     // Precompute each call's org-local day key ONCE. The trend, "today", and
     // period passes below would otherwise each re-derive it per row — ~37 passes
@@ -526,9 +549,13 @@ export async function getReportingData(
     // all-time, so a rep with a great day but a mediocre lifetime saw a number
     // that contradicted the count next to it. Give the dashboard TODAY's rate.
     const connectRateToday = pct(todays.filter(isConnected).length, todays.length);
-    const durations = periodCalls
-      .map((c) => Number(c.duration_sec ?? 0))
-      .filter((n) => n > 0);
+    // Avg talk time (glossary: avg_talk_time) — CONNECTED calls only, preferring
+    // the measured connected→ended talk_sec and falling back to duration_sec on
+    // legacy rows. Averaging every row's duration (the old math) let ringing and
+    // voicemail seconds drag the number toward zero.
+    const talkSecs = periodCalls
+      .filter(isConnected)
+      .map((c) => Number(c.talk_sec ?? c.duration_sec ?? 0));
 
     // Appointments "booked" reacts to the selected range too (created_at in the
     // org's day window), so Reports(Today) no longer shows "5 calls / 340 appts".
@@ -549,7 +576,7 @@ export async function getReportingData(
       callsToday: todays.length,
       connections,
       conversations: connections,
-      avgCallLenSec: avg(durations),
+      avgCallLenSec: avg(talkSecs),
       connectRate: pct(connections, totalCalls),
       appointmentRate: pct(apptOutcome, totalCalls),
       callbackRate: pct(callbackOutcome, totalCalls),
@@ -633,7 +660,7 @@ export async function getReportingData(
       .map((a, i) => ({
         id: String(a.id ?? i),
         leadName: String(a.lead_name ?? "").trim(),
-        whenLabel: apptWhen(a),
+        whenLabel: apptWhen(a, timezone),
         source: String(a.source ?? "ai"),
         status: String(a.status ?? "scheduled"),
       }));
@@ -849,7 +876,9 @@ export async function getTeamLeaderboard(): Promise<{
       .select("timezone")
       .eq("id", orgId)
       .maybeSingle();
-    const timezone = (org?.timezone as string) || "UTC";
+    // Same org-timezone fallback as every other surface (America/Chicago) — a
+    // UTC fallback here rolled the leaderboard's "today" over at the wrong hour.
+    const timezone = orgTimezone(org);
     return { reps: await aggregateTeamLeaderboard(orgId, timezone), meId: user.id };
   } catch (e) {
     console.error("[metrics] getTeamLeaderboard failed:", e instanceof Error ? e.message : e);

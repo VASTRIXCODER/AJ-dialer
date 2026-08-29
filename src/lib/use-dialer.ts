@@ -7,6 +7,7 @@ import {
   decideCallEvent,
   describeCallError,
 } from "./dialer/call-events";
+import { persistDisposition } from "./dialer/disposition-queue";
 import type { AgentKey } from "./elevenlabs";
 import type { CallOutcome, Lead } from "./types";
 import { formatPhone, toE164 } from "./utils";
@@ -93,6 +94,9 @@ export interface DialerState {
   callSid: string | null;
   /** Conference room for the active manual call — links its recording. */
   room: string | null;
+  /** Per-lead idempotency keys for the active round — every disposition save
+   *  carries its lead's key so an outbox replay can never double-file. */
+  attemptIds: Record<string, string>;
   /** Outbound call SIDs for the homeowner legs — used for hold/unhold. */
   outboundSids: string[];
   /** Which caller ID is active and rotation pool info — shown in session bar. */
@@ -291,6 +295,7 @@ export function useDialer(
     error: null,
     callSid: null,
     room: null,
+    attemptIds: {},
     outboundSids: [],
     callerIdInfo: null,
     excludedCallerIds: [],
@@ -379,6 +384,9 @@ export function useDialer(
   const redialTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const aiTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const humanIdRef = useRef<string | null>(null);
+  /** Per-lead idempotency keys for the CURRENT round (mirrors state.attemptIds
+   *  for code paths that run outside React's render cycle). */
+  const attemptIdsRef = useRef<Record<string, string>>({});
   // Monotonically incremented on every AI session start/end so in-flight fetch
   // callbacks from a prior session can detect they're stale and skip setState.
   const sessionGenRef = useRef(0);
@@ -1068,18 +1076,20 @@ export function useDialer(
     if (dialedLeads.length < 2) return;
     for (const l of dialedLeads) {
       if (!l.id || l.id === keepLeadId) continue;
-      void fetch("/api/calls", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          leadId: l.id,
-          leadName: `${l.firstName} ${l.lastName}`.trim(),
-          phone: l.phone,
-          durationSec: 0,
-          outcome: "no_answer",
-        }),
-        keepalive: true,
-      }).catch(() => {});
+      // Through the durable outbox (not bare fetch), each with its own per-lead
+      // idempotency key from dial time — a retried batch files each loser once.
+      // attemptRoom resolves the canonical attempt WITHOUT storing the round's
+      // shared room on the record (call_records.room is unique per round and
+      // belongs to the rep-dispositioned winner).
+      void persistDisposition({
+        leadId: l.id,
+        leadName: `${l.firstName} ${l.lastName}`.trim(),
+        phone: l.phone,
+        durationSec: 0,
+        outcome: "no_answer",
+        clientAttemptId: attemptIdsRef.current[l.id],
+        attemptRoom: humanIdRef.current ? `hc-${humanIdRef.current}` : undefined,
+      });
     }
   }, []);
 
@@ -1766,6 +1776,7 @@ export function useDialer(
       humanIdRef.current = humanId;
       const room = `hc-${humanId}`;
       // Persist the room so the disposition save can link the recording to it.
+      // (attemptIds is patched below once minted — see the dial block.)
       patch({ room });
       fetch("/api/calls/active", {
         method: "POST",
@@ -1789,6 +1800,18 @@ export function useDialer(
       // What we asked Twilio to dial. This is the ONLY handle on those calls
       // that can't be lost in transit, so every cleanup path falls back to it.
       const dialed = leads.map((l) => ({ leadId: l.id, phone: l.phone }));
+      // Per-lead idempotency keys for this round: carried onto call_attempts at
+      // dial time and onto every disposition save, so a replayed save can never
+      // double-file. One key per LEAD (a 3X round is three attempts).
+      const attemptIds: Record<string, string> = {};
+      for (const l of leads) {
+        attemptIds[l.id] =
+          typeof crypto !== "undefined" && "randomUUID" in crypto
+            ? crypto.randomUUID()
+            : `ca-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+      }
+      attemptIdsRef.current = attemptIds;
+      patch({ attemptIds });
       // Publish it immediately, so a teardown triggered from OUTSIDE this
       // function — a Call error event, Cancel, the poll giving up — can hang the
       // legs up too. Previously only the paths inside this try block could.
@@ -1806,6 +1829,7 @@ export function useDialer(
             room,
             agentIdentity: identityRef.current,
             leads: dialed,
+            attemptIds,
             excludedCallerIds: excludedCallerIdsRef.current.length
               ? excludedCallerIdsRef.current
               : undefined,

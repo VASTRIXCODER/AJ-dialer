@@ -41,6 +41,10 @@ export async function POST(req: Request) {
     callback?: { iso?: string; when?: string; reason?: string } | null;
     /** Which campaign script (A/B) the rep was shown for this lead, if any. */
     scriptVariant?: string;
+    /** Client-minted idempotency key — stable across outbox replays. */
+    clientAttemptId?: string;
+    /** Conference room for attempt resolution only (parallel non-winners). */
+    attemptRoom?: string;
   };
 
   // Strict allowlist — the DB check constraint only admits null | 'a' | 'b',
@@ -81,6 +85,14 @@ export async function POST(req: Request) {
     appointment: appt,
     callback,
     scriptVariant,
+    clientAttemptId:
+      typeof body.clientAttemptId === "string" && body.clientAttemptId.length <= 64
+        ? body.clientAttemptId
+        : null,
+    attemptRoom:
+      typeof body.attemptRoom === "string" && /^hc-[\w-]{1,80}$/.test(body.attemptRoom)
+        ? body.attemptRoom
+        : null,
   });
 
   if (!recordId) {

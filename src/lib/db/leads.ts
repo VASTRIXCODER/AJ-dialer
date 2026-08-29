@@ -1,12 +1,14 @@
 import "server-only";
 
 import { leads as fallbackLeads, getLeadById as fallbackById } from "../data";
+import { DIALABLE_STATUSES } from "../leads/dialable";
 import {
   hasStructuredPredicates,
   leadMatchesParsedQuery,
   parseLeadQuery,
 } from "../leads/search-heuristics";
 import { SMART_LISTS, countSmartLists, smartListById } from "../leads/smart-lists";
+import { isLeadSortKey, type LeadSortKey } from "../leads/sort-keys";
 import { countyForZip } from "../leads/zip-county";
 import { createAdminClient, isAdminConfigured } from "../supabase/admin";
 import { isSupabaseConfigured } from "../supabase/config";
@@ -20,7 +22,9 @@ import { canActOn, getScope } from "./scope";
 // in, reads come from their `leads` table (RLS-enforced); otherwise it falls
 // back to the in-memory source so demo mode keeps working.
 
-const DIALABLE: LeadStatus[] = ["new", "no_answer", "callback"];
+// Local alias of the shared list (leads/dialable.ts) — spread because the
+// Supabase `.in()` builders want a mutable array.
+const DIALABLE: LeadStatus[] = [...DIALABLE_STATUSES];
 
 /**
  * Strip the `+00` Postgres tacks onto `appointments.scheduled_at` (declared
@@ -1215,11 +1219,13 @@ export interface LeadsSort {
 
 /**
  * JS mirror of app_leads_page's sort whitelist — the demo/degraded-path twin of
- * the SQL CASE arms. Keep the two in lockstep. Text keys coalesce to "" (like
- * the SQL's coalesce), value keys return null for missing data (sorted last
- * regardless of direction, like the SQL's NULLS LAST).
+ * the SQL CASE arms. The key set is LEAD_SORT_KEYS (leads/sort-keys.ts), and the
+ * Record type makes a drifted arm a compile error; only the SQL copy still
+ * needs the lockstep comment. Text keys coalesce to "" (like the SQL's
+ * coalesce), value keys return null for missing data (sorted last regardless
+ * of direction, like the SQL's NULLS LAST).
  */
-const LEADS_SORT_VALUES: Record<string, (l: Lead) => string | number | null> = {
+const LEADS_SORT_VALUES: Record<LeadSortKey, (l: Lead) => string | number | null> = {
   name: (l) => `${l.lastName ?? ""} ${l.firstName ?? ""}`.toLowerCase(),
   city: (l) => (l.city ?? "").toLowerCase(),
   state: (l) => (l.state ?? "").toLowerCase(),
@@ -1291,7 +1297,23 @@ export interface LeadsPageStats {
   total: number;
   qualified: number;
   appointments: number;
-  avgScore: number;
+  /** Untouched book: attempt_count 0, never contacted, still-dialable status.
+   *  See docs/phase-1/metric-glossary.md — replaced the avgScore aggregate. */
+  neverDialed: number;
+}
+
+/**
+ * JS twin of the SQL's neverDialed stat (app_leads_page: attempt_count = 0 AND
+ * last_contacted_at IS NULL AND status dialable). The Lead shape doesn't carry
+ * attempt_count, so this approximates with lastContactedAt — every completed
+ * call stamps both, so the two only diverge on rows whose attempts never
+ * connected AND never set last_contacted_at, which the dial loop also stamps.
+ * Close enough for the demo/degraded paths this feeds.
+ */
+function neverDialedCount(all: Lead[]): number {
+  return all.filter(
+    (l) => !l.lastContactedAt && DIALABLE_STATUSES.includes(l.status),
+  ).length;
 }
 
 export interface LeadsPageResult {
@@ -1312,7 +1334,7 @@ function emptyLeadsPage(params: LeadsPageParams): LeadsPageResult {
   return {
     leads: [],
     total: 0,
-    stats: { total: 0, qualified: 0, appointments: 0, avgScore: 0 },
+    stats: { total: 0, qualified: 0, appointments: 0, neverDialed: 0 },
     smartCounts,
     page: Math.max(params.page, 1),
     pageSize: Math.min(Math.max(params.pageSize ?? LEADS_PAGE_SIZE, 1), 200),
@@ -1381,7 +1403,10 @@ function filterLeadsPage(
   // keys leave upload order untouched), nulls last regardless of direction.
   // Array.prototype.sort is stable, so the input's upload order stands in for
   // the SQL's (created_at, id) tiebreaker.
-  const sortValue = params.sort ? LEADS_SORT_VALUES[params.sort.key] : undefined;
+  const sortValue =
+    params.sort && isLeadSortKey(params.sort.key)
+      ? LEADS_SORT_VALUES[params.sort.key]
+      : undefined;
   const ordered = sortValue
     ? [...filtered].sort((a, b) => {
         const va = sortValue(a);
@@ -1409,9 +1434,7 @@ function filterLeadsPage(
       qualified: all.filter((l) => l.status === "qualified" || l.status === "appointment")
         .length,
       appointments: all.filter((l) => l.status === "appointment").length,
-      avgScore: all.length
-        ? Math.round(all.reduce((a, l) => a + (l.aiScore ?? 0), 0) / all.length)
-        : 0,
+      neverDialed: neverDialedCount(all),
     },
     smartCounts: countSmartLists(all),
     page,
@@ -1499,7 +1522,7 @@ export async function getLeadsPage(params: LeadsPageParams): Promise<LeadsPageRe
         total: Number(payload.stats?.total ?? 0),
         qualified: Number(payload.stats?.qualified ?? 0),
         appointments: Number(payload.stats?.appointments ?? 0),
-        avgScore: Number(payload.stats?.avgScore ?? 0),
+        neverDialed: Number(payload.stats?.neverDialed ?? 0),
       },
       smartCounts,
       page,
@@ -1931,8 +1954,6 @@ export async function getLeadStats() {
       (l) => l.status === "qualified" || l.status === "appointment",
     ).length,
     appointments: all.filter((l) => l.status === "appointment").length,
-    avgScore: all.length
-      ? Math.round(all.reduce((a, l) => a + (l.aiScore ?? 0), 0) / all.length)
-      : 0,
+    neverDialed: neverDialedCount(all),
   };
 }

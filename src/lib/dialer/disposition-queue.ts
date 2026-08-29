@@ -63,8 +63,19 @@ async function postOnce(payload: DispositionPayload): Promise<boolean> {
  * Persist a disposition. Advances nothing — the caller advances the queue
  * immediately for snappy UX; durability is guaranteed here in the background:
  * on any failure the payload is queued for replay rather than dropped.
+ *
+ * Stamps a client idempotency key BEFORE the first POST, so a replay of a
+ * save whose response was lost carries the SAME key — the server's unique
+ * index then makes the replay a no-op instead of a duplicate record +
+ * duplicate appointment (the exact bug this outbox used to cause).
  */
 export async function persistDisposition(payload: DispositionPayload): Promise<void> {
+  if (!payload.clientAttemptId) {
+    payload.clientAttemptId =
+      typeof crypto !== "undefined" && "randomUUID" in crypto
+        ? crypto.randomUUID()
+        : `ca-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+  }
   if (!(await postOnce(payload))) enqueue(payload);
 }
 

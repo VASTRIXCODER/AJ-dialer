@@ -1,7 +1,9 @@
 import "server-only";
 
 import { CONNECTED_OUTCOMES } from "../call-analytics";
+import { recordDispositionFiled } from "../calls/apply-event";
 import { zonedDayStartMs } from "../dialer/schedule";
+import { orgTimezone } from "../metrics/definitions";
 import { createAdminClient, isAdminConfigured } from "../supabase/admin";
 import { isSupabaseConfigured } from "../supabase/config";
 import { createClient } from "../supabase/server";
@@ -234,6 +236,18 @@ export async function insertCallRecord(input: {
   callback?: CallbackDraft | null;
   /** Which campaign script (A/B) was shown on this call — null when none was. */
   scriptVariant?: "a" | "b" | null;
+  /**
+   * Client-minted idempotency key — the SAME value on every outbox replay of
+   * this disposition. With `room`, one of the unique keys that makes a replayed
+   * save a no-op instead of a duplicate record + duplicate appointment.
+   */
+  clientAttemptId?: string | null;
+  /**
+   * The conference room for ATTEMPT RESOLUTION ONLY (parallel non-winner
+   * records share the round's room but must not STORE it — call_records.room
+   * is unique per round and belongs to the rep-dispositioned record).
+   */
+  attemptRoom?: string | null;
 }): Promise<string | null> {
   if (!isSupabaseConfigured()) return null;
   try {
@@ -256,7 +270,7 @@ export async function insertCallRecord(input: {
       campaignId = (l?.campaign_id as string) ?? null;
     }
 
-    const { data: rec } = await supabase.from("call_records").insert({
+    const { data: rec, error: insErr } = await supabase.from("call_records").insert({
       owner_id: user.id,
       lead_id: leadUuid,
       lead_name: input.leadName ?? "",
@@ -269,12 +283,31 @@ export async function insertCallRecord(input: {
       room: input.room ?? null,
       campaign_id: campaignId,
       script_variant: input.scriptVariant ?? null,
+      client_attempt_id: input.clientAttemptId ?? null,
       // The rep's notes belong to THIS call. They are also mirrored onto the
       // lead below (that's the lead's current note), but leads.notes is a single
       // field every later call overwrites — so without this column the note from
       // a call was gone the moment the next one was dispositioned.
       notes: input.notes?.trim() || null,
     }).select("id").maybeSingle();
+
+    // 23505 — this exact disposition already landed (the client outbox replayed
+    // a save whose response was lost). Return the EXISTING row and skip the
+    // lead update + routeDisposition below: the first write already did them,
+    // and re-routing is precisely what used to create the duplicate
+    // appointment/callback.
+    if (insErr?.code === "23505") {
+      let dupQuery = supabase.from("call_records").select("id");
+      if (input.clientAttemptId) {
+        dupQuery = dupQuery.eq("client_attempt_id", input.clientAttemptId);
+      } else if (input.room) {
+        dupQuery = dupQuery.eq("room", input.room);
+      } else {
+        return null;
+      }
+      const { data: dup } = await dupQuery.maybeSingle();
+      return (dup as { id?: string } | null)?.id ?? null;
+    }
     const recordId = (rec as { id?: string } | null)?.id ?? null;
 
     // Claim a recording that finished before this record existed (the rep was
@@ -320,7 +353,7 @@ export async function insertCallRecord(input: {
       }
     }
 
-    if (!input.outcome) return recordId;
+    if (!input.outcome) return recordId ?? null;
 
     // Reflect the disposition on the lead + route it to the right pipeline tab.
     if (leadUuid) {
@@ -345,6 +378,33 @@ export async function insertCallRecord(input: {
       callRecordId: recordId,
       source: input.channel === "ai" ? "ai" : "rep",
     });
+
+    // Canonical machine: mark the attempt dispositioned + link the projection
+    // row. Resolution: client key, else (room, lead) — attemptRoom covers the
+    // parallel non-winner records that must not STORE the shared room.
+    const resolveRoom = input.attemptRoom ?? input.room ?? null;
+    if (input.clientAttemptId || resolveRoom) {
+      const filed = await recordDispositionFiled({
+        attemptRef: {
+          clientAttemptId: input.clientAttemptId ?? null,
+          room: resolveRoom,
+          leadId: leadUuid,
+        },
+        disposition: input.outcome,
+        callRecordId: recordId,
+        actor: input.channel === "ai" ? "ai" : "rep",
+      });
+      if (filed.attemptId && recordId && isAdminConfigured()) {
+        try {
+          await createAdminClient()
+            .from("call_records")
+            .update({ attempt_id: filed.attemptId })
+            .eq("id", recordId);
+        } catch {
+          /* best-effort */
+        }
+      }
+    }
     return recordId ?? null;
   } catch {
     return null;
@@ -610,6 +670,7 @@ export async function completeAIConversation(input: {
       .eq("conversation_id", input.conversationId)
       .maybeSingle();
 
+    let recordId: string | null = (existingRec as { id?: string } | null)?.id ?? null;
     if (!existingRec) {
       // Tag the AI call with the lead's campaign for per-campaign reporting.
       let campaignId: string | null = null;
@@ -621,7 +682,7 @@ export async function completeAIConversation(input: {
           .maybeSingle();
         campaignId = (l?.campaign_id as string) ?? null;
       }
-      await admin.from("call_records").insert({
+      const { data: insRec, error: insErr } = await admin.from("call_records").insert({
         owner_id: ownerId,
         lead_id: existing?.lead_id ?? null,
         lead_name: existing?.lead_name ?? "",
@@ -646,7 +707,20 @@ export async function completeAIConversation(input: {
         sentiment: input.sentiment,
         campaign_id: campaignId,
         transcript_text: flattenTranscript(input.transcript),
-      });
+      }).select("id").maybeSingle();
+      recordId = (insRec as { id?: string } | null)?.id ?? null;
+      // 23505: a concurrent finalize (webhook racing the reconciler) inserted
+      // between our existence check and this insert — the unique
+      // conversation_id index closed that race. The other writer carried the
+      // same payload; adopt its row instead of duplicating.
+      if (insErr?.code === "23505") {
+        const { data: winner } = await admin
+          .from("call_records")
+          .select("id")
+          .eq("conversation_id", input.conversationId)
+          .maybeSingle();
+        recordId = (winner as { id?: string } | null)?.id ?? null;
+      }
     } else if (upgrading) {
       // Correct the previously-filed (e.g. no-answer) record with the real result.
       await admin
@@ -686,6 +760,24 @@ export async function completeAIConversation(input: {
       source: "ai",
       agentKey: (existing?.agent_key as string) ?? null,
     });
+
+    // Canonical machine: mark the attempt dispositioned + link the projection.
+    const filed = await recordDispositionFiled({
+      attemptRef: { conversationId: input.conversationId },
+      disposition: input.outcome,
+      callRecordId: recordId,
+      actor: "ai",
+    });
+    if (filed.attemptId && recordId) {
+      try {
+        await admin
+          .from("call_records")
+          .update({ attempt_id: filed.attemptId })
+          .eq("id", recordId);
+      } catch {
+        /* best-effort */
+      }
+    }
   } catch {
     /* best-effort */
   }
@@ -1207,7 +1299,9 @@ export async function getAITodayStats(): Promise<AITodayStats> {
     const { data: org } = orgId
       ? await supabase.from("organizations").select("timezone").eq("id", orgId).maybeSingle()
       : { data: null as { timezone?: string } | null };
-    const tz = (org?.timezone as string) || "UTC";
+    // The ONE timezone fallback (America/Chicago, matching the dialing/TCPA
+    // path) — a UTC fallback rolled "today" over at the wrong wall-clock hour.
+    const tz = orgTimezone(org);
     const todayStartISO = new Date(zonedDayStartMs(Date.now(), tz)).toISOString();
 
     // A fresh head-count query per metric, all sharing the same scope + "today".
@@ -1223,6 +1317,7 @@ export async function getAITodayStats(): Promise<AITodayStats> {
     const [callsTotal, notReal, connects, booked, completed] = await Promise.all([
       base(),
       base().is("outcome", null).not("failure_kind", "is", null),
+      // connected_at (stamped once when the callee answers) IS the human-connect evidence for AI calls — glossary: human_connects.
       base().not("connected_at", "is", null),
       base().eq("outcome", "appointment_booked"),
       base().not("ended_at", "is", null),
