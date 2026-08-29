@@ -16,6 +16,7 @@ import {
   resolveLeadFields,
   type LeadFieldDef,
 } from "../leads/field-schema";
+import { stageForLeadStatus } from "../opportunities/stage-machine";
 import { getViewer } from "../org/membership";
 import { templateProfile } from "../org/templates";
 import { isSolarVertical } from "../org/vertical";
@@ -143,6 +144,37 @@ export interface LeadPanel {
     status: string;
   } | null;
   nextCallback: { id: string; dueAt: string | null; reason: string; status: string } | null;
+  /**
+   * The record's sales state — where it sits in the pipeline, and the clocks
+   * behind that. Null when PART 37 hasn't been applied or the lead genuinely
+   * has no opportunity yet; the section simply doesn't render.
+   */
+  opportunity: {
+    id: string;
+    stage: string;
+    opStatus: string;
+    /** Time in the CURRENT stage starts here. */
+    stageEnteredAt: string | null;
+    attemptCount: number;
+    contactCount: number;
+    nextActionKind: string | null;
+    nextActionDueAt: string | null;
+    /** Speed-to-lead legs. Any of these may be null — render "—", never 0. */
+    firstReceivedAt: string | null;
+    firstAssignedAt: string | null;
+    firstAttemptedAt: string | null;
+    firstContactedAt: string | null;
+    lastTouchedAt: string | null;
+    closedAt: string | null;
+    closeReason: string | null;
+    /**
+     * Reconstructed by the PART 37 backfill from Phase 1 status rather than
+     * observed as it happened. Its clocks are inferences, and the surface has
+     * to say so — a "speed to lead" computed from a backfilled row is not a
+     * measurement of anything that was timed.
+     */
+    backfilled: boolean;
+  } | null;
   recordings: {
     id: string;
     startedAt: string;
@@ -357,6 +389,26 @@ async function demoPanel(leadId: string): Promise<LeadPanelResult> {
       // Sample recordings carry a placeholder "#" URL — nothing playable, so
       // the demo shows the honest empty state instead of a dead player.
       recordings: [],
+      // Derived from the demo lead's own status through the real mapping, so
+      // the section shows a coherent record rather than an invented one.
+      opportunity: {
+        id: `demo-opp-${lead.id}`,
+        stage: stageForLeadStatus(lead.status, Boolean(lead.assignedRepId)),
+        opStatus: "open",
+        stageEnteredAt: calls[0]?.startedAt ?? lead.createdAt,
+        attemptCount: calls.length,
+        contactCount: calls.filter((c) => c.hasSummary).length,
+        nextActionKind: cb ? "callback" : null,
+        nextActionDueAt: cb?.dueAt ?? null,
+        firstReceivedAt: lead.createdAt,
+        firstAssignedAt: lead.assignedRepId ? lead.createdAt : null,
+        firstAttemptedAt: calls.length ? calls[calls.length - 1].startedAt : null,
+        firstContactedAt: latest?.startedAt ?? null,
+        lastTouchedAt: calls[0]?.startedAt ?? null,
+        closedAt: null,
+        closeReason: null,
+        backfilled: false,
+      },
       aiSummary: latest
         ? {
             summary:
@@ -435,7 +487,7 @@ export async function getLeadPanelResult(leadId: string): Promise<LeadPanelResul
 
     const memberIds = [...new Set([ownerId, assignedRepId].filter(Boolean))] as string[];
 
-    const [members, pack, campaign, group, dncRow, appt, cb, recs, summaryRec] =
+    const [members, pack, campaign, group, dncRow, appt, cb, recs, summaryRec, oppRow] =
       await Promise.all([
         memberIds.length && orgId
           ? db
@@ -497,6 +549,22 @@ export async function getLeadPanelResult(leadId: string): Promise<LeadPanelResul
           .order("started_at", { ascending: false })
           .limit(1)
           .maybeSingle(),
+        // The record's sales state. Newest first rather than filtering to the
+        // open one: a CLOSED opportunity is still the truth about this lead,
+        // and hiding it would make a lost or suppressed record look like one
+        // that was never worked at all.
+        orgId
+          ? db
+              .from("opportunities")
+              .select(
+                "id,stage,op_status,stage_entered_at,attempt_count,contact_count,next_action_kind,next_action_due_at,first_received_at,first_assigned_at,first_attempted_at,first_contacted_at,last_touched_at,closed_at,close_reason,backfilled",
+              )
+              .eq("org_id", orgId)
+              .eq("lead_id", leadId)
+              .order("created_at", { ascending: false })
+              .limit(1)
+              .maybeSingle()
+          : Promise.resolve({ data: null }),
       ]);
 
     // Result unwrappers — the Promise.all above mixes maybeSingle() results and
@@ -522,6 +590,7 @@ export async function getLeadPanelResult(leadId: string): Promise<LeadPanelResul
     const apptData = one(appt);
     const cbData = one(cb);
     const sumData = one(summaryRec);
+    const oppData = one(oppRow);
 
     const panel: LeadPanel = {
       lead,
@@ -598,6 +667,26 @@ export async function getLeadPanelResult(leadId: string): Promise<LeadPanelResul
           url: playableRecordingUrl(str(r.recording_url)) ?? "",
         }))
         .filter((r) => Boolean(r.url)),
+      opportunity: oppData
+        ? {
+            id: String(oppData.id),
+            stage: String(oppData.stage ?? "new"),
+            opStatus: String(oppData.op_status ?? "open"),
+            stageEnteredAt: str(oppData.stage_entered_at),
+            attemptCount: Number(oppData.attempt_count ?? 0),
+            contactCount: Number(oppData.contact_count ?? 0),
+            nextActionKind: str(oppData.next_action_kind),
+            nextActionDueAt: str(oppData.next_action_due_at),
+            firstReceivedAt: str(oppData.first_received_at),
+            firstAssignedAt: str(oppData.first_assigned_at),
+            firstAttemptedAt: str(oppData.first_attempted_at),
+            firstContactedAt: str(oppData.first_contacted_at),
+            lastTouchedAt: str(oppData.last_touched_at),
+            closedAt: str(oppData.closed_at),
+            closeReason: str(oppData.close_reason),
+            backfilled: oppData.backfilled === true,
+          }
+        : null,
       aiSummary: sumData
         ? {
             summary: String(sumData.summary ?? ""),
