@@ -315,6 +315,53 @@ stalled, or has never run.
 scheduled. That starts automated follow-through against 37,878 live
 opportunities and is the operator's decision.
 
+## Slice S8 — 2026-08-29 (orchestration goes live; decoration removed)
+
+**The pipeline is running in production.** VICC enabled orchestration, the
+`orchestrate` pg_cron job was scheduled (jobid 4, every minute, HTTP 200), and
+Promised-callback protection was published. First sweep activated **7
+instances** and raised **7 owner escalations**; all parked in the 60-minute
+grace window. `kinds_run` = `escalate` — the first playbook steps ever executed
+against live data.
+
+Two skipped candidates were correct: their callbacks carry `lead_id = null`
+(the lead row was deleted and the FK nulled), so there is no opportunity to
+attach work to. Those are orphaned promises visible on the Callbacks board
+that nobody can work — flagged to the operator as data to clean up.
+
+**A bug in the heartbeat shipped an hour earlier, caught by checking rather
+than trusting:** the job fired and returned 200 for minutes while
+`orchestration_last_tick_at` stayed null, because the write sat after the
+try/catch and the tick returns early on its two most common outcomes (globally
+paused; no instances). Those are exactly the ticks whose silence is
+indistinguishable from a cron that was never scheduled. Moved into a `finally`
+with three tests (idle, paused, post-work).
+
+### Decoration removed — "make everything real"
+
+Each of these was declared, validated, documented or rendered, and enforced by
+nothing. An operator configuring one believed it did something.
+
+| Thing | Was | Now |
+|---|---|---|
+| `caps.touchesPerDay` / `touchesPer7Days` | set on a seed template, read by no one | counted against the lead's real contact attempts; a capped step **defers** to when the window clears, before the exactly-once gate so it is not skipped forever |
+| `stop.stopOnReassign` | snapshot hardcoded `reassigned: false` | reads `owner_assigned_at` against instance start |
+| `callback_completed` | hardcoded `false`; the natural "done" for the callback playbook could never fire | read from the callbacks table since activation |
+| `escalate.to` | every rung wrote an identical signal both audiences saw | signals carry an `audience` (PART 39); reps see owner rungs on their own opportunities, supervisors see all |
+| `replied`, `complaint`, `open_issue` | accepted stop rules nothing can ever raise | **refused at publish** with the reason; accepted again when their channel lands |
+| `PlaybookDefinition.routing` | declared, set by no template, read by nothing | **removed** rather than given an invented meaning |
+
+Engine ticks now report `deferred`, so a capped playbook reads as held rather
+than idle. 954 tests at this point; 14 new covering deferral timing, the freed
+execution row, the no-caps path, reassignment, and the validator's refusal
+message for each unavailable rule.
+
+**Still honestly absent (not decoration — no false claim is made):**
+escalations are in-app signals only; the notification outbox is
+appointment-shaped and trigger-fed, so nothing emails a manager.
+`app_claim_work_items` still has no consumer — work items surface in My Day and
+feed the who-next ladder, but there is no dedicated claim-and-work flow.
+
 **Not yet evidenced (honest):** perf/a11y sweeps and multi-role/multi-tenant
 walkthroughs of the Phase 2 surfaces (only the Owner role on one org was
 loaded); the opportunity-parity check riding reconcile-data; orchestrate-cron
