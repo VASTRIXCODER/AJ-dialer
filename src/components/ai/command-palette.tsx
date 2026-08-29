@@ -14,6 +14,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AiSourceBadge } from "@/components/ai/source-badge";
 import { navGroups, navLabel } from "@/components/layout/nav";
 import { useVocabulary } from "@/components/layout/vocabulary";
+import { useLead360 } from "@/components/leads/lead-360/lead-360-provider";
 import { cn } from "@/lib/utils";
 
 type LeadMatch = {
@@ -35,6 +36,7 @@ type Item =
 export function CommandPalette() {
   const router = useRouter();
   const vocab = useVocabulary();
+  const lead360 = useLead360();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(false);
@@ -146,9 +148,20 @@ export function CommandPalette() {
     (item: Item | undefined) => {
       if (!item) return;
       setOpen(false);
-      router.push(item.type === "command" ? item.href : "/dialer");
+      if (item.type === "command") {
+        router.push(item.href);
+        return;
+      }
+      // A lead result opens its Lead 360 drawer in place — picking "Maria S."
+      // used to push a bare /dialer that forgot who you searched for. Matches
+      // without an id (defensive: demo/AI output) fall back to a name search.
+      if (item.match.id) {
+        lead360.open(item.match.id);
+      } else {
+        router.push(`/leads?q=${encodeURIComponent(item.match.name)}`);
+      }
     },
-    [router],
+    [router, lead360],
   );
 
   function onInputKey(e: React.KeyboardEvent) {

@@ -18,6 +18,7 @@ import {
 import { useMemo, useState } from "react";
 import { OutcomeGrid } from "@/components/dialer/outcome-grid";
 import { useVocabulary } from "@/components/layout/vocabulary";
+import { LeadOpenLink } from "@/components/leads/lead-360/lead-open-link";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input, Label, Select, Textarea } from "@/components/ui/input";
@@ -205,7 +206,18 @@ export function AppointmentDialog({
         </div>
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
-            <h2 className="truncate text-lg font-semibold">{title}</h2>
+            {/* Name → Lead 360 when the booking is tied to a lead row. The
+                dialog closes first — Modal and Drawer are sibling portals at
+                the same z, so an open modal would sit over the drawer. */}
+            {!creating && appt!.leadId ? (
+              <h2 className="min-w-0 truncate text-lg font-semibold">
+                <LeadOpenLink leadId={appt!.leadId} onOpen={onClose}>
+                  {title}
+                </LeadOpenLink>
+              </h2>
+            ) : (
+              <h2 className="truncate text-lg font-semibold">{title}</h2>
+            )}
             {!creating && appt!.source === "ai" && (
               <Badge tone="accent" className="gap-1">
                 <Sparkles className="h-3 w-3" /> AI

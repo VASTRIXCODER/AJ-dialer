@@ -3,6 +3,7 @@ import "server-only";
 import { createAdminClient, isAdminConfigured } from "../supabase/admin";
 import { isSupabaseConfigured } from "../supabase/config";
 import { createClient } from "../supabase/server";
+import { logLeadEventBulk } from "./lead-events";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Handing a lead pack to a rep.
@@ -207,6 +208,16 @@ export async function assignPack(
       .eq("id", packId)
       .eq("org_id", scope.orgId);
     if (packErr) return { ok: false, error: packErr.message };
+
+    // Audit trail: every lead in the pack shows "assigned" (or reclaimed) on
+    // its own Lead 360 timeline. One batched, fire-and-forget insert.
+    logLeadEventBulk({
+      leadIds: (touched ?? []).map((r) => String((r as Row).id)),
+      orgId: scope.orgId,
+      actorId: scope.userId,
+      kind: "assignment",
+      payload: { packId, repId, count: touched?.length ?? 0 },
+    });
 
     return { ok: true, leads: touched?.length ?? 0 };
   } catch (e) {

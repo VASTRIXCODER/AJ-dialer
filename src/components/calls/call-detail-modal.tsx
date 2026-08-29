@@ -16,6 +16,7 @@ import {
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useVocabulary } from "@/components/layout/vocabulary";
+import { LeadOpenLink } from "@/components/leads/lead-360/lead-open-link";
 import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Modal } from "@/components/ui/modal";
@@ -259,17 +260,33 @@ export function CallDetailModal({
         )}
       </div>
 
-      {call?.leadId && (
+      {call?.leadId ? (
+        <div className="border-t border-border/60 p-4">
+          {/* Straight to the canonical record — the old /leads?q= search link
+              made you find the row again yourself. Closes this modal first
+              (sibling portals share z, the drawer would open underneath). */}
+          <LeadOpenLink
+            leadId={call.leadId}
+            onOpen={onClose}
+            className="flex w-full items-center justify-center gap-2 rounded-xl border border-border px-3 py-2 text-sm font-semibold text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground hover:no-underline"
+          >
+            <ExternalLink className="h-4 w-4" />
+            Open this {vocab.leadNoun}&#39;s full record
+          </LeadOpenLink>
+        </div>
+      ) : call?.leadName || call?.phone ? (
+        // No lead row behind this call (deleted, or never matched) — fall back
+        // to a name/number search in the book.
         <div className="border-t border-border/60 p-4">
           <Link
             href={`/leads?q=${encodeURIComponent(call.leadName || call.phone || "")}`}
             className="flex items-center justify-center gap-2 rounded-xl border border-border px-3 py-2 text-sm font-semibold text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
           >
             <ExternalLink className="h-4 w-4" />
-            Open this {vocab.leadNoun} in {vocab.LeadNounPlural}
+            Search this {vocab.leadNoun} in {vocab.LeadNounPlural}
           </Link>
         </div>
-      )}
+      ) : null}
     </Modal>
   );
 }

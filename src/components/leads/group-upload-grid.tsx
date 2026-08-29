@@ -2,7 +2,6 @@
 
 import {
   AlertTriangle,
-  CheckCircle2,
   ChevronDown,
   ChevronUp,
   Inbox,
@@ -12,76 +11,65 @@ import {
   UploadCloud,
   Wrench,
 } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { useRef, useState } from "react";
 import { Card } from "@/components/ui/card";
 import type { LeadGroupWithCount } from "@/lib/db/lead-groups";
+import { setPendingFile } from "@/lib/leads/pending-import";
 import { cn } from "@/lib/utils";
-import { CampaignCertificationDialog } from "./campaign-certification-dialog";
 import { LeadGroupManager } from "./lead-group-manager";
 import { SortPreviewReview, type SortPreviewResponse } from "./sort-preview-review";
-import { useCsvUpload } from "./use-csv-upload";
 
 /** Pack-size presets offered under the AI tile. 0 = don't split into packs. */
 const PACK_PRESETS = [0, 50, 100, 250, 500];
 /** How many rows to hand the classifier. 0 = sort the whole file. */
 const SORT_PRESETS = [500, 1000, 2000, 5000, 0];
 
+/**
+ * A group tile no longer imports in place — it hands the dropped file to the
+ * Import Studio (/leads/import), where mapping, dedupe and destination are all
+ * reviewable before anything writes. The File object survives the client-side
+ * navigation in a module singleton (see lib/leads/pending-import.ts), so the
+ * flow keeps its one-gesture feel: drop on "North Texas", land in the wizard
+ * with the file loaded and the group preselected.
+ */
 function UploadTile({
   groupKey,
   label,
   hint,
   manual,
-  packSize,
-  packBy,
-  packBatchFor,
 }: {
   groupKey: string | null;
   label: string;
   hint: string;
   manual?: boolean;
-  packSize: number;
-  packBy: "sequence" | "city";
-  packBatchFor: (file: string) => string;
 }) {
-  const [batch, setBatch] = useState("Upload");
-  const { status, handleFile, certPrompt, certifyAndRetry, cancelCert } = useCsvUpload({
-    leadGroup: groupKey,
-    packSize,
-    packBatch: batch,
-    packBy,
-  });
+  const router = useRouter();
   const inputRef = useRef<HTMLInputElement>(null);
   const [dragOver, setDragOver] = useState(false);
 
-  function onFile(f: File) {
-    setBatch(packBatchFor(f.name));
-    handleFile(f);
+  function goToStudio(f?: File) {
+    if (f) setPendingFile(f);
+    // "__misc__" is unslugifiable, so it can never collide with a real key.
+    router.push(`/leads/import?group=${encodeURIComponent(groupKey ?? "__misc__")}`);
   }
 
   return (
     <div>
-      {certPrompt && (
-        <CampaignCertificationDialog
-          campaignId={certPrompt.campaignId}
-          onCertified={certifyAndRetry}
-          onCancel={cancelCert}
-        />
-      )}
       <input
         ref={inputRef}
         type="file"
-        accept=".csv,text/csv"
+        accept=".csv,.tsv,.txt,text/csv,text/tab-separated-values,text/plain"
         className="hidden"
         onChange={(e) => {
           const f = e.target.files?.[0];
-          if (f) onFile(f);
+          if (f) goToStudio(f);
           e.target.value = "";
         }}
       />
       <button
         type="button"
         onClick={() => inputRef.current?.click()}
-        disabled={status.type === "working"}
         onDragOver={(e) => {
           e.preventDefault();
           setDragOver(true);
@@ -91,10 +79,10 @@ function UploadTile({
           e.preventDefault();
           setDragOver(false);
           const f = e.dataTransfer.files?.[0];
-          if (f) onFile(f);
+          if (f) goToStudio(f);
         }}
         className={cn(
-          "flex w-full flex-col items-center justify-center gap-1 rounded-2xl border-2 border-dashed p-5 text-center transition-colors disabled:opacity-60",
+          "flex w-full flex-col items-center justify-center gap-1 rounded-2xl border-2 border-dashed p-5 text-center transition-colors",
           dragOver
             ? "border-primary bg-primary-soft/40"
             : "border-border bg-muted/30 hover:border-primary/40 hover:bg-primary-soft/30",
@@ -106,9 +94,7 @@ function UploadTile({
             groupKey === null ? "bg-warning" : manual ? "bg-muted-foreground" : "bg-brand",
           )}
         >
-          {status.type === "working" ? (
-            <Loader2 className="h-5 w-5 animate-spin" />
-          ) : groupKey === null ? (
+          {groupKey === null ? (
             <Inbox className="h-5 w-5" />
           ) : manual ? (
             <Wrench className="h-5 w-5" />
@@ -119,25 +105,6 @@ function UploadTile({
         <p className="mt-1 text-sm font-semibold">{label}</p>
         <p className="line-clamp-2 text-xs text-muted-foreground">{hint}</p>
       </button>
-      {status.message && (
-        <p
-          className={cn(
-            "mt-2 flex items-center justify-center gap-1.5 text-center text-xs",
-            status.type === "error"
-              ? "text-danger"
-              : status.type === "done"
-                ? "text-success"
-                : "text-muted-foreground",
-          )}
-        >
-          {status.type === "error" ? (
-            <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
-          ) : status.type === "done" ? (
-            <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
-          ) : null}
-          {status.message}
-        </p>
-      )}
     </div>
   );
 }
@@ -438,18 +405,12 @@ export function GroupUploadGrid({
                   label={g.label}
                   hint={g.description || `${g.leadCount.toLocaleString()} leads`}
                   manual={g.kind === "manual"}
-                  packSize={packSize}
-                  packBy={packBy}
-                  packBatchFor={(f) => f.replace(/\.csv$/i, "")}
                 />
               ))}
               <UploadTile
                 groupKey={null}
                 label="Miscellaneous"
                 hint="Unsorted — file them later"
-                packSize={packSize}
-                packBy={packBy}
-                packBatchFor={(f) => f.replace(/\.csv$/i, "")}
               />
               <AutoSortTile
                 sortLimit={sortLimit}

@@ -52,8 +52,24 @@ import { normalizeParsedLeads } from "./normalize";
 
 /** The upload's column layout, resolved once and replayed for every chunk. */
 export type ColumnPlan =
-  | { kind: "headers"; header: Field[]; captures: CustomCapture[] }
-  | { kind: "ai"; mapping: ColumnMapping; captures: CustomCapture[] };
+  | {
+      kind: "headers";
+      header: Field[];
+      captures: CustomCapture[];
+      /** false ⇒ row 0 is data (headerless file). Omitted/true ⇒ row 0 is names. */
+      hasHeader?: boolean;
+      /** Column holding a whole-row Do-Not-Call flag (Import Studio mapping). */
+      dncCol?: number;
+      /** Column mapped onto leads.dialing_preference. */
+      dialPrefCol?: number;
+    }
+  | {
+      kind: "ai";
+      mapping: ColumnMapping;
+      captures: CustomCapture[];
+      dncCol?: number;
+      dialPrefCol?: number;
+    };
 
 export interface ParseCsvResult {
   leads: ParsedLead[];
@@ -125,12 +141,27 @@ export function sanitizeColumnPlan(raw: unknown): ColumnPlan | null {
     }
   }
 
+  // The wizard's DNC-flag / dialing-preference columns ride on either plan
+  // kind. Only ever used to index a row array, so bounds are the only check.
+  const dncCol = int(p.dncCol, -1);
+  const dialPrefCol = int(p.dialPrefCol, -1);
+  const extraCols = {
+    ...(dncCol >= 0 ? { dncCol } : {}),
+    ...(dialPrefCol >= 0 ? { dialPrefCol } : {}),
+  };
+
   if (p.kind === "headers") {
     if (!Array.isArray(p.header)) return null;
     const header: Field[] = p.header.map((h) =>
       typeof h === "string" && FIELDS.has(h) ? (h as Field) : null,
     );
-    return { kind: "headers", header, captures };
+    return {
+      kind: "headers",
+      header,
+      captures,
+      hasHeader: p.hasHeader !== false,
+      ...extraCols,
+    };
   }
 
   if (p.kind === "ai") {
@@ -163,7 +194,7 @@ export function sanitizeColumnPlan(raw: unknown): ColumnPlan | null {
       // re-derived (and re-typed) from this chunk's data.
       extras: [],
     };
-    return { kind: "ai", mapping, captures };
+    return { kind: "ai", mapping, captures, ...extraCols };
   }
 
   return null;
@@ -197,10 +228,14 @@ const NO_KEY_NOTE =
   "This file has no recognizable header row, so AI column mapping is needed — " +
   "but ANTHROPIC_API_KEY isn't configured on the server.";
 
-/** Data rows the grid holds under THIS plan — an AI plan may say there's no header. */
+/** Does this plan treat row 0 as data? Either kind can be headerless now. */
+function planIsHeaderless(plan: ColumnPlan): boolean {
+  return plan.kind === "ai" ? !plan.mapping.hasHeader : plan.hasHeader === false;
+}
+
+/** Data rows the grid holds under THIS plan — either kind may say "no header". */
 function dataRowsUnder(grid: string[][], plan: ColumnPlan): number {
-  const headerRows = plan.kind === "ai" && !plan.mapping.hasHeader ? 0 : 1;
-  return Math.max(0, grid.length - headerRows);
+  return Math.max(0, grid.length - (planIsHeaderless(plan) ? 0 : 1));
 }
 
 function finish(
@@ -233,13 +268,30 @@ function finish(
 
 export async function parseCsvToLeads(
   csv: string,
-  opts: { plan?: ColumnPlan | null } = {},
+  opts: {
+    plan?: ColumnPlan | null;
+    /** The uploader's explicit answer to "is row 0 column names?". Omitted =
+     *  legacy behavior (assume a header). NEVER guessed silently server-side —
+     *  the Import Studio presets its toggle with guessHasHeader and the human
+     *  confirms. false is the headerless-broker-list path: row 0 is data. */
+    hasHeader?: boolean;
+    /** Explicit delimiter override (TSV with commas inside cells). Omitted =
+     *  auto-detect, which is right for almost every file. */
+    delimiter?: string;
+  } = {},
 ): Promise<ParseCsvResult | { error: string }> {
   if (!csv || !csv.trim()) return { error: "That file looks empty." };
 
-  const grid = parseSheet(csv);
-  if (grid.length < 2) {
-    return { error: "That file has no data rows under the first line." };
+  const grid = parseSheet(csv, opts.delimiter);
+  // Whether row 0 is data decides how many rows a "parsable" file needs: a
+  // single-record headerless file is one whole lead, not an empty upload.
+  const headerless = opts.plan ? planIsHeaderless(opts.plan) : opts.hasHeader === false;
+  if (grid.length < (headerless ? 1 : 2)) {
+    return {
+      error: headerless
+        ? "That file looks empty."
+        : "That file has no data rows under the first line.",
+    };
   }
 
   // A later chunk of an upload whose layout is already settled. Replay it
@@ -247,19 +299,26 @@ export async function parseCsvToLeads(
   // differently from the ones before it.
   if (opts.plan) {
     const plan = opts.plan;
+    const cols = { dncCol: plan.dncCol, dialPrefCol: plan.dialPrefCol };
     const replayed =
       plan.kind === "ai"
-        ? applyAIMapping(grid, plan.mapping, plan.captures)
-        : rowsToLeads(grid, { header: plan.header, captures: plan.captures });
+        ? applyAIMapping(grid, plan.mapping, plan.captures, cols)
+        : rowsToLeads(grid, {
+            header: plan.header,
+            captures: plan.captures,
+            hasHeader: plan.hasHeader !== false,
+            ...cols,
+          });
     return finish(grid, replayed, plan.kind, null, plan);
   }
 
-  const headerPlan = resolveHeaderPlan(grid);
+  const headerPlan = resolveHeaderPlan(grid, { hasHeader: opts.hasHeader });
   const deterministic = rowsToLeads(grid, headerPlan);
   const headersPlan: ColumnPlan = {
     kind: "headers",
     header: headerPlan.header,
     captures: headerPlan.captures,
+    hasHeader: opts.hasHeader !== false,
   };
 
   if (!canAIParse()) {
@@ -269,11 +328,14 @@ export async function parseCsvToLeads(
     return finish(grid, deterministic, "headers", note, headersPlan);
   }
 
-  const dataRows = Math.max(0, grid.length - 1);
+  const dataRows = Math.max(0, grid.length - (headerless ? 0 : 1));
   let aiError: string | null = null;
 
   try {
     const mapping = await aiInferMapping(grid);
+    // The uploader's explicit header answer OVERRIDES the model's guess — a
+    // human looked at the file; the model looked at 30 sampled rows.
+    if (opts.hasHeader !== undefined) mapping.hasHeader = opts.hasHeader;
     const captures = resolveAIExtras(grid, mapping, mapping.hasHeader ? 1 : 0);
     const ai = applyAIMapping(grid, mapping, captures);
     const aiPlan: ColumnPlan = { kind: "ai", mapping, captures };

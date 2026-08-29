@@ -31,6 +31,7 @@ import {
 import { useEffect, useMemo, useRef, useState } from "react";
 import { CallDetailModal } from "@/components/calls/call-detail-modal";
 import { useVocabulary } from "@/components/layout/vocabulary";
+import { useLead360 } from "@/components/leads/lead-360/lead-360-provider";
 import { truePeopleSearchUrl } from "@/lib/leads/people-search-url";
 import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
@@ -789,6 +790,7 @@ function LeadDetail({
   reverseSearchConfigured: boolean;
   onLeadPatched?: (leadId: string, patch: Partial<Lead>) => void;
 }) {
+  const lead360 = useLead360();
   const name = `${lead.firstName} ${lead.lastName}`;
   // Stat tiles: the schema's first two money/number fields (solar: Utility
   // bill + Solar payment, exactly the old pair). The "(…)" unit suffix is
@@ -836,11 +838,21 @@ function LeadDetail({
                 ? formatPhone(lead.phone)
                 : "No number on file"}
             </p>
-            <div className="mt-1.5 flex flex-wrap gap-1.5">
+            <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
               <Badge tone="primary" className="capitalize">
                 {lead.status.replace("_", " ")}
               </Badge>
               {lead.timezone && <Badge tone="neutral">{lead.timezone}</Badge>}
+              {/* Lead 360 slides OVER the dialer — nothing here remounts, so
+                  it's safe to open mid-call. */}
+              <button
+                type="button"
+                onClick={() => lead360.open(lead.id)}
+                className="inline-flex items-center gap-1 rounded-lg border border-border/70 px-2 py-0.5 text-xs font-semibold text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                Full record
+                <ExternalLink className="h-3 w-3" />
+              </button>
             </div>
           </div>
           {lead.aiScore != null && (

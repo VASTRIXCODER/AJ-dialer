@@ -16,6 +16,7 @@ import { createClient } from "../supabase/server";
 import type { Lead, LeadGroup, LeadStatus } from "../types";
 import { normalizePhone } from "../utils";
 import { getDncDigits, scrubDnc } from "./dnc";
+import { logLeadEvent } from "./lead-events";
 import { canActOn, getScope } from "./scope";
 
 // Account-scoped lead access. When Supabase is configured and the user is signed
@@ -719,6 +720,81 @@ export interface LeadPatch {
 const LOCKED_STATUSES: LeadStatus[] = ["appointment", "callback"];
 
 /**
+ * Audit an edit onto the lead's timeline (lead_events) — status transitions,
+ * core/custom field diffs (old → new), and note changes, each under its own
+ * kind so the Lead 360 timeline can describe them differently. Fire-and-forget
+ * via logLeadEvent: never slows or fails the save it describes.
+ */
+function logLeadUpdateEvents(
+  leadId: string,
+  before: Row,
+  patch: LeadPatch,
+  written: Record<string, unknown>,
+  actorId: string,
+): void {
+  const orgId = before.org_id ? String(before.org_id) : null;
+
+  if (patch.status !== undefined) {
+    const from = String(before.status ?? "new");
+    if (patch.status !== from) {
+      logLeadEvent({
+        leadId,
+        orgId,
+        actorId,
+        kind: "status",
+        payload: { from, to: patch.status, via: "edit" },
+      });
+    }
+  }
+
+  // "", null and undefined all mean "empty" for diffing — a CSV blank turning
+  // into an explicit null is not a change worth an audit line.
+  const norm = (v: unknown) => (v === undefined || v === null || v === "" ? null : v);
+  const same = (a: unknown, b: unknown) =>
+    typeof a === "boolean" || typeof b === "boolean"
+      ? Boolean(a) === Boolean(b)
+      : String(a ?? "") === String(b ?? "");
+
+  const changes: Record<string, { from: unknown; to: unknown }> = {};
+  for (const [col, value] of Object.entries(written)) {
+    // status and notes get their own event kinds; custom_fields diffs from the patch.
+    if (col === "status" || col === "notes" || col === "custom_fields") continue;
+    const from = norm(before[col]);
+    const to = norm(value);
+    if (!same(from, to)) changes[col] = { from, to };
+  }
+  if (patch.customFields) {
+    const beforeCustom = (
+      before.custom_fields && typeof before.custom_fields === "object"
+        ? before.custom_fields
+        : {}
+    ) as Record<string, unknown>;
+    for (const [k, v] of Object.entries(patch.customFields)) {
+      const from = norm(beforeCustom[k]);
+      const to = norm(v);
+      if (!same(from, to)) changes[k] = { from, to };
+    }
+  }
+  if (Object.keys(changes).length) {
+    logLeadEvent({ leadId, orgId, actorId, kind: "field_change", payload: { changes } });
+  }
+
+  if (patch.notes !== undefined) {
+    const from = norm(before.notes);
+    const to = norm(patch.notes);
+    if (!same(from, to)) {
+      logLeadEvent({
+        leadId,
+        orgId,
+        actorId,
+        kind: "note",
+        payload: { preview: String(to ?? "").slice(0, 280), cleared: to === null },
+      });
+    }
+  }
+}
+
+/**
  * Edit an existing lead's fields (contact info, address, energy details, status,
  * notes) — the general-purpose counterpart to the disposition flow, for
  * correcting data rather than filing a call outcome. Row-level scoped exactly
@@ -750,10 +826,12 @@ export async function updateLead(
 
     // Read who owns this lead first — canActOn() needs it to decide whether
     // THIS actor (owner, or a supervisor in the same org) may write to it.
+    // The full row is read (not just the authz columns) so the audit trail can
+    // record old → new for every field the patch actually changes.
     const reader = isAdminConfigured() ? createAdminClient() : await createClient();
     const { data: row } = await reader
       .from("leads")
-      .select("owner_id, org_id, custom_fields")
+      .select("*")
       .eq("id", id)
       .maybeSingle();
     if (!row) return { ok: false, error: "Lead not found." };
@@ -818,11 +896,17 @@ export async function updateLead(
       }
     }
 
-    if (Object.keys(fields).length === 0) return { ok: true };
+    if (Object.keys(fields).length === 0) {
+      // Custom-fields-only edit (applied via the RPC above) still gets audited.
+      logLeadUpdateEvents(id, r, patch, fields, scope.userId);
+      return { ok: true };
+    }
 
     const writer = isAdminConfigured() ? createAdminClient() : await createClient();
     const { error } = await writer.from("leads").update(fields).eq("id", id);
-    return error ? { ok: false, error: error.message } : { ok: true };
+    if (error) return { ok: false, error: error.message };
+    logLeadUpdateEvents(id, r, patch, fields, scope.userId);
+    return { ok: true };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "Update failed." };
   }

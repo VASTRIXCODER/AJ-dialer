@@ -1,21 +1,33 @@
-import { Download, Users } from "lucide-react";
-import { LeadsTable, type LeadsTableFilters } from "@/components/leads/leads-table";
+import { Users } from "lucide-react";
+import {
+  LeadsTable,
+  type LeadsTableFilters,
+  type SmartListChip,
+} from "@/components/leads/leads-table";
+import { ExportDialog } from "@/components/leads/export-dialog";
 import { GroupUploadGrid } from "@/components/leads/group-upload-grid";
+import { LeadCountsRow, type LeadCountKey } from "@/components/leads/lead-counts-row";
 import { LeadPacksPanel } from "@/components/leads/lead-packs-panel";
-import { MetricCard } from "@/components/dashboard/metric-card";
 import { EmptyState } from "@/components/shared/empty-state";
 import { PageContainer, PageHeader } from "@/components/shared/page-header";
-import { buttonVariants } from "@/components/ui/button";
-import { CalendarCheck, PhoneOff, Zap } from "lucide-react";
 import {
   getLeadsPage,
   getMissingCountyCount,
+  LEADS_PAGE_SIZE,
   listPlaces,
   type LeadsSort,
 } from "@/lib/db/leads";
+import { getFilteredLeadsPage, getLeadCounts } from "@/lib/db/leads-filter";
+import { getScope } from "@/lib/db/scope";
+import { listSmartLists, validateSmartListFilter } from "@/lib/db/smart-lists";
 import { getCampaigns } from "@/lib/db/pipeline";
 import { listLeadGroupsWithCounts } from "@/lib/db/lead-groups";
 import { resolveLeadFields, type CoreFieldOverrides } from "@/lib/leads/field-schema";
+import {
+  buildCountFilter,
+  decodeFilterParam,
+  encodeFilterParam,
+} from "@/lib/leads/filter-spec";
 import { isLeadSortKey } from "@/lib/leads/sort-keys";
 import { getViewer, listMembers } from "@/lib/org/membership";
 import { templateProfile } from "@/lib/org/templates";
@@ -23,7 +35,6 @@ import { orgVocabulary } from "@/lib/org/vocabulary";
 import { isSolarVertical } from "@/lib/org/vertical";
 import { leadStatusConfig } from "@/lib/status";
 import type { LeadStatus } from "@/lib/types";
-import { formatNumber } from "@/lib/utils";
 
 export const metadata = { title: "Leads" };
 export const dynamic = "force-dynamic";
@@ -60,10 +71,44 @@ export default async function LeadsPage({
   // book as the onboarding empty state — validate instead of forwarding.
   const uploaderId = sp.uploader && UUID.test(sp.uploader) ? sp.uploader : undefined;
   const sort = parseSort(sp.sort);
+  const pageNum = Math.max(1, Number.parseInt(sp.page ?? "1", 10) || 1);
+
+  // The typed-filter RPC and the tile counts both trust an ALREADY-AUTHORIZED
+  // scope; demo mode has no session, so fall back the same way the count route
+  // does (the demo paths ignore the ids anyway).
+  const scope = (await getScope()) ?? { userId: "demo", orgId: null, supervisor: true };
+
+  const [campaigns, viewer, places, counts, smartLists] = await Promise.all([
+    getCampaigns(),
+    getViewer(),
+    listPlaces(),
+    getLeadCounts(scope),
+    listSmartLists(scope),
+  ]);
+
+  // ?f= — a typed FilterSpec (base64url). Decode + sanitize server-side; a
+  // mangled param degrades to whatever conditions survive (null = no filter).
+  // The RE-ENCODED canonical param is what travels back to the table, so the
+  // URL the table preserves always matches the filter the server ran.
+  let filterSpec = sp.f ? decodeFilterParam(sp.f) : null;
+  // Legacy ?smart= bookmarks: a seeded KEY translates into its DB list's
+  // FilterSpec right here, so old links run through the same ?f= pipeline the
+  // chips use (and the matching chip lights up by canonical param). A key
+  // without a list (deleted, or a solar-only key on a non-solar org) falls
+  // through to the legacy p_smart read unchanged.
+  let smartTranslated = false;
+  if (!filterSpec && sp.smart) {
+    const legacyList = smartLists.find((l) => l.key === sp.smart);
+    if (legacyList) {
+      filterSpec = legacyList.filter;
+      smartTranslated = true;
+    }
+  }
+  const fParam = filterSpec ? encodeFilterParam(filterSpec) : undefined;
   const filters: LeadsTableFilters = {
     q: sp.q?.trim() || undefined,
     status,
-    smart: sp.smart || undefined,
+    smart: smartTranslated ? undefined : sp.smart || undefined,
     group: sp.group || undefined,
     county: sp.county || undefined,
     city: sp.city || undefined,
@@ -73,25 +118,55 @@ export default async function LeadsPage({
     // The VALIDATED value goes back to the table, so its headers only ever
     // reflect a sort the server actually applied.
     sort: sort ? `${sort.key}.${sort.dir}` : undefined,
+    f: fParam,
   };
-  const pageNum = Math.max(1, Number.parseInt(sp.page ?? "1", 10) || 1);
 
-  let [pageData, campaigns, viewer, places] = await Promise.all([
-    getLeadsPage({ page: pageNum, ...filters, sort }),
-    getCampaigns(),
-    getViewer(),
-    listPlaces(),
-  ]);
-  // Out-of-range page (stale bookmark, or the last row of the last page was
-  // just deleted and router.refresh() kept ?page=N): clamp to the real last
-  // page instead of rendering a book that looks empty.
-  if (pageData.leads.length === 0 && pageData.total > 0 && pageNum > 1) {
-    const lastPage = Math.max(1, Math.ceil(pageData.total / pageData.pageSize));
-    if (lastPage < pageNum) {
-      pageData = await getLeadsPage({ page: lastPage, ...filters, sort });
+  let leads;
+  let total: number;
+  let page = pageNum;
+  let pageSize = LEADS_PAGE_SIZE;
+  // The scope-wide total only exists on the legacy read; the typed-filter
+  // path skips the onboarding empty state (a filter implies a book).
+  let bookTotal: number | null = null;
+
+  if (filterSpec) {
+    // ?f= REPLACES the legacy filter set for the row read — one grammar, one
+    // source of truth. Legacy params still ride the URL untouched for when the
+    // filter is cleared.
+    const opts = { filter: filterSpec, sort: sort ? [sort] : undefined };
+    let result = await getFilteredLeadsPage(scope, {
+      ...opts,
+      offset: (pageNum - 1) * pageSize,
+      limit: pageSize,
+    });
+    // Same out-of-range clamp as the legacy path (stale bookmark, shrunk set).
+    if (result.leads.length === 0 && result.total > 0 && pageNum > 1) {
+      const lastPage = Math.max(1, Math.ceil(result.total / pageSize));
+      if (lastPage < pageNum) {
+        page = lastPage;
+        result = await getFilteredLeadsPage(scope, {
+          ...opts,
+          offset: (lastPage - 1) * pageSize,
+          limit: pageSize,
+        });
+      }
     }
+    leads = result.leads;
+    total = result.total;
+  } else {
+    let pageData = await getLeadsPage({ page: pageNum, ...filters, sort });
+    // Out-of-range page (stale bookmark, or the last row of the last page was
+    // just deleted and router.refresh() kept ?page=N): clamp to the real last
+    // page instead of rendering a book that looks empty.
+    if (pageData.leads.length === 0 && pageData.total > 0 && pageNum > 1) {
+      const lastPage = Math.max(1, Math.ceil(pageData.total / pageData.pageSize));
+      if (lastPage < pageNum) {
+        pageData = await getLeadsPage({ page: lastPage, ...filters, sort });
+      }
+    }
+    ({ leads, total, page, pageSize } = pageData);
+    bookTotal = pageData.stats.total;
   }
-  const { leads, total, stats, smartCounts, page, pageSize } = pageData;
   // The org's own intake groups (+ how many leads sit in each, and in the
   // Miscellaneous catch-all) drive both the upload tiles and the group filter.
   // missingCountyCount rides alongside it — both are org-scoped HEAD counts
@@ -134,6 +209,37 @@ export default async function LeadsPage({
       .fields,
   );
 
+  // Smart-list chips, pre-digested for the client: each list's filter encoded
+  // to its canonical ?f= param (same encoder as the count tiles, so active-chip
+  // matching is param-for-param) and validated against the org's resolved
+  // schema — a list referencing a vanished custom field gets an amber dot
+  // instead of quietly reading as "empty list."
+  const meId = viewer.user?.id ?? null;
+  const smartChips: SmartListChip[] = smartLists.map((l) => ({
+    id: l.id,
+    key: l.key,
+    name: l.name,
+    description: l.description,
+    tone: l.tone,
+    favorite: l.favorite,
+    param: encodeFilterParam(l.filter),
+    warnings: validateSmartListFilter(l.filter, fields),
+    canEdit: canManage || (l.ownerId != null && l.ownerId === meId),
+  }));
+
+  // Tile → URL: each count key encodes its own FilterSpec into ?f=. "active"
+  // (no exclusions) is the bare page. The tile whose canonical param matches
+  // the current ?f= renders highlighted — encode-for-encode, since every tile
+  // href came from the same encoder.
+  const countHrefs = {} as Record<LeadCountKey, string>;
+  let activeCountKey: LeadCountKey | null = null;
+  for (const key of Object.keys(counts) as LeadCountKey[]) {
+    const tileSpec = buildCountFilter(key);
+    const enc = tileSpec ? encodeFilterParam(tileSpec) : "";
+    countHrefs[key] = enc ? `/leads?f=${enc}` : "/leads";
+    if (enc && fParam === enc) activeCountKey = key;
+  }
+
   // "homeowner" was hardcoded here, so every vertical read the solar tenant's
   // noun on its own leads page. orgVocabulary owns that precedence now (org
   // setting → vertical → neutral), in one place, for every screen.
@@ -143,24 +249,25 @@ export default async function LeadsPage({
       title={vocab.LeadNounPlural}
       description={`Every ${vocab.leadNoun} in your pipeline, scored and ready to dial.`}
     >
-      {/* Hidden for reps: /api/leads/export is gated on leads.import, so showing
-          it to everyone would just hand a rep a 403 page. */}
-      {canManage && (
-        <a
-          href="/api/leads/export"
-          download
-          className={buttonVariants({ variant: "outline", size: "sm", className: "gap-2" })}
-        >
-          <Download className="h-4 w-4" />
-          Export CSV
-        </a>
+      {/* Hidden for reps: Export v2 is gated on `leads.export` (manager+ by
+          default), so showing the button to everyone would just hand a rep a
+          403. The dialog receives the CURRENT sanitized ?f= spec (null = the
+          whole scope) so what exports always matches what's on screen; the
+          legacy re-import-format GET stays reachable from inside the dialog. */}
+      {viewer.permissions.includes("leads.export") && (
+        <ExportDialog
+          filterSpec={filterSpec}
+          fields={fields}
+          templates={viewer.org?.settings.exportTemplates ?? []}
+          canSaveTemplates={viewer.permissions.includes("org.edit")}
+        />
       )}
     </PageHeader>
   );
 
   // Scope-wide total, not the current page/filter — an empty BOOK gets the
   // onboarding empty state; an empty filter result renders inside the table.
-  if (stats.total === 0) {
+  if (bookTotal === 0) {
     return (
       <PageContainer>
         {header}
@@ -194,30 +301,29 @@ export default async function LeadsPage({
       />
       {canManage && <LeadPacksPanel members={members} />}
 
-      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-        <MetricCard label="Total leads" value={formatNumber(stats.total)} icon={Users} accent="primary" />
-        <MetricCard label="Qualified" value={formatNumber(stats.qualified)} icon={Zap} accent="success" />
-        {/* Labeled "In appointment stage" — NOT "Appointments" — because this
-            counts LEADS whose status is 'appointment', a different number from
-            the Reports/Dashboard "Appointments" KPI (booked appointment ROWS).
-            Three screens once showed three different "Appointments" totals. */}
-        <MetricCard label="In appointment stage" value={formatNumber(stats.appointments)} icon={CalendarCheck} accent="accent" />
-        {/* Glossary "Never dialed": attempt_count 0, never contacted, and a
-            still-dialable status — the untouched, workable part of the book.
-            Replaced the Avg-AI-score aggregate (per-lead ai_score stays). */}
-        <MetricCard label="Never dialed" value={formatNumber(stats.neverDialed)} sub="No attempts, still dialable" icon={PhoneOff} accent="warning" />
-      </div>
+      {/* The 8 drillable tiles (app_lead_counts) — each links straight into
+          the typed filter that computes it, so a number and its drilled row
+          set can never disagree. Replaced the old 4-KPI MetricCard row. */}
+      <LeadCountsRow
+        counts={counts}
+        hrefFor={(key) => countHrefs[key]}
+        active={activeCountKey}
+      />
 
       <LeadsTable
         leads={leads}
         total={total}
         page={page}
         pageSize={pageSize}
-        smartCounts={smartCounts}
+        smartLists={smartChips}
         filters={filters}
+        // The SANITIZED spec behind filters.f — the filter-summary bar and the
+        // builder drawer seed from it, so the UI always reflects what actually
+        // ran (not whatever a mangled URL claimed).
+        filterSpec={filterSpec}
         campaigns={campaignList}
         canManage={canManage}
-        meId={viewer.user?.id ?? null}
+        meId={meId}
         members={members}
         labelOverrides={groupLabels}
         orgGroups={leadGroups.map((g) => ({ key: g.key, label: g.label }))}

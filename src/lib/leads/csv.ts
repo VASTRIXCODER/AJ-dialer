@@ -31,7 +31,16 @@ export type ParsedLead = {
   notes?: string;
   /** Typed spillover for CSV columns beyond the core slots (custom_fields jsonb). */
   customFields?: Record<string, string | number | boolean>;
+  /** True when the file's own Do-Not-Call column flagged this row. The importer
+   *  stores the lead with status 'dnc' AND suppresses the number — recorded and
+   *  reportable, never dialable. */
+  dnc?: boolean;
+  /** From a mapped dialing-preference column → leads.dialing_preference. */
+  dialingPreference?: DialingPreference;
 };
+
+/** leads.dialing_preference — who may dial this lead. */
+export type DialingPreference = "ai" | "manual" | "either" | "none";
 
 export type ParseResult = {
   leads: ParsedLead[];
@@ -95,12 +104,17 @@ export function parseDelimited(text: string, delimiter: string): string[][] {
   return rows.filter((r) => r.some((c) => c.trim().length));
 }
 
-/** Parse a spreadsheet into a grid, auto-detecting delimiter and stripping BOM. */
-export function parseSheet(raw: string): string[][] {
+/**
+ * Parse a spreadsheet into a grid, stripping the BOM. The delimiter is
+ * auto-detected unless the caller passes one explicitly — the Import Studio's
+ * override for TSVs whose cells legitimately contain commas, where counting
+ * would pick the wrong character.
+ */
+export function parseSheet(raw: string, delimiter?: string): string[][] {
   const text = raw.replace(/^﻿/, "").replace(/\r\n?/g, "\n");
   const nl = text.indexOf("\n");
   const firstLine = nl === -1 ? text : text.slice(0, nl);
-  return parseDelimited(text, detectDelimiter(firstLine));
+  return parseDelimited(text, delimiter || detectDelimiter(firstLine));
 }
 
 /** How many significant digits a cell holds (10+ ⇒ looks like a phone number). */
@@ -109,9 +123,11 @@ export function digitCount(v: string): number {
 }
 
 // customFields is excluded: no header maps to it directly — unmapped columns
-// are captured into it by key instead (see discoverCustomColumns).
+// are captured into it by key instead (see discoverCustomColumns). dnc and
+// dialingPreference are excluded too: they're row-level SIGNALS driven by the
+// plan's dncCol/dialPrefCol, not text fields a header can assign into.
 export type Field =
-  | Exclude<keyof ParsedLead, "customFields">
+  | Exclude<keyof ParsedLead, "customFields" | "dnc" | "dialingPreference">
   | "name"
   | "address2"
   | null;
@@ -216,7 +232,7 @@ export function recoverPhone(cells: string[], skip?: Set<number>): string {
  * 10+ digits) — so data-broker ID columns (12–13 digits) and ZIPs (5 digits)
  * are rejected, and the real 10/11-digit phone column wins.
  */
-function sniffPhoneColumn(grid: string[][], header: Field[]): number {
+function sniffPhoneColumn(grid: string[][], header: Field[], start = 1): number {
   const width = grid.reduce((m, r) => Math.max(m, r.length), 0);
   const limit = Math.min(grid.length, 80); // sample enough rows to be confident
   let best = -1;
@@ -225,7 +241,7 @@ function sniffPhoneColumn(grid: string[][], header: Field[]): number {
     if (header[c]) continue; // don't steal an already-mapped column
     let hits = 0;
     let seen = 0;
-    for (let r = 1; r < limit; r++) {
+    for (let r = start; r < limit; r++) {
       const v = (grid[r]?.[c] ?? "").trim();
       if (!v) continue;
       seen++;
@@ -264,21 +280,30 @@ export function sampleColumn(grid: string[][], col: number, start = 1): string[]
  * normalize its header to a snake_case key, detect its type from the column's
  * values, and skip anything unusable — empty headers, keys that collide with an
  * earlier column, and columns with no data at all. Capped at MAX_CUSTOM_FIELDS.
+ *
+ * With `hasHeader: false` there is no header row to name columns from, so
+ * unmapped columns get synthetic labels ("Column 3" → key column_3) and their
+ * type is detected from row 0 down — row 0 is DATA, never consumed as names.
  */
-function discoverCustomColumns(grid: string[][], header: Field[]): CustomCapture[] {
+function discoverCustomColumns(
+  grid: string[][],
+  header: Field[],
+  hasHeader = true,
+): CustomCapture[] {
   const captures: CustomCapture[] = [];
   const seen = new Set<string>();
-  for (let c = 0; c < grid[0].length && captures.length < MAX_CUSTOM_FIELDS; c++) {
+  const width = grid.reduce((m, r) => Math.max(m, r.length), 0);
+  for (let c = 0; c < width && captures.length < MAX_CUSTOM_FIELDS; c++) {
     if (header[c]) continue; // an already-mapped core column
-    const label = (grid[0][c] ?? "").trim();
-    if (!label) continue; // headerless column — no key to store it under
+    const label = hasHeader ? (grid[0][c] ?? "").trim() : `Column ${c + 1}`;
+    if (!label) continue; // blank header cell — no key to store it under
     const key = normalizeFieldKey(label);
     if (!key || seen.has(key)) continue;
     // Never capture reserved keys: the export's metadata tail (Status, AI
     // Score, Created At…) would otherwise re-import as junk custom fields
     // holding stale shadows of live columns.
     if (RESERVED_FIELD_KEYS.has(key)) continue;
-    const samples = sampleColumn(grid, c);
+    const samples = sampleColumn(grid, c, hasHeader ? 1 : 0);
     if (!samples.length) continue; // entirely empty column — nothing to keep
     seen.add(key);
     captures.push({ col: c, key, label, type: detectFieldType(samples) });
@@ -318,19 +343,93 @@ export function captureToFieldDef(cap: {
 export interface HeaderPlan {
   header: Field[];
   captures: CustomCapture[];
+  /** false ⇒ row 0 is DATA (headerless broker export): no row is consumed as
+   *  column names anywhere in the pipeline. Omitted/true ⇒ row 0 is the header. */
+  hasHeader?: boolean;
+  /** Column holding a Do-Not-Call flag: truthy rows import with status 'dnc'
+   *  and their numbers are suppressed. -1 / omitted = none. */
+  dncCol?: number;
+  /** Column mapped onto leads.dialing_preference. -1 / omitted = none. */
+  dialPrefCol?: number;
 }
 
-/** Work out this file's column layout from its header row + a sample of its data. */
-export function resolveHeaderPlan(grid: string[][]): HeaderPlan {
-  if (!grid.length) return { header: [], captures: [] };
-  const header = grid[0].map(mapHeader);
+/**
+ * Work out this file's column layout from its header row + a sample of its data.
+ * `hasHeader: false` is the headerless-broker-list path: nothing is read as
+ * column names — the phone column is sniffed from the DATA starting at row 0,
+ * and unmapped columns get synthetic "Column N" labels. The old behavior ate
+ * row 1 as headers at this layer (and again in chunk.ts), so the first
+ * homeowner of every broker file simply never existed.
+ */
+export function resolveHeaderPlan(
+  grid: string[][],
+  opts: { hasHeader?: boolean } = {},
+): HeaderPlan {
+  const hasHeader = opts.hasHeader !== false;
+  if (!grid.length) return { header: [], captures: [], hasHeader };
+  const width = grid.reduce((m, r) => Math.max(m, r.length), 0);
+  const header: Field[] = hasHeader
+    ? grid[0].map(mapHeader)
+    : new Array<Field>(width).fill(null);
   if (!header.includes("phone")) {
-    const sniffed = sniffPhoneColumn(grid, header);
+    const sniffed = sniffPhoneColumn(grid, header, hasHeader ? 1 : 0);
     if (sniffed >= 0) header[sniffed] = "phone";
   }
   // Capture is decided AFTER phone sniffing so a data-detected phone column is
   // never duplicated into customFields.
-  return { header, captures: discoverCustomColumns(grid, header) };
+  return { header, captures: discoverCustomColumns(grid, header, hasHeader), hasHeader };
+}
+
+/**
+ * Does row 0 LOOK like a header row? Used ONLY to preset the Import Studio's
+ * "first row is column names" toggle — never to silently decide for the user
+ * (that silent decision is exactly how broker lists lost their first row).
+ * A header row is one that (a) maps at least two core fields by name, or
+ * (b) is the only row in the file that carries no digits — column names are
+ * words; data rows almost always hold a phone, ZIP, or house number.
+ */
+export function guessHasHeader(grid: string[][]): boolean {
+  if (!grid.length) return true;
+  const first = grid[0] ?? [];
+  const mapped = new Set(first.map(mapHeader).filter(Boolean));
+  if (mapped.size >= 2) return true;
+  const hasDigits = (r: string[]) => r.some((c) => /\d/.test(c ?? ""));
+  if (grid.length > 1 && !hasDigits(first) && grid.slice(1).every(hasDigits)) {
+    return true;
+  }
+  return false;
+}
+
+/** Truthy values a file's own Do-Not-Call column marks a row with. */
+const DNC_FLAG_RE = /do\s*not\s*call|dnc|opt(ed)?[\s_-]*out|suppress/i;
+const TRUTHY = new Set(["true", "yes", "y", "1", "x"]);
+
+/** Is this cell a truthy Do-Not-Call flag? ("Y", "TRUE", "1", "DNC", "opt-out") */
+export function isDncFlagValue(raw: string): boolean {
+  const v = (raw ?? "").trim();
+  if (!v) return false;
+  return TRUTHY.has(v.toLowerCase()) || DNC_FLAG_RE.test(v);
+}
+
+/**
+ * Map a dialing-preference column's cell onto leads.dialing_preference.
+ * Explicit tokens win; bare truthy values ("yes") mean "dialable by anything"
+ * (either) and falsy values mean none. Unrecognized ⇒ null (leave the default).
+ */
+export function mapDialingPreference(raw: string): DialingPreference | null {
+  const v = (raw ?? "").trim().toLowerCase();
+  if (!v) return null;
+  const n = v.replace(/[^a-z0-9]+/g, " ").trim();
+  if (n === "ai" || n === "ai only" || n === "agent" || n === "auto") return "ai";
+  if (n === "manual" || n === "human" || n === "rep" || n === "manual only") return "manual";
+  if (n === "either" || n === "both" || n === "any" || n === "all") return "either";
+  if (
+    n === "none" || n === "no" || n === "n" || n === "false" || n === "0" ||
+    n === "never" || n === "do not dial" || n === "dnd"
+  )
+    return "none";
+  if (TRUTHY.has(n)) return "either";
+  return null;
 }
 
 /**
@@ -339,13 +438,18 @@ export function resolveHeaderPlan(grid: string[][]): HeaderPlan {
  * upload identically — see HeaderPlan.
  */
 export function rowsToLeads(grid: string[][], plan?: HeaderPlan): ParseResult {
-  if (grid.length < 2)
+  // A headerless file's row 0 IS data — one row is a complete, importable file.
+  const hasHeader = plan ? plan.hasHeader !== false : true;
+  if (grid.length < (hasHeader ? 2 : 1))
     return { leads: [], noPhone: 0, sawPhoneColumn: false, discoveredFields: [] };
-  const { header, captures } = plan ?? resolveHeaderPlan(grid);
+  const resolved = plan ?? resolveHeaderPlan(grid);
+  const { header, captures } = resolved;
+  const dncCol = resolved.dncCol ?? -1;
+  const dialPrefCol = resolved.dialPrefCol ?? -1;
   const sawPhoneColumn = header.includes("phone");
   const out: ParsedLead[] = [];
   let noPhone = 0;
-  for (let r = 1; r < grid.length; r++) {
+  for (let r = hasHeader ? 1 : 0; r < grid.length; r++) {
     const cells = grid[r];
     const lead: ParsedLead = { firstName: "", lastName: "", phone: "" };
     let addr1 = "";
@@ -389,6 +493,14 @@ export function rowsToLeads(grid: string[][], plan?: HeaderPlan): ParseResult {
     if (!isValidPhone(lead.phone)) {
       const recovered = recoverPhone(cells);
       if (recovered) lead.phone = recovered;
+    }
+    // The file's own DNC flag / dialing-preference columns (mapped in the
+    // Import Studio). Never silently dropped: a flagged row is stored as a
+    // suppressed lead, not skipped as if it never existed.
+    if (dncCol >= 0 && isDncFlagValue((cells[dncCol] ?? "").trim())) lead.dnc = true;
+    if (dialPrefCol >= 0) {
+      const pref = mapDialingPreference((cells[dialPrefCol] ?? "").trim());
+      if (pref) lead.dialingPreference = pref;
     }
     const hasName = Boolean(lead.firstName || lead.lastName);
     if (!lead.phone && !hasName) continue;

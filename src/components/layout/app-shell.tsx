@@ -6,6 +6,7 @@ import { useState } from "react";
 import { CommandPalette } from "@/components/ai/command-palette";
 import { type DialerConfig, DialerProvider } from "@/components/dialer/dialer-context";
 import { GlobalCallBar } from "@/components/dialer/global-call-bar";
+import { Lead360Provider } from "@/components/leads/lead-360/lead-360-provider";
 import type { OrgFeatures } from "@/lib/org/settings";
 import { DEFAULT_VOCABULARY, type OrgVocabulary } from "@/lib/org/vocabulary";
 import { AmbientBackground } from "./ambient-background";
@@ -52,6 +53,9 @@ export function AppShell({
   return (
     <VocabularyProvider value={vocabulary}>
     <DialerProvider config={dialerConfig}>
+    {/* Inside Vocabulary + Dialer so the Lead 360 drawer reads the org's nouns
+        and can be opened mid-call from any dialer surface without a remount. */}
+    <Lead360Provider>
     <div className="relative flex min-h-screen">
       <AmbientBackground />
       <CommandPalette />
@@ -110,6 +114,7 @@ export function AppShell({
       {/* Follows the rep to every page so an in-progress call never drops. */}
       <GlobalCallBar />
     </div>
+    </Lead360Provider>
     </DialerProvider>
     </VocabularyProvider>
   );

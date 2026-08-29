@@ -2782,3 +2782,941 @@ revoke all on function public.app_metrics_hourly(uuid, uuid, boolean, date, text
 grant execute on function public.app_metrics_hourly(uuid, uuid, boolean, date, text, text) to service_role;
 
 notify pgrst, 'reload schema';
+
+-- ═════════════════════════════════════════════════════════════════════════════
+-- PART 28 — LEAD OPERATIONS FOUNDATION                          [Phase 1 · C]
+-- Import jobs (observable, rollbackable), per-lead import provenance, the
+-- chunk-sized dedupe probe that replaces the O(book×chunks) phone scan,
+-- mapping templates, per-lead audit events (Lead 360's timeline), and the two
+-- columns the typed filter system needs (dialing_preference, archived_at).
+-- Rollback: drop the new tables/functions/index; the leads columns may stay.
+-- ═════════════════════════════════════════════════════════════════════════════
+create table if not exists public.import_jobs (
+  id           uuid primary key default gen_random_uuid(),
+  org_id       uuid not null references public.organizations (id) on delete cascade,
+  created_by   uuid references auth.users (id) on delete set null,
+  file_name    text not null default '',
+  status       text not null default 'running',  -- running | completed | canceled | failed | rolled_back
+  has_header   boolean not null default true,
+  delimiter    text not null default ',',
+  dedupe_mode  text not null default 'skip',     -- skip | update | create_new
+  destination  jsonb not null default '{}'::jsonb,
+  column_plan  jsonb,
+  rows_total   int not null default 0,
+  created_ct   int not null default 0,
+  updated_ct   int not null default 0,
+  duplicate_ct int not null default 0,
+  dnc_ct       int not null default 0,
+  invalid_ct   int not null default 0,
+  skipped_ct   int not null default 0,
+  failed_ct    int not null default 0,
+  error_rows   jsonb not null default '[]'::jsonb,
+  created_at   timestamptz not null default now(),
+  finished_at  timestamptz,
+  rolled_back_at timestamptz
+);
+create index if not exists import_jobs_org_idx on public.import_jobs (org_id, created_at desc);
+alter table public.import_jobs enable row level security;
+drop policy if exists "import_jobs org read" on public.import_jobs;
+create policy "import_jobs org read" on public.import_jobs for select using (
+  public.app_is_superadmin() or (public.app_is_active() and public.app_is_org_member(org_id))
+);
+
+alter table public.leads add column if not exists import_job_id uuid references public.import_jobs (id) on delete set null;
+alter table public.leads add column if not exists source_file   text;
+alter table public.leads add column if not exists original_row  int;
+alter table public.leads add column if not exists dialing_preference text not null default 'either'; -- ai | manual | either | none
+alter table public.leads add column if not exists archived_at   timestamptz;
+create index if not exists leads_import_job_idx on public.leads (import_job_id) where import_job_id is not null;
+
+-- Atomic accounting bump — chunks arrive as separate requests.
+create or replace function public.app_import_job_bump(
+  p_job uuid, p_rows int, p_created int, p_updated int, p_dup int,
+  p_dnc int, p_invalid int, p_skipped int, p_failed int, p_errors jsonb
+) returns void language sql volatile security definer set search_path = public as $$
+  update public.import_jobs set
+    rows_total   = rows_total   + coalesce(p_rows, 0),
+    created_ct   = created_ct   + coalesce(p_created, 0),
+    updated_ct   = updated_ct   + coalesce(p_updated, 0),
+    duplicate_ct = duplicate_ct + coalesce(p_dup, 0),
+    dnc_ct       = dnc_ct       + coalesce(p_dnc, 0),
+    invalid_ct   = invalid_ct   + coalesce(p_invalid, 0),
+    skipped_ct   = skipped_ct   + coalesce(p_skipped, 0),
+    failed_ct    = failed_ct    + coalesce(p_failed, 0),
+    error_rows   = case when jsonb_array_length(error_rows) < 1000
+                        then error_rows || coalesce(p_errors, '[]'::jsonb)
+                        else error_rows end
+  where id = p_job;
+$$;
+revoke all on function public.app_import_job_bump(uuid, int, int, int, int, int, int, int, int, jsonb) from public, anon, authenticated;
+grant execute on function public.app_import_job_bump(uuid, int, int, int, int, int, int, int, int, jsonb) to service_role;
+
+-- Chunk-sized dedupe probe: which of these last-10-digit keys already exist in
+-- the org, and on which lead? Replaces insertLeads' "read every phone in the
+-- org per chunk" scan (O(book × chunks) → one indexed probe per chunk).
+create or replace function public.app_phone_matches(p_org uuid, p_digits text[])
+returns table (digits text, lead_id uuid)
+language sql stable security definer set search_path = public as $$
+  select right(regexp_replace(coalesce(l.phone, ''), '\D', '', 'g'), 10), l.id
+  from public.leads l
+  where l.org_id = p_org
+    and right(regexp_replace(coalesce(l.phone, ''), '\D', '', 'g'), 10) = any(p_digits);
+$$;
+revoke all on function public.app_phone_matches(uuid, text[]) from public, anon, authenticated;
+grant execute on function public.app_phone_matches(uuid, text[]) to service_role;
+create index if not exists leads_org_phone10_idx
+  on public.leads (org_id, right(regexp_replace(coalesce(phone, ''), '\D', '', 'g'), 10));
+
+create table if not exists public.import_mapping_templates (
+  id         uuid primary key default gen_random_uuid(),
+  org_id     uuid not null references public.organizations (id) on delete cascade,
+  name       text not null,
+  header_sig text not null default '',
+  plan       jsonb not null,
+  created_by uuid,
+  created_at timestamptz not null default now(),
+  last_used_at timestamptz
+);
+create index if not exists import_templates_org_idx on public.import_mapping_templates (org_id, header_sig);
+alter table public.import_mapping_templates enable row level security;
+drop policy if exists "import_templates org read" on public.import_mapping_templates;
+create policy "import_templates org read" on public.import_mapping_templates for select using (
+  public.app_is_superadmin() or (public.app_is_active() and public.app_is_org_member(org_id))
+);
+
+-- Per-lead audit events — Lead 360's timeline backbone (status transitions,
+-- assignment changes, DNC add/remove, field edits, notes).
+create table if not exists public.lead_events (
+  id         uuid primary key default gen_random_uuid(),
+  org_id     uuid,
+  lead_id    uuid not null references public.leads (id) on delete cascade,
+  actor_id   uuid,
+  kind       text not null,   -- status | assignment | dnc | field_change | note
+  payload    jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default now()
+);
+create index if not exists lead_events_lead_idx on public.lead_events (lead_id, created_at desc);
+alter table public.lead_events enable row level security;
+drop policy if exists "lead_events org read" on public.lead_events;
+create policy "lead_events org read" on public.lead_events for select using (
+  public.app_is_superadmin() or (public.app_is_active() and public.app_is_org_member(org_id))
+);
+
+-- ═════════════════════════════════════════════════════════════════════════════
+-- PART 29 — TYPED FILTER COMPILER + ACCURATE LEAD COUNTS       [Phase 1 · C2]
+-- app_filter_leads executes a sanitized FilterSpec (src/lib/leads/filter-spec.ts
+-- — the TS evaluator is the semantic twin; the shared parity fixture in
+-- tests/filter-evaluator.test.ts is the contract). Injection safety is
+-- structural: every column comes from a CASE whitelist, every operator from a
+-- CASE whitelist, every VALUE passes through quote_literal/%L — nothing user-
+-- supplied is ever interpolated raw, and an unknown key/op raises.
+-- SERVICE-ROLE ONLY, same trust model as app_leads_page.
+-- Rollback: drop function public.app_flt_frag, public.app_filter_leads,
+--           public.app_lead_counts;
+-- ═════════════════════════════════════════════════════════════════════════════
+
+-- Compile ONE condition to a WHERE fragment (alias l = leads).
+create or replace function public.app_flt_frag(cond jsonb, p_org uuid, p_user uuid)
+returns text
+language plpgsql immutable as $$
+declare
+  v_kind text := coalesce(cond->>'kind', 'core');
+  v_key  text := cond->>'key';
+  v_cmp  text := cond->>'cmp';
+  v_val  jsonb := cond->'value';
+  v_txt  text := cond->>'value';
+  v_expr text;      -- SQL expression for the field
+  v_type text;      -- text | number | boolean | date
+  v_list text;      -- quoted IN-list
+  v_esc  text;      -- LIKE-escaped text value
+begin
+  -- ── Derived keys: fixed templates, cmp only selects polarity ────────────────
+  if v_kind = 'derived' or v_key in
+     ('phone_valid','dnc','never_dialed','dial_eligible','latest_outcome',
+      'has_open_callback','has_scheduled_appointment','unassigned','archived','search') then
+    v_expr := case v_key
+      when 'phone_valid' then
+        '(length(regexp_replace(coalesce(l.phone, ''''), ''\D'', '''', ''g'')) = 10
+          or (length(regexp_replace(coalesce(l.phone, ''''), ''\D'', '''', ''g'')) = 11
+              and regexp_replace(coalesce(l.phone, ''''), ''\D'', '''', ''g'') like ''1%''))'
+      when 'dnc' then
+        format('(l.status = ''dnc'' or exists (select 1 from public.dnc_numbers d
+           where d.org_id = %L
+             and d.phone_digits = right(regexp_replace(coalesce(l.phone, ''''), ''\D'', '''', ''g''), 10)))', p_org)
+      when 'never_dialed' then
+        '(coalesce(l.attempt_count, 0) = 0 and l.last_contacted_at is null)'
+      when 'dial_eligible' then
+        format('(l.status in (''new'', ''no_answer'', ''callback'')
+          and l.archived_at is null
+          and (length(regexp_replace(coalesce(l.phone, ''''), ''\D'', '''', ''g'')) >= 10)
+          and not exists (select 1 from public.dnc_numbers d
+               where d.org_id = %L
+                 and d.phone_digits = right(regexp_replace(coalesce(l.phone, ''''), ''\D'', '''', ''g''), 10))
+          and (l.reserved_until is null or l.reserved_until < now())
+          and (l.next_eligible_at is null or l.next_eligible_at <= now()))', p_org)
+      when 'has_open_callback' then
+        '(exists (select 1 from public.callbacks cb where cb.lead_id = l.id and cb.status = ''due''))'
+      when 'has_scheduled_appointment' then
+        '(exists (select 1 from public.appointments a where a.lead_id = l.id and a.status = ''scheduled''))'
+      when 'unassigned' then '(l.assigned_rep_id is null)'
+      when 'archived' then '(l.archived_at is not null)'
+      else null
+    end;
+    if v_key = 'search' then
+      v_esc := replace(replace(replace(coalesce(v_txt, ''), '\', '\\'), '%', '\%'), '_', '\_');
+      return format('((l.first_name || '' '' || l.last_name) ilike %L
+        or l.city ilike %L
+        or regexp_replace(coalesce(l.phone, ''''), ''\D'', '''', ''g'') like %L)',
+        '%' || v_esc || '%', '%' || v_esc || '%',
+        '%' || regexp_replace(coalesce(v_txt, ''), '\D', '', 'g') || '%');
+    end if;
+    if v_key = 'latest_outcome' then
+      v_expr := '(select cr.outcome from public.call_records cr
+                  where cr.lead_id = l.id order by cr.started_at desc limit 1)';
+      if v_cmp = 'eq' then return format('%s = %L', v_expr, v_txt);
+      elsif v_cmp = 'neq' then return format('%s is distinct from %L', v_expr, v_txt);
+      elsif v_cmp = 'in' then
+        select string_agg(quote_literal(x.v), ',') into v_list
+        from jsonb_array_elements_text(v_val) x(v);
+        return format('%s in (%s)', v_expr, coalesce(v_list, 'null'));
+      elsif v_cmp = 'is_empty' then return format('%s is null', v_expr);
+      elsif v_cmp = 'not_empty' then return format('%s is not null', v_expr);
+      else raise exception 'bad cmp % for latest_outcome', v_cmp;
+      end if;
+    end if;
+    if v_expr is null then raise exception 'unknown derived key %', v_key; end if;
+    return case when v_cmp in ('is_false') then '(not ' || v_expr || ')' else v_expr end;
+  end if;
+
+  -- ── Custom fields (l.custom_fields jsonb) ───────────────────────────────────
+  if v_kind = 'custom' then
+    if v_key !~ '^[a-z0-9_]{1,64}$' then raise exception 'bad custom key %', v_key; end if;
+    v_type := coalesce(cond->>'type', 'text');
+    v_type := case when v_type in ('number','currency') then 'number'
+                   when v_type = 'boolean' then 'boolean'
+                   when v_type = 'date' then 'date'
+                   else 'text' end;
+    v_expr := format('(l.custom_fields->>%L)', v_key);
+    if v_type = 'number' then
+      -- Numeric guard mirrors the TS evaluator: a non-numeric stored value
+      -- never matches a numeric comparison.
+      v_expr := format('(case when %s ~ ''^-?[0-9]+(\.[0-9]+)?$'' then (%s)::numeric end)', v_expr, v_expr);
+    end if;
+  else
+    -- ── Core columns: strict whitelist ────────────────────────────────────────
+    v_expr := case v_key
+      when 'status'             then 'l.status'
+      when 'campaign_id'        then 'l.campaign_id'
+      when 'lead_group'         then 'l.lead_group'
+      when 'lead_pack_id'       then 'l.lead_pack_id::text'
+      when 'assigned_rep_id'    then 'l.assigned_rep_id'
+      when 'owner_id'           then 'l.owner_id::text'
+      when 'address'            then 'l.address'
+      when 'city'               then 'lower(btrim(coalesce(l.city, '''')))'
+      when 'state'              then 'lower(btrim(coalesce(l.state, '''')))'
+      when 'county'             then 'l.county'
+      when 'zip'                then 'l.zip'
+      when 'timezone'           then 'l.timezone'
+      when 'source_file'        then 'l.source_file'
+      when 'dialing_preference' then 'coalesce(l.dialing_preference, ''either'')'
+      when 'import_job_id'      then 'l.import_job_id::text'
+      when 'created_at'         then 'l.created_at'
+      when 'last_contacted_at'  then 'l.last_contacted_at'
+      when 'last_attempt_at'    then 'l.last_attempt_at'
+      when 'next_eligible_at'   then 'l.next_eligible_at'
+      when 'utility_bill'       then 'l.utility_bill'
+      when 'solar_payment'      then 'l.solar_payment'
+      when 'attempt_count'      then 'coalesce(l.attempt_count, 0)'
+      when 'has_ev'             then 'coalesce(l.has_ev, false)'
+      when 'has_pool'           then 'coalesce(l.has_pool, false)'
+      when 'has_battery'        then 'coalesce(l.has_battery, false)'
+      when 'multiple_systems'   then 'coalesce(l.multiple_systems, false)'
+      else null
+    end;
+    if v_expr is null then raise exception 'unknown filter key %', v_key; end if;
+    v_type := case
+      when v_key in ('created_at','last_contacted_at','last_attempt_at','next_eligible_at') then 'date'
+      when v_key in ('utility_bill','solar_payment','attempt_count') then 'number'
+      when v_key in ('has_ev','has_pool','has_battery','multiple_systems') then 'boolean'
+      else 'text' end;
+    -- City/state comparisons are case/space-folded on both sides.
+    if v_key in ('city','state') and v_cmp in ('eq','neq','in','nin') then
+      v_txt := lower(btrim(coalesce(v_txt, '')));
+    end if;
+  end if;
+
+  -- ── Generic operators per type ──────────────────────────────────────────────
+  if v_cmp = 'is_empty' then
+    return case v_type
+      when 'text' then format('(coalesce(btrim(%s), '''') = '''')', v_expr)
+      else format('(%s is null)', v_expr) end;
+  elsif v_cmp = 'not_empty' then
+    return case v_type
+      when 'text' then format('(coalesce(btrim(%s), '''') <> '''')', v_expr)
+      else format('(%s is not null)', v_expr) end;
+  elsif v_cmp = 'is_true'  and v_type = 'boolean' then return '(' || v_expr || ')';
+  elsif v_cmp = 'is_false' and v_type = 'boolean' then return '(not ' || v_expr || ')';
+  elsif v_cmp = 'eq'  then return format('(%s = %L%s)', v_expr, v_txt,
+    case v_type when 'number' then '::numeric' when 'date' then '::timestamptz' else '' end);
+  elsif v_cmp = 'neq' then return format('(%s is distinct from %L%s)', v_expr, v_txt,
+    case v_type when 'number' then '::numeric' when 'date' then '::timestamptz' else '' end);
+  elsif v_cmp in ('in', 'nin') then
+    select string_agg(quote_literal(case when v_key in ('city','state')
+                                         then lower(btrim(x.v)) else x.v end), ',')
+      into v_list
+    from jsonb_array_elements_text(v_val) x(v);
+    if v_list is null then raise exception 'empty list for %', v_key; end if;
+    return case when v_cmp = 'in'
+      then format('(%s in (%s))', v_expr, v_list)
+      else format('(%s not in (%s) or %s is null)', v_expr, v_list, v_expr) end;
+  elsif v_cmp = 'contains' and v_type = 'text' then
+    v_esc := replace(replace(replace(coalesce(v_txt, ''), '\', '\\'), '%', '\%'), '_', '\_');
+    return format('(%s ilike %L)', v_expr, '%' || v_esc || '%');
+  elsif v_cmp = 'starts_with' and v_type = 'text' then
+    v_esc := replace(replace(replace(coalesce(v_txt, ''), '\', '\\'), '%', '\%'), '_', '\_');
+    return format('(%s ilike %L)', v_expr, v_esc || '%');
+  elsif v_cmp in ('gt','gte','lt','lte') and v_type = 'number' then
+    if v_txt !~ '^-?[0-9]+(\.[0-9]+)?$' then raise exception 'bad number %', v_txt; end if;
+    return format('(%s %s %L::numeric)', v_expr,
+      case v_cmp when 'gt' then '>' when 'gte' then '>=' when 'lt' then '<' else '<=' end, v_txt);
+  elsif v_cmp = 'between' and v_type = 'number' then
+    if (v_val->>0) !~ '^-?[0-9]+(\.[0-9]+)?$' or (v_val->>1) !~ '^-?[0-9]+(\.[0-9]+)?$' then
+      raise exception 'bad between for %', v_key;
+    end if;
+    return format('(%s between %L::numeric and %L::numeric)', v_expr, v_val->>0, v_val->>1);
+  elsif v_cmp = 'before' and v_type = 'date' then
+    return format('(%s < %L::timestamptz)', v_expr, v_txt);
+  elsif v_cmp = 'after' and v_type = 'date' then
+    return format('(%s > %L::timestamptz)', v_expr, v_txt);
+  elsif v_cmp = 'within_days' and v_type = 'date' then
+    if v_txt !~ '^[0-9]{1,4}$' then raise exception 'bad days %', v_txt; end if;
+    return format('(%s >= now() - make_interval(days => %s))', v_expr, v_txt);
+  elsif v_cmp = 'older_than_days' and v_type = 'date' then
+    if v_txt !~ '^[0-9]{1,4}$' then raise exception 'bad days %', v_txt; end if;
+    return format('(%s < now() - make_interval(days => %s))', v_expr, v_txt);
+  end if;
+  raise exception 'bad cmp % for % (%)', v_cmp, v_key, v_type;
+end;
+$$;
+revoke all on function public.app_flt_frag(jsonb, uuid, uuid) from public, anon, authenticated;
+
+create or replace function public.app_filter_leads(
+  p_org uuid, p_user uuid, p_supervisor boolean,
+  p_filter jsonb,
+  p_sort jsonb default null,
+  p_offset int default 0, p_limit int default 50,
+  p_count_only boolean default false
+) returns jsonb
+language plpgsql stable security definer set search_path = public as $$
+declare
+  v_limit  int := least(greatest(coalesce(p_limit, 50), 1), 1000);
+  v_offset int := greatest(coalesce(p_offset, 0), 0);
+  v_where  text := '';
+  v_groups text[] := '{}';
+  v_conds  text[];
+  v_grp    jsonb;
+  v_cond   jsonb;
+  v_order  text := '';
+  v_sorts  text[] := '{}';
+  v_s      jsonb;
+  v_dir    text;
+  v_expr   text;
+  v_rows   jsonb;
+  v_total  bigint;
+  v_scope  text;
+  v_sql    text;
+begin
+  -- Same two-branch scope as app_leads_page.
+  v_scope := case when p_supervisor
+    then format('(l.org_id = %L or (l.owner_id = %L and l.org_id is null))', p_org, p_user)
+    else format('((l.owner_id = %L or l.assigned_rep_id = %L) and (l.org_id = %L or l.org_id is null))',
+                p_user, p_user::text, p_org) end;
+
+  -- Compile the FilterSpec: root op over groups, each group an op over conds.
+  -- Caps mirror sanitizeFilterSpec (≤8 groups × ≤8 conditions).
+  if p_filter is not null and jsonb_typeof(p_filter->'groups') = 'array' then
+    for v_grp in select * from jsonb_array_elements(p_filter->'groups') limit 8 loop
+      v_conds := '{}';
+      if jsonb_typeof(v_grp->'conditions') = 'array' then
+        for v_cond in select * from jsonb_array_elements(v_grp->'conditions') limit 8 loop
+          v_conds := v_conds || public.app_flt_frag(v_cond, p_org, p_user);
+        end loop;
+      end if;
+      if array_length(v_conds, 1) > 0 then
+        v_groups := v_groups || ('(' || array_to_string(v_conds,
+          case when coalesce(v_grp->>'op', 'and') = 'or' then ' or ' else ' and ' end) || ')');
+      end if;
+    end loop;
+  end if;
+  if array_length(v_groups, 1) > 0 then
+    v_where := ' and (' || array_to_string(v_groups,
+      case when coalesce(p_filter->>'op', 'and') = 'or' then ' or ' else ' and ' end) || ')';
+  end if;
+
+  -- Archived rows are excluded from every result UNLESS the filter itself
+  -- references the archived key (drilling into the archived bucket).
+  if position('"archived"' in coalesce(p_filter::text, '')) = 0 then
+    v_where := v_where || ' and l.archived_at is null';
+  end if;
+
+  -- Sort: whitelisted keys only, ≤3, (created_at, id) always closes.
+  if p_sort is not null and jsonb_typeof(p_sort) = 'array' then
+    for v_s in select * from jsonb_array_elements(p_sort) limit 3 loop
+      v_dir := case when lower(coalesce(v_s->>'dir', 'asc')) = 'desc' then 'desc' else 'asc' end;
+      v_expr := case v_s->>'key'
+        when 'name'   then 'lower(coalesce(l.last_name, '''') || '' '' || coalesce(l.first_name, ''''))'
+        when 'city'   then 'lower(coalesce(l.city, ''''))'
+        when 'state'  then 'lower(coalesce(l.state, ''''))'
+        when 'status' then 'l.status'
+        when 'utility_bill'      then 'l.utility_bill'
+        when 'solar_payment'     then 'l.solar_payment'
+        when 'ai_score'          then 'l.ai_score'
+        when 'last_contacted_at' then 'l.last_contacted_at'
+        when 'created_at'        then 'l.created_at'
+        when 'attempt_count'     then 'coalesce(l.attempt_count, 0)'
+        when 'last_attempt_at'   then 'l.last_attempt_at'
+        when 'next_eligible_at'  then 'l.next_eligible_at'
+        else null end;
+      if v_expr is not null then
+        v_sorts := v_sorts || (v_expr || ' ' || v_dir || ' nulls last');
+      end if;
+    end loop;
+  end if;
+  v_order := case when array_length(v_sorts, 1) > 0
+    then array_to_string(v_sorts, ', ') || ', l.created_at asc, l.id asc'
+    else 'l.created_at asc, l.id asc' end;
+
+  v_sql := 'from public.leads l where ' || v_scope || v_where;
+
+  execute 'select count(*) ' || v_sql into v_total;
+  if p_count_only then
+    return jsonb_build_object('total', v_total);
+  end if;
+
+  execute 'select coalesce(jsonb_agg(row_json), ''[]''::jsonb) from (
+      select to_jsonb(l.*) as row_json ' || v_sql ||
+    ' order by ' || v_order ||
+    format(' limit %s offset %s', v_limit, v_offset) || ') s'
+  into v_rows;
+
+  return jsonb_build_object('rows', v_rows, 'total', v_total);
+end;
+$$;
+do $$
+declare r record;
+begin
+  for r in
+    select p.oid::regprocedure as sig from pg_proc p
+    join pg_namespace n on n.oid = p.pronamespace
+    where n.nspname = 'public' and p.proname = 'app_filter_leads'
+  loop
+    execute format('revoke execute on function %s from public', r.sig);
+    execute format('revoke execute on function %s from anon', r.sig);
+    execute format('revoke execute on function %s from authenticated', r.sig);
+    execute format('grant  execute on function %s to service_role', r.sig);
+  end loop;
+end $$;
+
+-- The 8 drillable lead-count tiles — one scan, FILTER clauses, definitions in
+-- docs/phase-1/metric-glossary.md ("Lead counts"). Unique lead ROWS, not phones.
+create or replace function public.app_lead_counts(p_org uuid, p_user uuid, p_supervisor boolean)
+returns jsonb
+language sql stable security definer set search_path = public as $$
+  with scope as (
+    select l.*,
+      right(regexp_replace(coalesce(l.phone, ''), '\D', '', 'g'), 10) as p10,
+      length(regexp_replace(coalesce(l.phone, ''), '\D', '', 'g')) as plen
+    from public.leads l
+    where case when p_supervisor
+      then (l.org_id = p_org or (l.owner_id = p_user and l.org_id is null))
+      else ((l.owner_id = p_user or l.assigned_rep_id = p_user::text)
+            and (l.org_id = p_org or l.org_id is null)) end
+  ),
+  dnc as (select phone_digits from public.dnc_numbers where org_id = p_org)
+  select jsonb_build_object(
+    'active',       count(*) filter (where archived_at is null and status <> 'dnc'),
+    'dialEligible', count(*) filter (where archived_at is null
+                      and status in ('new', 'no_answer', 'callback')
+                      and plen >= 10
+                      and p10 not in (select phone_digits from dnc)
+                      and (reserved_until is null or reserved_until < now())
+                      and (next_eligible_at is null or next_eligible_at <= now())),
+    'assigned',     count(*) filter (where archived_at is null and status <> 'dnc' and assigned_rep_id is not null),
+    'unassigned',   count(*) filter (where archived_at is null and status <> 'dnc' and assigned_rep_id is null),
+    'neverDialed',  count(*) filter (where archived_at is null
+                      and coalesce(attempt_count, 0) = 0 and last_contacted_at is null
+                      and status in ('new', 'no_answer', 'callback')),
+    'attempted',    count(*) filter (where archived_at is null
+                      and (coalesce(attempt_count, 0) > 0 or last_contacted_at is not null)),
+    'dnc',          count(*) filter (where status = 'dnc' or p10 in (select phone_digits from dnc)),
+    'archived',     count(*) filter (where archived_at is not null or plen < 10)
+  ) from scope;
+$$;
+revoke all on function public.app_lead_counts(uuid, uuid, boolean) from public, anon, authenticated;
+grant execute on function public.app_lead_counts(uuid, uuid, boolean) to service_role;
+
+notify pgrst, 'reload schema';
+
+-- ═════════════════════════════════════════════════════════════════════════════
+-- PART 30 — SMART LISTS 2.0                                    [Phase 1 · C3]
+-- Dynamic saved queries (FilterSpec jsonb + saved view config) replacing the
+-- six hardcoded rules in src/lib/leads/smart-lists.ts. The legacy rules are
+-- seeded per org; the two solar-specific ones only for solar-template orgs
+-- (they used to show for every vertical). Writes are service-role after app
+-- permission checks; any member may read.
+-- Rollback: drop table public.smart_lists;
+-- ═════════════════════════════════════════════════════════════════════════════
+create table if not exists public.smart_lists (
+  id          uuid primary key default gen_random_uuid(),
+  org_id      uuid not null references public.organizations (id) on delete cascade,
+  key         text,                              -- non-null only for seeded legacy lists
+  name        text not null,
+  description text not null default '',
+  tone        text not null default 'neutral',
+  filter      jsonb not null,                    -- FilterSpec
+  columns     jsonb,
+  sort        jsonb,
+  owner_id    uuid,
+  shared      boolean not null default true,
+  favorite    boolean not null default false,
+  version     int not null default 1,
+  updated_by  uuid,
+  created_at  timestamptz not null default now(),
+  updated_at  timestamptz not null default now(),
+  unique (org_id, key)
+);
+alter table public.smart_lists enable row level security;
+drop policy if exists "smart_lists org read" on public.smart_lists;
+create policy "smart_lists org read" on public.smart_lists for select using (
+  public.app_is_superadmin() or (public.app_is_active() and public.app_is_org_member(org_id))
+);
+
+-- Seed the four vertical-neutral legacy lists for every org.
+-- Every seeded FilterSpec MUST be sanitize-stable (sanitizeFilterSpec accepts it
+-- UNCHANGED) — tests/smart-list-migration.test.ts parses these literals and
+-- pins that. An earlier revision seeded going_cold's day count as the STRING
+-- "14", which the TS sanitizer drops, silently widening the list; hence the
+-- corrective ON CONFLICT below: never-edited seed rows (version = 1) get their
+-- filter repaired on re-run, user-versioned lists are never touched.
+insert into public.smart_lists (org_id, key, name, description, tone, filter)
+select o.id, s.key, s.name, s.description, s.tone, s.filter::jsonb
+from public.organizations o
+cross join (values
+  ('fresh', 'Never called', 'New leads that haven''t been contacted yet.', 'primary',
+   '{"op":"and","groups":[{"op":"and","conditions":[{"kind":"core","key":"status","cmp":"eq","value":"new"},{"kind":"derived","key":"never_dialed","cmp":"is_true"}]}]}'),
+  ('going_cold', 'Going cold', 'Contacted once, then nothing for two weeks.', 'warning',
+   '{"op":"and","groups":[{"op":"and","conditions":[{"kind":"core","key":"status","cmp":"in","value":["new","no_answer","callback"]},{"kind":"core","key":"last_contacted_at","cmp":"older_than_days","value":14}]}]}'),
+  ('no_phone', 'No valid phone', 'Rows whose phone can''t be dialed.', 'danger',
+   '{"op":"and","groups":[{"op":"and","conditions":[{"kind":"derived","key":"phone_valid","cmp":"is_false"}]}]}'),
+  ('missing_address', 'Missing address', 'No street address or city on file.', 'warning',
+   '{"op":"and","groups":[{"op":"and","conditions":[{"kind":"core","key":"address","cmp":"is_empty"},{"kind":"core","key":"city","cmp":"is_empty"}]}]}')
+) s(key, name, description, tone, filter)
+on conflict (org_id, key) do update
+  set filter = excluded.filter, updated_at = now()
+  where smart_lists.version = 1 and smart_lists.filter is distinct from excluded.filter;
+
+-- The two solar-vertical rules, only where the vertical warrants them.
+insert into public.smart_lists (org_id, key, name, description, tone, filter)
+select o.id, s.key, s.name, s.description, s.tone, s.filter::jsonb
+from public.organizations o
+cross join (values
+  ('high_bill', 'High utility bill', 'Monthly utility bill of $200 or more.', 'success',
+   '{"op":"and","groups":[{"op":"and","conditions":[{"kind":"core","key":"utility_bill","cmp":"gte","value":200}]}]}'),
+  ('big_load', 'Big energy load', 'EV, pool, battery, or multiple systems.', 'primary',
+   '{"op":"and","groups":[{"op":"or","conditions":[{"kind":"core","key":"has_ev","cmp":"is_true"},{"kind":"core","key":"has_pool","cmp":"is_true"},{"kind":"core","key":"has_battery","cmp":"is_true"},{"kind":"core","key":"multiple_systems","cmp":"is_true"}]}]}')
+) s(key, name, description, tone, filter)
+where coalesce(o.dialer_template, '') in ('solar', 'sunrun')
+on conflict (org_id, key) do update
+  set filter = excluded.filter, updated_at = now()
+  where smart_lists.version = 1 and smart_lists.filter is distinct from excluded.filter;
+
+-- ═════════════════════════════════════════════════════════════════════════════
+-- PART 31 — EXPORT AUDIT                                        [Phase 1 · C4]
+-- Every export writes who/what/how-many (spec §6 requires an export audit
+-- event). Service-role writes; supervisor read via app policies later if a UI
+-- needs it.
+-- Rollback: drop table public.export_audit;
+-- ═════════════════════════════════════════════════════════════════════════════
+create table if not exists public.export_audit (
+  id         uuid primary key default gen_random_uuid(),
+  org_id     uuid,
+  user_id    uuid,
+  row_count  int not null default 0,
+  columns    jsonb not null default '[]'::jsonb,
+  filter     jsonb,
+  truncated  boolean not null default false,
+  created_at timestamptz not null default now()
+);
+create index if not exists export_audit_org_idx on public.export_audit (org_id, created_at desc);
+alter table public.export_audit enable row level security;
+
+notify pgrst, 'reload schema';
+
+-- ═════════════════════════════════════════════════════════════════════════════
+-- PART 32 — PACKS BECOME ASSIGNMENTS                            [Phase 1 · D1]
+-- lead_packs evolves IN PLACE into the assignment unit (no rename — the table
+-- is live; the UI says "Assignment"). New columns are all defaulted, so legacy
+-- behavior is unchanged until the Assignment Center reads them. Allocation is
+-- atomic (FOR UPDATE SKIP LOCKED) with never-dialed-first ordering; candidate
+-- narrowing by FilterSpec happens app-side via app_filter_leads (ids →
+-- p_lead_ids), keeping ONE filter compiler.
+-- Rollback: drop the two RPCs + assignment_events; the columns may stay.
+-- ═════════════════════════════════════════════════════════════════════════════
+alter table public.lead_packs add column if not exists status         text not null default 'active'; -- active|paused|completed|archived
+alter table public.lead_packs add column if not exists priority       int  not null default 0;
+alter table public.lead_packs add column if not exists due_date       timestamptz;
+alter table public.lead_packs add column if not exists dialing_mode   text not null default 'either'; -- manual|ai|either
+alter table public.lead_packs add column if not exists max_attempts   int;
+alter table public.lead_packs add column if not exists cooldown_hours int;
+alter table public.lead_packs add column if not exists ordering       text not null default 'file';   -- file|priority
+alter table public.lead_packs add column if not exists source         text not null default 'import'; -- import|manual|filter|smart_list
+alter table public.lead_packs add column if not exists filter_snapshot jsonb;
+alter table public.lead_packs add column if not exists campaign_id    text;
+create index if not exists lead_packs_assignee_status_idx on public.lead_packs (org_id, assigned_to, status);
+
+create table if not exists public.assignment_events (
+  id         uuid primary key default gen_random_uuid(),
+  org_id     uuid not null references public.organizations (id) on delete cascade,
+  pack_id    uuid references public.lead_packs (id) on delete set null,
+  actor_id   uuid,
+  action     text not null,  -- created|assigned|reclaimed|reassigned|paused|resumed|rebalanced|edited|completed|campaign_cloned
+  payload    jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default now()
+);
+create index if not exists assignment_events_pack_idx on public.assignment_events (pack_id, created_at desc);
+create index if not exists assignment_events_org_idx  on public.assignment_events (org_id, created_at desc);
+alter table public.assignment_events enable row level security;
+drop policy if exists "assignment_events org read" on public.assignment_events;
+create policy "assignment_events org read" on public.assignment_events for select using (
+  public.app_is_superadmin() or (public.app_is_active() and public.app_is_org_member(org_id))
+);
+
+-- Count what an allocation WOULD take, with exact exclusion reasons. No locks.
+create or replace function public.app_preview_assignment(
+  p_org uuid, p_lead_ids uuid[], p_count int
+) returns jsonb
+language sql stable security definer set search_path = public as $$
+  with pool as (
+    select l.*,
+      length(regexp_replace(coalesce(l.phone, ''), '\D', '', 'g')) as plen,
+      right(regexp_replace(coalesce(l.phone, ''), '\D', '', 'g'), 10) as p10
+    from public.leads l
+    where l.org_id = p_org
+      and (p_lead_ids is null or l.id = any(p_lead_ids))
+  ),
+  cls as (
+    select case
+      when status = 'dnc' or p10 in (select phone_digits from public.dnc_numbers where org_id = p_org) then 'dnc'
+      when plen < 10 then 'no_phone'
+      when assigned_rep_id is not null then 'assigned'
+      when archived_at is not null or status not in ('new', 'no_answer', 'callback') then 'ineligible'
+      else 'eligible' end as bucket
+    from pool
+  )
+  select jsonb_build_object(
+    'eligible',           count(*) filter (where bucket = 'eligible'),
+    'wouldAllocate',      least(count(*) filter (where bucket = 'eligible'), greatest(coalesce(p_count, 0), 0)),
+    'excludedDnc',        count(*) filter (where bucket = 'dnc'),
+    'excludedNoPhone',    count(*) filter (where bucket = 'no_phone'),
+    'excludedAssigned',   count(*) filter (where bucket = 'assigned'),
+    'excludedIneligible', count(*) filter (where bucket = 'ineligible')
+  ) from cls;
+$$;
+revoke all on function public.app_preview_assignment(uuid, uuid[], int) from public, anon, authenticated;
+grant execute on function public.app_preview_assignment(uuid, uuid[], int) to service_role;
+
+-- Atomically allocate up to p_count eligible UNASSIGNED leads into a new pack
+-- for p_rep. Never-dialed first (mirrors app_claim_dial_leads' ORDER BY).
+create or replace function public.app_allocate_assignment(
+  p_org uuid, p_actor uuid, p_rep uuid, p_count int,
+  p_label text, p_opts jsonb default '{}'::jsonb,
+  p_lead_ids uuid[] default null
+) returns jsonb
+language plpgsql volatile security definer set search_path = public as $$
+declare
+  v_pack uuid;
+  v_n    int;
+begin
+  insert into public.lead_packs (
+    org_id, batch, seq, label, size, created_by,
+    assigned_to, assigned_by, assigned_at,
+    status, priority, due_date, dialing_mode, max_attempts, cooldown_hours,
+    ordering, source, filter_snapshot, campaign_id
+  ) values (
+    p_org, coalesce(p_opts->>'batch', 'assignment'), 0, p_label, 0, p_actor,
+    p_rep, p_actor, now(),
+    'active',
+    coalesce((p_opts->>'priority')::int, 0),
+    (p_opts->>'dueDate')::timestamptz,
+    coalesce(p_opts->>'dialingMode', 'either'),
+    (p_opts->>'maxAttempts')::int,
+    (p_opts->>'cooldownHours')::int,
+    coalesce(p_opts->>'ordering', 'file'),
+    coalesce(p_opts->>'source', 'manual'),
+    p_opts->'filterSnapshot',
+    p_opts->>'campaignId'
+  ) returning id into v_pack;
+
+  with picked as (
+    select l.id from public.leads l
+    where l.org_id = p_org
+      and (p_lead_ids is null or l.id = any(p_lead_ids))
+      and l.assigned_rep_id is null
+      and l.archived_at is null
+      and l.status in ('new', 'no_answer', 'callback')
+      and length(regexp_replace(coalesce(l.phone, ''), '\D', '', 'g')) >= 10
+      and not exists (select 1 from public.dnc_numbers d
+           where d.org_id = p_org
+             and d.phone_digits = right(regexp_replace(coalesce(l.phone, ''), '\D', '', 'g'), 10))
+    order by coalesce(l.attempt_count, 0) asc,
+             l.last_attempt_at asc nulls first,
+             l.created_at asc, l.id asc
+    limit greatest(coalesce(p_count, 0), 0)
+    for update skip locked
+  ),
+  moved as (
+    update public.leads l
+    set lead_pack_id = v_pack, assigned_rep_id = p_rep::text
+    from picked where l.id = picked.id
+    returning l.id
+  )
+  select count(*)::int into v_n from moved;
+
+  update public.lead_packs set size = v_n where id = v_pack;
+  insert into public.assignment_events (org_id, pack_id, actor_id, action, payload)
+  values (p_org, v_pack, p_actor, 'created',
+          jsonb_build_object('rep', p_rep, 'allocated', v_n, 'requested', p_count));
+
+  if v_n = 0 then
+    delete from public.lead_packs where id = v_pack;
+    return jsonb_build_object('packId', null, 'allocated', 0);
+  end if;
+  return jsonb_build_object('packId', v_pack, 'allocated', v_n);
+end;
+$$;
+revoke all on function public.app_allocate_assignment(uuid, uuid, uuid, int, text, jsonb, uuid[]) from public, anon, authenticated;
+grant execute on function public.app_allocate_assignment(uuid, uuid, uuid, int, text, jsonb, uuid[]) to service_role;
+
+-- ═════════════════════════════════════════════════════════════════════════════
+-- PART 33 — CALLBACK WORKSPACE v2                               [Phase 1 · D2]
+-- Callbacks gain ownership, priority, provenance, attempts, and a CLAIM so two
+-- users can never execute the same callback (15-minute stale takeover).
+-- Rollback: drop function public.app_claim_callback; columns may stay.
+-- ═════════════════════════════════════════════════════════════════════════════
+alter table public.callbacks add column if not exists priority       int not null default 0;
+alter table public.callbacks add column if not exists assigned_to    uuid;
+alter table public.callbacks add column if not exists campaign_id    text;
+alter table public.callbacks add column if not exists call_record_id uuid references public.call_records (id) on delete set null;
+alter table public.callbacks add column if not exists attempt_count  int not null default 0;
+alter table public.callbacks add column if not exists last_attempt_at timestamptz;
+alter table public.callbacks add column if not exists claimed_by     uuid;
+alter table public.callbacks add column if not exists claimed_at     timestamptz;
+alter table public.callbacks add column if not exists timezone       text;
+
+create or replace function public.app_claim_callback(p_id uuid, p_user uuid)
+returns boolean language sql volatile security definer set search_path = public as $$
+  with c as (
+    update public.callbacks
+    set claimed_by = p_user, claimed_at = now()
+    where id = p_id and status = 'due'
+      and (claimed_by is null or claimed_by = p_user
+           or claimed_at < now() - interval '15 minutes')
+    returning id
+  )
+  select exists (select 1 from c);
+$$;
+revoke all on function public.app_claim_callback(uuid, uuid) from public, anon, authenticated;
+grant execute on function public.app_claim_callback(uuid, uuid) to service_role;
+
+-- ═════════════════════════════════════════════════════════════════════════════
+-- PART 34 — CAMPAIGNS BECOME OPERATIONAL OBJECTS                [Phase 1 · D4]
+-- Campaign columns for audience/policy/goals; leads.campaign_id STAYS text (no
+-- FK migration on live rows — the lead_group precedent); the funnel RPC returns
+-- mutually exclusive CURRENT-STATE buckets, each drillable app-side.
+-- Rollback: drop function public.app_campaign_funnel + the index; columns stay.
+-- ═════════════════════════════════════════════════════════════════════════════
+alter table public.campaigns add column if not exists description      text not null default '';
+alter table public.campaigns add column if not exists objective        text not null default '';
+alter table public.campaigns add column if not exists archived_at      timestamptz;
+alter table public.campaigns add column if not exists audience         jsonb;
+alter table public.campaigns add column if not exists dialing_policy   jsonb;
+alter table public.campaigns add column if not exists caller_ids       text[] not null default '{}';
+alter table public.campaigns add column if not exists retry_policy     jsonb;
+alter table public.campaigns add column if not exists disposition_keys text[] not null default '{}';
+alter table public.campaigns add column if not exists goals            jsonb;
+create index if not exists leads_org_campaign_idx on public.leads (org_id, campaign_id) where campaign_id is not null;
+
+-- One bucket per lead, priority-ordered so the funnel never double-counts:
+-- dnc > appointment > converted > callback > connected > exhausted > attempted
+-- > assigned > eligible > excluded (archived / invalid phone / parked status).
+create or replace function public.app_campaign_funnel(p_org uuid, p_campaign text)
+returns jsonb
+language sql stable security definer set search_path = public as $$
+  with pool as (
+    select l.*,
+      length(regexp_replace(coalesce(l.phone, ''), '\D', '', 'g')) as plen,
+      right(regexp_replace(coalesce(l.phone, ''), '\D', '', 'g'), 10) as p10,
+      coalesce((select (c.retry_policy->>'maxAttempts')::int
+                from public.campaigns c where c.id::text = p_campaign), 0) as max_att
+    from public.leads l
+    where l.org_id = p_org and l.campaign_id = p_campaign
+  ),
+  cls as (
+    select case
+      when status = 'dnc' or p10 in (select phone_digits from public.dnc_numbers where org_id = p_org) then 'dnc'
+      when status = 'appointment' then 'appointment'
+      when status = 'qualified' then 'converted'
+      when status = 'callback' then 'callback'
+      when exists (select 1 from public.call_records cr
+                   where cr.lead_id = pool.id
+                     and coalesce(cr.human_connected,
+                       cr.outcome in ('appointment_booked','callback_scheduled','qualified',
+                                      'not_interested','do_not_call'))) then 'connected'
+      when max_att > 0 and coalesce(attempt_count, 0) >= max_att then 'exhausted'
+      when coalesce(attempt_count, 0) > 0 or last_contacted_at is not null then 'attempted'
+      when assigned_rep_id is not null then 'assigned'
+      when archived_at is null and status in ('new', 'no_answer') and plen >= 10 then 'eligible'
+      else 'excluded' end as bucket
+    from pool
+  )
+  select jsonb_build_object(
+    'eligible',    count(*) filter (where bucket = 'eligible'),
+    'assigned',    count(*) filter (where bucket = 'assigned'),
+    'attempted',   count(*) filter (where bucket = 'attempted'),
+    'connected',   count(*) filter (where bucket = 'connected'),
+    'callback',    count(*) filter (where bucket = 'callback'),
+    'appointment', count(*) filter (where bucket = 'appointment'),
+    'converted',   count(*) filter (where bucket = 'converted'),
+    'exhausted',   count(*) filter (where bucket = 'exhausted'),
+    'dnc',         count(*) filter (where bucket = 'dnc'),
+    'excluded',    count(*) filter (where bucket = 'excluded'),
+    'total',       count(*)
+  ) from cls;
+$$;
+revoke all on function public.app_campaign_funnel(uuid, text) from public, anon, authenticated;
+grant execute on function public.app_campaign_funnel(uuid, text) to service_role;
+
+notify pgrst, 'reload schema';
+
+-- ═════════════════════════════════════════════════════════════════════════════
+-- PART 35 — REALTIME: PRIVATE ORG BROADCAST CHANNELS           [Phase 1 · E1]
+-- One private channel per org (topic org:<uuid>:floor). The SERVER publishes
+-- (service role bypasses RLS); clients may only RECEIVE broadcasts + track
+-- presence — a client can never forge a call.state/transcript event. Join is
+-- authorized by active-org membership, so a dual-org member only receives
+-- their ACTIVE org's floor.
+-- Rollback: drop policy both policies on realtime.messages; drop function
+--           public.app_can_join_org_topic; clients degrade to polling.
+-- ═════════════════════════════════════════════════════════════════════════════
+create or replace function public.app_can_join_org_topic(topic text)
+returns boolean
+language sql stable security definer set search_path = public as $$
+  select case
+    when topic ~ '^org:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}:floor$' then
+      split_part(topic, ':', 2)::uuid = public.app_active_org()
+      and public.app_is_org_member(split_part(topic, ':', 2)::uuid)
+      and public.app_is_active()
+    else false
+  end;
+$$;
+
+drop policy if exists "org members receive floor events" on realtime.messages;
+create policy "org members receive floor events"
+on realtime.messages for select to authenticated
+using (
+  realtime.messages.extension in ('broadcast', 'presence')
+  and public.app_can_join_org_topic(realtime.topic())
+);
+
+drop policy if exists "org members track presence" on realtime.messages;
+create policy "org members track presence"
+on realtime.messages for insert to authenticated
+with check (
+  realtime.messages.extension = 'presence'
+  and public.app_can_join_org_topic(realtime.topic())
+);
+
+-- ═════════════════════════════════════════════════════════════════════════════
+-- PART 36 — CALL INTELLIGENCE                                   [Phase 1 · F1]
+-- Structured AI artifacts with provenance + an append-only supersede chain
+-- (an AI writer may NEVER supersede a human row); immutable transcript
+-- segments with timestamps (audio↔transcript sync); the shared live-poll
+-- cursor (N supervisors share ONE provider poll); the needs-review queue.
+-- All service-role write, org-member read where policies exist.
+-- Rollback: drop the four tables.
+-- ═════════════════════════════════════════════════════════════════════════════
+create table if not exists public.call_artifacts (
+  id              uuid primary key default gen_random_uuid(),
+  org_id          uuid,
+  call_record_id  uuid references public.call_records (id) on delete cascade,
+  conversation_id text,
+  kind            text not null,   -- summary|facts|objections|commitments|appointment_signals|compliance_flags|proposed_disposition|coaching
+  payload         jsonb not null,
+  confidence      numeric,         -- 0..1; null for human-authored
+  evidence        int[] not null default '{}',  -- transcript turn indices
+  model           text,
+  prompt_version  text,
+  source          text not null default 'ai',    -- ai | human
+  status          text not null default 'active',-- active | superseded
+  supersedes      uuid references public.call_artifacts (id),
+  created_by      uuid,
+  created_at      timestamptz not null default now()
+);
+create index if not exists call_artifacts_call_idx on public.call_artifacts (call_record_id, kind, status);
+create index if not exists call_artifacts_org_idx  on public.call_artifacts (org_id, created_at desc);
+alter table public.call_artifacts enable row level security;
+drop policy if exists "call_artifacts org read" on public.call_artifacts;
+create policy "call_artifacts org read" on public.call_artifacts for select using (
+  public.app_is_superadmin() or (public.app_is_active() and public.app_is_org_member(org_id))
+);
+
+create table if not exists public.call_transcript_segments (
+  id              bigint generated always as identity primary key,
+  org_id          uuid,
+  conversation_id text not null,
+  call_record_id  uuid,
+  turn_index      int  not null,
+  role            text not null,          -- agent | contact
+  message         text not null,
+  secs            numeric,                -- offset from call start
+  source          text not null default 'elevenlabs',
+  interim         boolean not null default false,
+  supersedes_turn int,
+  created_at      timestamptz not null default now(),
+  unique (conversation_id, turn_index)
+);
+create index if not exists cts_convo_idx on public.call_transcript_segments (conversation_id, turn_index);
+alter table public.call_transcript_segments enable row level security;
+drop policy if exists "cts org read" on public.call_transcript_segments;
+create policy "cts org read" on public.call_transcript_segments for select using (
+  public.app_is_superadmin() or (public.app_is_active() and public.app_is_org_member(org_id))
+);
+
+create table if not exists public.transcript_cursors (
+  conversation_id text primary key,
+  last_turn       int not null default -1,
+  fetched_at      timestamptz not null default now()
+);
+alter table public.transcript_cursors enable row level security;
+
+create table if not exists public.call_review_queue (
+  id             uuid primary key default gen_random_uuid(),
+  org_id         uuid,
+  call_record_id uuid references public.call_records (id) on delete cascade,
+  reason         text not null,  -- low_confidence|high_impact|conflict|missing_transcript|rep_flagged
+  proposed_disposition text,
+  confidence     numeric,
+  status         text not null default 'open',  -- open|resolved|dismissed
+  resolved_by    uuid,
+  resolved_at    timestamptz,
+  resolution     text,
+  created_at     timestamptz not null default now()
+);
+create index if not exists call_review_org_idx on public.call_review_queue (org_id, status, created_at desc);
+alter table public.call_review_queue enable row level security;
+drop policy if exists "review org read" on public.call_review_queue;
+create policy "review org read" on public.call_review_queue for select using (
+  public.app_is_superadmin() or (public.app_is_active() and public.app_is_org_member(org_id))
+);
+
+notify pgrst, 'reload schema';

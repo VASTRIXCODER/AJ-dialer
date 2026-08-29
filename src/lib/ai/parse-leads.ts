@@ -2,7 +2,9 @@ import "server-only";
 
 import {
   captureToFieldDef,
+  isDncFlagValue,
   looksLikePhone,
+  mapDialingPreference,
   MAX_CUSTOM_FIELDS,
   recoverPhone,
   sampleColumn,
@@ -238,7 +240,13 @@ export function applyAIMapping(
   grid: string[][],
   m: ColumnMapping,
   knownExtras?: CustomCapture[],
+  // The Import Studio can mark a whole-row DNC flag / dialing-preference column
+  // on top of an AI plan (the wizard's mapping works on column indices, whatever
+  // kind of plan proposed them). -1 / omitted = none.
+  cols?: { dncCol?: number; dialPrefCol?: number },
 ): ParseResult {
+  const dncCol = cols?.dncCol ?? -1;
+  const dialPrefCol = cols?.dialPrefCol ?? -1;
   const start = m.hasHeader ? 1 : 0;
   const extras = knownExtras ?? resolveAIExtras(grid, m, start);
   const out: ParsedLead[] = [];
@@ -314,6 +322,18 @@ export function applyAIMapping(
     };
     if (!Number.isNaN(bill) && bill > 0) lead.utilityBill = bill;
     if (customFields) lead.customFields = customFields;
+
+    // Row-level suppression: an explicit DNC column marked truthy, or every
+    // valid number in the row carrying a per-number DNC flag. The lead is
+    // STORED (status 'dnc') and its number suppressed — recorded, never dialed.
+    const allFlagged = anyValid.length > 0 && callable.length === 0;
+    if (allFlagged || (dncCol >= 0 && isDncFlagValue(cell(row, dncCol)))) {
+      lead.dnc = true;
+    }
+    if (dialPrefCol >= 0) {
+      const pref = mapDialingPreference(cell(row, dialPrefCol));
+      if (pref) lead.dialingPreference = pref;
+    }
 
     if (!lead.phone && !firstName && !lastName) continue;
     if (!isValidPhone(lead.phone)) noPhone++;

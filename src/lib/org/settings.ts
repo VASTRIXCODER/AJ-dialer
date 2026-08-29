@@ -9,6 +9,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import type { LeadFieldDef } from "../leads/field-schema";
+import { sanitizeExportTemplates, type ExportTemplate } from "../leads/export-spec";
 
 export type DispositionTone = "success" | "warning" | "danger" | "neutral";
 
@@ -255,6 +256,13 @@ export interface OrgSettings {
    * src/lib/leads/field-schema.ts).
    */
   leadFields: LeadFieldDef[];
+  /**
+   * Saved Export v2 setups (column selection + format), managed from the leads
+   * Export dialog. Capped at 20; sanitized on every read (mergeSettings) so a
+   * hand-edited blob degrades to its valid templates instead of breaking the
+   * dialog. See src/lib/leads/export-spec.ts.
+   */
+  exportTemplates: ExportTemplate[];
   /** Domain noun the dialer uses for a contact, e.g. "homeowner". */
   leadNoun: string;
   leadNounPlural: string;
@@ -389,6 +397,7 @@ export const DEFAULT_ORG_SETTINGS: OrgSettings = {
   billing: { ...DEFAULT_BILLING },
   costRates: { ...DEFAULT_COST_RATES },
   leadFields: [],
+  exportTemplates: [],
   leadNoun: "lead",
   leadNounPlural: "leads",
   leadGroupLabels: {},
@@ -478,6 +487,9 @@ export function mergeSettings(raw: unknown): OrgSettings {
     // Arrays replace wholesale (like dispositions) — spread-merging would
     // resurrect a field an admin just deleted.
     leadFields: Array.isArray(s.leadFields) ? s.leadFields : [],
+    // Sanitized on read (shape + the 20-template cap) — the stored blob is
+    // whatever the PATCH route last wrote, and templates replace wholesale.
+    exportTemplates: sanitizeExportTemplates(s.exportTemplates),
     leadNoun: s.leadNoun ?? DEFAULT_ORG_SETTINGS.leadNoun,
     leadNounPlural: s.leadNounPlural ?? DEFAULT_ORG_SETTINGS.leadNounPlural,
     leadGroupLabels:

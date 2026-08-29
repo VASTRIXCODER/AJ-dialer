@@ -56,6 +56,7 @@ export type FilterFieldKey =
   | "lead_pack_id"
   | "assigned_rep_id"
   | "owner_id"
+  | "address"
   | "city"
   | "state"
   | "county"
@@ -119,6 +120,7 @@ export const FILTER_FIELD_TYPES: Record<FilterFieldKey, FilterValueType> = {
   lead_pack_id: "enum",
   assigned_rep_id: "enum",
   owner_id: "enum",
+  address: "text",
   city: "text",
   state: "text",
   county: "text",
@@ -343,6 +345,7 @@ export interface LeadForFilter {
   firstName: string;
   lastName: string;
   phone?: string;
+  address?: string | null;
   city: string;
   state: string;
   county?: string | null;
@@ -532,6 +535,7 @@ const CORE_GETTERS: Partial<Record<FilterFieldKey, (l: LeadForFilter) => unknown
   lead_pack_id: (l) => l.leadPackId,
   assigned_rep_id: (l) => l.assignedRepId,
   owner_id: (l) => l.ownerId,
+  address: (l) => l.address,
   city: (l) => l.city,
   state: (l) => l.state,
   county: (l) => l.county,
@@ -597,6 +601,56 @@ export function evaluateFilter(
   };
   if (spec.groups.length === 0) return true;
   return spec.op === "and" ? spec.groups.every(evalGroup) : spec.groups.some(evalGroup);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Count-tile drilldowns — the FilterSpec behind each LeadCounts tile.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** The 8 tile keys of LeadCounts (db/leads-filter.ts) — restated here so this
+ *  pure module never imports a component or a server file. */
+export type LeadCountFilterKey =
+  | "active"
+  | "dialEligible"
+  | "assigned"
+  | "unassigned"
+  | "neverDialed"
+  | "attempted"
+  | "dnc"
+  | "archived";
+
+const one = (c: FilterCondition): FilterSpec => ({
+  op: "and",
+  groups: [{ op: "and", conditions: [c] }],
+});
+
+/**
+ * The spec a count tile drills into — each mirrors the predicate the RPC (and
+ * demoLeadCounts) counts with, so a tile's number and its drilled row set can
+ * never disagree. `active` returns null: "everything not excluded" is the
+ * default view, so the tile links to a bare /leads rather than encoding an
+ * empty filter. Every non-null result is already sanitize-stable
+ * (tests/lead-count-filters.test.ts pins that).
+ */
+export function buildCountFilter(key: LeadCountFilterKey): FilterSpec | null {
+  switch (key) {
+    case "active":
+      return null;
+    case "dialEligible":
+      return one({ kind: "derived", key: "dial_eligible", cmp: "is_true" });
+    case "assigned":
+      return one({ kind: "core", key: "assigned_rep_id", cmp: "not_empty" });
+    case "unassigned":
+      return one({ kind: "derived", key: "unassigned", cmp: "is_true" });
+    case "neverDialed":
+      return one({ kind: "derived", key: "never_dialed", cmp: "is_true" });
+    case "attempted":
+      return one({ kind: "core", key: "attempt_count", cmp: "gt", value: 0 });
+    case "dnc":
+      return one({ kind: "derived", key: "dnc", cmp: "is_true" });
+    case "archived":
+      return one({ kind: "derived", key: "archived", cmp: "is_true" });
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -2,6 +2,7 @@
 
 import { CalendarCheck2, Loader2, PhoneCall } from "lucide-react";
 import Link from "next/link";
+import { LeadOpenLink } from "@/components/leads/lead-360/lead-open-link";
 import { whenLabel } from "@/lib/appointments/time";
 import type { BookedLead } from "@/lib/db/leads";
 import { formatAddress, formatPhone, initials } from "@/lib/utils";
@@ -50,9 +51,11 @@ export function BookedLeadsPanel({ leads, loading }: { leads: BookedLead[]; load
             size="sm"
           />
           <div className="min-w-0 flex-1">
-            <p className="truncate text-sm font-medium">
+            {/* Name → Lead 360 (works mid-call — the drawer never remounts the
+                dialer). */}
+            <LeadOpenLink leadId={l.id} className="block truncate text-sm font-medium">
               {l.firstName} {l.lastName}
-            </p>
+            </LeadOpenLink>
             <p className="truncate text-xs text-muted-foreground">
               {formatAddress(l)} · {formatPhone(l.phone)}
             </p>

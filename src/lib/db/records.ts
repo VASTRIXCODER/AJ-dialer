@@ -14,6 +14,7 @@ import {
   LIVE_STATES,
 } from "../types";
 import { addToDnc } from "./dnc";
+import { logLeadEvent } from "./lead-events";
 
 const UUID =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -116,6 +117,22 @@ async function routeDisposition(
   },
 ): Promise<void> {
   const { ownerId, leadId, outcome } = input;
+
+  // Timeline audit: every disposition path funnels through here, so this one
+  // fire-and-forget line gives the Lead 360 a status entry for each call filed.
+  // The org is resolved inside logLeadEvent (this function doesn't know it).
+  if (leadId) {
+    logLeadEvent({
+      leadId,
+      actorId: ownerId,
+      kind: "status",
+      payload: {
+        outcome,
+        to: OUTCOME_TO_STATUS[outcome] ?? "contacted",
+        from: "disposition",
+      },
+    });
+  }
 
   // Clear this lead's pending pipeline items so the newest disposition wins.
   if (leadId) {

@@ -1,6 +1,7 @@
 import { AlarmClock, CheckCircle2, Clock, PhoneCall, PhoneIncoming, Users } from "lucide-react";
 import Link from "next/link";
 import { MetricCard } from "@/components/dashboard/metric-card";
+import { LeadOpenLink } from "@/components/leads/lead-360/lead-open-link";
 import { RowActions } from "@/components/pipeline/row-actions";
 import { EmptyState } from "@/components/shared/empty-state";
 import { PageContainer, PageHeader } from "@/components/shared/page-header";
@@ -129,7 +130,18 @@ export default async function CallbacksPage() {
                     <div className="flex items-center gap-2.5">
                       <Avatar initials={initials(cb.leadName)} tone="chart-1" size="sm" />
                       <div className="min-w-0 flex-1">
-                        <p className="truncate text-sm font-semibold">{cb.leadName}</p>
+                        {/* Name → Lead 360 when the callback is tied to a lead
+                            row; legacy rows without one stay plain text. */}
+                        {cb.leadId ? (
+                          <LeadOpenLink
+                            leadId={cb.leadId}
+                            className="block truncate text-sm font-semibold"
+                          >
+                            {cb.leadName}
+                          </LeadOpenLink>
+                        ) : (
+                          <p className="truncate text-sm font-semibold">{cb.leadName}</p>
+                        )}
                         <p className="truncate text-xs text-muted-foreground tabular">
                           {cb.phone ? formatPhone(cb.phone) : "—"}
                           {cb.repName && <span> · {cb.repName}</span>}

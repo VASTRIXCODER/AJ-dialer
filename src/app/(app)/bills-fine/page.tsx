@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { MetricCard } from "@/components/dashboard/metric-card";
+import { LeadOpenLink } from "@/components/leads/lead-360/lead-open-link";
 import { RowActions } from "@/components/pipeline/row-actions";
 import { EmptyState } from "@/components/shared/empty-state";
 import { PageContainer, PageHeader } from "@/components/shared/page-header";
@@ -178,9 +179,10 @@ export default async function BillsFinePage({
             <div key={lead.id} className="flex items-center gap-3 px-5 py-4">
               <Avatar initials={initials(lead.leadName)} tone="warning" size="sm" />
               <div className="min-w-0 flex-1">
-                <p className="truncate text-sm font-semibold">
+                {/* Name → Lead 360, over this page. */}
+                <LeadOpenLink leadId={lead.id} className="block truncate text-sm font-semibold">
                   {leadDisplayName(lead.leadName, lead.phone, vocab.leadNoun)}
-                </p>
+                </LeadOpenLink>
                 <p className="truncate text-xs text-muted-foreground tabular">
                   {lead.phone ? formatPhone(lead.phone) : "—"}
                   {lead.utilityProvider && <span> · {lead.utilityProvider}</span>}

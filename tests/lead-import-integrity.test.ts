@@ -366,9 +366,12 @@ describe("chunked parse — the whole file, read the same way throughout", () =>
 describe("importShortfall — the books have to balance", () => {
   const totals = (over: Partial<ImportTotals> = {}): ImportTotals => ({
     inserted: 0,
+    updated: 0,
+    failed: 0,
     invalidPhone: 0,
     duplicates: 0,
     dncSkipped: 0,
+    dncFlagged: 0,
     fileRows: 0,
     parsedRows: 0,
     skippedRows: 0,
@@ -418,9 +421,12 @@ describe("importShortfall — the books have to balance", () => {
 describe("describeImport", () => {
   const base: ImportTotals = {
     inserted: 8600,
+    updated: 0,
+    failed: 0,
     invalidPhone: 12,
     duplicates: 700,
     dncSkipped: 60,
+    dncFlagged: 0,
     fileRows: 9381,
     parsedRows: 9360,
     skippedRows: 21,

@@ -29,9 +29,16 @@ const CHUNK_BYTES = 3_000_000;
 
 export interface ImportTotals {
   inserted: number;
+  /** Existing leads enriched instead of skipped (dedupe mode "update"). */
+  updated: number;
+  /** Rows a chunk write failed on — reported per-row in the job's error CSV. */
+  failed: number;
   invalidPhone: number;
   duplicates: number;
   dncSkipped: number;
+  /** Rows the file's OWN Do-Not-Call column flagged — imported with status
+   *  'dnc' and suppressed (they are part of `inserted`, never dialable). */
+  dncFlagged: number;
   /** Data rows the file contained, across all chunks. The denominator. */
   fileRows: number;
   /** Rows the server turned into a lead. */
@@ -63,9 +70,12 @@ export type ImportOutcome =
 function emptyTotals(chunks: number): ImportTotals {
   return {
     inserted: 0,
+    updated: 0,
+    failed: 0,
     invalidPhone: 0,
     duplicates: 0,
     dncSkipped: 0,
+    dncFlagged: 0,
     fileRows: 0,
     parsedRows: 0,
     skippedRows: 0,
@@ -90,15 +100,27 @@ export async function importCsvInChunks(
   csv: string,
   base: Record<string, unknown> = {},
   onProgress?: (sent: number, total: number) => void,
+  opts: {
+    /** false ⇒ record 0 is DATA (headerless file) — nothing is lifted as a
+     *  header at the chunking layer, and rowOffset counts from record 0. */
+    hasHeader?: boolean;
+    /** Polled between chunks: true stops the loop cleanly (rows already sent
+     *  stay imported and are reported honestly in the partial totals). */
+    isCancelled?: () => boolean;
+  } = {},
 ): Promise<ImportOutcome> {
   const chunks = splitCsvIntoChunks(csv, {
     maxRows: CHUNK_ROWS,
     maxBytes: CHUNK_BYTES,
+    hasHeader: opts.hasHeader,
   });
   if (!chunks.length) {
     return {
       ok: false,
-      error: "That file has no data rows under the first line.",
+      error:
+        opts.hasHeader === false
+          ? "That file looks empty."
+          : "That file has no data rows under the first line.",
       totals: emptyTotals(0),
     };
   }
@@ -108,6 +130,9 @@ export async function importCsvInChunks(
   let packSeqOffset = 0;
 
   for (const chunk of chunks) {
+    if (opts.isCancelled?.()) {
+      return { ok: false, error: "Import canceled.", totals };
+    }
     onProgress?.(totals.chunksSent, chunks.length);
 
     const res = await fetch("/api/leads/import", {
@@ -143,9 +168,12 @@ export async function importCsvInChunks(
     }
 
     totals.inserted += num(json.inserted);
+    totals.updated += num(json.updated);
+    totals.failed += num(json.failed);
     totals.invalidPhone += num(json.invalidPhone);
     totals.duplicates += num(json.duplicates);
     totals.dncSkipped += num(json.dncSkipped);
+    totals.dncFlagged += num(json.dncFlagged);
     totals.fileRows += num(json.fileRows);
     totals.parsedRows += num(json.parsedRows);
     totals.skippedRows += num(json.skippedRows);
@@ -169,6 +197,7 @@ export async function importCsvInChunks(
 /** The one-line result an importer shows when the upload finishes. */
 export function describeImport(totals: ImportTotals): string {
   const notes = [
+    totals.updated > 0 ? `${totals.updated} existing records enriched` : "",
     totals.invalidPhone > 0
       ? `${totals.invalidPhone} without a valid phone — not dialable`
       : "",
@@ -201,8 +230,16 @@ export function importShortfall(totals: ImportTotals): string | null {
   if (totals.truncated > 0) {
     return `${totals.truncated} rows were left out because the upload hit a size limit — split the file and import the rest.`;
   }
+  if (totals.failed > 0) {
+    return `${totals.failed} rows failed to write — download the error report and retry them.`;
+  }
   const accounted =
-    totals.inserted + totals.duplicates + totals.dncSkipped + totals.skippedRows;
+    totals.inserted +
+    totals.updated +
+    totals.duplicates +
+    totals.dncSkipped +
+    totals.skippedRows +
+    totals.failed;
   if (totals.fileRows > accounted) {
     const missing = totals.fileRows - accounted;
     return `${missing} of ${totals.fileRows} rows didn't import — re-upload the file to try them again.`;

@@ -20,15 +20,16 @@ import {
   ShieldCheck,
   Shuffle,
   Trash2,
+  UploadCloud,
   UserCheck,
   Users,
   X,
   XCircle,
 } from "lucide-react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { NotificationsSettings } from "@/components/admin/notifications-settings";
-import { CsvImport } from "@/components/leads/csv-import";
 import { OrgSettingsForm } from "@/components/admin/org-settings-form";
 import { SectionCard } from "@/components/shared/section-card";
 import { Avatar } from "@/components/ui/avatar";
@@ -997,7 +998,20 @@ function DataTab({
         className="lg:col-span-2"
       >
         {canImport ? (
-          <CsvImport variant="dropzone" />
+          // Imports run through the Import Studio now — mapping review, dedupe
+          // modes, and rollback all live there instead of a blind dropzone.
+          <Link
+            href="/leads/import"
+            className="flex w-full flex-col items-center justify-center rounded-2xl border-2 border-dashed border-border bg-muted/30 p-8 text-center transition-colors hover:border-primary/40 hover:bg-primary-soft/30"
+          >
+            <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-brand text-white shadow-glow">
+              <UploadCloud className="h-6 w-6" />
+            </span>
+            <span className="mt-3 font-semibold">Open the Import Studio</span>
+            <span className="mt-1 text-sm text-muted-foreground">
+              Guided import — columns reviewed, duplicates handled, rollback included
+            </span>
+          </Link>
         ) : (
           <p className="flex items-center gap-2 rounded-xl border border-dashed border-border/70 px-4 py-6 text-sm text-muted-foreground">
             <Plug className="h-4 w-4" />

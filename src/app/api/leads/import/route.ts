@@ -1,5 +1,13 @@
 import { NextResponse } from "next/server";
 import { dncKey, getDncDigits } from "@/lib/db/dnc";
+import {
+  bumpImportJob,
+  getImportJob,
+  normalizeDedupeMode,
+  writeImportChunk,
+  type ImportChunkRow,
+  type ImportJob,
+} from "@/lib/db/lead-import";
 import { insertLeads, type LeadInput } from "@/lib/db/leads";
 import { hasCurrentCertification, normalizeCampaignId } from "@/lib/legal/campaign-cert";
 import {
@@ -149,6 +157,19 @@ export async function POST(req: Request) {
      *  a chunked upload cost one Claude call instead of one per chunk, and what
      *  stops two chunks of the same file reading it differently. */
     columnPlan?: unknown;
+    // ── Import Studio (job-tracked imports) ─────────────────────────────────
+    /** The uploader's explicit "row 0 is column names" answer. false = the
+     *  headerless broker-list path: row 0 is DATA, and no layer may eat it. */
+    hasHeader?: boolean;
+    /** Explicit delimiter override (TSV with commas inside cells). */
+    delimiter?: string;
+    /** Import job to account this chunk against (created via
+     *  POST /api/leads/import/jobs). Enables dedupe modes + rollback. */
+    jobId?: string;
+    /** skip (default, today's behavior) | update | create_new. */
+    dedupeMode?: string;
+    /** Original file name, stamped on every inserted row (provenance). */
+    sourceFile?: string;
   };
 
   // Reject an oversized CSV before parsing: parseCsvToLeads walks the whole string
@@ -212,11 +233,20 @@ export async function POST(req: Request) {
   let fileRows = 0;
   let skippedRows = 0;
 
+  // Delimiter override is allowlisted — anything else falls back to detection.
+  const DELIMS = new Set([",", ";", "\t", "|"]);
+  const delimiter =
+    typeof body.delimiter === "string" && DELIMS.has(body.delimiter)
+      ? body.delimiter
+      : undefined;
+
   if (typeof body.csv === "string" && body.csv.trim()) {
     const parsed = await parseCsvToLeads(body.csv, {
       // Untrusted by the time it comes back through the browser — rebuilt from
       // recognised values only, or discarded (then this chunk resolves its own).
       plan: sanitizeColumnPlan(body.columnPlan),
+      hasHeader: typeof body.hasHeader === "boolean" ? body.hasHeader : undefined,
+      delimiter,
     });
     if ("error" in parsed) {
       return NextResponse.json({ inserted: 0, error: parsed.error }, { status: 400 });
@@ -339,9 +369,94 @@ export async function POST(req: Request) {
   // The chunk's position in the file drives the created_at origin, so chunk 7's
   // rows sort after chunk 6's however long the requests took — see insertLeads.
   const rowOffset = Math.max(0, Math.floor(Number(body.rowOffset) || 0));
-  const written = rows.length
-    ? await insertLeads(rows, { createdAtOffsetMs: rowOffset })
-    : { inserted: 0, invalidPhone: 0, duplicates: 0, noop: true };
+
+  // ── Job-tracked write (Import Studio) ─────────────────────────────────────
+  // A valid, still-running job for THIS org switches the write to
+  // writeImportChunk: one dedupe probe per chunk instead of a full phone scan,
+  // dedupe modes, provenance stamping, and atomic per-chunk accounting on the
+  // job row. Everything else (packs, groups, campaign, cert gate) is identical.
+  const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  let job: ImportJob | null = null;
+  if (typeof body.jobId === "string" && UUID.test(body.jobId) && viewer.org?.id) {
+    job = await getImportJob(body.jobId);
+    if (!job || job.orgId !== viewer.org.id) {
+      return NextResponse.json(
+        { inserted: 0, error: "That import job doesn't exist in this workspace." },
+        { status: 400 },
+      );
+    }
+    if (job.status !== "running") {
+      // A canceled/finished job must STOP the chunk loop — silently importing
+      // into a dead job is how "I canceled it but the leads kept coming" happens.
+      return NextResponse.json(
+        { inserted: 0, error: "That import job is no longer running." },
+        { status: 409 },
+      );
+    }
+  }
+
+  let written: {
+    inserted: number;
+    invalidPhone: number;
+    duplicates: number;
+    error?: string;
+    noop?: boolean;
+  };
+  let updated = 0;
+  let failed = 0;
+  let dncFlagged = 0;
+
+  if (job && viewer.org?.id && viewer.user?.id) {
+    const dedupeMode = normalizeDedupeMode(body.dedupeMode ?? job.dedupeMode);
+    const chunk = rows.length
+      ? await writeImportChunk(rows as ImportChunkRow[], {
+          orgId: viewer.org.id,
+          ownerId: viewer.user.id,
+          jobId: job.id,
+          sourceFile:
+            (typeof body.sourceFile === "string" && body.sourceFile.slice(0, 200)) ||
+            job.fileName ||
+            null,
+          dedupeMode,
+          rowOffset,
+        })
+      : {
+          created: 0,
+          updated: 0,
+          duplicates: 0,
+          invalidPhone: 0,
+          dncFlagged: 0,
+          failed: 0,
+          errors: [] as { row: number; message: string }[],
+          noop: true as const,
+        };
+    updated = chunk.updated;
+    failed = chunk.failed;
+    dncFlagged = chunk.dncFlagged;
+    written = {
+      inserted: chunk.created,
+      invalidPhone: chunk.invalidPhone,
+      duplicates: chunk.duplicates,
+      error: "error" in chunk ? chunk.error : undefined,
+      noop: chunk.noop,
+    };
+    // Per-chunk accounting bump — atomic, because chunks are separate requests.
+    await bumpImportJob(job.id, {
+      rows: fileRows,
+      created: chunk.created,
+      updated: chunk.updated,
+      duplicates: chunk.duplicates,
+      dnc: dncSkipped,
+      invalid: chunk.invalidPhone,
+      skipped: skippedRows,
+      failed: chunk.failed,
+      errors: chunk.errors,
+    });
+  } else {
+    written = rows.length
+      ? await insertLeads(rows, { createdAtOffsetMs: rowOffset })
+      : { inserted: 0, invalidPhone: 0, duplicates: 0, noop: true };
+  }
 
   // "Nothing worth inserting" is not a failure. One chunk of a re-uploaded file
   // is often 100% duplicates (or 100% DNC, leaving `rows` empty above), and
@@ -381,6 +496,13 @@ export async function POST(req: Request) {
       aiError,
       packs: packIds.length,
       dncSkipped,
+      // Job-tracked extras: existing leads enriched (dedupe mode "update"),
+      // rows that failed to write, and rows the file's own DNC column flagged
+      // (imported suppressed — stored, reportable, never dialable).
+      updated,
+      failed,
+      dncFlagged,
+      jobId: job?.id ?? null,
       // The full accounting for this request: every data row it received ends up
       // in exactly one of inserted / duplicates / dncSkipped / skippedRows /
       // truncated. Reported every time so the importer can reconcile the file

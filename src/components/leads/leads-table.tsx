@@ -2,16 +2,20 @@
 
 import { motion } from "framer-motion";
 import {
+  Archive,
   ArrowDown,
   ArrowUp,
   BatteryCharging,
+  BookmarkPlus,
   Car,
   ChevronsUpDown,
+  ListFilter,
   Loader2,
   Pencil,
   PhoneCall,
   Search,
   Sparkles,
+  Star,
   Trash2,
   UploadCloud,
   UserCheck,
@@ -33,6 +37,11 @@ import { useVocabulary } from "@/components/layout/vocabulary";
 import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
+import { useConfirm } from "@/components/ui/confirm-dialog";
+import { Drawer } from "@/components/ui/drawer";
+import { Input, Label } from "@/components/ui/input";
+import { Modal } from "@/components/ui/modal";
+import { useToast } from "@/components/ui/toast";
 import type { Lead, LeadStatus } from "@/lib/types";
 import {
   CORE_LEAD_FIELDS,
@@ -40,11 +49,14 @@ import {
   leadFieldValue,
   type LeadFieldDef,
 } from "@/lib/leads/field-schema";
-import { leadStatusConfig } from "@/lib/status";
+import { encodeFilterParam, type FilterSpec } from "@/lib/leads/filter-spec";
+import { leadStatusConfig, resolveLeadStatusConfig } from "@/lib/status";
 import { applyLabelOverride } from "@/lib/leads/group-labels";
-import { SMART_LISTS } from "@/lib/leads/smart-lists";
+import type { SmartListTone } from "@/lib/leads/smart-lists";
 import { cn, formatAddress, formatNumber, formatPhone, initials } from "@/lib/utils";
 import { EditLeadDialog } from "./edit-lead-dialog";
+import { FilterBuilder } from "./filter-builder";
+import { useLead360 } from "./lead-360/lead-360-provider";
 
 /** The server-side filter set, mirrored in the URL (see leads/page.tsx). */
 export interface LeadsTableFilters {
@@ -64,7 +76,43 @@ export interface LeadsTableFilters {
   /** Server-side sort as "key.dir" (e.g. "ai_score.desc") — whitelisted in
    *  leads/page.tsx AND again inside the SQL. Absent = upload order. */
   sort?: string;
+  /** Encoded FilterSpec (?f=) — the typed-filter grammar. When present the
+   *  server row set comes from app_filter_leads and the legacy params above
+   *  are ignored for the read (they stay in the URL for when it clears). */
+  f?: string;
 }
+
+/**
+ * One smart-list chip, PRE-DIGESTED server-side (leads/page.tsx): the list's
+ * filter is already sanitized and encoded to its canonical ?f= param, and the
+ * schema-validation warnings are already resolved against the org's fields —
+ * the client just renders and navigates, it never re-derives filter truth.
+ */
+export interface SmartListChip {
+  id: string;
+  /** Seed key ('fresh', …) — null for user-created lists. Matches legacy ?smart=. */
+  key: string | null;
+  name: string;
+  description: string;
+  tone: SmartListTone;
+  favorite: boolean;
+  /** Canonical encodeFilterParam of the list's filter ("" = unusable). */
+  param: string;
+  /** validateSmartListFilter output — non-empty renders the amber dot. */
+  warnings: string[];
+  /** Viewer may toggle favorite (owner, or manager+ for shared lists). */
+  canEdit: boolean;
+}
+
+/** Tone → dot color, all semantic tokens (never hex). */
+const TONE_DOT: Record<SmartListTone, string> = {
+  success: "bg-success",
+  warning: "bg-warning",
+  danger: "bg-danger",
+  accent: "bg-accent",
+  primary: "bg-primary",
+  neutral: "bg-muted-foreground",
+};
 
 const FILTERS: Array<{ value: LeadStatus | "all"; label: string }> = [
   { value: "all", label: "All" },
@@ -161,7 +209,7 @@ export function LeadsTable({
   total,
   page,
   pageSize,
-  smartCounts,
+  smartLists = [],
   filters,
   campaigns = [],
   canManage = false,
@@ -173,6 +221,7 @@ export function LeadsTable({
   orgCities = [],
   fields = CORE_LEAD_FIELDS,
   showSolarPayment = true,
+  filterSpec = null,
 }: {
   /** ONE server-filtered page of rows — filtering happens in getLeadsPage. */
   leads: Lead[];
@@ -180,8 +229,8 @@ export function LeadsTable({
   total: number;
   page: number;
   pageSize: number;
-  /** Scope-wide smart-list counts (chips stay stable as filters change). */
-  smartCounts: Record<string, number>;
+  /** The org's smart lists (DB rows via listSmartLists), favorites first. */
+  smartLists?: SmartListChip[];
   /** The active URL-driven filters this page was rendered with. */
   filters: LeadsTableFilters;
   campaigns?: { id: string; name: string }[];
@@ -210,9 +259,14 @@ export function LeadsTable({
   fields?: LeadFieldDef[];
   /** Show solar-specific fields (per-tenant — off for non-solar orgs). */
   showSolarPayment?: boolean;
+  /** The SANITIZED spec behind filters.f (decoded server-side) — seeds the
+   *  filter summary bar and the builder drawer. */
+  filterSpec?: FilterSpec | null;
 }) {
   const router = useRouter();
   const vocab = useVocabulary();
+  const lead360 = useLead360();
+  const confirm = useConfirm();
   const [isPending, startTransition] = useTransition();
 
   // Every filter lives in the URL — the server does the actual filtering, so
@@ -231,6 +285,7 @@ export function LeadsTable({
       if (next.uploaderId) sp.set("uploader", next.uploaderId);
       if (next.mine) sp.set("mine", "1");
       if (next.sort) sp.set("sort", next.sort);
+      if (next.f) sp.set("f", next.f);
       if (nextPage > 1) sp.set("page", String(nextPage));
       const qs = sp.toString();
       startTransition(() => {
@@ -428,6 +483,140 @@ export function LeadsTable({
   const [pendingDelete, setPendingDelete] = useState<string[] | null>(null);
   const [err, setErr] = useState("");
   const [editing, setEditing] = useState<Lead | null>(null);
+
+  // ── Typed-filter builder (?f=) ────────────────────────────────────────────
+  // The drawer edits a DRAFT seeded from the server-confirmed spec on open;
+  // Apply encodes it into the URL (the server sanitizes on decode), so the
+  // builder can never half-apply a filter the page didn't actually run.
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const [draftSpec, setDraftSpec] = useState<FilterSpec | null>(null);
+  const openFilterBuilder = () => {
+    setDraftSpec(filterSpec ?? null);
+    setFiltersOpen(true);
+  };
+  const applyFilterSpec = () => {
+    const enc = draftSpec ? encodeFilterParam(draftSpec) : "";
+    applyFilters({ f: enc || undefined });
+    setFiltersOpen(false);
+  };
+  const clearFilterSpec = () => applyFilters({ f: undefined });
+  const activeConditionCount = useMemo(
+    () =>
+      filterSpec ? filterSpec.groups.reduce((n, g) => n + g.conditions.length, 0) : 0,
+    [filterSpec],
+  );
+  // Vocabulary-resolved status labels for the builder's status value select.
+  const statusOptions = useMemo(() => {
+    const cfg = resolveLeadStatusConfig(vocab);
+    return Object.entries(cfg).map(([value, c]) => ({ value, label: c.label }));
+  }, [vocab]);
+
+  // ── Smart lists (DB-backed chips) ─────────────────────────────────────────
+  // A chip is just a pre-encoded ?f= param: clicking it navigates through the
+  // SAME pipeline the filter builder uses. Active = canonical-param match (or
+  // the legacy ?smart= key for old bookmarks the server didn't translate).
+  const { toast } = useToast();
+  const [favBusy, setFavBusy] = useState<string | null>(null);
+  const [saveOpen, setSaveOpen] = useState(false);
+  const [saveName, setSaveName] = useState("");
+  const [saveDesc, setSaveDesc] = useState("");
+  const [saveShared, setSaveShared] = useState(false);
+  const [saveBusy, setSaveBusy] = useState(false);
+  const [saveErr, setSaveErr] = useState("");
+
+  const activeSmartId = useMemo(
+    () =>
+      smartLists.find(
+        (sl) =>
+          Boolean(sl.param) &&
+          (filters.f === sl.param || (sl.key != null && filters.smart === sl.key)),
+      )?.id ?? null,
+    [smartLists, filters.f, filters.smart],
+  );
+
+  const applySmartList = (chip: SmartListChip, active: boolean) => {
+    applyFilters(
+      active
+        ? { f: undefined, smart: undefined }
+        : { f: chip.param, smart: undefined },
+    );
+  };
+
+  // Favorite is an org-level ordering bit (favorites sort first for everyone),
+  // so the star only renders for viewers the API would let flip it (canEdit).
+  const toggleFavorite = async (chip: SmartListChip) => {
+    if (favBusy) return;
+    setFavBusy(chip.id);
+    try {
+      const res = await fetch(`/api/smart-lists/${chip.id}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ favorite: !chip.favorite }),
+      });
+      const json = (await res.json().catch(() => ({}))) as { error?: string };
+      if (!res.ok || json.error) {
+        toast({
+          title: "Couldn't update that list",
+          description: json.error,
+          tone: "danger",
+        });
+      } else {
+        router.refresh();
+      }
+    } catch {
+      toast({
+        title: "Network error",
+        description: "Couldn't update that list.",
+        tone: "danger",
+      });
+    } finally {
+      setFavBusy(null);
+    }
+  };
+
+  const openSaveDialog = () => {
+    setSaveName("");
+    setSaveDesc("");
+    // Managers curate the shared book, so their lists default to shared; a rep
+    // can only save private ones (the API enforces the same line).
+    setSaveShared(canManage);
+    setSaveErr("");
+    setSaveOpen(true);
+  };
+
+  const saveAsList = async () => {
+    if (!filterSpec || !saveName.trim() || saveBusy) return;
+    setSaveBusy(true);
+    setSaveErr("");
+    try {
+      const res = await fetch("/api/smart-lists", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          name: saveName.trim(),
+          description: saveDesc.trim(),
+          shared: saveShared,
+          filter: filterSpec,
+        }),
+      });
+      const json = (await res.json().catch(() => ({}))) as { error?: string };
+      if (!res.ok || json.error) {
+        setSaveErr(json.error ?? "Couldn't save that list.");
+        return;
+      }
+      setSaveOpen(false);
+      toast({
+        title: "List saved",
+        description: `"${saveName.trim()}" now lives in the smart-lists row.`,
+        tone: "success",
+      });
+      router.refresh();
+    } catch {
+      setSaveErr("Network error while saving.");
+    } finally {
+      setSaveBusy(false);
+    }
+  };
 
   // Checkboxes are useful for bulk-assign (campaigns) and bulk-delete. Every
   // viewer can now bulk-delete SOMETHING (a rep, their own uploads), so the
@@ -653,6 +842,43 @@ export function LeadsTable({
 
   const deleteCount = pendingDelete?.length ?? 0;
 
+  // Archive keeps the rows (history, recordings, DNC state intact) but drops
+  // them from every default view — the safe alternative to delete for curating
+  // the shared book. Managers+ only; /api/leads/archive re-checks server-side.
+  async function archiveSelected() {
+    if (selected.size === 0) return;
+    const n = selected.size;
+    const ok = await confirm({
+      title: `Archive ${n} ${n === 1 ? vocab.leadNoun : vocab.leadNounPlural}?`,
+      body: "Archived rows leave the default views and stop being dial-eligible. Nothing is deleted — they stay reachable from the Archived tile.",
+      confirmLabel: "Archive",
+    });
+    if (!ok) return;
+    setBusy(true);
+    setErr("");
+    try {
+      const res = await fetch("/api/leads/archive", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ leadIds: [...selected] }),
+      });
+      const json = (await res.json().catch(() => ({}))) as {
+        updated?: number;
+        error?: string;
+      };
+      if (!res.ok || json.error) {
+        setErr(json.error ?? "Couldn’t archive those leads.");
+        return;
+      }
+      setSelected(new Set());
+      router.refresh();
+    } catch {
+      setErr("Network error while archiving.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   // Group leads into per-uploader sections. Reps only ever see their own uploads
   // (one group → headers stay hidden); supervisors see every account's leads
   // split into labeled sections so it's clear who owns what.
@@ -684,45 +910,103 @@ export function LeadsTable({
 
   return (
     <div className="space-y-4">
-      {/* Smart lists — auto-updating segments. Only shows chips that currently
-          match at least one lead, so the row stays relevant as data changes. */}
-      {SMART_LISTS.some((sl) => smartCounts[sl.id] > 0) && (
+      {/* Smart lists — DB-backed saved filters (smart_lists, favorites first).
+          Clicking a chip applies the list's FilterSpec through the SAME ?f=
+          pipeline as the filter builder, so a chip can never select different
+          rows than its filter says. No per-chip counts: each would be a full
+          filter scan on every page load. */}
+      {smartLists.length > 0 && (
         <div className="flex flex-wrap items-center gap-1.5">
           <span className="flex items-center gap-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
             <Sparkles className="h-3.5 w-3.5" />
             Smart lists
           </span>
-          {SMART_LISTS.filter((sl) => smartCounts[sl.id] > 0).map((sl) => {
-            const active = filters.smart === sl.id;
+          {smartLists.map((sl) => {
+            const active = sl.id === activeSmartId;
             return (
-              <button
+              // A wrapper div, not one big button — the favorite star is its
+              // own control and nested buttons are invalid (and unreachable
+              // by keyboard).
+              <div
                 key={sl.id}
-                type="button"
-                title={sl.description}
-                onClick={() => applyFilters({ smart: active ? undefined : sl.id })}
                 className={cn(
-                  "flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium transition-colors",
+                  "flex items-center overflow-hidden rounded-full border transition-colors",
                   active
                     ? "border-primary bg-primary text-white"
-                    : "border-border bg-background/50 text-muted-foreground hover:bg-muted",
+                    : "border-border bg-background/50 text-muted-foreground",
                 )}
               >
-                {sl.label}
-                <span
+                <button
+                  type="button"
+                  title={
+                    sl.warnings.length > 0
+                      ? `${sl.description ? `${sl.description}\n` : ""}⚠ ${sl.warnings.join("\n⚠ ")}`
+                      : sl.description || sl.name
+                  }
+                  aria-pressed={active}
+                  disabled={!sl.param}
+                  onClick={() => applySmartList(sl, active)}
                   className={cn(
-                    "rounded-full px-1.5 tabular",
-                    active ? "bg-white/20" : "bg-muted text-foreground",
+                    "flex items-center gap-1.5 py-1 pl-2.5 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50",
+                    sl.canEdit ? "pr-1" : "pr-2.5",
+                    !active && "hover:bg-muted hover:text-foreground",
                   )}
                 >
-                  {smartCounts[sl.id]}
-                </span>
-              </button>
+                  <span
+                    aria-hidden
+                    className={cn(
+                      "h-2 w-2 shrink-0 rounded-full",
+                      active ? "bg-white" : TONE_DOT[sl.tone],
+                    )}
+                  />
+                  {sl.name}
+                  {sl.warnings.length > 0 && (
+                    <span
+                      aria-label="This list has warnings"
+                      className={cn(
+                        "h-1.5 w-1.5 shrink-0 rounded-full",
+                        active ? "bg-white/80" : "bg-warning",
+                      )}
+                    />
+                  )}
+                </button>
+                {sl.canEdit && (
+                  <button
+                    type="button"
+                    onClick={() => void toggleFavorite(sl)}
+                    disabled={favBusy === sl.id}
+                    aria-pressed={sl.favorite}
+                    aria-label={
+                      sl.favorite
+                        ? `Remove ${sl.name} from favorites`
+                        : `Add ${sl.name} to favorites`
+                    }
+                    title={
+                      sl.favorite ? "Remove from favorites" : "Favorite — favorites sort first"
+                    }
+                    className={cn(
+                      "py-1 pl-0.5 pr-2 transition-colors",
+                      active
+                        ? "text-white/80 hover:text-white"
+                        : "text-muted-foreground/60 hover:text-warning",
+                    )}
+                  >
+                    {favBusy === sl.id ? (
+                      <Loader2 className="h-3 w-3 animate-spin motion-reduce:animate-none" />
+                    ) : (
+                      <Star
+                        className={cn("h-3 w-3", sl.favorite && "fill-warning text-warning")}
+                      />
+                    )}
+                  </button>
+                )}
+              </div>
             );
           })}
-          {filters.smart && (
+          {activeSmartId && (
             <button
               type="button"
-              onClick={() => applyFilters({ smart: undefined })}
+              onClick={() => applyFilters({ smart: undefined, f: undefined })}
               className="text-xs font-medium text-muted-foreground hover:text-foreground"
             >
               Clear
@@ -742,6 +1026,28 @@ export function LeadsTable({
           />
         </div>
         <div className="flex flex-wrap items-center gap-1.5">
+          {/* The typed-filter builder — every FilterSpec field/operator, beyond
+              the quick chips on this row. */}
+          <button
+            type="button"
+            onClick={openFilterBuilder}
+            aria-pressed={Boolean(filters.f)}
+            title="Build a typed filter (any field, any operator)"
+            className={cn(
+              "flex h-9 items-center gap-1.5 rounded-lg border px-2.5 text-sm font-medium transition-colors",
+              filters.f
+                ? "border-primary/60 bg-primary-soft text-primary"
+                : "border-border bg-background/60 text-muted-foreground hover:bg-muted",
+            )}
+          >
+            <ListFilter className="h-3.5 w-3.5" />
+            Filters
+            {activeConditionCount > 0 && (
+              <span className="rounded-full bg-primary/15 px-1.5 text-xs tabular">
+                {activeConditionCount}
+              </span>
+            )}
+          </button>
           {/* Only worth showing when there's something to filter OUT — a rep
               whose leads are all their own would just get a no-op control. */}
           {hasOthersLeads && (
@@ -908,6 +1214,43 @@ export function LeadsTable({
         </div>
       </div>
 
+      {/* Active typed-filter summary — visible whenever ?f= is applied, so the
+          filtered view is never mistaken for the whole book. */}
+      {filters.f && filterSpec && (
+        <div className="flex flex-wrap items-center gap-2 rounded-xl border border-accent/40 bg-accent-soft/40 px-3 py-2">
+          <ListFilter className="h-4 w-4 text-accent" />
+          <span className="text-sm font-medium">
+            Filtered view — {activeConditionCount} condition
+            {activeConditionCount === 1 ? "" : "s"}
+            {filterSpec.groups.length > 1 &&
+              ` across ${filterSpec.groups.length} groups`}
+          </span>
+          <div className="ml-auto flex items-center gap-2">
+            {/* Any active ?f= can become a named smart list — the whole point
+                of the chips row being DB-backed. */}
+            <Button
+              variant="outline"
+              size="sm"
+              className="gap-1.5"
+              onClick={openSaveDialog}
+            >
+              <BookmarkPlus className="h-3.5 w-3.5" />
+              Save as list…
+            </Button>
+            <Button variant="outline" size="sm" onClick={openFilterBuilder}>
+              Edit
+            </Button>
+            <button
+              type="button"
+              onClick={clearFilterSpec}
+              className="text-xs font-medium text-muted-foreground hover:text-foreground"
+            >
+              Clear filter
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Delete confirmation — takes over the action bar while pending */}
       {pendingDelete && (
         <div className="flex flex-wrap items-center gap-2 rounded-xl border border-danger/40 bg-danger/10 px-3 py-2">
@@ -1050,6 +1393,25 @@ export function LeadsTable({
               </Button>
             </>
           )}
+          {/* Archive = curate without destroying. Managers+ only (the shared
+              book); reps tidy their own uploads with Delete below. */}
+          {canManage && (
+            <Button
+              size="sm"
+              variant="outline"
+              className="gap-1.5"
+              disabled={busy}
+              onClick={archiveSelected}
+              title="Remove from the default views without deleting anything"
+            >
+              {busy ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Archive className="h-3.5 w-3.5" />
+              )}
+              Archive
+            </Button>
+          )}
           {deletableSelected.length > 0 && (
             <Button
               variant="danger"
@@ -1157,7 +1519,19 @@ export function LeadsTable({
                     initial={{ opacity: 0, y: 6 }}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ delay: Math.min(i, 14) * 0.025, duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
-                    className={cn("group transition-colors hover:bg-muted/50", isSel && "bg-primary-soft/30")}
+                    // Anywhere on the row opens Lead 360 — except clicks that
+                    // land on a real control (checkbox, Call, Edit, Delete),
+                    // which keep their own behavior.
+                    onClick={(e) => {
+                      if (
+                        (e.target as HTMLElement).closest(
+                          "button, a, input, select, label",
+                        )
+                      )
+                        return;
+                      lead360.open(l.id);
+                    }}
+                    className={cn("group cursor-pointer transition-colors hover:bg-muted/50", isSel && "bg-primary-soft/30")}
                   >
                     {selectable && (
                       <td className="px-4 py-3">
@@ -1174,7 +1548,15 @@ export function LeadsTable({
                       <div className="flex items-center gap-2.5">
                         <Avatar initials={initials(name)} tone="chart-1" size="sm" />
                         <div className="min-w-0">
-                          <p className="font-semibold">{name || "—"}</p>
+                          {/* Keyboard-reachable twin of the row click. */}
+                          <button
+                            type="button"
+                            onClick={() => lead360.open(l.id)}
+                            title="Open full record"
+                            className="block max-w-full truncate rounded-sm text-left font-semibold hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                          >
+                            {name || "—"}
+                          </button>
                           <p className="text-xs text-muted-foreground tabular">
                             {l.phone ? formatPhone(l.phone) : "No phone"}
                           </p>
@@ -1286,8 +1668,16 @@ export function LeadsTable({
                     </td>
                     <td className="px-4 py-3">
                       <div className="flex items-center justify-end gap-1">
+                        {/* Deep-link into the dialer aimed at THIS number —
+                            same ?dial=&name= contract the callbacks and
+                            set-aside pages use. Bare /dialer just opened the
+                            page and forgot who you meant to call. */}
                         <Link
-                          href="/dialer"
+                          href={
+                            l.phone
+                              ? `/dialer?dial=${encodeURIComponent(l.phone)}&name=${encodeURIComponent(name)}`
+                              : "/dialer"
+                          }
                           className={buttonVariants({
                             size: "sm",
                             variant: "ghost",
@@ -1376,6 +1766,148 @@ export function LeadsTable({
           fields={fields}
         />
       )}
+
+      {/* "Save as list…" — names the ACTIVE ?f= filter and stores it as a
+          smart_lists row. Rendered always so the exit animation plays. */}
+      <Modal
+        open={saveOpen}
+        onClose={() => setSaveOpen(false)}
+        labelledBy="save-list-title"
+        maxWidth="max-w-md"
+        dismissible={!saveBusy}
+      >
+        <div className="border-b border-border/60 p-5">
+          <h2
+            id="save-list-title"
+            className="flex items-center gap-2 text-lg font-bold tracking-tight"
+          >
+            <BookmarkPlus className="h-4 w-4" />
+            Save as list
+          </h2>
+          <p className="mt-0.5 text-sm text-muted-foreground">
+            A smart list keeps this filter one click away and always shows
+            whichever {vocab.leadNounPlural} match right now.
+          </p>
+        </div>
+        <form
+          className="space-y-4 p-5"
+          onSubmit={(e) => {
+            e.preventDefault();
+            void saveAsList();
+          }}
+        >
+          <div>
+            <Label htmlFor="save-list-name">Name</Label>
+            <Input
+              id="save-list-name"
+              value={saveName}
+              onChange={(e) => setSaveName(e.target.value)}
+              maxLength={80}
+              required
+              placeholder="e.g. Going cold in Fresno"
+            />
+          </div>
+          <div>
+            <Label htmlFor="save-list-desc">Description (optional)</Label>
+            <Input
+              id="save-list-desc"
+              value={saveDesc}
+              onChange={(e) => setSaveDesc(e.target.value)}
+              maxLength={300}
+              placeholder="What this list is for"
+            />
+          </div>
+          {/* Sharing needs leads.import — a rep's lists are private, so the
+              toggle only renders where the API would accept it. */}
+          {canManage && (
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={saveShared}
+                onChange={(e) => setSaveShared(e.target.checked)}
+                className="h-4 w-4 rounded border-border"
+              />
+              Share with the whole workspace
+            </label>
+          )}
+          {saveErr && <p className="text-sm font-medium text-danger">{saveErr}</p>}
+          <div className="flex items-center justify-end gap-2 pt-1">
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={() => setSaveOpen(false)}
+              disabled={saveBusy}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="submit"
+              size="sm"
+              className="gap-1.5"
+              disabled={saveBusy || !saveName.trim()}
+            >
+              {saveBusy && (
+                <Loader2 className="h-3.5 w-3.5 animate-spin motion-reduce:animate-none" />
+              )}
+              Save list
+            </Button>
+          </div>
+        </form>
+      </Modal>
+
+      {/* The typed-filter builder drawer. Rendered always (open drives the
+          exit animation); Apply pushes ?f= into the URL, Cancel discards the
+          draft — the page's spec is untouched until Apply. */}
+      <Drawer
+        open={filtersOpen}
+        onClose={() => setFiltersOpen(false)}
+        label="Filter leads"
+        width={640}
+      >
+        <div className="flex items-start justify-between gap-3 border-b border-border/60 p-5">
+          <div>
+            <h2 className="flex items-center gap-2 text-lg font-bold tracking-tight">
+              <ListFilter className="h-4 w-4" />
+              Filters
+            </h2>
+            <p className="mt-0.5 text-sm text-muted-foreground">
+              Match {vocab.leadNounPlural} on any field, with AND/OR groups.
+            </p>
+          </div>
+          <Button variant="ghost" size="sm" onClick={() => setFiltersOpen(false)}>
+            Cancel
+          </Button>
+        </div>
+        <div className="flex-1 overflow-y-auto p-5">
+          <FilterBuilder
+            value={draftSpec}
+            onChange={setDraftSpec}
+            fields={fields}
+            statusOptions={statusOptions}
+            campaignOptions={campaigns}
+            repOptions={members}
+          />
+        </div>
+        <div className="flex items-center justify-end gap-2 border-t border-border/60 p-4">
+          {filters.f && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                setFiltersOpen(false);
+                clearFilterSpec();
+              }}
+            >
+              Clear filter
+            </Button>
+          )}
+          <Button size="sm" onClick={applyFilterSpec} disabled={isPending}>
+            {isPending && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+            Apply
+          </Button>
+        </div>
+      </Drawer>
     </div>
   );
 }

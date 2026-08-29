@@ -11,6 +11,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { CampaignEditButton } from "@/components/campaigns/campaign-edit-button";
 import { MetricCard } from "@/components/dashboard/metric-card";
+import { LeadOpenLink } from "@/components/leads/lead-360/lead-open-link";
 import { ReportFunnel } from "@/components/reports/report-sections";
 import { PageContainer, PageHeader } from "@/components/shared/page-header";
 import { SectionCard } from "@/components/shared/section-card";
@@ -219,8 +220,11 @@ export default async function CampaignDetailPage({
                     const lc = leadStatusConfig[l.status];
                     return (
                       <tr key={l.id} className="border-b border-border/60 last:border-0">
-                        <td className="max-w-[220px] truncate py-2.5 pr-4 font-medium">
-                          {leadDisplayName(`${l.firstName} ${l.lastName}`, l.phone, vocab.leadNoun)}
+                        <td className="max-w-[220px] py-2.5 pr-4 font-medium">
+                          {/* Name → Lead 360, over this page. */}
+                          <LeadOpenLink leadId={l.id}>
+                            {leadDisplayName(`${l.firstName} ${l.lastName}`, l.phone, vocab.leadNoun)}
+                          </LeadOpenLink>
                         </td>
                         <td className="py-2.5 pr-4">
                           <Badge tone={lc.tone}>{lc.label}</Badge>

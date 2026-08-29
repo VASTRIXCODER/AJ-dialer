@@ -11,6 +11,20 @@ Running log of verification evidence per slice. Baseline first; every checkpoint
 
 ## Slice log
 
+### C1–C5 — 2026-08-28 (Checkpoint 3: lead operations)
+
+- Tests added: `lead-timeline` (10), `csv-headerless` (the F8 regression suite incl. the single-row headerless file), `csv-delimiter`, `import-dedupe` (skip/update/create matrix + idempotent retry), `rollback-untouched`, `lead-counts-defs` (5), `leads-filter-demo` (7), `lead-count-filters` (5), `smart-list-migration` (5), `export-spec` (19); `lead-import-integrity` updated for the hasHeader API.
+- Suite: **51 files / 571 tests** green; `tsc --noEmit` clean; full build passes.
+- SQL applied to live DB (PARTs 28–36 — ALL Phase-1 DDL is now applied): import jobs + provenance + `app_phone_matches` probe; `app_flt_frag`/`app_filter_leads` (whitelisted FilterSpec compiler — probed live: nested AND/OR, derived keys, sorts) + `app_lead_counts`; `smart_lists` seeded (46 lists; solar-only rules gated to solar orgs); `export_audit`; assignments evolution + `app_allocate_assignment`/`app_preview_assignment`; callbacks v2 + `app_claim_callback`; campaigns v2 + `app_campaign_funnel`; realtime private-channel policies; call-intelligence tables.
+- Shipped behavior:
+  - **Universal Lead 360** — drawer from every surface (leads table, dialer, booked panel, campaigns, bills-fine, callbacks, appointments, call archive, command palette) + deep-linkable `/leads/[id]`; identity/ownership/eligibility-reasons/labeled number-location inference/DNC audit/all custom fields with raw toggle/chronological timeline (attempts, status changes, notes, callbacks, appointments, assignments, DNC)/editable notes/recordings/AI summary with source badge. Per-lead audit trail via `lead_events` hooks in updateLead/assignPack/DNC/routeDisposition.
+  - **Import Studio** at `/leads/import` — the headerless-file bug (F8) is FIXED at both layers with an explicit hasHeader toggle + auto-guess; observable jobs with per-chunk accounting; dedupe modes skip/update/create-new via one indexed probe per chunk (kills the O(book×chunks) scan); DNC-column detection (stored + suppressed); dialing-preference mapping; mapping templates; row-level error CSV; authorized rollback that removes only provably-untouched rows; honest XLSX message.
+  - **Typed filters** — FilterBuilder (nested AND/OR, custom fields, activity-derived keys) drives `?f=` on /leads via the SQL compiler; 8 drillable defined count tiles replace the old ambiguous KPIs; bulk Archive.
+  - **Smart Lists 2.0** — dynamic saved queries in the DB; legacy six seeded (solar-only ones only for solar verticals); save-current-filter-as-list; favorites; validation warnings for lists referencing deleted custom fields.
+  - **Export v2** — field chooser/reorder/rename, format options, saved templates, streams the CURRENT filter through the shared formula-injection encoder, 50k cap with pre-count warning, `export_audit` row per export, new `leads.export` permission (manager+).
+  - Dead controls fixed: the leads-table "Call" button now dials its lead; command-palette lead results open the record.
+- Notes: prod deploy of this checkpoint bundles Phases A–C.
+
 ### B1–B4 — 2026-08-28 (Checkpoint 2: the data-accuracy foundation)
 
 - Tests added: `call-state-machine` (19, incl. exhaustive 14×14 transition sweep), `eligibility` (22, one per reason + boundaries + callback-bypass rules), `metrics-definitions` (11) + `metrics-timezone` (8, DST spring/fall + week-start), `filter-spec` (18) + `filter-evaluator` (43, incl. the 30-lead × 12-spec TS↔SQL parity fixture), `dialable` (6, locks DIALABLE to DEFAULT_SEGMENTS), `area-code` (9), `disposition-defs` (12), `disposition-idempotency` (5, outbox key stability), `reservation-policy` (5, claim shell + per-lead-tz window release).

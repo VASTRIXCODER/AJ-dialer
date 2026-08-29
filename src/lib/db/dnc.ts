@@ -1,6 +1,7 @@
 import "server-only";
 
 import { createAdminClient, isAdminConfigured } from "../supabase/admin";
+import { logDncEventForPhone } from "./lead-events";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Do-Not-Call / suppression list, per organization. Keyed on the last 10 digits
@@ -80,6 +81,19 @@ export async function addToDnc(input: {
       },
       { onConflict: "org_id,phone_digits" },
     );
+    // Timeline audit for any lead carrying this number. The suppression list is
+    // keyed by phone, not lead id — the helper derives matching leads and skips
+    // silently when none exist (an imported DNC number with no lead row).
+    if (!error) {
+      logDncEventForPhone({
+        orgId: input.orgId,
+        phone: input.phone,
+        action: "added",
+        reason: input.reason ?? null,
+        source: input.source ?? "manual",
+        actorId: input.createdBy ?? null,
+      });
+    }
     return !error;
   } catch {
     return false;
@@ -124,6 +138,9 @@ export async function removeFromDnc(orgId: string, phone: string): Promise<boole
       .delete()
       .eq("org_id", orgId)
       .eq("phone_digits", key);
+    if (!error) {
+      logDncEventForPhone({ orgId, phone, action: "removed", source: "manual" });
+    }
     return !error;
   } catch {
     return false;

@@ -21,7 +21,8 @@ import { detectDelimiter } from "./csv";
 // ─────────────────────────────────────────────────────────────────────────────
 
 export interface CsvChunk {
-  /** A complete CSV: this upload's header row plus this chunk's data rows. */
+  /** A complete CSV: this upload's header row (when it has one) plus this
+   *  chunk's data rows. Headerless uploads emit data rows only. */
   csv: string;
   /** 0-based index of this chunk's first data row WITHIN THE WHOLE FILE. */
   rowOffset: number;
@@ -34,6 +35,13 @@ export interface ChunkOptions {
   maxRows: number;
   /** Max UTF-8 bytes per chunk, header included. */
   maxBytes: number;
+  /**
+   * false ⇒ the file has NO header row: records[0] is DATA, nothing is lifted
+   * off the top or re-emitted per chunk, and rowOffset counts from record 0.
+   * This layer used to unconditionally consume records[0] as a header — the
+   * second place a headerless broker list lost its first row.
+   */
+  hasHeader?: boolean;
 }
 
 /**
@@ -97,10 +105,12 @@ export function splitCsvIntoChunks(raw: string, opts: ChunkOptions): CsvChunk[] 
   const nl = text.indexOf("\n");
   const delimiter = detectDelimiter(nl === -1 ? text : text.slice(0, nl));
   const records = splitRecords(text, delimiter);
-  if (records.length < 2) return [];
+  const hasHeader = opts.hasHeader !== false;
+  // Headerless: a single record is a complete one-row file, not "no data rows".
+  if (records.length < (hasHeader ? 2 : 1)) return [];
 
-  const header = records[0];
-  const headerBytes = utf8Length(header) + 1;
+  const header = hasHeader ? records[0] : null;
+  const headerBytes = header === null ? 0 : utf8Length(header) + 1;
   const maxRows = Math.max(1, Math.floor(opts.maxRows));
   const maxBytes = Math.max(headerBytes + 1, Math.floor(opts.maxBytes));
 
@@ -112,7 +122,7 @@ export function splitCsvIntoChunks(raw: string, opts: ChunkOptions): CsvChunk[] 
   const flush = () => {
     if (!batch.length) return;
     chunks.push({
-      csv: `${header}\n${batch.join("\n")}`,
+      csv: header === null ? batch.join("\n") : `${header}\n${batch.join("\n")}`,
       rowOffset,
       rows: batch.length,
     });
@@ -121,7 +131,7 @@ export function splitCsvIntoChunks(raw: string, opts: ChunkOptions): CsvChunk[] 
     batchBytes = headerBytes;
   };
 
-  for (let r = 1; r < records.length; r++) {
+  for (let r = hasHeader ? 1 : 0; r < records.length; r++) {
     const rec = records[r];
     const bytes = utf8Length(rec) + 1;
     // Close the current chunk BEFORE adding a row that would overflow it — but
