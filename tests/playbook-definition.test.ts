@@ -57,22 +57,61 @@ describe("validateDefinition — the strict publish gate", () => {
     }
   });
 
-  it("an UNKNOWN event name still validates (events are inert until emitted)", () => {
-    // …but an event OUTSIDE the vocabulary fails — the vocabulary IS the
-    // whitelist; inertness applies to vocabulary events whose emitters
-    // haven't shipped (message.received, installed, …).
-    expect(
-      validateDefinition({
-        ...base,
-        trigger: { kind: "event", event: "message.received" },
-      }).ok,
-    ).toBe(true);
+  it("an event with no emitter is REFUSED, not quietly accepted", () => {
+    // This inverts the earlier contract, deliberately. A playbook triggered on
+    // `message.received` used to publish clean and then never run once —
+    // nothing emits it. Publishing something that can never fire is the same
+    // lie as a frequency cap that never applies, so it now fails with the
+    // reason and the list of events that DO work.
+    const v = validateDefinition({
+      ...base,
+      trigger: { kind: "event", event: "message.received" },
+    });
+    expect(v.ok).toBe(false);
+    expect(v.errors.join(" ")).toContain("no emitter yet");
+
+    // Outside the vocabulary entirely still fails, as before.
     expect(
       validateDefinition({
         ...base,
         trigger: { kind: "event", event: "totally.made.up" },
       }).ok,
     ).toBe(false);
+
+    // The three with real emitters publish clean.
+    for (const event of ["lead.received", "opportunity.assigned", "call.completed"]) {
+      expect(
+        validateDefinition({ ...base, trigger: { kind: "event", event } }).ok,
+        event,
+      ).toBe(true);
+    }
+  });
+
+  it("a cron/schedule trigger is refused — nothing evaluates cron", () => {
+    const v = validateDefinition({
+      ...base,
+      trigger: { kind: "schedule", cron: "0 9 * * *" },
+    });
+    expect(v.ok).toBe(false);
+    expect(v.errors.join(" ")).toContain("not implemented");
+  });
+
+  it("requiresApproval is refused — there is no approval queue", () => {
+    const v = validateDefinition({
+      ...base,
+      steps: [{ ...base.steps[0], requiresApproval: true }],
+    });
+    expect(v.ok).toBe(false);
+    expect(v.errors.join(" ")).toContain("no approval queue");
+  });
+
+  it("dueAtLocalTime is refused — only dueInMinutes is scheduled", () => {
+    const v = validateDefinition({
+      ...base,
+      steps: [{ ...base.steps[0], dueAtLocalTime: "09:00" }],
+    });
+    expect(v.ok).toBe(false);
+    expect(v.errors.join(" ")).toContain("not implemented");
   });
 
   it("rejects missing stop rules, duplicate step ids, unknown condition keys", () => {

@@ -55,8 +55,6 @@ export function WhyNowCard({ leadId }: { leadId: string }) {
 
   if (!ctx) return null;
 
-  const hot =
-    ctx.hotUntil !== null && new Date(ctx.hotUntil).getTime() > Date.now();
   const line = whyNowLine(ctx, vocab.leadNoun);
 
   return (
@@ -70,12 +68,8 @@ export function WhyNowCard({ leadId }: { leadId: string }) {
           Why now
         </p>
         <span
-          className={cn(
-            "ml-auto rounded-md px-1.5 py-0.5 text-[11px] font-semibold",
-            hot ? "bg-danger/10 text-danger" : "bg-muted text-muted-foreground",
-          )}
+          className="ml-auto rounded-md bg-muted px-1.5 py-0.5 text-[11px] font-semibold text-muted-foreground"
         >
-          {hot ? "Hot · " : ""}
           {STAGE_LABELS[ctx.stage] ?? ctx.stage}
         </span>
       </div>

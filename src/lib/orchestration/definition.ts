@@ -56,6 +56,19 @@ export const TRIGGER_EVENTS = [
   "customer.issue",
 ] as const;
 
+/**
+ * The trigger events something in the product actually emits. The other nine
+ * in TRIGGER_EVENTS are vocabulary for workstreams that have not landed
+ * (messaging, appointments lifecycle, fulfillment), so a playbook triggered on
+ * one would publish clean and then never run — silently, forever. Publishing
+ * refuses them until their emitter exists.
+ */
+export const LIVE_TRIGGER_EVENTS: readonly string[] = [
+  "lead.received",
+  "opportunity.assigned",
+  "call.completed",
+];
+
 /** Stop-rule slugs. Two are ALWAYS enforced even when omitted (see resolve). */
 export const STOP_RULES = [
   "contacted",
@@ -278,6 +291,10 @@ export function validateDefinition(raw: unknown): { ok: boolean; errors: string[
   } else if (t.kind === "event") {
     if (!(TRIGGER_EVENTS as readonly string[]).includes(t.event)) {
       errs.push(`trigger.event "${t.event}" is not in the event vocabulary`);
+    } else if (!LIVE_TRIGGER_EVENTS.includes(t.event)) {
+      errs.push(
+        `trigger.event "${t.event}" has no emitter yet, so this playbook would never run. Available today: ${LIVE_TRIGGER_EVENTS.join(", ")}.`,
+      );
     }
     if (t.filter) validateGroup(t.filter, "trigger.filter", errs, 1, { n: 0 });
   } else if (t.kind === "sweep") {
@@ -286,11 +303,13 @@ export function validateDefinition(raw: unknown): { ok: boolean; errors: string[
       errs.push("trigger.intervalMinutes must be 5–1440");
     }
   } else if (t.kind === "schedule") {
-    if (!/^\S+ \S+ \S+ \S+ \S+$/.test(String(t.cron ?? ""))) {
-      errs.push("trigger.cron must be a 5-field cron expression");
-    }
+    // The engine has no cron evaluator: nothing anywhere reads trigger.cron,
+    // so a scheduled playbook would publish clean and never fire once.
+    errs.push(
+      'trigger.kind "schedule" is not implemented — nothing evaluates cron yet. Use a sweep trigger with intervalMinutes instead.',
+    );
   } else {
-    errs.push("trigger.kind must be event | schedule | sweep");
+    errs.push("trigger.kind must be event | sweep");
   }
 
   // Eligibility
@@ -311,6 +330,14 @@ export function validateDefinition(raw: unknown): { ok: boolean; errors: string[
     if (ids.has(id)) errs.push(`${p}: duplicate id "${id}"`);
     ids.add(id);
 
+    if (step.requiresApproval === true) {
+      // Stored on work_items.requires_approval and read by nothing — there is
+      // no approval queue, so an item marked "needs approval" is worked like
+      // any other. Refused rather than quietly granting the opposite.
+      errs.push(
+        `${p}: requiresApproval is not implemented — there is no approval queue, so the step would run unapproved`,
+      );
+    }
     if ((RESERVED_KINDS as readonly string[]).includes(kind)) {
       errs.push(
         `${p}: "${kind}" is reserved — its workstream hasn't shipped, so a published playbook may not promise it`,
@@ -324,6 +351,14 @@ export function validateDefinition(raw: unknown): { ok: boolean; errors: string[
       if (!SLUG.test(String(step.reason ?? ""))) errs.push(`${p}: reason must be a slug`);
       if (step.dueAtLocalTime != null && !HHMM.test(String(step.dueAtLocalTime))) {
         errs.push(`${p}: dueAtLocalTime must be HH:MM`);
+      }
+      if (step.dueAtLocalTime != null) {
+        // Accepted and then ignored: createWorkItem only ever receives the
+        // dueInMinutes delta, so a local-time due date silently became "no
+        // due date at all".
+        errs.push(
+          `${p}: dueAtLocalTime is not implemented — use dueInMinutes, which is what the engine schedules on`,
+        );
       }
     } else if (kind === "set_next_action") {
       const next = step.next as Record<string, unknown> | undefined;

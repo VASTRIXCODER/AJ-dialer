@@ -38,7 +38,6 @@ async function authz() {
 async function engineHealth(): Promise<{
   lastTickAt: string | null;
   running: boolean;
-  known: boolean;
 }> {
   try {
     const { data, error } = await createAdminClient()
@@ -46,7 +45,7 @@ async function engineHealth(): Promise<{
       .select("orchestration_last_tick_at")
       .eq("id", "global")
       .maybeSingle();
-    if (error) return { lastTickAt: null, running: false, known: false };
+    if (error) return { lastTickAt: null, running: false };
     const raw = data?.orchestration_last_tick_at
       ? String(data.orchestration_last_tick_at)
       : null;
@@ -55,10 +54,9 @@ async function engineHealth(): Promise<{
       lastTickAt: raw,
       // Ticks are meant to be per-minute; five minutes of silence is stalled.
       running: Number.isFinite(ts) && Date.now() - ts < 5 * 60_000,
-      known: true,
     };
   } catch {
-    return { lastTickAt: null, running: false, known: false };
+    return { lastTickAt: null, running: false };
   }
 }
 

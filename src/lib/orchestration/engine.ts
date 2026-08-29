@@ -317,13 +317,16 @@ export async function orchestrationTick(now = new Date()): Promise<TickResult> {
     const orgIds = [...new Set(instances.map((i) => String(i.org_id)))];
     const { data: orgs } = await admin
       .from("organizations")
-      .select("id, settings")
+      .select("id, settings, timezone")
       .in("id", orgIds);
     const orgEnabled = new Map(
       (orgs ?? []).map((o) => [
         String(o.id),
         mergeSettings(o.settings).orchestration.enabled,
       ]),
+    );
+    const orgTz = new Map(
+      (orgs ?? []).map((o) => [String(o.id), String(o.timezone ?? "") || "America/Chicago"]),
     );
     const pbIds = [...new Set(instances.map((i) => String(i.playbook_id)))];
     const { data: pbs } = await admin
@@ -407,15 +410,26 @@ export async function orchestrationTick(now = new Date()): Promise<TickResult> {
         // Waits move the instance to 'waiting' — no execution row needed (the
         // wake pass is idempotent by construction).
         if (step.kind === "wait") {
-          const { data: lead } = await admin
-            .from("opportunities")
-            .select("lead_id, leads(timezone)")
-            .eq("id", inst.opportunity_id)
-            .maybeSingle();
-          const tz =
-            String(
-              (lead as { leads?: { timezone?: string } } | null)?.leads?.timezone ?? "",
-            ) || "America/Chicago";
+          // `for.timezone` chooses whose clock a local-time wait follows.
+          // It was accepted and ignored — every wait used the lead's zone —
+          // and the fallback was a hardcoded America/Chicago rather than the
+          // workspace's own, so "wait until 10:00" could mean 10:00 somewhere
+          // nobody works.
+          const wantsOrg =
+            (step.for as { timezone?: string } | undefined)?.timezone === "org";
+          const fallback = orgTz.get(String(inst.org_id)) ?? "America/Chicago";
+          let tz = fallback;
+          if (!wantsOrg) {
+            const { data: lead } = await admin
+              .from("opportunities")
+              .select("lead_id, leads(timezone)")
+              .eq("id", inst.opportunity_id)
+              .maybeSingle();
+            tz =
+              String(
+                (lead as { leads?: { timezone?: string } } | null)?.leads?.timezone ?? "",
+              ) || fallback;
+          }
           await admin
             .from("playbook_instances")
             .update({
@@ -484,7 +498,6 @@ export async function orchestrationTick(now = new Date()): Promise<TickResult> {
             sourceKind: "playbook",
             sourceId: inst.playbook_id,
             automationEligible: false,
-            requiresApproval: step.requiresApproval ?? false,
           });
         } else if (step.kind === "set_next_action") {
           const mins =

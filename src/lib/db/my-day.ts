@@ -215,6 +215,9 @@ async function readMyDay(input: {
       .eq("org_id", scope.orgId)
       .in("status", ["pending", "reserved", "in_progress", "waiting"])
       .or(`owner_id.eq.${scope.userId},reserved_by.eq.${scope.userId}`)
+      // Priority first — a playbook that marks an item "hot" (95) means it,
+      // and ordering by date alone put it behind older routine work.
+      .order("priority", { ascending: false })
       .order("due_at", { ascending: true, nullsFirst: true })
       .limit(50),
     admin

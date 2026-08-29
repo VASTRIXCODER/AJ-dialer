@@ -38,7 +38,6 @@ const STATUS_TONE: Record<PlaybookRow["status"], "success" | "warning" | "neutra
 interface EngineHealth {
   lastTickAt: string | null;
   running: boolean;
-  known: boolean;
 }
 
 export function PlaybooksPanel() {
