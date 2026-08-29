@@ -1084,6 +1084,34 @@ export async function getAICallRef(
   }
 }
 
+/**
+ * A human override IS the review: when a supervisor (or the record's owner)
+ * re-dispositions a call by hand, any open needs-review row for that record is
+ * answered by that act — resolve it as 'manual_override' rather than leaving a
+ * stale "please review" item pointing at a record someone already reviewed.
+ * Service-role (the queue has no user write policy); best-effort, never throws.
+ */
+async function resolveOpenReviewsForRecord(
+  callRecordId: string | null | undefined,
+  resolvedBy: string | null,
+): Promise<void> {
+  if (!callRecordId || !isAdminConfigured()) return;
+  try {
+    await createAdminClient()
+      .from("call_review_queue")
+      .update({
+        status: "resolved",
+        resolved_by: resolvedBy,
+        resolved_at: new Date().toISOString(),
+        resolution: "manual_override",
+      })
+      .eq("call_record_id", callRecordId)
+      .eq("status", "open");
+  } catch {
+    /* best-effort */
+  }
+}
+
 // ── Lead enrichment from an AI call (admin; processes extracted data) ────────
 /**
  * Write the data the AI extracted from a call back onto the lead — utility bill,
@@ -1216,6 +1244,8 @@ export async function applyManualDisposition(
      *  taxonomy. Defaults to the canonical outcome (a valid system key). */
     dispositionKey?: string | null;
     actorLabel?: string;
+    /** Who overrode (stamps call_review_queue.resolved_by when a review closes). */
+    actorId?: string | null;
   },
 ): Promise<{ ok: boolean; error?: string }> {
   try {
@@ -1247,6 +1277,8 @@ export async function applyManualDisposition(
       // The override replaces BOTH facts: the canonical outcome and the pressed
       // key — leaving the old key would disagree with the corrected outcome.
       await admin.from("call_records").update({ outcome, disposition }).eq("id", rec.id);
+      // The human's override answers any open needs-review item on this record.
+      await resolveOpenReviewsForRecord(String(rec.id), input.actorId ?? null);
     } else {
       await admin.from("call_records").insert({
         owner_id: lead.owner_id,
@@ -1313,6 +1345,9 @@ export async function setConversationDisposition(
         .from("call_records")
         .update({ outcome, disposition })
         .eq("id", rec.id);
+      // The supervisor's override answers any open needs-review item filed
+      // against this record — resolve it rather than leaving a stale ask.
+      await resolveOpenReviewsForRecord(String(rec.id), user.id);
     } else {
       await supabase.from("call_records").insert({
         owner_id: user.id,

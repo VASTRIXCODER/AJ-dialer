@@ -155,6 +155,10 @@ export interface LeadPanel {
     sentiment: string | null;
     at: string;
     source: "claude" | "demo";
+    /** Which model generated it (F1 artifact provenance) — null on legacy rows. */
+    model?: string | null;
+    /** Set when a human superseded the AI's summary — provenance flips to them. */
+    editedBy?: string | null;
   } | null;
 }
 
@@ -368,6 +372,49 @@ async function demoPanel(leadId: string): Promise<LeadPanelResult> {
 
 // ── Live assembly ────────────────────────────────────────────────────────────
 
+/**
+ * Provenance for the panel's AI-summary section (F1): which model wrote the
+ * active summary artifact, or which person superseded it. Best-effort — a
+ * workspace without the artifacts table simply shows no provenance line.
+ */
+async function summaryProvenance(
+  // Chainable query-builder shape shared by admin + session clients.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  db: { from: (t: string) => any },
+  callRecordId: string,
+  orgId: string | null,
+  nameById: Map<string, string>,
+): Promise<{ model?: string | null; editedBy?: string | null }> {
+  try {
+    const { data } = await db
+      .from("call_artifacts")
+      .select("source, model, created_by")
+      .eq("call_record_id", callRecordId)
+      .eq("kind", "summary")
+      .eq("status", "active")
+      .limit(1)
+      .maybeSingle();
+    if (!data) return {};
+    const a = data as Record<string, unknown>;
+    if (a.source === "human") {
+      let name = a.created_by ? nameById.get(String(a.created_by)) : undefined;
+      if (!name && a.created_by && orgId) {
+        const { data: mem } = await db
+          .from("organization_members")
+          .select("name")
+          .eq("org_id", orgId)
+          .eq("user_id", String(a.created_by))
+          .maybeSingle();
+        name = mem ? String((mem as Record<string, unknown>).name ?? "") : undefined;
+      }
+      return { editedBy: name || "a supervisor" };
+    }
+    return { model: (a.model as string) ?? null };
+  } catch {
+    return {};
+  }
+}
+
 export async function getLeadPanelResult(leadId: string): Promise<LeadPanelResult> {
   if (!isSupabaseConfigured()) return demoPanel(leadId);
 
@@ -557,6 +604,7 @@ export async function getLeadPanelResult(leadId: string): Promise<LeadPanelResul
             sentiment: str(sumData.sentiment),
             at: String(sumData.started_at ?? ""),
             source: "claude",
+            ...(await summaryProvenance(db, String(sumData.id), orgId, nameById)),
           }
         : null,
     };

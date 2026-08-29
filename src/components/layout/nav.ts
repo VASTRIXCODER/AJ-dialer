@@ -33,6 +33,12 @@ export interface NavItem {
    * `label` remains the neutral fallback for anywhere without a vocabulary.
    */
   vocabLabel?: keyof OrgVocabulary;
+  /**
+   * When set, the sidebar renders a live count chip on this item (a small
+   * client component that polls its endpoint). "reviews" = open needs-review
+   * items (F1) — the number a supervisor is on the hook for right now.
+   */
+  countBadge?: "reviews";
   /** When set, the item is only shown to viewers holding this permission. */
   permission?: Permission;
   /** When set, the item only shows if the org has this feature enabled. */
@@ -91,7 +97,15 @@ export const navGroups: NavGroup[] = [
         feature: "appointments",
         permission: "appointments.view",
       },
-      { label: "Callbacks", href: "/callbacks", icon: PhoneIncoming, feature: "callbacks" },
+      {
+        label: "Callbacks",
+        href: "/callbacks",
+        icon: PhoneIncoming,
+        feature: "callbacks",
+        // The needs-review lane (F1) lives on the callbacks workspace — the
+        // badge is what tells a supervisor there's adjudication waiting.
+        countBadge: "reviews",
+      },
       {
         label: "No need right now",
         vocabLabel: "noNeedLabel",

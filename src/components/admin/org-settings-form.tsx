@@ -213,6 +213,11 @@ export function OrgSettingsForm({
   const [costRates, setCostRates] = useState<OrgSettings["costRates"]>(
     org.settings.costRates,
   );
+  // Leaderboard scoring — already resolved through mergeLeaderboardSettings on
+  // read, so every field is present even for orgs saved before F2.
+  const [lb, setLb] = useState<OrgSettings["leaderboard"]>(org.settings.leaderboard);
+  const setLbPoint = (key: keyof OrgSettings["leaderboard"]["points"], n: number) =>
+    setLb({ ...lb, points: { ...lb.points, [key]: Math.max(0, n) } });
   // ── Dialer layout, qualify fields & lead-field schema ──────────────────────
   // The toggles show the EFFECTIVE state (template preset ⊕ stored overrides);
   // saving pins the whole section explicitly for this workspace.
@@ -1481,6 +1486,91 @@ export function OrgSettingsForm({
         </div>
       </SectionCard>
 
+      {/* Leaderboard scoring — the formula behind every points figure */}
+      <SectionCard
+        title="Leaderboard scoring"
+        description="What each result is worth on your leaderboard. Every entry shows its exact breakdown, so these numbers are the whole formula."
+      >
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+          <PointsField
+            label="Human connect"
+            value={lb.points.humanConnect}
+            onChange={(n) => setLbPoint("humanConnect", n)}
+          />
+          <PointsField
+            label="Qualified"
+            value={lb.points.qualified}
+            onChange={(n) => setLbPoint("qualified", n)}
+          />
+          <PointsField
+            label="Appointment booked"
+            value={lb.points.appointmentBooked}
+            onChange={(n) => setLbPoint("appointmentBooked", n)}
+          />
+          {/* "Kept" = appointment rows marked completed — the status exists in
+              this schema, so the component is real, not aspirational. */}
+          <PointsField
+            label="Appointment kept"
+            value={lb.points.appointmentKept}
+            onChange={(n) => setLbPoint("appointmentKept", n)}
+          />
+          <PointsField
+            label="Callback completed"
+            value={lb.points.callbackCompleted}
+            onChange={(n) => setLbPoint("callbackCompleted", n)}
+          />
+          <PointsField
+            label="Per talk minute (connected)"
+            value={lb.points.talkMinute}
+            onChange={(n) => setLbPoint("talkMinute", n)}
+          />
+        </div>
+        <div className="mt-4 space-y-3">
+          <Toggle
+            label="Count AI-agent calls"
+            hint="Off (default): only human dials score — the board measures reps, not the bot."
+            checked={lb.exclusions.includeAiCalls}
+            onChange={(v) =>
+              setLb({ ...lb, exclusions: { ...lb.exclusions, includeAiCalls: v } })
+            }
+          />
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <NumberField
+              label="Min talk seconds for a connect"
+              value={lb.exclusions.minTalkSecForConnect}
+              onChange={(n) =>
+                setLb({
+                  ...lb,
+                  exclusions: { ...lb.exclusions, minTalkSecForConnect: Math.max(0, n) },
+                })
+              }
+            />
+            <Field label="Week starts on">
+              <Select
+                value={String(lb.weekStart)}
+                onChange={(e) =>
+                  setLb({ ...lb, weekStart: e.target.value === "0" ? 0 : 1 })
+                }
+              >
+                <option value="1">Monday</option>
+                <option value="0">Sunday</option>
+              </Select>
+            </Field>
+          </div>
+        </div>
+        <p className="mt-2 text-xs text-muted-foreground">
+          Periods are calendar-true in your org timezone: today, the calendar week from the
+          start day above, and the calendar month. Calls whose talk time is below the minimum
+          never score as connects.
+        </p>
+        <div className="mt-4 flex justify-end">
+          <SaveBtn
+            k="leaderboard"
+            onClick={() => save({ settings: { leaderboard: lb } }, "leaderboard")}
+          />
+        </div>
+      </SectionCard>
+
       {/* Danger zone */}
       {canDelete && (
         <SectionCard
@@ -1551,6 +1641,29 @@ function NumberField({
         type="number"
         value={value}
         onChange={(e) => onChange(Number(e.target.value))}
+      />
+    </Field>
+  );
+}
+
+/** Fractional-friendly number input (leaderboard points allow e.g. 0.1/min). */
+function PointsField({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value: number;
+  onChange: (n: number) => void;
+}) {
+  return (
+    <Field label={label}>
+      <Input
+        type="number"
+        step="0.1"
+        min="0"
+        value={value}
+        onChange={(e) => onChange(Number(e.target.value) || 0)}
       />
     </Field>
   );

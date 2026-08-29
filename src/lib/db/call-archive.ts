@@ -298,6 +298,39 @@ function mapArchiveRow(
   };
 }
 
+/** One stored transcript turn, with its offset when the provider reported one. */
+export interface ArchiveTranscriptTurn {
+  role: string;
+  message: string;
+  /** Seconds from call start — what makes a turn seekable. Null on legacy rows. */
+  secs: number | null;
+}
+
+/** Provenance for the summary shown in the detail view (F1 artifacts). */
+export interface ArchiveSummaryMeta {
+  source: "ai" | "human";
+  model: string | null;
+  createdAt: string;
+  /** Resolved for human-authored rows — the "Edited by <name>" line. */
+  editorName: string | null;
+}
+
+export interface ArchiveCallDetail extends ArchiveCall {
+  transcriptText: string | null;
+  /**
+   * The per-turn transcript WITH timestamps, preferred over the flat text when
+   * present: call_transcript_segments first (the live relay wrote them with
+   * secs), else the conversation's stored turn array. Null for manual calls
+   * and legacy AI rows — the modal falls back to parsing transcriptText,
+   * honestly without the seek affordance.
+   */
+  transcriptTurns: ArchiveTranscriptTurn[] | null;
+  /** Null when no summary artifact exists (legacy calls). */
+  summaryMeta: ArchiveSummaryMeta | null;
+  /** May THIS viewer edit the summary (supervisors)? Drives the affordance. */
+  canEditSummary: boolean;
+}
+
 /**
  * One call with its FULL transcript — the detail view's read. Kept separate from
  * the list query so a page of 25 results never ships 25 full transcripts to the
@@ -305,7 +338,7 @@ function mapArchiveRow(
  */
 export async function getArchivedCall(
   id: string,
-): Promise<(ArchiveCall & { transcriptText: string | null }) | null> {
+): Promise<ArchiveCallDetail | null> {
   if (!isSupabaseConfigured() || !id) return null;
   try {
     const supabase = await createClient();
@@ -351,7 +384,99 @@ export async function getArchivedCall(
       new Map(repName ? [[String(row.owner_id), repName]] : []),
       "",
     );
-    return { ...mapped, transcriptText: (row.transcript_text as string) ?? null };
+
+    // ── Per-turn transcript with secs (F1: audio ↔ transcript sync) ──────────
+    // Prefer the immutable segment store (the live relay wrote each turn with
+    // its offset); fall back to the conversation's persisted turn array (also
+    // carries secs); manual/legacy calls get null and the modal parses the
+    // flat text without a seek affordance — the honest fallback.
+    const conversationId = (row.conversation_id as string) ?? null;
+    let transcriptTurns: ArchiveTranscriptTurn[] | null = null;
+    if (conversationId) {
+      try {
+        const { data: segs } = await reader
+          .from("call_transcript_segments")
+          .select("turn_index, role, message, secs")
+          .eq("conversation_id", conversationId)
+          .order("turn_index", { ascending: true })
+          .limit(500);
+        const segRows = (segs ?? []) as unknown as Row[];
+        if (segRows.length > 0) {
+          transcriptTurns = segRows.map((s) => ({
+            role: String(s.role ?? "agent"),
+            message: String(s.message ?? ""),
+            secs: s.secs == null ? null : Number(s.secs),
+          }));
+        }
+      } catch {
+        /* segments table absent — fall through */
+      }
+      if (!transcriptTurns) {
+        try {
+          const { data: convo } = await reader
+            .from("ai_conversations")
+            .select("transcript")
+            .eq("conversation_id", conversationId)
+            .maybeSingle();
+          const turns = (convo as Row | null)?.transcript;
+          if (Array.isArray(turns) && turns.length > 0) {
+            transcriptTurns = (turns as Row[])
+              .map((t) => ({
+                role: String(t.role ?? "agent"),
+                message: String(t.message ?? ""),
+                secs: t.secs == null || !Number.isFinite(Number(t.secs)) ? null : Number(t.secs),
+              }))
+              .filter((t) => t.message.trim().length > 0);
+            if (transcriptTurns.length === 0) transcriptTurns = null;
+          }
+        } catch {
+          /* keep null */
+        }
+      }
+    }
+
+    // ── Summary provenance (F1: AI-vs-human notes) ───────────────────────────
+    let summaryMeta: ArchiveSummaryMeta | null = null;
+    try {
+      const { data: art } = await reader
+        .from("call_artifacts")
+        .select("source, model, created_at, created_by")
+        .eq("call_record_id", id)
+        .eq("kind", "summary")
+        .eq("status", "active")
+        .limit(1)
+        .maybeSingle();
+      if (art) {
+        const a = art as unknown as Row;
+        const source = a.source === "human" ? "human" : "ai";
+        let editorName: string | null = null;
+        if (source === "human" && a.created_by && orgId && isAdminConfigured()) {
+          const { data: mem } = await createAdminClient()
+            .from("organization_members")
+            .select("name")
+            .eq("org_id", orgId)
+            .eq("user_id", String(a.created_by))
+            .maybeSingle();
+          editorName = String((mem as unknown as Row | null)?.name ?? "") || null;
+        }
+        summaryMeta = {
+          source,
+          model: (a.model as string) ?? null,
+          createdAt: String(a.created_at ?? ""),
+          editorName,
+        };
+      }
+    } catch {
+      /* artifacts table absent — provenance simply doesn't render */
+    }
+
+    return {
+      ...mapped,
+      transcriptText: (row.transcript_text as string) ?? null,
+      transcriptTurns,
+      summaryMeta,
+      canEditSummary: supervisor,
+    };
   } catch {
     return null;
   }

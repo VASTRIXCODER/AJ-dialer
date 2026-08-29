@@ -63,7 +63,7 @@ function obj(
  * framing (so the model never invents solar-specific content), enriched with
  * the template's blurb and the org's own noun for a contact.
  */
-function systemPrompt(ctx: OrgAIContext): string {
+export function systemPrompt(ctx: OrgAIContext): string {
   if (ctx.isSolar) {
     return (
       "You are the embedded intelligence layer of AIATWORK, a solar resolution dialer. " +
@@ -95,7 +95,7 @@ function systemPrompt(ctx: OrgAIContext): string {
  * own labels, typed values, schema'd custom fields). Fields the org's template
  * hides never appear, so a non-solar prompt carries no solar vocabulary.
  */
-function leadContext(lead: Lead, ctx: OrgAIContext): string {
+export function leadContext(lead: Lead, ctx: OrgAIContext): string {
   const fields: Record<string, string | number | boolean | null> = {};
   for (const e of leadSchemaEntries(lead, ctx)) fields[e.label] = e.value;
   return JSON.stringify({

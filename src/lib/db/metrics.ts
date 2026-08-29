@@ -21,7 +21,18 @@ import {
 } from "../call-analytics";
 import { zonedDayHour, zonedDayKey } from "../dialer/schedule";
 import { isConnectedRecord, orgTimezone } from "../metrics/definitions";
-import { composeLeaderboard } from "../leaderboard";
+import {
+  composeLeaderboard,
+  type ComposedBoard,
+  type LeaderboardMember,
+  type LeaderboardPeriodMeta,
+  type LeaderboardPeriodStat,
+} from "../leaderboard";
+import {
+  DEFAULT_LEADERBOARD,
+  mergeLeaderboardSettings,
+  type LeaderboardSettings,
+} from "../org/settings";
 import { createAdminClient, isAdminConfigured } from "../supabase/admin";
 import { isSupabaseConfigured } from "../supabase/config";
 import { createClient } from "../supabase/server";
@@ -29,8 +40,6 @@ import type {
   AILiveState,
   CallOutcome,
   KpiPoint,
-  LeaderboardEntry,
-  LeaderboardStat,
   MetricSummary,
 } from "../types";
 
@@ -337,6 +346,16 @@ export async function getReportingData(
    *  that don't pass it). The 7d/30d trend and today's hourly chart always
    *  keep their own fixed windows regardless of this param. */
   rangeDays: number | null = null,
+  opts: {
+    /**
+     * Shift the ranged period back by this many days — the comparison-period
+     * hook: `getReportingData(7, { periodOffsetDays: 7 })` is "the 7 days
+     * BEFORE the current 7". Only the period figures move; today's tiles and
+     * the fixed trends stay anchored to now. Ignored when rangeDays is null
+     * (all time has no previous period).
+     */
+    periodOffsetDays?: number;
+  } = {},
 ): Promise<ReportingData> {
   if (!isSupabaseConfigured()) return fallbackReporting();
   try {
@@ -377,11 +396,15 @@ export async function getReportingData(
 
     // How far back the ROW fetch reaches. Row-based views (dispositions, funnel,
     // avg talk, trends) are computed in JS from these rows, so the window must
-    // cover both the selected range and the fixed 30-day trend. All-time (null)
-    // pages the whole history. The +1 day of slack keeps the org-tz day-key
-    // filter below from clipping the boundary day; that filter does the precise
-    // per-day scoping — this bound is only a coarse floor to keep the fetch small.
-    const windowDays = rangeDays && rangeDays > 0 ? Math.max(rangeDays, 30) : null;
+    // cover both the selected range (shifted back for a comparison period) and
+    // the fixed 30-day trend. All-time (null) pages the whole history. The +1
+    // day of slack keeps the org-tz day-key filter below from clipping the
+    // boundary day; that filter does the precise per-day scoping — this bound
+    // is only a coarse floor to keep the fetch small.
+    const offsetDays =
+      rangeDays && rangeDays > 0 ? Math.max(0, Math.floor(opts.periodOffsetDays ?? 0)) : 0;
+    const windowDays =
+      rangeDays && rangeDays > 0 ? Math.max(rangeDays + offsetDays, 30) : null;
     const callsSinceISO = windowDays
       ? new Date(Date.now() - (windowDays + 1) * DAY_MS).toISOString()
       : null;
@@ -510,19 +533,23 @@ export async function getReportingData(
     // chart keep their own fixed windows. Compared by day-KEY (YYYY-MM-DD,
     // lexicographically sortable) in the org's timezone rather than a raw
     // Date boundary, so the cutoff lands on the org's own calendar day.
+    // With periodOffsetDays the same-length window slides back — the range
+    // becomes [today − (offset + range − 1), today − offset], which is exactly
+    // "the previous period" when offset === rangeDays.
+    const dayKeyAgo = (daysBack: number) => {
+      const d = new Date();
+      d.setDate(d.getDate() - daysBack);
+      return zonedDayKey(d, timezone);
+    };
     const rangeStartKey =
-      rangeDays && rangeDays > 0
-        ? (() => {
-            const d = new Date();
-            d.setDate(d.getDate() - (rangeDays - 1));
-            return zonedDayKey(d, timezone);
-          })()
-        : null;
+      rangeDays && rangeDays > 0 ? dayKeyAgo(offsetDays + rangeDays - 1) : null;
+    const rangeEndKey = rangeDays && rangeDays > 0 && offsetDays > 0 ? dayKeyAgo(offsetDays) : null;
+    const inPeriod = (k: string | null): boolean =>
+      k !== null &&
+      (rangeStartKey === null || k >= rangeStartKey) &&
+      (rangeEndKey === null || k <= rangeEndKey);
     const periodCalls = rangeStartKey
-      ? calls.filter((_c, i) => {
-          const k = callDayKey[i];
-          return k !== null && k >= rangeStartKey;
-        })
+      ? calls.filter((_c, i) => inPeriod(callDayKey[i]))
       : calls;
 
     // "Today" is evaluated in the org's own timezone — a server-local (UTC)
@@ -565,7 +592,7 @@ export async function getReportingData(
       ? appts.filter(
           (a) =>
             a.created_at &&
-            zonedDayKey(new Date(String(a.created_at)), timezone) >= rangeStartKey,
+            inPeriod(zonedDayKey(new Date(String(a.created_at)), timezone)),
         )
       : appts;
 
@@ -787,19 +814,114 @@ function fallbackReporting(): ReportingData {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Org-wide team leaderboard. Aggregates EVERY active member's real call +
-// appointment stats over three windows (today / 7d / 30d) so the leaderboard
-// ranks the whole floor, not just the signed-in user. Reads via the service-role
-// client scoped to the viewer's org in app code (any member can see the team
-// ranking, even though RLS would otherwise hide other reps' rows). Falls back to
-// the bundled demo team when Supabase / the service role isn't configured.
-// The pure aggregation lives in ../leaderboard (composeLeaderboard).
+// Org-wide team leaderboard v2. Aggregates EVERY active member's real call,
+// appointment, and callback rows over three CALENDAR-TRUE windows (org-tz day /
+// calendar week / calendar month) through the org's own scoring config
+// (settings.leaderboard). Reads via the service-role client scoped to the
+// viewer's org in app code (any member can see the team ranking, even though
+// RLS would otherwise hide other reps' rows). Falls back to a demo team — run
+// through the SAME composition, so demo numbers obey the same math — when
+// Supabase / the service role isn't configured.
+// The pure composition lives in ../leaderboard (composeLeaderboard).
 // ─────────────────────────────────────────────────────────────────────────────
+
+/** One member with stats for all three calendar periods + streak/PB. */
+export interface TeamLeaderboardRep {
+  id: string;
+  name: string;
+  initials: string;
+  avatarColor: string;
+  role: string;
+  team: string;
+  daily: LeaderboardPeriodStat;
+  weekly: LeaderboardPeriodStat;
+  monthly: LeaderboardPeriodStat;
+  streakDays: number;
+  personalBestPoints: number;
+  personalBestDay: string | null;
+}
+
+export interface TeamLeaderboard {
+  reps: TeamLeaderboardRep[];
+  meId: string | null;
+  periods: {
+    daily: LeaderboardPeriodMeta;
+    weekly: LeaderboardPeriodMeta;
+    monthly: LeaderboardPeriodMeta;
+  };
+  config: LeaderboardSettings;
+  timezone: string;
+  /** Render time — the "data as of" stamp for the board. */
+  generatedAt: string;
+}
+
+/** Streaks + personal best need history beyond the month — fetch this window. */
+const LEADERBOARD_FETCH_DAYS = 90;
+
+/** Compose the three calendar boards and fold them into per-rep rows. */
+function composeTeamBoards(
+  rows: Row[],
+  members: LeaderboardMember[],
+  config: LeaderboardSettings,
+  timezone: string,
+  opts: { appointments?: Row[]; callbacks?: Row[]; now?: number } = {},
+): Omit<TeamLeaderboard, "meId"> {
+  const now = opts.now ?? Date.now();
+  const shared = { tz: timezone, now, appointments: opts.appointments, callbacks: opts.callbacks };
+  const boards: Record<"daily" | "weekly" | "monthly", ComposedBoard> = {
+    daily: composeLeaderboard(rows, members, config, { period: "daily", ...shared }),
+    weekly: composeLeaderboard(rows, members, config, { period: "weekly", ...shared }),
+    monthly: composeLeaderboard(rows, members, config, { period: "monthly", ...shared }),
+  };
+  const daily = new Map(boards.daily.entries.map((e) => [e.id, e]));
+  const monthly = new Map(boards.monthly.entries.map((e) => [e.id, e]));
+  // Rep order = the weekly ranking (the view's default period); the client
+  // re-sorts per its own period/rank-by controls with the same comparator.
+  const reps: TeamLeaderboardRep[] = boards.weekly.entries.map((w) => {
+    const d = daily.get(w.id)!;
+    const m = monthly.get(w.id)!;
+    return {
+      id: w.id,
+      name: w.name,
+      initials: w.initials,
+      avatarColor: w.avatarColor,
+      role: w.role,
+      team: w.team,
+      daily: d.stat,
+      weekly: w.stat,
+      monthly: m.stat,
+      streakDays: w.streakDays,
+      personalBestPoints: w.personalBestPoints,
+      personalBestDay: w.personalBestDay,
+    };
+  });
+  return {
+    reps,
+    periods: {
+      daily: boards.daily.period,
+      weekly: boards.weekly.period,
+      monthly: boards.monthly.period,
+    },
+    config,
+    timezone,
+    generatedAt: new Date(now).toISOString(),
+  };
+}
+
+/** Valid-but-empty board (config/periods intact so headers still render). */
+function emptyTeamLeaderboard(
+  config: LeaderboardSettings,
+  timezone: string,
+  meId: string | null,
+): TeamLeaderboard {
+  return { ...composeTeamBoards([], [], config, timezone), meId };
+}
 
 async function aggregateTeamLeaderboard(
   orgId: string,
   timezone: string,
-): Promise<LeaderboardEntry[]> {
+  config: LeaderboardSettings,
+): Promise<Omit<TeamLeaderboard, "meId">> {
   // Missing service-role key is a DISTINCT condition from "no data yet" — it
   // means the leaderboard can never populate for this org until it's set, not
   // that no one has dialed. Logged so that's diagnosable instead of reading as
@@ -809,7 +931,7 @@ async function aggregateTeamLeaderboard(
       "[metrics] aggregateTeamLeaderboard: SUPABASE_SERVICE_ROLE_KEY not configured — " +
         "the team leaderboard cannot be computed.",
     );
-    return [];
+    return composeTeamBoards([], [], config, timezone);
   }
   const admin = createAdminClient();
 
@@ -820,112 +942,158 @@ async function aggregateTeamLeaderboard(
     .eq("status", "active");
   if (memberErr) {
     console.error("[metrics] aggregateTeamLeaderboard members query failed:", memberErr.message);
-    return [];
+    return composeTeamBoards([], [], config, timezone);
   }
-  const members = (memberRows ?? []) as Row[];
-  if (!members.length) return [];
-  const ids = members.map((m) => String(m.user_id));
+  const memberRaw = (memberRows ?? []) as Row[];
+  if (!memberRaw.length) return composeTeamBoards([], [], config, timezone);
+  const ids = memberRaw.map((m) => String(m.user_id));
 
-  const sinceMonth = new Date(Date.now() - 30 * 86_400_000).toISOString();
-  // PAGE the 30-day call_records to completion — the SAME guarantee getReportingData
+  const since = new Date(Date.now() - LEADERBOARD_FETCH_DAYS * 86_400_000).toISOString();
+  // PAGE the call_records to completion — the SAME guarantee getReportingData
   // uses. A single `.limit(50000)` returns only PostgREST's first 1,000 rows per
   // request, so a high-volume floor's leaderboard was computed from ~1k of ~45k
   // calls while Reports (fetchPaged) saw all of them — the two surfaces silently
-  // disagreed. fetchPaged orders newest-first, so a ceiling hit drops oldest, never
-  // a random subset.
-  const [{ data: profRows, error: profErr }, callRows] = await Promise.all([
+  // disagreed. fetchPaged orders newest-first, so a ceiling hit drops oldest,
+  // never a random subset. human_connected + talk_sec ride along so the connect
+  // gate uses the same canonical predicate as every other surface.
+  const [{ data: profRows, error: profErr }, callRows, apptRows, cbRows] = await Promise.all([
     admin.from("profiles").select("id,full_name,avatar_color,team").in("id", ids),
     fetchPaged(
       (from, to) =>
         admin
           .from("call_records")
-          .select("owner_id,outcome,duration_sec,channel,started_at")
+          .select("owner_id,outcome,duration_sec,talk_sec,human_connected,channel,started_at")
           .eq("org_id", orgId)
-          .gte("started_at", sinceMonth)
+          .gte("started_at", since)
           .order("started_at", { ascending: false })
           .range(from, to),
       "leaderboard call_records",
     ),
+    // appointmentKept = appointments the rep actually HELD (status completed).
+    fetchPaged(
+      (from, to) =>
+        admin
+          .from("appointments")
+          .select("owner_id,status,created_at")
+          .eq("org_id", orgId)
+          .eq("status", "completed")
+          .gte("created_at", since)
+          .order("created_at", { ascending: false })
+          .range(from, to),
+      "leaderboard appointments",
+    ),
+    // callbackCompleted — completion is stamped on last_attempt_at
+    // (completeCallbackForLead in db/callbacks.ts) and credited to assigned_to.
+    fetchPaged(
+      (from, to) =>
+        admin
+          .from("callbacks")
+          .select("owner_id,assigned_to,status,last_attempt_at,created_at")
+          .eq("org_id", orgId)
+          .eq("status", "completed")
+          .gte("last_attempt_at", since)
+          .order("last_attempt_at", { ascending: false })
+          .range(from, to),
+      "leaderboard callbacks",
+    ),
   ]);
   if (profErr) console.error("[metrics] aggregateTeamLeaderboard profiles query failed:", profErr.message);
   const profById = new Map(((profRows ?? []) as Row[]).map((p) => [String(p.id), p]));
-  return composeLeaderboard(members, profById, callRows, Date.now(), timezone);
+  const members: LeaderboardMember[] = memberRaw.map((m) => {
+    const prof = profById.get(String(m.user_id));
+    return {
+      userId: String(m.user_id),
+      name: String(prof?.full_name || m.name || "Member"),
+      role: String(m.role || "rep"),
+      // Empty when unset — Avatar's seed prop then hash-picks a chart tone.
+      avatarColor: String(prof?.avatar_color || ""),
+      team: String(prof?.team || ""),
+    };
+  });
+  return composeTeamBoards(callRows, members, config, timezone, {
+    appointments: apptRows,
+    callbacks: cbRows,
+  });
 }
 
 /** The org-wide leaderboard for the current viewer's organization, + their id. */
-export async function getTeamLeaderboard(): Promise<{
-  reps: LeaderboardEntry[];
-  meId: string | null;
-}> {
-  if (!isSupabaseConfigured()) return { reps: fallbackLeaderboard(), meId: null };
+export async function getTeamLeaderboard(): Promise<TeamLeaderboard> {
+  if (!isSupabaseConfigured()) return fallbackLeaderboard();
   try {
     const supabase = await createClient();
     const {
       data: { user },
     } = await supabase.auth.getUser();
-    if (!user) return { reps: fallbackLeaderboard(), meId: null };
+    if (!user) return fallbackLeaderboard();
     const { data: prof } = await supabase
       .from("profiles")
       .select("org_id")
       .eq("id", user.id)
       .maybeSingle();
     const orgId = prof?.org_id ? String(prof.org_id) : null;
-    if (!orgId) return { reps: [], meId: user.id };
+    if (!orgId) return emptyTeamLeaderboard(DEFAULT_LEADERBOARD, "America/Chicago", user.id);
     const { data: org } = await supabase
       .from("organizations")
-      .select("timezone")
+      .select("timezone,settings")
       .eq("id", orgId)
       .maybeSingle();
     // Same org-timezone fallback as every other surface (America/Chicago) — a
     // UTC fallback here rolled the leaderboard's "today" over at the wrong hour.
     const timezone = orgTimezone(org);
-    return { reps: await aggregateTeamLeaderboard(orgId, timezone), meId: user.id };
+    // The org's own scoring config, sanitized on read.
+    const config = mergeLeaderboardSettings(
+      (org?.settings as { leaderboard?: unknown } | null | undefined)?.leaderboard,
+    );
+    return { ...(await aggregateTeamLeaderboard(orgId, timezone, config)), meId: user.id };
   } catch (e) {
     console.error("[metrics] getTeamLeaderboard failed:", e instanceof Error ? e.message : e);
     // Supabase is configured (checked above) — a thrown query is a real failure,
     // so return an empty board rather than the demo team over live data.
-    return { reps: [], meId: null };
+    return emptyTeamLeaderboard(DEFAULT_LEADERBOARD, "America/Chicago", null);
   }
 }
 
-function scaleStat(base: LeaderboardStat, factor: number): LeaderboardStat {
+/**
+ * Demo team leaderboard (no Supabase). The sample reps are expanded into
+ * synthetic per-day call rows and run through the REAL composition — the demo
+ * board can therefore never disagree with production math (points, breakdowns,
+ * calendar windows, streaks all come from composeLeaderboard itself).
+ */
+function fallbackLeaderboard(): TeamLeaderboard {
+  const timezone = "America/Chicago";
+  const now = Date.now();
+  const rows: Row[] = [];
+  const members: LeaderboardMember[] = sampleLeaderboard.map((r) => ({
+    userId: r.id,
+    name: r.name,
+    role: r.role,
+    avatarColor: r.avatarColor,
+    team: r.team,
+  }));
+  for (const r of sampleLeaderboard) {
+    // Two weeks of history — enough for the week/month boards, streaks and
+    // personal bests to light up without composing 30k synthetic rows per render.
+    for (let d = 0; d < 14; d++) {
+      const dayStart = now - d * 86_400_000;
+      const talkPerConnect = Math.max(
+        60,
+        Math.round((r.talkTimeMin * 60) / Math.max(1, r.conversationsToday)),
+      );
+      for (let i = 0; i < r.callsToday; i++) {
+        const isAppt = i < r.appointmentsToday;
+        const isConn = i < r.conversationsToday;
+        rows.push({
+          owner_id: r.id,
+          outcome: isAppt ? "appointment_booked" : isConn ? "qualified" : "no_answer",
+          duration_sec: isConn ? talkPerConnect : 0,
+          channel: "human",
+          started_at: new Date(dayStart - i * 60_000).toISOString(),
+        });
+      }
+    }
+  }
   return {
-    ...base,
-    calls: base.calls * factor,
-    connects: base.connects * factor,
-    appointments: base.appointments * factor,
-    callbacks: base.callbacks * factor,
-    talkTimeMin: base.talkTimeMin * factor,
-    aiCalls: base.aiCalls * factor,
-    humanCalls: base.humanCalls * factor,
+    ...composeTeamBoards(rows, members, DEFAULT_LEADERBOARD, timezone, { now }),
+    meId: null,
   };
-}
-
-/** Demo team leaderboard (no Supabase) — derived from the bundled sample reps. */
-function fallbackLeaderboard(): LeaderboardEntry[] {
-  return sampleLeaderboard.map((r) => {
-    const daily: LeaderboardStat = {
-      calls: r.callsToday,
-      connects: r.conversationsToday,
-      appointments: r.appointmentsToday,
-      callbacks: Math.round(r.appointmentsToday / 2),
-      talkTimeMin: r.talkTimeMin,
-      connectRate: r.connectRate,
-      conversionRate: pct(r.appointmentsToday, r.conversationsToday),
-      aiCalls: Math.round(r.callsToday / 2),
-      humanCalls: r.callsToday - Math.round(r.callsToday / 2),
-      score: r.score,
-    };
-    return {
-      id: r.id,
-      name: r.name,
-      initials: r.initials,
-      avatarColor: r.avatarColor,
-      role: r.role,
-      team: r.team,
-      daily,
-      weekly: scaleStat(daily, 5),
-      monthly: scaleStat(daily, 21),
-    };
-  });
 }

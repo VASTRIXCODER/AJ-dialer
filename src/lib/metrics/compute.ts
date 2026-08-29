@@ -127,6 +127,58 @@ export function weekRange(
 }
 
 /**
+ * The org-tz calendar month containing `now`. Once the local day-key is known,
+ * the month is pure calendar arithmetic on YYYY-MM-DD strings — no timestamp
+ * stepping at all, so DST can't touch it (the keys already encode the org's
+ * local calendar; Date.UTC is used only to count the days in the month).
+ */
+export function zonedMonthRange(
+  now: Date,
+  tz: string,
+): { fromKey: string; toKey: string; days: string[] } {
+  const [y, m] = zonedDayKey(now, tz).split("-").map(Number);
+  // Day 0 of the NEXT month = the last day of this month.
+  const daysInMonth = new Date(Date.UTC(y, m, 0)).getUTCDate();
+  const mm = String(m).padStart(2, "0");
+  const days = Array.from(
+    { length: daysInMonth },
+    (_, i) => `${y}-${mm}-${String(i + 1).padStart(2, "0")}`,
+  );
+  return { fromKey: days[0], toKey: days[daysInMonth - 1], days };
+}
+
+/**
+ * Human label for a YYYY-MM-DD day key — "Mon Aug 24" / "Aug 24" / "Aug 24, 2026".
+ * A day key is a calendar date, not an instant, so it's rendered at UTC noon of
+ * that date: no viewer/server timezone can shift it onto a neighboring day.
+ */
+export function dayKeyLabel(
+  key: string,
+  opts: { weekday?: boolean; year?: boolean } = {},
+): string {
+  const [y, m, d] = key.split("-").map(Number);
+  if (!y || !m || !d) return key;
+  return new Date(Date.UTC(y, m - 1, d, 12)).toLocaleDateString("en-US", {
+    timeZone: "UTC",
+    month: "short",
+    day: "numeric",
+    ...(opts.weekday ? { weekday: "short" as const } : {}),
+    ...(opts.year ? { year: "numeric" as const } : {}),
+  });
+}
+
+/** "August 2026" for the month a day key falls in (leaderboard month label). */
+export function monthKeyLabel(key: string): string {
+  const [y, m] = key.split("-").map(Number);
+  if (!y || !m) return key;
+  return new Date(Date.UTC(y, m - 1, 15)).toLocaleDateString("en-US", {
+    timeZone: "UTC",
+    month: "long",
+    year: "numeric",
+  });
+}
+
+/**
  * Distinct non-cancelled appointments CREATED in the [fromKey, toKey] local-day
  * range. Creations only — edits and reschedules never re-increment, and both
  * historical spellings of "cancelled" are excluded.

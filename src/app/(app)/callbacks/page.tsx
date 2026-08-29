@@ -1,12 +1,14 @@
 import { AlarmClock, CheckCircle2, Clock, PhoneCall, PhoneIncoming, Users } from "lucide-react";
 import { MetricCard } from "@/components/dashboard/metric-card";
 import { CallbackBoard } from "@/components/callbacks/callback-board";
+import { ReviewLane } from "@/components/callbacks/review-lane";
 import { EmptyState } from "@/components/shared/empty-state";
 import { PageContainer, PageHeader } from "@/components/shared/page-header";
 import { Badge } from "@/components/ui/badge";
 import { reconcileOwnerActiveCalls } from "@/lib/ai-call-reconcile";
 import { laneOf } from "@/lib/callbacks/lanes";
 import { getCallbackBoard } from "@/lib/db/callbacks";
+import { getReviewQueue } from "@/lib/db/review-queue";
 import { getScope } from "@/lib/db/scope";
 import { getViewer, listMembers } from "@/lib/org/membership";
 
@@ -30,7 +32,12 @@ export default async function CallbacksPage() {
   const [viewer, scope] = await Promise.all([getViewer(), getScope()]);
   // Finalize any stuck calls first so callback-dispositioned ones show up.
   await reconcileOwnerActiveCalls();
-  const board = await getCallbackBoard(scope);
+  const [board, reviews] = await Promise.all([
+    getCallbackBoard(scope),
+    // The needs-review lane (F1): calls the AI analyzer declined to
+    // disposition on its own, plus rep-flagged wrap-ups.
+    getReviewQueue(scope),
+  ]);
 
   // The manager surface: reassign + priority ride on `assignments.manage` —
   // callbacks are distributed work, same permission that deals lead packs.
@@ -42,7 +49,12 @@ export default async function CallbacksPage() {
           .map((m) => ({ id: m.userId, name: m.name }))
       : [];
 
-  if (board.open.length === 0 && board.closed.length === 0 && board.completedCount === 0) {
+  if (
+    board.open.length === 0 &&
+    board.closed.length === 0 &&
+    board.completedCount === 0 &&
+    reviews.rows.length === 0
+  ) {
     return (
       <PageContainer>
         <PageHeader
@@ -81,6 +93,19 @@ export default async function CallbacksPage() {
         <MetricCard label="Upcoming" value={String(count("upcoming"))} icon={CheckCircle2} accent="accent" />
         <MetricCard label="Completed" value={String(board.completedCount)} icon={PhoneCall} accent="success" />
       </div>
+
+      {/* Needs review comes FIRST: unresolved calls outrank scheduled ones —
+          a promise with a due time can wait its lane; an unadjudicated
+          disposition is blocking the record right now. */}
+      {reviews.rows.length > 0 && (
+        <ReviewLane
+          rows={reviews.rows}
+          dispositions={viewer.org?.settings.dispositions ?? null}
+          userId={scope?.userId ?? ""}
+          supervisor={scope?.supervisor ?? false}
+          initialNow={now}
+        />
+      )}
 
       <CallbackBoard
         open={board.open}

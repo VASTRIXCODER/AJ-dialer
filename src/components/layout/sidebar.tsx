@@ -13,6 +13,7 @@ import { DEFAULT_VOCABULARY, type OrgVocabulary } from "@/lib/org/vocabulary";
 import { ROLE_LABEL, type OrgRole, isOrgRole } from "@/lib/permissions";
 import { cn } from "@/lib/utils";
 import { navGroups, navLabel } from "./nav";
+import { ReviewCountBadge } from "./review-count-badge";
 
 type Account = { name: string; email: string; initials: string };
 
@@ -165,6 +166,7 @@ export function Sidebar({
                         )}
                       />
                       <span className="relative z-10 flex-1">{navLabel(item, vocabulary)}</span>
+                      {item.countBadge === "reviews" && <ReviewCountBadge />}
                       {item.badge &&
                         (item.badge === "Live" ? (
                           <span className="relative z-10 flex items-center gap-1.5 text-[10px] font-bold text-success">

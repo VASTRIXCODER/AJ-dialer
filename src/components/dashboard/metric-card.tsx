@@ -1,9 +1,49 @@
-import { ArrowDownRight, ArrowUpRight, type LucideIcon } from "lucide-react";
+import { ArrowDownRight, ArrowUpRight, Info, type LucideIcon } from "lucide-react";
 import { CountUp } from "@/components/motion";
 import { SpotlightCard } from "@/components/motion/spotlight-card";
+import { Tooltip } from "@/components/ui/tooltip";
+import { METRICS, type MetricId } from "@/lib/metrics/definitions";
 import { cn } from "@/lib/utils";
 
 type Accent = "primary" | "accent" | "success" | "warning" | "danger";
+
+/**
+ * The glossary tooltip for a metric tile — the SAME description every surface
+ * shares (src/lib/metrics/definitions.ts), plus what the number divides by and
+ * what is deliberately not in it. Keyboard-reachable (the trigger is a
+ * focusable button) so the definition isn't hover-only.
+ */
+function DefinitionHint({ id }: { id: MetricId }) {
+  const def = METRICS[id];
+  return (
+    <Tooltip
+      content={
+        <span className="block max-w-[16rem] space-y-1">
+          <span className="block">{def.description}</span>
+          {def.denominator && (
+            <span className="block text-muted-foreground">Denominator: {def.denominator}</span>
+          )}
+          {def.excludes.length > 0 && (
+            <span className="block text-muted-foreground">
+              Excludes: {def.excludes.join("; ")}.
+            </span>
+          )}
+        </span>
+      }
+    >
+      {/* A focusable span, not a <button>: KPI cards can be wrapped in a
+          DrillLink <a>, and interactive content inside an anchor is invalid
+          HTML (and would navigate on click). Focus still opens the tooltip. */}
+      <span
+        tabIndex={0}
+        aria-label={`What "${def.label}" means`}
+        className="inline-flex cursor-help text-muted-foreground/60 transition-colors hover:text-muted-foreground focus-visible:text-muted-foreground"
+      >
+        <Info className="h-3 w-3" />
+      </span>
+    </Tooltip>
+  );
+}
 
 /** Split a formatted metric ("$1,284", "73%", "4.8") into animatable parts. */
 function parseMetric(value: string) {
@@ -25,14 +65,18 @@ export function MetricCard({
   delta,
   icon: Icon,
   accent = "primary",
+  definitionKey,
   className,
 }: {
   label: string;
   value: string;
   sub?: string;
-  delta?: { value: string; positive: boolean };
+  /** srLabel is the screen-reader sentence behind the ▲/▼ ("up 12 vs …"). */
+  delta?: { value: string; positive: boolean; srLabel?: string };
   icon: LucideIcon;
   accent?: Accent;
+  /** Glossary id — renders an ⓘ tooltip with the metric's one true definition. */
+  definitionKey?: MetricId;
   className?: string;
 }) {
   const accents: Record<Accent, string> = {
@@ -64,8 +108,9 @@ export function MetricCard({
 
       <div className="relative flex items-start justify-between">
         <div className="space-y-2">
-          <p className="text-[11px] font-semibold uppercase tracking-[0.1em] text-muted-foreground">
+          <p className="flex items-center gap-1 text-[11px] font-semibold uppercase tracking-[0.1em] text-muted-foreground">
             {label}
+            {definitionKey && <DefinitionHint id={definitionKey} />}
           </p>
           <p className="text-4xl font-bold tracking-tight tabular">
             {parsed ? (
@@ -90,11 +135,13 @@ export function MetricCard({
                 )}
               >
                 {delta.positive ? (
-                  <ArrowUpRight className="h-3 w-3" />
+                  <ArrowUpRight className="h-3 w-3" aria-hidden />
                 ) : (
-                  <ArrowDownRight className="h-3 w-3" />
+                  <ArrowDownRight className="h-3 w-3" aria-hidden />
                 )}
-                {delta.value}
+                <span aria-hidden={Boolean(delta.srLabel)}>{delta.value}</span>
+                {/* The arrow is decoration; this is what a screen reader hears. */}
+                {delta.srLabel && <span className="sr-only">{delta.srLabel}</span>}
               </span>
             )}
             {sub && <span className="text-xs text-muted-foreground">{sub}</span>}

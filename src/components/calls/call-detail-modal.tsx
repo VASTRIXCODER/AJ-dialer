@@ -8,19 +8,21 @@ import {
   ExternalLink,
   Loader2,
   NotebookPen,
+  Pencil,
   Phone,
   Play,
   User,
   X,
 } from "lucide-react";
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { AiSourceBadge } from "@/components/ai/source-badge";
 import { useVocabulary } from "@/components/layout/vocabulary";
 import { LeadOpenLink } from "@/components/leads/lead-360/lead-open-link";
 import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Modal } from "@/components/ui/modal";
-import type { ArchiveCall } from "@/lib/db/call-archive";
+import type { ArchiveCall, ArchiveCallDetail } from "@/lib/db/call-archive";
 import { resolveOutcomeConfig } from "@/lib/status";
 import {
   formatClock,
@@ -32,7 +34,7 @@ import {
 } from "@/lib/utils";
 import { TranscriptPanel } from "./transcript";
 
-type FullCall = ArchiveCall & { transcriptText: string | null };
+type FullCall = ArchiveCallDetail;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ONE call-detail view, for both channels.
@@ -60,10 +62,27 @@ export function CallDetailModal({
 }) {
   const vocab = useVocabulary();
   const [call, setCall] = useState<FullCall | null>(
-    preview ? { ...preview, transcriptText: null } : null,
+    preview
+      ? {
+          ...preview,
+          transcriptText: null,
+          transcriptTurns: null,
+          summaryMeta: null,
+          canEditSummary: false,
+        }
+      : null,
   );
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  // Audio ↔ transcript sync (F1): the <audio> ref lets a timestamped turn seek
+  // the recording, and the playhead highlights the turn being spoken.
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const [activeSecs, setActiveSecs] = useState<number | null>(null);
+  // Summary editing (supervisors) — supersedes the AI artifact server-side.
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [editError, setEditError] = useState("");
 
   useEffect(() => {
     const ctrl = new AbortController();
@@ -82,6 +101,51 @@ export function CallDetailModal({
       });
     return () => ctrl.abort();
   }, [callId]);
+
+  const seekTo = (secs: number) => {
+    const audio = audioRef.current;
+    if (!audio) return;
+    audio.currentTime = Math.max(0, secs);
+    // Autoplay may be blocked — the seek still landed, which is the point.
+    audio.play().catch(() => {});
+  };
+
+  const saveSummary = async () => {
+    if (!call || saving) return;
+    const text = draft.trim();
+    if (!text) return;
+    setSaving(true);
+    setEditError("");
+    try {
+      const res = await fetch("/api/calls/summary", {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ callRecordId: call.id, text }),
+      });
+      const j = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string };
+      if (!res.ok || !j.ok) {
+        setEditError(j.error || "Couldn't save the edit.");
+        return;
+      }
+      // Provenance flips locally the same way it did server-side: this summary
+      // is now human-authored.
+      setCall({
+        ...call,
+        summary: text,
+        summaryMeta: {
+          source: "human",
+          model: null,
+          createdAt: new Date().toISOString(),
+          editorName: null,
+        },
+      });
+      setEditing(false);
+    } catch {
+      setEditError("Couldn't save the edit.");
+    } finally {
+      setSaving(false);
+    }
+  };
 
   const cfg = call?.outcome ? resolveOutcomeConfig(vocab)[call.outcome] : null;
   // Only claim a name once we have a record. Without this the header flashed
@@ -168,11 +232,71 @@ export function CallDetailModal({
 
         {call?.summary ? (
           <div className="rounded-xl border border-border/60 bg-surface/60 p-4">
-            <p className="mb-1.5 flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wide text-muted-foreground">
-              <ClipboardList className="h-3.5 w-3.5" />
-              Call summary
-            </p>
-            <p className="text-sm leading-relaxed">{call.summary}</p>
+            <div className="mb-1.5 flex items-center justify-between gap-2">
+              <p className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wide text-muted-foreground">
+                <ClipboardList className="h-3.5 w-3.5" />
+                Call summary
+                {call.summaryMeta?.source === "ai" && <AiSourceBadge source="claude" />}
+              </p>
+              {call.canEditSummary && !editing && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setDraft(call.summary ?? "");
+                    setEditing(true);
+                    setEditError("");
+                  }}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-border px-2 py-1 text-xs font-semibold text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
+                >
+                  <Pencil className="h-3 w-3" />
+                  Edit
+                </button>
+              )}
+            </div>
+            {editing ? (
+              <div className="space-y-2">
+                <textarea
+                  value={draft}
+                  onChange={(e) => setDraft(e.target.value)}
+                  rows={4}
+                  maxLength={4000}
+                  className="w-full rounded-xl border border-border bg-background p-3 text-sm leading-relaxed outline-none focus:border-primary"
+                />
+                {editError && (
+                  <p className="text-xs font-medium text-danger">{editError}</p>
+                )}
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={saveSummary}
+                    disabled={saving || !draft.trim()}
+                    className="rounded-lg bg-primary px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
+                  >
+                    {saving ? "Saving…" : "Save"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setEditing(false)}
+                    className="rounded-lg border border-border px-3 py-1.5 text-xs font-semibold text-muted-foreground hover:bg-muted/60"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <p className="text-sm leading-relaxed">{call.summary}</p>
+            )}
+            {/* Honest provenance: WHO wrote these words. AI output names its
+                model and call date; a human edit names the editor instead. */}
+            {call.summaryMeta && !editing && (
+              <p className="mt-2 border-t border-border/40 pt-2 text-xs text-muted-foreground">
+                {call.summaryMeta.source === "human"
+                  ? `Edited by ${call.summaryMeta.editorName || "a supervisor"}`
+                  : `AI-generated from the call on ${
+                      stamp ? formatDay(call.startedAt) : "record"
+                    }${call.summaryMeta.model ? ` · model ${call.summaryMeta.model}` : ""}`}
+              </p>
+            )}
           </div>
         ) : (
           !loading && (
@@ -206,14 +330,20 @@ export function CallDetailModal({
           </Link>
         )}
 
-        {loading && !call?.transcriptText ? (
+        {loading && !call?.transcriptText && !call?.transcriptTurns?.length ? (
           <div className="flex items-center justify-center gap-2 py-8 text-sm text-muted-foreground">
             <Loader2 className="h-4 w-4 animate-spin" />
             Loading the transcript…
           </div>
-        ) : call?.transcriptText ? (
+        ) : call?.transcriptText || call?.transcriptTurns?.length ? (
           <TranscriptPanel
             text={call.transcriptText}
+            // Stored per-turn timestamps make turns seek controls into the
+            // recording; without them (manual/legacy calls) the panel renders
+            // from the flat text with no seek affordance — the honest fallback.
+            turns={call.transcriptTurns}
+            onSeek={call.hasRecording && call.recordingUrl ? seekTo : undefined}
+            activeSecs={activeSecs}
             contactLabel={firstName}
             highlightTerm={highlightTerm}
             filename={`transcript-${slug(name)}-${fileStamp}`}
@@ -246,7 +376,16 @@ export function CallDetailModal({
               </a>
             </div>
             {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
-            <audio controls preload="none" src={call.recordingUrl} className="w-full" />
+            <audio
+              ref={audioRef}
+              controls
+              preload="none"
+              src={call.recordingUrl}
+              className="w-full"
+              // The playhead drives the transcript highlight — clicking a turn
+              // seeks here, and this keeps the active turn in lockstep.
+              onTimeUpdate={(e) => setActiveSecs(e.currentTarget.currentTime)}
+            />
           </div>
         ) : (
           !loading && (

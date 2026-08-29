@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
-import { orgAIContext } from "@/lib/ai/org-context";
-import { getCallSummary } from "@/lib/ai/services";
+import { analyzeCall } from "@/lib/ai/analyze-call";
 import { insertCallRecord } from "@/lib/db/records";
 import { getViewer } from "@/lib/org/membership";
 import { resolveDispositionByKey } from "@/lib/status";
@@ -129,8 +128,12 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: false, error: "Failed to save call record." }, { status: 500 });
   }
 
-  // Fire-and-forget: generate an AI summary from lead context + outcome and
-  // back-fill it onto the record. Doesn't block the disposition response.
+  // Fire-and-forget: the F1 structured analysis pass. One generateJSON writes
+  // typed artifacts (summary/facts/objections/… with confidence + evidence)
+  // instead of the old free-form summary string; the summary artifact's text
+  // still backfills call_records.summary so the archive can search it. In demo
+  // mode (no key) analyzeCall persists NOTHING — no simulated intelligence
+  // ever enters the permanent record. Doesn't block the disposition response.
   if (body.leadId && body.outcome && isSupabaseConfigured()) {
     (async () => {
       try {
@@ -166,33 +169,27 @@ export async function POST(req: Request) {
           createdAt: String(row.created_at ?? ""),
           timezone: String(row.timezone ?? ""),
         };
-        // Summarize with the org's actual vertical/vocabulary — the last
-        // remaining solar-default caller after P6.AIADAPT.
+        // The lead's org, not the viewer's profile default — analyzeCall
+        // resolves the vertical context and disposition policy from it.
         const viewer = await getViewer();
-        const ctx = orgAIContext(viewer.org);
-        // The rep's notes and the call duration are the only real evidence a
-        // manual call leaves — and they were being thrown away here, so the
-        // summary PERSISTED on the record was written blind while the one the
-        // rep saw on screen (which does pass them) was better informed.
-        const result = await getCallSummary(
+        const orgId = viewer.org?.id ?? (row.org_id ? String(row.org_id) : null);
+        if (!orgId) return;
+        await analyzeCall({
+          callRecordId: recordId,
+          orgId,
           lead,
-          body.outcome!,
-          ctx.isSolar,
-          {
-            notes: typeof body.notes === "string" ? body.notes.slice(0, 4000) : undefined,
-            durationSec:
-              typeof body.durationSec === "number" && Number.isFinite(body.durationSec)
-                ? Math.max(0, Math.round(body.durationSec))
-                : undefined,
-          },
-          ctx,
-        );
-        if (result.data.executiveSummary) {
-          await supabase
-            .from("call_records")
-            .update({ summary: result.data.executiveSummary })
-            .eq("id", recordId);
-        }
+          // Manual calls leave no transcript (Twilio records, it doesn't
+          // transcribe) — the notes + duration ARE the evidence, and the
+          // policy's reviewOnMissingTranscript decides what a proposal from
+          // that thin evidence may do.
+          transcriptTurns: null,
+          outcome: body.outcome ?? null,
+          notes: typeof body.notes === "string" ? body.notes.slice(0, 4000) : undefined,
+          durationSec:
+            typeof body.durationSec === "number" && Number.isFinite(body.durationSec)
+              ? Math.max(0, Math.round(body.durationSec))
+              : undefined,
+        });
       } catch {
         /* best-effort */
       }

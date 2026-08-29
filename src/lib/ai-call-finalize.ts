@@ -3,6 +3,7 @@ import "server-only";
 import { recordCallSuccess, recordProviderFailure } from "./ai-call-breaker";
 import { getAICall, updateAICall } from "./ai-call-store";
 import { orgLikeForConversation } from "./ai/agent-context";
+import { analyzeCall } from "./ai/analyze-call";
 import { isAIConfigured } from "./ai/claude";
 import { readCall, resolveAppointment } from "./ai/appointment";
 import { orgAIContext } from "./ai/org-context";
@@ -378,6 +379,48 @@ export async function finalizeAIConversation(input: {
   // score, status) so the CRM reflects what the AI learned on the call.
   if (connected && outcome) {
     await enrichLeadFromAI({ conversationId, outcome, score, qualification });
+  }
+
+  // F1 structured pass — AUGMENTS the legacy analyzeConversation flow above
+  // (which keeps owning the outcome, the appointment resolution, and the lead
+  // enrichment): one combined generateJSON writes typed call_artifacts rows
+  // (confidence + transcript-turn evidence + model provenance) and runs the
+  // org's disposition policy (auto-apply into an empty slot, or the
+  // needs-review queue). Fire-and-forget: this runs on webhook / live-detail
+  // paths that must not wait out a second Claude round-trip, and analyzeCall
+  // itself never throws and persists nothing in demo mode.
+  if (connected && isAdminConfigured()) {
+    try {
+      const { data: rec } = await createAdminClient()
+        .from("call_records")
+        .select("id, org_id")
+        .eq("conversation_id", conversationId)
+        .maybeSingle();
+      if (rec?.id && rec.org_id) {
+        void analyzeCall({
+          conversationId,
+          callRecordId: String(rec.id),
+          orgId: String(rec.org_id),
+          lead,
+          transcriptTurns: turns
+            .map((t) => ({
+              role: String(t.role ?? t.speaker ?? "agent"),
+              message: String(t.message ?? t.text ?? ""),
+              secs:
+                typeof t.secs === "number"
+                  ? t.secs
+                  : typeof t.time_in_call_secs === "number"
+                    ? t.time_in_call_secs
+                    : null,
+            }))
+            .filter((t) => t.message.trim().length > 0),
+          outcome,
+          durationSec: input.durationSec,
+        }).catch(() => {});
+      }
+    } catch {
+      /* best-effort — intelligence must never fail the finalize */
+    }
   }
 
   return { connected, outcome, failureKind, summary, sentiment, appointment };

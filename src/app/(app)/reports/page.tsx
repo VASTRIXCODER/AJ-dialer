@@ -4,6 +4,7 @@ import {
   CalendarRange,
   Clock,
   Filter,
+  GitCompareArrows,
   PhoneCall,
   Target,
   Users,
@@ -15,6 +16,8 @@ import { AiExecReport } from "@/components/ai/exec-report";
 import { HourlyBarChart, OutcomeDonut, TrendAreaChart } from "@/components/dashboard/charts";
 import { MetricCard } from "@/components/dashboard/metric-card";
 import { CallHistory } from "@/components/reports/call-history";
+import { DataStamp } from "@/components/reports/data-stamp";
+import { DrillLink } from "@/components/reports/drill-link";
 import {
   FieldInsights,
   resolveFieldInsights,
@@ -29,6 +32,7 @@ import {
   type CsvSection,
   ExportReportButton,
 } from "@/components/reports/export-report-button";
+import { ReportViewPicker } from "@/components/reports/view-picker";
 import { EmptyState } from "@/components/shared/empty-state";
 import { PageContainer, PageHeader } from "@/components/shared/page-header";
 import { SectionCard } from "@/components/shared/section-card";
@@ -36,12 +40,22 @@ import { Badge } from "@/components/ui/badge";
 import { buttonVariants } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { costBreakdown } from "@/lib/call-costs";
+import { zonedDayKey } from "@/lib/dialer/schedule";
 import { getReportingData, getTeamLeaderboard } from "@/lib/db/metrics";
 import { resolveLeadFields } from "@/lib/leads/field-schema";
+import { dayKeyLabel } from "@/lib/metrics/compute";
+import { orgTimezone } from "@/lib/metrics/definitions";
 import { getViewer } from "@/lib/org/membership";
 import { DEFAULT_COST_RATES } from "@/lib/org/settings";
 import { templateProfile } from "@/lib/org/templates";
 import { orgVocabulary } from "@/lib/org/vocabulary";
+import {
+  drillAppointments,
+  drillConnected,
+  drillDialed,
+  drillOutcome,
+} from "@/lib/reports/drill";
+import type { ReportRangeKey } from "@/lib/reports/view-spec";
 import { resolveOutcomeConfig } from "@/lib/status";
 import {
   cn,
@@ -57,21 +71,43 @@ export const dynamic = "force-dynamic";
 
 // Date-range presets for the period KPIs / dispositions / recent calls. The
 // 7d/30d trend and today's hourly chart always keep their own fixed windows.
-const RANGES = [
+const RANGES: { key: ReportRangeKey; label: string; days: number | null }[] = [
   { key: "today", label: "Today", days: 1 },
   { key: "7d", label: "7 days", days: 7 },
   { key: "30d", label: "30 days", days: 30 },
   { key: "all", label: "All time", days: null },
-] as const;
+];
+
+/** ▲/▼ delta for a KPI card vs the previous period, with the sr sentence. */
+function kpiDelta(
+  cur: number,
+  prev: number | null,
+  format: (n: number) => string,
+  prevLabel: string,
+): { value: string; positive: boolean; srLabel: string } | undefined {
+  if (prev === null) return undefined;
+  const diff = Math.round((cur - prev) * 10) / 10;
+  if (diff === 0) return undefined; // no arrow for "no change" — nothing to claim
+  const positive = diff > 0;
+  return {
+    value: format(Math.abs(diff)),
+    positive,
+    srLabel: `${positive ? "up" : "down"} ${format(Math.abs(diff))} vs previous period (${prevLabel})`,
+  };
+}
 
 export default async function ReportsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ range?: string }>;
+  searchParams: Promise<{ range?: string; compare?: string }>;
 }) {
-  const { range } = await searchParams;
-  const rangeKey = RANGES.some((r) => r.key === range) ? range! : "all";
+  const { range, compare } = await searchParams;
+  const rangeKey: ReportRangeKey = RANGES.some((r) => r.key === range)
+    ? (range as ReportRangeKey)
+    : "all";
   const rangeDays = RANGES.find((r) => r.key === rangeKey)?.days ?? null;
+  // Compare needs a bounded window — "all time" has no previous period.
+  const compareOn = compare === "prev" && rangeDays != null;
 
   const [
     {
@@ -86,9 +122,18 @@ export default async function ReportsPage({
       recentCalls,
       scope,
     },
+    prevData,
     { reps },
     viewer,
-  ] = await Promise.all([getReportingData(rangeDays), getTeamLeaderboard(), getViewer()]);
+  ] = await Promise.all([
+    getReportingData(rangeDays),
+    // The previous same-length window — a second full pass by design (the cost
+    // is acceptable and it guarantees both windows use identical math).
+    compareOn ? getReportingData(rangeDays, { periodOffsetDays: rangeDays! }) : null,
+    getTeamLeaderboard(),
+    getViewer(),
+  ]);
+  const prev = prevData?.metrics ?? null;
 
   // Manual-only orgs (e.g. Donny) have no AI calls, so drop the AI-vs-human
   // split and the AI executive report — every call here is a human call.
@@ -99,6 +144,31 @@ export default async function ReportsPage({
   const vocab = orgVocabulary(viewer.org);
   const outcomes = resolveOutcomeConfig(vocab);
 
+  // Every "day" on this page is the org's day. The stamp + range labels below
+  // say so explicitly instead of leaving the boundary a mystery.
+  const tz = orgTimezone(viewer.org);
+  const generatedAt = new Date();
+  const keyAgo = (daysBack: number) => {
+    const d = new Date();
+    d.setDate(d.getDate() - daysBack);
+    return zonedDayKey(d, tz);
+  };
+  const todayKey = zonedDayKey(generatedAt, tz);
+  const rangeStartKey = rangeDays ? keyAgo(rangeDays - 1) : null;
+  const rangeLabel =
+    rangeDays == null
+      ? "All time"
+      : rangeDays === 1
+        ? dayKeyLabel(todayKey, { weekday: true })
+        : `${dayKeyLabel(rangeStartKey!)} – ${dayKeyLabel(todayKey)}`;
+  // The exact both-windows sentence ("Aug 22 – Aug 28 vs Aug 15 – Aug 21").
+  const prevLabel =
+    compareOn && rangeDays
+      ? rangeDays === 1
+        ? dayKeyLabel(keyAgo(1), { weekday: true })
+        : `${dayKeyLabel(keyAgo(2 * rangeDays - 1))} – ${dayKeyLabel(keyAgo(rangeDays))}`
+      : "";
+
   // Cost & usage: talk time × the org's per-minute rates (defaults apply when
   // the org never configured any). channelStats is already scoped to the
   // selected range, so the panel reacts to the range bar for free.
@@ -107,25 +177,84 @@ export default async function ReportsPage({
   const aiCost = costs.perChannel.find((c) => c.channel === "ai");
   const humanCost = costs.perChannel.find((c) => c.channel === "human");
 
+  const compareHref = (key: ReportRangeKey, on: boolean) => {
+    const p = new URLSearchParams();
+    if (key !== "all") p.set("range", key);
+    if (on) p.set("compare", "prev");
+    const qs = p.toString();
+    return qs ? `/reports?${qs}` : "/reports";
+  };
+
   // Date-range switch — period figures react to it; the 30-day trend and
   // today's hourly chart keep their own fixed windows regardless.
   const rangeBar = (
-    <div className="flex w-fit items-center gap-1 rounded-xl border border-border bg-card p-1">
-      <span className="flex items-center gap-1 px-2 text-xs font-medium text-muted-foreground">
-        <CalendarRange className="h-3.5 w-3.5" />
-      </span>
-      {RANGES.map((r) => (
-        <Link
-          key={r.key}
-          href={r.key === "all" ? "/reports" : `/reports?range=${r.key}`}
-          className={cn(
-            buttonVariants({ size: "sm", variant: rangeKey === r.key ? "primary" : "ghost" }),
-          )}
-        >
-          {r.label}
-        </Link>
-      ))}
+    <div className="flex flex-wrap items-center gap-2">
+      <div className="flex w-fit items-center gap-1 rounded-xl border border-border bg-card p-1">
+        <span className="flex items-center gap-1 px-2 text-xs font-medium text-muted-foreground">
+          <CalendarRange className="h-3.5 w-3.5" />
+        </span>
+        {RANGES.map((r) => (
+          <Link
+            key={r.key}
+            href={compareHref(r.key, compareOn && r.days != null)}
+            className={cn(
+              buttonVariants({ size: "sm", variant: rangeKey === r.key ? "primary" : "ghost" }),
+            )}
+          >
+            {r.label}
+          </Link>
+        ))}
+      </div>
+      {/* Comparison period: none | previous same-length window. */}
+      <div className="flex w-fit items-center gap-1 rounded-xl border border-border bg-card p-1">
+        <span className="flex items-center gap-1 px-2 text-xs font-medium text-muted-foreground">
+          <GitCompareArrows className="h-3.5 w-3.5" />
+          Compare
+        </span>
+        {rangeDays == null ? (
+          // All-time has no "previous period" — a disabled control with the
+          // reason beats a toggle that silently does nothing.
+          <span
+            className="cursor-not-allowed px-2 py-1 text-xs text-muted-foreground/60"
+            title="Pick a date range first — all time has no previous period."
+          >
+            needs a date range
+          </span>
+        ) : (
+          <>
+            <Link
+              href={compareHref(rangeKey, false)}
+              className={cn(
+                buttonVariants({ size: "sm", variant: compareOn ? "ghost" : "primary" }),
+              )}
+            >
+              Off
+            </Link>
+            <Link
+              href={compareHref(rangeKey, true)}
+              className={cn(
+                buttonVariants({ size: "sm", variant: compareOn ? "primary" : "ghost" }),
+              )}
+            >
+              Previous period
+            </Link>
+          </>
+        )}
+      </div>
+      <ReportViewPicker
+        views={viewer.org?.settings.reportViews ?? []}
+        current={{ range: rangeKey, compare: compareOn ? "prev" : "none" }}
+        canWrite={viewer.permissions.includes("org.edit")}
+      />
     </div>
+  );
+
+  const stampLine = (
+    <DataStamp
+      generatedAt={generatedAt}
+      timezone={tz}
+      rangeLabel={compareOn ? `${rangeLabel} vs ${prevLabel}` : rangeLabel}
+    />
   );
 
   if (metrics.totalCalls === 0 && recentCalls.length === 0) {
@@ -136,6 +265,7 @@ export default async function ReportsPage({
           description="Full visibility into calls, connect rates, every disposition, and team performance."
         />
         {rangeBar}
+        {stampLine}
         <EmptyState
           icon={BarChart3}
           title={rangeKey === "all" ? "No report data yet" : "No calls in this range"}
@@ -195,6 +325,8 @@ export default async function ReportsPage({
     },
   ];
 
+  const donutLegend = dispositions.filter((d) => d.count > 0);
+
   return (
     <PageContainer>
       <PageHeader
@@ -209,20 +341,80 @@ export default async function ReportsPage({
       </PageHeader>
 
       {rangeBar}
+      {stampLine}
 
-      {/* KPI row */}
+      {/* KPI row — every card drills into the matching leads; ⓘ = glossary. */}
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">
-        <MetricCard label="Total calls" value={formatNumber(metrics.totalCalls)} icon={PhoneCall} accent="primary" />
-        <MetricCard label="Connect rate" value={formatPercent(metrics.connectRate, 1)} icon={Zap} accent="accent" />
-        <MetricCard label="Connections" value={formatNumber(metrics.connections)} icon={Users} accent="primary" />
+        <DrillLink filter={drillDialed(rangeDays)}>
+          <MetricCard
+            label="Total calls"
+            value={formatNumber(metrics.totalCalls)}
+            icon={PhoneCall}
+            accent="primary"
+            delta={kpiDelta(metrics.totalCalls, prev?.totalCalls ?? null, formatNumber, prevLabel)}
+          />
+        </DrillLink>
+        <DrillLink filter={drillConnected(rangeDays)}>
+          <MetricCard
+            label="Connect rate"
+            value={formatPercent(metrics.connectRate, 1)}
+            icon={Zap}
+            accent="accent"
+            definitionKey="connect_rate"
+            delta={kpiDelta(
+              metrics.connectRate,
+              prev?.connectRate ?? null,
+              (n) => `${n.toFixed(1)} pp`,
+              prevLabel,
+            )}
+          />
+        </DrillLink>
+        <DrillLink filter={drillConnected(rangeDays)}>
+          <MetricCard
+            label="Connections"
+            value={formatNumber(metrics.connections)}
+            icon={Users}
+            accent="primary"
+            definitionKey="human_connects"
+            delta={kpiDelta(metrics.connections, prev?.connections ?? null, formatNumber, prevLabel)}
+          />
+        </DrillLink>
         {/* Booked appointment ROWS (appointments table), non-cancelled, scoped to
             the selected range — NOT funnel.appointments, which counts historical
             call_records outcomes and never shrinks after a lead is re-dispositioned.
             Same table the Dashboard + calendar use, so screens agree on the same
             window; the Dashboard just shows all-time. (Range-scoping is why
             Reports(Today) no longer reads "5 calls / 340 appointments".) */}
-        <MetricCard label="Appointments" value={formatNumber(metrics.appointmentsBooked)} icon={Target} accent="success" sub={`${vocab.appointmentNounPlural} on the books`} />
-        <MetricCard label="Avg talk time" value={formatDuration(metrics.avgCallLenSec)} icon={Clock} accent="warning" />
+        <DrillLink filter={drillAppointments()}>
+          <MetricCard
+            label="Appointments"
+            value={formatNumber(metrics.appointmentsBooked)}
+            icon={Target}
+            accent="success"
+            sub={`${vocab.appointmentNounPlural} on the books`}
+            definitionKey="appointments_set"
+            delta={kpiDelta(
+              metrics.appointmentsBooked,
+              prev?.appointmentsBooked ?? null,
+              formatNumber,
+              prevLabel,
+            )}
+          />
+        </DrillLink>
+        {/* Avg talk time has no leads-side expression — honestly unlinked. */}
+        <MetricCard
+          label="Avg talk time"
+          value={formatDuration(metrics.avgCallLenSec)}
+          icon={Clock}
+          accent="warning"
+          definitionKey="avg_talk_time"
+          delta={kpiDelta(
+            metrics.avgCallLenSec,
+            prev?.avgCallLenSec ?? null,
+            formatDuration,
+            prevLabel,
+          )}
+        />
       </div>
 
       {/* Funnel + channel split (channel split only when AI is in play) */}
@@ -231,7 +423,7 @@ export default async function ReportsPage({
           title="Conversion funnel"
           description="Dials → connects → appointments booked on calls (call outcomes, not the appointments calendar)"
         >
-          <ReportFunnel funnel={funnel} />
+          <ReportFunnel funnel={funnel} rangeDays={rangeDays} />
         </SectionCard>
         {aiDialerEnabled && (
           <SectionCard title="AI vs human" description="Channel performance side by side">
@@ -303,7 +495,25 @@ export default async function ReportsPage({
         </SectionCard>
         <SectionCard title="Outcome mix" description="Disposition share">
           {outcomeBreakdown.length > 0 ? (
-            <OutcomeDonut data={outcomeBreakdown} />
+            <>
+              <OutcomeDonut data={outcomeBreakdown} />
+              {/* Legend rows drill into the leads whose latest outcome matches. */}
+              <div className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1">
+                {donutLegend.map((d) => (
+                  <DrillLink
+                    key={d.key}
+                    filter={drillOutcome(d.key, rangeDays)}
+                    className="rounded-lg"
+                  >
+                    <span className="flex items-center gap-2 rounded-lg px-1 py-0.5 text-xs transition-colors hover:bg-muted/40">
+                      <span className="h-2.5 w-2.5 rounded-full" style={{ background: d.color }} />
+                      <span className="truncate text-muted-foreground">{d.label}</span>
+                      <span className="ml-auto font-semibold tabular">{Math.round(d.rate)}%</span>
+                    </span>
+                  </DrillLink>
+                ))}
+              </div>
+            </>
           ) : (
             <p className="py-10 text-center text-sm text-muted-foreground">No dispositions yet.</p>
           )}
@@ -313,23 +523,25 @@ export default async function ReportsPage({
       {/* All dispositions */}
       <SectionCard
         title="Disposition breakdown"
-        description="Every outcome, by volume and share — connected outcomes ringed"
+        description="Every outcome, by volume and share — connected outcomes ringed. Click a row to open the matching leads."
       >
-        <DispositionBreakdown dispositions={dispositions} />
+        <DispositionBreakdown dispositions={dispositions} rangeDays={rangeDays} />
       </SectionCard>
 
       {/* Per-rep performance (supervisors) */}
       {teamWide && reps.length > 0 && (
         <SectionCard
           title="Rep performance"
-          description="Last 30 days, ranked by performance score — its own fixed window, independent of the date range above"
+          description="This calendar month, ranked by leaderboard points — its own fixed window, independent of the date range above"
           bodyClassName="p-0"
         >
           <RepPerformance reps={reps} />
         </SectionCard>
       )}
 
-      {/* Hourly + utility insights */}
+      {/* Hourly + utility insights. Hourly bars deliberately have NO drill link:
+          hour-of-day isn't expressible as a leads filter, and a wrong link is
+          worse than none. */}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         <SectionCard title="Hourly productivity" description="Dials & connects (today)" className="lg:col-span-2">
           <HourlyBarChart data={hourlyCalls} />

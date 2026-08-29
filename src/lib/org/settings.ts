@@ -10,6 +10,12 @@
 
 import type { LeadFieldDef } from "../leads/field-schema";
 import { sanitizeExportTemplates, type ExportTemplate } from "../leads/export-spec";
+import { sanitizeReportViews, type ReportView } from "../reports/view-spec";
+import {
+  DEFAULT_AI_DISPOSITION_POLICY,
+  mergeAiDispositionPolicy,
+  type AiDispositionPolicy,
+} from "../ai/disposition-policy";
 
 export type DispositionTone = "success" | "warning" | "danger" | "neutral";
 
@@ -237,6 +243,13 @@ export interface OrgSettings {
      * rate nobody chose. Set this to whatever the plan actually allows.
      */
     maxConcurrentCalls: number;
+    /**
+     * What an AI-PROPOSED disposition may do to a call record (F1): silent
+     * auto-apply only above `autoApplyMin` confidence, with a transcript, and
+     * never for an `alwaysReview` outcome — everything else lands in the
+     * needs-review queue. See src/lib/ai/disposition-policy.ts.
+     */
+    dispositionPolicy: AiDispositionPolicy;
   };
   compliance: {
     dncEnforced: boolean;
@@ -273,6 +286,13 @@ export interface OrgSettings {
   billing: OrgBilling;
   /** Per-minute call cost estimates — drives the Reports "Cost & usage" panel. */
   costRates: CostRates;
+  /** Leaderboard scoring: per-component points, exclusions, and week start. */
+  leaderboard: LeaderboardSettings;
+  /**
+   * Saved /reports views (range + compare presets by name). Capped at 12 and
+   * sanitized on every read — see src/lib/reports/view-spec.ts.
+   */
+  reportViews: ReportView[];
   /**
    * The org's lead field schema: custom fields discovered from CSV imports plus
    * any explicit overrides of the core slots. Empty = derive everything from the
@@ -351,6 +371,80 @@ export const DEFAULT_COST_RATES: CostRates = {
   manualPerMinute: 0.015,
 };
 
+// ── Leaderboard scoring (F2) ─────────────────────────────────────────────────
+
+/**
+ * Points per scoring component. These replace the old hardcoded score formula in
+ * src/lib/leaderboard.ts — an org decides what a connect, a qualified call, a
+ * booking, a KEPT booking, a completed callback, and a minute of real talk are
+ * worth on its own floor. The scoring math itself (windows, exclusions, ties)
+ * lives in composeLeaderboard and is deliberately not configurable.
+ */
+export interface LeaderboardPoints {
+  humanConnect: number;
+  qualified: number;
+  appointmentBooked: number;
+  /** Appointment marked completed (the rep actually held it). */
+  appointmentKept: number;
+  /** Per whole minute of connected talk time. */
+  talkMinute: number;
+  callbackCompleted: number;
+}
+
+export interface LeaderboardExclusions {
+  /** Count AI-agent calls toward reps' scores. Off = human dials only. */
+  includeAiCalls: boolean;
+  /**
+   * A "connect" only scores when measured talk time reaches this many seconds
+   * (calls whose talk time is unknown — legacy rows — are not gated).
+   */
+  minTalkSecForConnect: number;
+}
+
+export interface LeaderboardSettings {
+  points: LeaderboardPoints;
+  exclusions: LeaderboardExclusions;
+  /** Calendar week start for the weekly board: 0 = Sunday, 1 = Monday. */
+  weekStart: 0 | 1;
+}
+
+export const DEFAULT_LEADERBOARD: LeaderboardSettings = {
+  points: {
+    humanConnect: 1,
+    qualified: 3,
+    appointmentBooked: 5,
+    appointmentKept: 8,
+    talkMinute: 0.1,
+    callbackCompleted: 2,
+  },
+  exclusions: { includeAiCalls: false, minTalkSecForConnect: 30 },
+  weekStart: 1,
+};
+
+/** Sanitize a stored leaderboard blob (numbers coerced, weekStart clamped). */
+export function mergeLeaderboardSettings(raw: unknown): LeaderboardSettings {
+  const s = (raw ?? {}) as Partial<LeaderboardSettings>;
+  const num = (v: unknown, fallback: number): number => {
+    const n = Number(v);
+    return Number.isFinite(n) && n >= 0 ? n : fallback;
+  };
+  const points = { ...DEFAULT_LEADERBOARD.points };
+  for (const key of Object.keys(points) as (keyof LeaderboardPoints)[]) {
+    points[key] = num(s.points?.[key], DEFAULT_LEADERBOARD.points[key]);
+  }
+  return {
+    points,
+    exclusions: {
+      includeAiCalls: s.exclusions?.includeAiCalls === true,
+      minTalkSecForConnect: num(
+        s.exclusions?.minTalkSecForConnect,
+        DEFAULT_LEADERBOARD.exclusions.minTalkSecForConnect,
+      ),
+    },
+    weekStart: s.weekStart === 0 ? 0 : 1,
+  };
+}
+
 export const DEFAULT_ORG_SETTINGS: OrgSettings = {
   dialing: {
     mode: "progressive",
@@ -405,6 +499,10 @@ export const DEFAULT_ORG_SETTINGS: OrgSettings = {
     language: "en",
     // Matches the common ElevenLabs plan allowance. Raise if the plan does.
     maxConcurrentCalls: 10,
+    dispositionPolicy: {
+      ...DEFAULT_AI_DISPOSITION_POLICY,
+      alwaysReview: [...DEFAULT_AI_DISPOSITION_POLICY.alwaysReview],
+    },
   },
   compliance: {
     dncEnforced: true,
@@ -423,6 +521,12 @@ export const DEFAULT_ORG_SETTINGS: OrgSettings = {
   features: { ...DEFAULT_FEATURES },
   billing: { ...DEFAULT_BILLING },
   costRates: { ...DEFAULT_COST_RATES },
+  leaderboard: {
+    points: { ...DEFAULT_LEADERBOARD.points },
+    exclusions: { ...DEFAULT_LEADERBOARD.exclusions },
+    weekStart: DEFAULT_LEADERBOARD.weekStart,
+  },
+  reportViews: [],
   leadFields: [],
   exportTemplates: [],
   leadNoun: "lead",
@@ -479,7 +583,13 @@ export function mergeSettings(raw: unknown): OrgSettings {
         : DEFAULT_ORG_SETTINGS.automation.windows,
     },
     hours: { ...DEFAULT_ORG_SETTINGS.hours, ...(s.hours ?? {}) },
-    ai: { ...DEFAULT_ORG_SETTINGS.ai, ...(s.ai ?? {}) },
+    ai: {
+      ...DEFAULT_ORG_SETTINGS.ai,
+      ...(s.ai ?? {}),
+      // Sanitized on every read (clamped threshold, wholesale array replace) —
+      // the stored blob is whatever the last PATCH wrote.
+      dispositionPolicy: mergeAiDispositionPolicy(s.ai?.dispositionPolicy),
+    },
     compliance: { ...DEFAULT_ORG_SETTINGS.compliance, ...(s.compliance ?? {}) },
     dispositions: Array.isArray(s.dispositions)
       ? s.dispositions
@@ -511,6 +621,10 @@ export function mergeSettings(raw: unknown): OrgSettings {
     features: { ...DEFAULT_FEATURES, ...(s.features ?? {}) },
     billing: { ...DEFAULT_BILLING, ...(s.billing ?? {}) },
     costRates: { ...DEFAULT_COST_RATES, ...(s.costRates ?? {}) },
+    // Sanitized on read — point values coerced, weekStart clamped to 0|1.
+    leaderboard: mergeLeaderboardSettings(s.leaderboard),
+    // Sanitized on read (shape + the 12-view cap); views replace wholesale.
+    reportViews: sanitizeReportViews(s.reportViews),
     // Arrays replace wholesale (like dispositions) — spread-merging would
     // resurrect a field an admin just deleted.
     leadFields: Array.isArray(s.leadFields) ? s.leadFields : [],

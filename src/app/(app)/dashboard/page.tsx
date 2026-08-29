@@ -12,6 +12,7 @@ import {
 import Link from "next/link";
 import { HourlyBarChart, OutcomeDonut, TrendAreaChart } from "@/components/dashboard/charts";
 import { MetricCard } from "@/components/dashboard/metric-card";
+import { DataStamp } from "@/components/reports/data-stamp";
 import { resolveFieldInsights } from "@/components/reports/field-insights";
 import { EmptyState } from "@/components/shared/empty-state";
 import { PageContainer, PageHeader } from "@/components/shared/page-header";
@@ -21,7 +22,9 @@ import { Badge } from "@/components/ui/badge";
 import { buttonVariants } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { getReportingData, getTeamLeaderboard } from "@/lib/db/metrics";
+import { compareRanked } from "@/lib/leaderboard";
 import { resolveLeadFields } from "@/lib/leads/field-schema";
+import { orgTimezone } from "@/lib/metrics/definitions";
 import { getViewer } from "@/lib/org/membership";
 import { templateProfile } from "@/lib/org/templates";
 import { orgVocabulary } from "@/lib/org/vocabulary";
@@ -64,9 +67,11 @@ export default async function DashboardPage() {
     // trend and today's tiles are unaffected). Reports still offers true all-time.
   ] = await Promise.all([getReportingData(90), getViewer(), getTeamLeaderboard()]);
 
-  // Top performers today, org-wide (every onboarded member counts).
+  // Top performers today, org-wide (every onboarded member counts) — ranked by
+  // the org's configurable leaderboard points, with the one deterministic
+  // tie-break every leaderboard surface shares (src/lib/leaderboard.ts).
   const leaderboard = [...teamReps]
-    .sort((a, b) => b.daily.score - a.daily.score || b.daily.appointments - a.daily.appointments)
+    .sort((a, b) => compareRanked({ id: a.id, stat: a.daily }, { id: b.id, stat: b.daily }))
     .slice(0, 5);
 
   const org = viewer.org;
@@ -152,6 +157,9 @@ export default async function DashboardPage() {
         </Link>
       </PageHeader>
 
+      {/* Force-dynamic page ⇒ render time IS the data's freshness. */}
+      <DataStamp generatedAt={new Date()} timezone={orgTimezone(org)} />
+
       {/* Hero metrics */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <MetricCard
@@ -160,6 +168,7 @@ export default async function DashboardPage() {
           icon={PhoneCall}
           accent="primary"
           sub="dials placed today"
+          definitionKey="calls_today"
         />
         <MetricCard
           label="Connect rate"
@@ -167,13 +176,16 @@ export default async function DashboardPage() {
           icon={Zap}
           accent="accent"
           sub="conversations / dials · today"
+          definitionKey="connect_rate"
         />
         <MetricCard
           label="Appointments"
           value={formatNumber(metrics.appointmentsBooked)}
           icon={CalendarCheck}
           accent="success"
-          sub="reviews booked · 90d"
+          // The org's own noun — this tile said "reviews booked" to every tenant.
+          sub={`${vocab.appointmentNounPlural} booked · 90d`}
+          definitionKey="appointments_set"
         />
         <MetricCard
           label="Avg talk time"
@@ -181,6 +193,7 @@ export default async function DashboardPage() {
           icon={Clock}
           accent="warning"
           sub="per conversation · 90d"
+          definitionKey="avg_talk_time"
         />
       </div>
 
@@ -323,7 +336,7 @@ export default async function DashboardPage() {
 
         <SectionCard
           title="Top performers"
-          description="By performance score"
+          description="By leaderboard points · today"
           action={{ label: "Leaderboard", href: "/leaderboard" }}
         >
           {leaderboard.length === 0 ? (
@@ -359,7 +372,7 @@ export default async function DashboardPage() {
                   </div>
                   <div className="flex items-center gap-1 text-sm font-bold text-success">
                     <TrendingUp className="h-3.5 w-3.5" />
-                    {rep.daily.score}
+                    {rep.daily.points}
                   </div>
                   {i === 0 && <Trophy className="h-4 w-4 text-warning" />}
                 </li>

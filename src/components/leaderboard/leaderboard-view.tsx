@@ -1,17 +1,46 @@
 "use client";
 
 import { motion } from "framer-motion";
-import { Crown, Flame, Medal, PhoneCall, Target, TrendingUp, Trophy, Users } from "lucide-react";
-import { useState } from "react";
+import {
+  Award,
+  Crown,
+  Flame,
+  Info,
+  Medal,
+  PhoneCall,
+  Target,
+  Trophy,
+  Users,
+  Zap,
+} from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { CountUp } from "@/components/motion";
 import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
-import type { LeaderboardEntry, LeaderboardStat } from "@/lib/types";
+import { Tooltip } from "@/components/ui/tooltip";
+import type { TeamLeaderboard, TeamLeaderboardRep } from "@/lib/db/metrics";
+import {
+  compareRanked,
+  TIE_BREAK_NOTE,
+  type LeaderboardPeriodStat,
+} from "@/lib/leaderboard";
+import { useOrgChannel } from "@/lib/realtime/use-org-channel";
 import { cn } from "@/lib/utils";
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Leaderboard v2.
+//   • Calendar-true periods with the EXACT date range in the header — "This
+//     week" is the org's Mon–Sun (or Sun–Sat) week, never a rolling 7 days.
+//   • Points come from the org's configurable scoring; every entry's points
+//     badge opens a breakdown (component × count × points) that sums to the
+//     total, so no number on this board is unexplainable.
+//   • Live: leaderboard.delta events on the org channel trigger a debounced
+//     (5s) refetch of /api/leaderboard — no reload, no per-client poll loop.
+// ─────────────────────────────────────────────────────────────────────────────
+
 type Period = "daily" | "weekly" | "monthly";
-type RankBy = "appointments" | "score" | "connects" | "calls";
+type RankBy = "points" | "appointments" | "connects" | "calls";
 
 const PERIODS: { key: Period; label: string }[] = [
   { key: "daily", label: "Today" },
@@ -20,8 +49,8 @@ const PERIODS: { key: Period; label: string }[] = [
 ];
 
 const RANKS: { key: RankBy; label: string }[] = [
+  { key: "points", label: "Points" },
   { key: "appointments", label: "Appointments" },
-  { key: "score", label: "Score" },
   { key: "connects", label: "Connects" },
   { key: "calls", label: "Calls" },
 ];
@@ -33,9 +62,18 @@ const ROLE_TONE: Record<string, "primary" | "accent" | "warning" | "neutral"> = 
   rep: "neutral",
 };
 
-const statFor = (r: LeaderboardEntry, p: Period): LeaderboardStat => r[p];
-const rankVal = (s: LeaderboardStat, by: RankBy) =>
-  by === "appointments" ? s.appointments : by === "connects" ? s.connects : by === "calls" ? s.calls : s.score;
+const statFor = (r: TeamLeaderboardRep, p: Period): LeaderboardPeriodStat => r[p];
+const rankVal = (s: LeaderboardPeriodStat, by: RankBy) =>
+  by === "appointments"
+    ? s.appointments
+    : by === "connects"
+      ? s.connects
+      : by === "calls"
+        ? s.calls
+        : s.points;
+
+/** Debounce window between a leaderboard.delta event and the refetch. */
+const REFETCH_DEBOUNCE_MS = 5_000;
 
 function Segmented<T extends string>({
   options,
@@ -112,39 +150,92 @@ function SummaryCard({
   );
 }
 
-function SplitBar({ ai, human }: { ai: number; human: number }) {
-  const total = ai + human;
-  if (total === 0) return null;
-  const aiPct = Math.round((ai / total) * 100);
+/** Points badge whose tooltip is the exact component × count × points table. */
+function PointsBadge({ stat }: { stat: LeaderboardPeriodStat }) {
+  const body =
+    stat.breakdown.length === 0 ? (
+      <span>No scoring activity in this period.</span>
+    ) : (
+      <span className="block min-w-44 space-y-0.5">
+        {stat.breakdown.map((b) => (
+          <span key={b.component} className="flex items-baseline gap-2 tabular">
+            <span className="text-muted-foreground">{b.label}</span>
+            <span className="ml-auto">
+              {b.count} × → <span className="font-semibold">{b.points}</span>
+            </span>
+          </span>
+        ))}
+        <span className="mt-1 flex items-baseline gap-2 border-t border-border/60 pt-1 font-semibold tabular">
+          <span>Total</span>
+          <span className="ml-auto">{stat.points}</span>
+        </span>
+      </span>
+    );
   return (
-    <div
-      className="mt-1 flex h-1 w-24 overflow-hidden rounded-full bg-muted"
-      title={`${ai} AI · ${human} human`}
-    >
-      <span className="bg-brand" style={{ width: `${aiPct}%` }} />
-      <span className="bg-accent" style={{ width: `${100 - aiPct}%` }} />
-    </div>
+    <Tooltip content={body}>
+      <span className="inline-flex cursor-help">
+        <Badge tone="success" className="gap-1 tabular">
+          <Zap className="h-3 w-3" />
+          {stat.points}
+        </Badge>
+      </span>
+    </Tooltip>
   );
 }
 
 export function LeaderboardView({
-  reps,
-  meId = null,
+  initialData,
+  orgId = null,
 }: {
-  reps: LeaderboardEntry[];
-  meId?: string | null;
+  initialData: TeamLeaderboard;
+  /** Enables the live channel; null (demo / org-less) stays static. */
+  orgId?: string | null;
 }) {
+  const [data, setData] = useState<TeamLeaderboard>(initialData);
   const [period, setPeriod] = useState<Period>("weekly");
-  const [rankBy, setRankBy] = useState<RankBy>("appointments");
+  const [rankBy, setRankBy] = useState<RankBy>("points");
+
+  // ── Live refetch: leaderboard.delta → debounced /api/leaderboard pull ──────
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const refetch = useCallback(async () => {
+    try {
+      const res = await fetch("/api/leaderboard", { cache: "no-store" });
+      if (!res.ok) return;
+      const j = (await res.json()) as TeamLeaderboard;
+      if (Array.isArray(j?.reps)) setData(j);
+    } catch {
+      /* keep showing the last good board — the next delta retries */
+    }
+  }, []);
+  const scheduleRefetch = useCallback(() => {
+    if (timerRef.current) return; // one pending refetch coalesces a burst
+    timerRef.current = setTimeout(() => {
+      timerRef.current = null;
+      void refetch();
+    }, REFETCH_DEBOUNCE_MS);
+  }, [refetch]);
+  useEffect(
+    () => () => {
+      if (timerRef.current) clearTimeout(timerRef.current);
+    },
+    [],
+  );
+  useOrgChannel({
+    orgId,
+    on: { "leaderboard.delta": scheduleRefetch },
+    // A (re)join means missed events are possible — pull a fresh snapshot.
+    onResync: scheduleRefetch,
+  });
+
+  const { reps, periods, config } = data;
+  const meId = data.meId;
 
   const ranked = [...reps].sort((a, b) => {
     const sa = statFor(a, period);
     const sb = statFor(b, period);
-    return (
-      rankVal(sb, rankBy) - rankVal(sa, rankBy) ||
-      sb.score - sa.score ||
-      sb.calls - sa.calls
-    );
+    // Chosen column first, then the SAME deterministic chain the server ranks
+    // with — two reloads can never disagree about who is #4.
+    return rankVal(sb, rankBy) - rankVal(sa, rankBy) || compareRanked({ id: a.id, stat: sa }, { id: b.id, stat: sb });
   });
 
   // Period totals across the floor.
@@ -166,6 +257,7 @@ export function LeaderboardView({
   const heights = ["h-24", "h-32", "h-20"];
   const place = [2, 1, 3];
   const rankLabel = RANKS.find((r) => r.key === rankBy)!.label.toLowerCase();
+  const periodMeta = periods[period];
 
   return (
     <div className="space-y-6">
@@ -179,7 +271,11 @@ export function LeaderboardView({
 
       {/* Controls */}
       <div className="flex flex-col items-center justify-between gap-3 sm:flex-row">
-        <Segmented options={PERIODS} value={period} onChange={setPeriod} layoutId="lb-period" />
+        <div className="flex flex-col items-center gap-1 sm:items-start">
+          <Segmented options={PERIODS} value={period} onChange={setPeriod} layoutId="lb-period" />
+          {/* The honest window: exact org-tz calendar dates, never a rolling lie. */}
+          <p className="text-xs text-muted-foreground tabular">{periodMeta.label}</p>
+        </div>
         <div className="flex items-center gap-2">
           <span className="hidden text-xs font-medium text-muted-foreground sm:inline">Rank by</span>
           <Segmented options={RANKS} value={rankBy} onChange={setRankBy} layoutId="lb-rank" />
@@ -247,7 +343,10 @@ export function LeaderboardView({
       {/* Full ranking */}
       <Card className="overflow-hidden">
         <div className="flex items-center justify-between border-b border-border p-5">
-          <h3 className="font-semibold">Full ranking</h3>
+          <div className="flex items-center gap-2">
+            <h3 className="font-semibold">Full ranking</h3>
+            <span className="text-xs text-muted-foreground tabular">{periodMeta.label}</span>
+          </div>
           <span className="text-xs text-muted-foreground">{ranked.length} on the floor</span>
         </div>
         {/* Column header (desktop) */}
@@ -261,7 +360,7 @@ export function LeaderboardView({
           <span className="w-16 text-right" title="Appointments booked, as a share of connected calls">
             Conv
           </span>
-          <span className="w-14 text-right">Score</span>
+          <span className="w-16 text-right">Points</span>
         </div>
         <div className="divide-y divide-border">
           {ranked.map((rep, i) => {
@@ -300,11 +399,26 @@ export function LeaderboardView({
                       </span>
                     )}
                   </p>
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-1.5">
                     <Badge tone={ROLE_TONE[rep.role] ?? "neutral"} className="capitalize">
                       {rep.role}
                     </Badge>
-                    <SplitBar ai={s.aiCalls} human={s.humanCalls} />
+                    {rep.streakDays >= 2 && (
+                      <Tooltip content={`${rep.streakDays} consecutive days with a connect`}>
+                        <span className="inline-flex cursor-help items-center gap-0.5 rounded-full bg-warning/15 px-1.5 py-0.5 text-[10px] font-bold text-warning tabular">
+                          <Flame className="h-3 w-3" />
+                          {rep.streakDays}
+                        </span>
+                      </Tooltip>
+                    )}
+                    {rep.personalBestPoints > 0 && (
+                      <Tooltip content={`Personal best: ${rep.personalBestPoints} points in one day (last 90 days)`}>
+                        <span className="inline-flex cursor-help items-center gap-0.5 rounded-full bg-accent-soft px-1.5 py-0.5 text-[10px] font-bold text-accent tabular">
+                          <Award className="h-3 w-3" />
+                          PB {rep.personalBestPoints}
+                        </span>
+                      </Tooltip>
+                    )}
                   </div>
                 </div>
                 <div className="hidden w-16 text-right lg:block">
@@ -328,11 +442,8 @@ export function LeaderboardView({
                 <div className="hidden w-16 text-right lg:block">
                   <p className="text-sm font-bold tabular">{s.conversionRate}%</p>
                 </div>
-                <div className="w-14 text-right">
-                  <Badge tone="success" className="gap-1">
-                    <TrendingUp className="h-3 w-3" />
-                    {s.score}
-                  </Badge>
+                <div className="w-16 text-right">
+                  <PointsBadge stat={s} />
                 </div>
               </motion.div>
             );
@@ -347,6 +458,23 @@ export function LeaderboardView({
             </p>
           </div>
         )}
+        {/* Footer: how points work here, and how ties are settled. */}
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-border/60 px-5 py-3 text-xs text-muted-foreground">
+          <Tooltip content={TIE_BREAK_NOTE}>
+            <span className="inline-flex cursor-help items-center gap-1">
+              <Info className="h-3.5 w-3.5" />
+              Deterministic ties
+            </span>
+          </Tooltip>
+          {!config.exclusions.includeAiCalls && (
+            <span>AI-agent calls don&apos;t score (org setting).</span>
+          )}
+          {config.exclusions.minTalkSecForConnect > 0 && (
+            <span className="tabular">
+              Connects need ≥{config.exclusions.minTalkSecForConnect}s of talk.
+            </span>
+          )}
+        </div>
       </Card>
     </div>
   );
