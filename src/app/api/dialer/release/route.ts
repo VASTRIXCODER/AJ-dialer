@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { releaseCallWorkItemsForRep } from "@/lib/db/opportunities";
 import { releaseDialLeads } from "@/lib/db/reservations";
 import { getScope } from "@/lib/db/scope";
 import { getViewer } from "@/lib/org/membership";
@@ -17,5 +18,11 @@ export async function POST(req: Request) {
   const body = (await req.json().catch(() => ({}))) as { leadIds?: string[] };
   const leadIds = Array.isArray(body.leadIds) ? body.leadIds.slice(0, 200) : [];
   const released = await releaseDialLeads(scope.orgId, scope.userId, leadIds);
+  // Hand back the matching work-item reservations too (P2.3 threading).
+  void releaseCallWorkItemsForRep({
+    orgId: scope.orgId,
+    repId: scope.userId,
+    leadIds: leadIds.length ? leadIds : undefined,
+  });
   return NextResponse.json({ released });
 }

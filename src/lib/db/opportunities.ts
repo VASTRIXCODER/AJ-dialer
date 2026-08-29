@@ -398,11 +398,113 @@ export async function createWorkItem(input: {
   }
 }
 
+/** The work-item kinds a phone call satisfies. */
+export const CALL_WORK_KINDS = [
+  "first_call",
+  "follow_up_call",
+  "callback",
+  "hot_response",
+] as const;
+
+/**
+ * Set (or clear) the opportunity's explicit next action — the P2.3 "nothing
+ * sits in limbo" stamp. Setting is guarded to OPEN opportunities (a very late
+ * replay must not decorate a closed row); clearing is unguarded, so a closing
+ * outcome leaves the row clean either way.
+ */
+export async function setOpportunityNextAction(input: {
+  opportunityId: string;
+  orgId: string;
+  action: { kind: string; dueAt: string | null } | null;
+}): Promise<void> {
+  if (!isAdminConfigured()) return;
+  try {
+    const admin = createAdminClient();
+    let q = admin
+      .from("opportunities")
+      .update({
+        next_action_kind: input.action?.kind ?? null,
+        next_action_due_at: input.action?.dueAt ?? null,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", input.opportunityId)
+      .eq("org_id", input.orgId);
+    if (input.action) q = q.neq("op_status", "closed");
+    await q;
+  } catch {
+    count("opportunity.next_action_fail", 1, { orgId: input.orgId });
+  }
+}
+
+/**
+ * P2.3 threading, claim side: when the dialer claims leads, the call work
+ * items behind them get reserved for the SAME rep — so two reps working
+ * overlapping queues can't both "own" the follow-up, and the disposition that
+ * lands completes the item that was actually being worked. TTL-stamped, never
+ * renewed on heartbeat by design: an expired reservation is simply
+ * re-reservable by the next claim, and completion never depends on holding it.
+ * Fire-and-forget — a missing PART 37 must not slow a claim down.
+ */
+export async function reserveCallWorkItems(input: {
+  orgId: string;
+  leadIds: string[];
+  repId: string;
+  ttlSeconds: number;
+}): Promise<void> {
+  if (!isAdminConfigured() || !input.leadIds.length) return;
+  try {
+    const nowIso = new Date().toISOString();
+    const until = new Date(Date.now() + input.ttlSeconds * 1000).toISOString();
+    await createAdminClient()
+      .from("work_items")
+      .update({
+        status: "reserved",
+        reserved_by: input.repId,
+        reserved_until: until,
+        updated_at: nowIso,
+      })
+      .eq("org_id", input.orgId)
+      .in("lead_id", input.leadIds.slice(0, 200))
+      .in("type", [...CALL_WORK_KINDS])
+      // Reservable: pending, or a reservation somebody let lapse.
+      .or(`status.eq.pending,and(status.eq.reserved,reserved_until.lt.${nowIso})`);
+  } catch {
+    count("work_item.reserve_fail", 1, { orgId: input.orgId });
+  }
+}
+
+/** Release THIS rep's work-item reservations (skip / session end). */
+export async function releaseCallWorkItemsForRep(input: {
+  orgId: string;
+  repId: string;
+  leadIds?: string[];
+}): Promise<void> {
+  if (!isAdminConfigured()) return;
+  try {
+    let q = createAdminClient()
+      .from("work_items")
+      .update({
+        status: "pending",
+        reserved_by: null,
+        reserved_until: null,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("org_id", input.orgId)
+      .eq("reserved_by", input.repId)
+      .eq("status", "reserved");
+    if (input.leadIds?.length) q = q.in("lead_id", input.leadIds.slice(0, 200));
+    await q;
+  } catch {
+    count("work_item.release_fail", 1, { orgId: input.orgId });
+  }
+}
+
 /**
  * Complete the opportunity's open call-type work items after a call filed —
  * the "every completed call completes or reschedules the originating work
- * item" rule (phase_two.md §8). Matched loosely by lead: v0 has no
- * work-item id threading through the dialer yet (P2.3 adds it).
+ * item" rule (phase_two.md §8). Matched by lead + call kind; with P2.3
+ * claim-side reservation, the reserved item IS the lead's item, so this
+ * closes exactly the work that was being dialed.
  */
 export async function completeCallWorkItems(input: {
   orgId: string;
@@ -423,7 +525,7 @@ export async function completeCallWorkItems(input: {
       })
       .eq("org_id", input.orgId)
       .eq("lead_id", input.leadId)
-      .in("type", ["first_call", "follow_up_call", "callback", "hot_response"])
+      .in("type", [...CALL_WORK_KINDS])
       .in("status", ["pending", "reserved", "in_progress", "waiting"]);
   } catch {
     count("work_item.complete_fail", 1, { orgId: input.orgId });

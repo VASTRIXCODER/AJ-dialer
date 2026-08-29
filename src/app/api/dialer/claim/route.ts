@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { dueCallbackLeadIds } from "@/lib/db/callbacks";
+import { reserveCallWorkItems } from "@/lib/db/opportunities";
 import { getScope } from "@/lib/db/scope";
 import { claimDialLeads, RESERVATION_TTL_SEC } from "@/lib/db/reservations";
 import { getViewer } from "@/lib/org/membership";
@@ -100,6 +101,18 @@ export async function POST(req: Request) {
       cooldownMinutes,
     });
     leads.push(...rest.filter((l) => !claimedIds.has(l.id)));
+  }
+
+  // P2.3 threading: the call work items behind the claimed leads get reserved
+  // for this rep, so the disposition completes the item that was actually
+  // worked. Fire-and-forget — Phase 2 bookkeeping never slows a claim.
+  if (leads.length) {
+    void reserveCallWorkItems({
+      orgId: scope.orgId,
+      leadIds: leads.map((l) => l.id),
+      repId: scope.userId,
+      ttlSeconds: RESERVATION_TTL_SEC,
+    });
   }
   return NextResponse.json({ leads, ttlSeconds: RESERVATION_TTL_SEC });
 }

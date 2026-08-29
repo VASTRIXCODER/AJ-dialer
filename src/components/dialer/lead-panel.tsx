@@ -30,6 +30,7 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { CallDetailModal } from "@/components/calls/call-detail-modal";
+import { WhyNowCard } from "@/components/dialer/why-now";
 import { useVocabulary } from "@/components/layout/vocabulary";
 import { useLead360 } from "@/components/leads/lead-360/lead-360-provider";
 import { truePeopleSearchUrl } from "@/lib/leads/people-search-url";
@@ -882,6 +883,11 @@ function LeadDetail({
               onApplied={(phone) => onLeadPatched?.(lead.id, { phone })}
             />
           ))}
+
+        {/* Pre-call brief (P2.3): stage, the one-line "why now", open work
+            items, live signals. Renders nothing when the org has no
+            opportunity data — no reserved space, no fake zeros. */}
+        <WhyNowCard leadId={lead.id} />
 
         <div className="mt-4 space-y-2 text-sm">
           {formatAddress(lead) && (

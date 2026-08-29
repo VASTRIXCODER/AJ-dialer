@@ -27,9 +27,13 @@ export const getScope = cache(async (): Promise<Scope | null> => {
   if (!user) return null;
   const { data: prof } = await supabase
     .from("profiles")
-    .select("org_id, role")
+    .select("org_id, role, disabled")
     .eq("id", user.id)
     .maybeSingle();
+  // Suspension backstop, CENTRAL: most scope consumers go on to read through
+  // the service-role client, which bypasses the RLS `app_is_active()` gate a
+  // suspended account otherwise hits. A disabled profile gets no scope at all.
+  if (prof?.disabled) return null;
   const orgId = prof?.org_id ? String(prof.org_id) : null;
   const supervisor = Boolean(
     orgId && ["owner", "admin", "manager"].includes(String(prof?.role ?? "rep")),

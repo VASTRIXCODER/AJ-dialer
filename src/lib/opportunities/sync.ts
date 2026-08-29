@@ -3,10 +3,12 @@ import "server-only";
 import {
   completeCallWorkItems,
   getOpenOpportunityByLead,
+  setOpportunityNextAction,
   stampOpportunityTouch,
   transitionOpportunityStage,
 } from "@/lib/db/opportunities";
 import { emitOrchestrationEvent } from "@/lib/orchestration/events";
+import { nextActionForOutcome } from "./next-action";
 import { stageForLeadStatus, type OpportunityStage } from "./stage-machine";
 import type { CallOutcome, LeadStatus } from "@/lib/types";
 
@@ -52,6 +54,10 @@ export async function syncOpportunityAfterCall(input: {
   actorId?: string | null;
   /** The lead's CURRENT status after routing, when the caller knows it. */
   leadStatus?: LeadStatus;
+  /** Agreed callback time (floating iso, the callbacks convention), if any. */
+  callbackAt?: string | null;
+  /** Booked appointment time (floating iso), if any. */
+  appointmentAt?: string | null;
 }): Promise<void> {
   try {
     if (!input.orgId || !input.leadId) return;
@@ -91,6 +97,21 @@ export async function syncOpportunityAfterCall(input: {
         leadId: input.leadId,
         completedBy: input.actorId ?? null,
         evidence: { outcome: input.outcome, channel: input.channel },
+      });
+    }
+
+    // P2.3: every disposition leaves an explicit "what happens next, when" —
+    // callback/appointment times when they were agreed, deterministic
+    // follow-up windows otherwise, cleared on closing outcomes.
+    const nextAction = nextActionForOutcome(input.outcome, {
+      callbackAt: input.callbackAt ?? null,
+      appointmentAt: input.appointmentAt ?? null,
+    });
+    if (nextAction) {
+      await setOpportunityNextAction({
+        opportunityId: opp.id,
+        orgId: input.orgId,
+        action: nextAction === "clear" ? null : nextAction,
       });
     }
 

@@ -491,6 +491,10 @@ export async function insertCallRecord(input: {
         channel: input.channel === "ai" ? "ai" : "human",
         actorId: user.id,
         leadStatus: OUTCOME_TO_STATUS[input.outcome] ?? "contacted",
+        // Agreed times, when the drafts carried them — they become the
+        // opportunity's explicit next action (P2.3).
+        callbackAt: input.callback?.iso ?? null,
+        appointmentAt: input.appointment?.iso ?? null,
       });
     }
 
@@ -940,6 +944,8 @@ export async function completeAIConversation(input: {
         channel: "ai",
         actorId: ownerId,
         leadStatus: OUTCOME_TO_STATUS[input.outcome] ?? "contacted",
+        callbackAt: input.callback?.iso ?? null,
+        appointmentAt: input.appointment?.iso ?? null,
       });
     }
 

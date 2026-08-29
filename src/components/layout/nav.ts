@@ -4,6 +4,7 @@ import {
   CalendarCheck,
   CheckCircle2,
   ClipboardList,
+  Compass,
   Headphones,
   LayoutDashboard,
   type LucideIcon,
@@ -13,6 +14,7 @@ import {
   Radio,
   Settings,
   Sparkles,
+  Sunrise,
   Trophy,
   Users,
 } from "lucide-react";
@@ -67,6 +69,9 @@ export const navGroups: NavGroup[] = [
     label: "Workspace",
     items: [
       { label: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
+      // P2.6: the rep's personal "what should I do right now" — deliberately
+      // ungated: it degrades to an honest empty state everywhere.
+      { label: "My Day", href: "/today", icon: Sunrise },
       {
         label: "Power Dialer",
         href: "/dialer",
@@ -144,6 +149,15 @@ export const navGroups: NavGroup[] = [
         feature: "reports",
       },
       { label: "Reports", href: "/reports", icon: BarChart3, feature: "reports" },
+      {
+        // P2.10: the supervisor cockpit — today strip, pipeline leaks, rep
+        // performance. Same permission as Reports; it IS reporting, live.
+        label: "Command Center",
+        href: "/command",
+        icon: Compass,
+        feature: "reports",
+        permission: "reports.view",
+      },
     ],
   },
   {
