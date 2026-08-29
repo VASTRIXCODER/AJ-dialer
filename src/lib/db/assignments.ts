@@ -16,8 +16,10 @@ import {
 import { leads as demoLeads } from "../data";
 import { isDialableStatus } from "../leads/dialable";
 import { sanitizeFilterSpec, type FilterSpec } from "../leads/filter-spec";
+import { emitOrchestrationEvent } from "../orchestration/events";
 import { createAdminClient, isAdminConfigured } from "../supabase/admin";
 import { logLeadEventBulk } from "./lead-events";
+import { stampOpportunitiesAssigned } from "./opportunities";
 import { getFilteredLeadIds } from "./leads-filter";
 import type { Scope } from "./scope";
 
@@ -559,13 +561,29 @@ export async function allocateAssignment(input: {
           .select("id")
           .eq("lead_pack_id", packId)
           .limit(MAX_ALLOCATION_CANDIDATES);
+        const movedIds = ((moved ?? []) as Row[]).map((l) => String(l.id));
         logLeadEventBulk({
-          leadIds: ((moved ?? []) as Row[]).map((l) => String(l.id)),
+          leadIds: movedIds,
           orgId: input.orgId,
           actorId: input.actorId,
           kind: "assignment",
           payload: { packId, repId: input.repId, count: allocated },
         });
+        // Phase 2 (§7): ownership + assigned-stage stamps on the opportunity,
+        // and the `opportunity.assigned` trigger for a bounded few.
+        await stampOpportunitiesAssigned({
+          orgId: input.orgId,
+          leadIds: movedIds,
+          ownerId: input.repId,
+          reason: `assignment:${packId}`,
+        });
+        for (const leadId of movedIds.slice(0, 50)) {
+          await emitOrchestrationEvent({
+            orgId: input.orgId,
+            leadId,
+            event: "opportunity.assigned",
+          });
+        }
       } catch {
         /* best-effort */
       }

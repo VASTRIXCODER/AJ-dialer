@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { orchestrationTick } from "@/lib/orchestration/engine";
+import { runOrchestrationSweeps } from "@/lib/orchestration/events";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -30,8 +31,11 @@ async function runTick(req: Request) {
   if ((req.headers.get("authorization") ?? "") !== `Bearer ${secret}`) {
     return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
   }
+  // Sweeps first (they ACTIVATE instances), then the tick (it EXECUTES them —
+  // a fresh activation's first step often runs on the same tick).
+  const sweeps = await runOrchestrationSweeps();
   const result = await orchestrationTick();
-  return NextResponse.json({ ok: true, ranAt: new Date().toISOString(), ...result });
+  return NextResponse.json({ ok: true, ranAt: new Date().toISOString(), sweeps, ...result });
 }
 
 export const GET = runTick;

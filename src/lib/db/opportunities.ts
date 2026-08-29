@@ -166,6 +166,187 @@ export async function stampOpportunityTouch(input: {
 }
 
 /**
+ * INTAKE (§7): give every new lead an opportunity, with honest clocks.
+ *
+ * Insert-select over non-archived org leads that have no opportunity yet —
+ * `first_received_at` comes from the LEAD's created_at (accurate however late
+ * this runs), `eligible_at` stamps only when the lead is actually workable
+ * (dialable status + plausible phone). Bounded and idempotent: the fast path
+ * calls it right after an import chunk lands; the reconcile cron is the
+ * safety net for any intake path that forgets. Returns the created pairs so
+ * a caller can emit `lead.received` for a bounded few.
+ */
+export async function ensureOpportunitiesForNewLeads(
+  limit = 2000,
+): Promise<{ opportunityId: string; leadId: string; orgId: string }[]> {
+  if (!isAdminConfigured()) return [];
+  try {
+    const admin = createAdminClient();
+    // Keyset-scan RECENT leads (30-day window, newest first) and collect the
+    // ones missing an opportunity. The window is honest: history was covered
+    // by the PART 37 backfill, so "new lead without an opportunity" is by
+    // definition recent. Keyset paging (not a fixed head window) is the part
+    // that matters — a 5k import would otherwise hide rows 2001+ behind a
+    // window full of already-covered leads forever.
+    const windowStart = new Date(Date.now() - 30 * 86_400_000).toISOString();
+    type LeadRow = Record<string, unknown>;
+    const missing: LeadRow[] = [];
+    let cursor: { createdAt: string; id: string } | null = null;
+    for (let page = 0; page < 10 && missing.length < limit; page++) {
+      let q = admin
+        .from("leads")
+        .select(
+          "id, org_id, status, assigned_rep_id, owner_id, campaign_id, created_at, last_attempt_at, attempt_count, phone",
+        )
+        .is("archived_at", null)
+        .not("org_id", "is", null)
+        .gte("created_at", windowStart)
+        .order("created_at", { ascending: false })
+        .order("id", { ascending: false })
+        .limit(1000);
+      if (cursor) {
+        // Strictly older than the last row we saw (created_at desc keyset;
+        // the id tiebreak rides the or() for equal timestamps).
+        q = q.or(
+          `created_at.lt.${cursor.createdAt},and(created_at.eq.${cursor.createdAt},id.lt.${cursor.id})`,
+        );
+      }
+      const { data: pageRows } = await q;
+      const rows = (pageRows ?? []) as LeadRow[];
+      if (!rows.length) break;
+      const last = rows[rows.length - 1];
+      cursor = { createdAt: String(last.created_at), id: String(last.id) };
+
+      const ids = rows.map((l) => String(l.id));
+      const covered = new Set<string>();
+      for (let i = 0; i < ids.length; i += 500) {
+        const { data: have } = await admin
+          .from("opportunities")
+          .select("lead_id")
+          .in("lead_id", ids.slice(i, i + 500));
+        for (const r of have ?? []) covered.add(String(r.lead_id));
+      }
+      for (const l of rows) {
+        if (!covered.has(String(l.id))) missing.push(l);
+        if (missing.length >= limit) break;
+      }
+      if (rows.length < 1000) break; // window exhausted
+    }
+    if (!missing.length) return [];
+    const DIALABLE = new Set(["new", "no_answer", "callback"]);
+    const rows = missing.map((l) => {
+        const status = String(l.status ?? "new");
+        const assigned = l.assigned_rep_id != null && String(l.assigned_rep_id) !== "";
+        const stage =
+          status === "new"
+            ? assigned
+              ? "assigned"
+              : "new"
+            : status === "no_answer"
+              ? "attempting"
+              : status === "contacted" || status === "callback"
+                ? "contacted"
+                : status === "qualified"
+                  ? "interested"
+                  : status === "appointment"
+                    ? "appointment_booked"
+                    : status === "bills_fine"
+                      ? "nurture"
+                      : status === "not_interested"
+                        ? "lost"
+                        : status === "dnc"
+                          ? "dnc_suppressed"
+                          : "new";
+        const phoneOk = String(l.phone ?? "").replace(/\D/g, "").length >= 10;
+        const created = String(l.created_at ?? new Date().toISOString());
+        return {
+          org_id: l.org_id,
+          lead_id: l.id,
+          stage,
+          op_status: status === "not_interested" || status === "dnc" ? "closed" : "open",
+          owner_id:
+            assigned && /^[0-9a-f-]{36}$/i.test(String(l.assigned_rep_id))
+              ? String(l.assigned_rep_id)
+              : (l.owner_id ?? null),
+          first_received_at: created,
+          eligible_at: DIALABLE.has(status) && phoneOk ? created : null,
+          first_attempted_at: l.last_attempt_at ?? null,
+          last_touched_at: l.last_attempt_at ?? null,
+          attempt_count: Number(l.attempt_count ?? 0),
+          campaign_id: l.campaign_id ?? null,
+          source: "intake",
+          backfilled: false,
+          created_at: created,
+        };
+      });
+    if (!rows.length) return [];
+    // Plain INSERT: the rows were pre-checked missing, so a conflict only
+    // means another worker won a race in the tiny window since — the partial
+    // unique can't be named in an upsert onConflict, and a dropped batch is
+    // simply re-found by the next pass. Batches shrink the blast radius.
+    const out: { opportunityId: string; leadId: string; orgId: string }[] = [];
+    for (let i = 0; i < rows.length; i += 200) {
+      const { data, error } = await admin
+        .from("opportunities")
+        .insert(rows.slice(i, i + 200))
+        .select("id, lead_id, org_id");
+      if (error) continue; // racer won — next pass re-checks
+      for (const r of data ?? []) {
+        out.push({
+          opportunityId: String(r.id),
+          leadId: String(r.lead_id),
+          orgId: String(r.org_id),
+        });
+      }
+    }
+    return out;
+  } catch {
+    count("opportunity.intake_fail", 1, {});
+    return [];
+  }
+}
+
+/**
+ * Assignment hook (§7): stamp ownership + the assigned stage the moment an
+ * allocation lands. Bulk, idempotent-ish (first_assigned_at only fills), and
+ * never throws into the allocation path.
+ */
+export async function stampOpportunitiesAssigned(input: {
+  orgId: string;
+  leadIds: string[];
+  ownerId: string;
+  reason?: string;
+}): Promise<void> {
+  if (!isAdminConfigured() || !input.leadIds.length) return;
+  try {
+    const admin = createAdminClient();
+    const iso = new Date().toISOString();
+    for (let i = 0; i < input.leadIds.length; i += 500) {
+      await admin
+        .from("opportunities")
+        .update({
+          owner_id: input.ownerId,
+          owner_assigned_at: iso,
+          assignment_reason: input.reason ?? "assignment",
+          updated_at: iso,
+        })
+        .eq("org_id", input.orgId)
+        .in("lead_id", input.leadIds.slice(i, i + 500))
+        .neq("op_status", "closed");
+      await admin
+        .from("opportunities")
+        .update({ first_assigned_at: iso, stage: "assigned", stage_entered_at: iso })
+        .eq("org_id", input.orgId)
+        .in("lead_id", input.leadIds.slice(i, i + 500))
+        .eq("stage", "new")
+        .is("first_assigned_at", null);
+    }
+  } catch {
+    count("opportunity.assign_stamp_fail", 1, { orgId: input.orgId });
+  }
+}
+
+/**
  * Create a work item, deduped: the partial unique on (org_id, dedupe_key)
  * absorbs replays while a live item exists. Returns the id (fresh or null on
  * dedupe/failure — callers must not care which).

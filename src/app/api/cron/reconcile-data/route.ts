@@ -3,6 +3,7 @@ import { applyCallEvent } from "@/lib/calls/apply-event";
 import { writeAudit } from "@/lib/db/app-control";
 import { zonedDayKey, zonedDayStartMs } from "@/lib/dialer/schedule";
 import { orgTimezone } from "@/lib/metrics/definitions";
+import { processLeadIntake } from "@/lib/orchestration/events";
 import { listActiveOrgsWithSettings } from "@/lib/org/membership";
 import { createAdminClient, isAdminConfigured } from "@/lib/supabase/admin";
 import { count } from "@/lib/telemetry";
@@ -431,10 +432,21 @@ async function runReconcileData(req: Request) {
     metricDrift = { error: e instanceof Error ? e.message : "failed" };
   }
 
+  // Phase 2 intake safety net (§7): every new lead gets an opportunity with
+  // honest clocks even if an intake path forgot the fast hook. Bounded and
+  // idempotent, like everything else on this tick.
+  let opportunityIntake: Record<string, unknown>;
+  try {
+    opportunityIntake = { created: await processLeadIntake() };
+  } catch (e) {
+    opportunityIntake = { error: e instanceof Error ? e.message : "failed" };
+  }
+
   // Zeros included on purpose: the counters double as proof the job ran.
   count("reconcile.counter_repairs", Number(counterDrift.repaired ?? 0));
   count("reconcile.stuck_reconciled", Number(stuckAttempts.reconciled ?? 0));
   count("reconcile.metric_drift", Number(metricDrift.drifts ?? 0));
+  count("reconcile.opportunities_created", Number(opportunityIntake.created ?? 0));
 
   return NextResponse.json({
     ok: true,
@@ -442,6 +454,7 @@ async function runReconcileData(req: Request) {
     counterDrift,
     stuckAttempts,
     metricDrift,
+    opportunityIntake,
   });
 }
 

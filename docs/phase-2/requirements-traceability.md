@@ -48,8 +48,18 @@ to docs/phase_two.md; evidence = file paths / tests. Last updated: 2026-08-29
 
 ## P2.2 — Lead intake & speed-to-lead (§7)
 
-All items **Not started**. Clock columns exist on `opportunities` (PART 37);
-nothing stamps `eligible_at`, no routing, no SLA timers, no intake view.
+| Item | Status | Evidence |
+|---|---|---|
+| Every new lead → opportunity with honest clocks (first_received/eligible) | Done — fast hook after import chunks + reconcile-data safety net (bounded keyset scan, 30-day window) | orchestration/events.ts processLeadIntake; db/opportunities.ts ensureOpportunitiesForNewLeads; api/leads/import; cron/reconcile-data |
+| Condition evaluator (runtime half of the grammar) | Done — FilterSpec discipline (null-as-"", numeric-over-junk = no match, unknown keys = no match) | orchestration/conditions.ts; tests/orchestration-conditions.test.ts |
+| Playbook ACTIVATION: event triggers | Done — lead.received / call.completed / opportunity.assigned emitters (org switch + published-listener gated, bounded emits with counted skips) | orchestration/events.ts; opportunities/sync.ts; db/assignments.ts; api/leads/import |
+| Playbook ACTIVATION: sweep triggers | Partial — stateless interval gating, 50 candidates/playbook/firing; candidate sources are pragmatic (overdue callbacks vs least-recently-touched), not a general compiler | orchestration/events.ts runOrchestrationSweeps |
+| Assignment routing stamps (owner, first_assigned_at, assigned stage) | Done (allocation path) | db/opportunities.ts stampOpportunitiesAssigned; db/assignments.ts |
+| Playbook admin (install/publish/pause/retire + org master switch) | Done — Studio-lite; strict validation is the publish gate; all mutations audited | api/playbooks; components/admin/playbooks-panel.tsx |
+| Configurable routing policies (territory/skill/round-robin/capacity) | Not started | — |
+| SLA escalation beyond the speed-to-lead template | Partial — the template escalates via signals; manager notification templates Not started | orchestration/templates.ts |
+| King's intake view (volume, ownership, untouched, SLA drill-down) | Not started (P2.10) | — |
+| Speed-to-lead metrics (percentiles) | Not started | metric-glossary definitions only |
 
 ## P2.3 — Outbound opportunity automation (§8)
 

@@ -6,6 +6,7 @@ import {
   stampOpportunityTouch,
   transitionOpportunityStage,
 } from "@/lib/db/opportunities";
+import { emitOrchestrationEvent } from "@/lib/orchestration/events";
 import { stageForLeadStatus, type OpportunityStage } from "./stage-machine";
 import type { CallOutcome, LeadStatus } from "@/lib/types";
 
@@ -92,6 +93,20 @@ export async function syncOpportunityAfterCall(input: {
         evidence: { outcome: input.outcome, channel: input.channel },
       });
     }
+
+    // Orchestration: `call.completed` is the trigger behind no-answer
+    // follow-up and friends. No-op unless the org opted into orchestration
+    // and published a listener — the emitter checks both.
+    await emitOrchestrationEvent({
+      orgId: input.orgId,
+      leadId: input.leadId,
+      event: "call.completed",
+      touch: {
+        outcome: input.outcome,
+        channel: input.channel === "ai" ? "ai_call" : "manual_call",
+        direction: "outbound",
+      },
+    });
   } catch {
     /* bookkeeping must never take a call path down */
   }

@@ -30,6 +30,7 @@ import {
   setPackSizes,
 } from "@/lib/db/lead-packs";
 import type { LeadGroup } from "@/lib/types";
+import { processLeadIntake } from "@/lib/orchestration/events";
 import { getViewer } from "@/lib/org/membership";
 import { clientIp, rateLimit } from "@/lib/rate-limit";
 import { createAdminClient, isAdminConfigured } from "@/lib/supabase/admin";
@@ -470,6 +471,9 @@ export async function POST(req: Request) {
   // import that failed (or inserted nothing) must not grow the org's schema.
   if (!result.error && result.inserted > 0) {
     await persistDiscoveredFields(viewer.org?.id, discoveredFields);
+    // Phase 2 intake (§7): opportunities + speed-to-lead clocks for the rows
+    // that just landed. Fire-and-forget — the reconcile cron is the backstop.
+    void processLeadIntake().catch(() => {});
   }
 
   if (packIds.length && viewer.org?.id) {
