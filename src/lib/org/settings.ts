@@ -32,6 +32,8 @@ export interface OrgFeatures {
   campaigns: boolean;
   reports: boolean;
   aiAgent: boolean;
+  /** The CRM workspace: pipeline board, shared work queue, audiences. */
+  crm: boolean;
 }
 
 /** One inclusive-start, exclusive-end hour window, e.g. {start:8,end:9} = 8–9am. */
@@ -399,6 +401,7 @@ export const DEFAULT_FEATURES: OrgFeatures = {
   campaigns: true,
   reports: true,
   aiAgent: true,
+  crm: true,
 };
 
 export const DEFAULT_BILLING: OrgBilling = {

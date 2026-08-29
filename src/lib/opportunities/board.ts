@@ -160,5 +160,13 @@ export const CLOSE_REASONS: { stage: OpportunityStage; label: string; hint: stri
   },
 ];
 
+/**
+ * The board's "nobody owns this" owner filter. Lives here rather than beside
+ * the queries because the picker that writes it is a Client Component, and the
+ * query module is `server-only` — a value imported across that line fails the
+ * build.
+ */
+export const UNASSIGNED = "unassigned";
+
 /** Every stage is in exactly one lane — asserted by the board test. */
 export const ALL_STAGES_COVERED: readonly OpportunityStage[] = STAGES;

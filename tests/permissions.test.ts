@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+  ORG_ROLES,
+  PERMISSIONS,
+  PERMISSION_LABEL,
   ROLE_RANK,
   assignableRoles,
   atLeast,
@@ -8,6 +11,46 @@ import {
   isOrgRole,
   outranks,
 } from "@/lib/permissions";
+
+describe("the CRM's permissions", () => {
+  it("gives reps the two that make the shared queue usable", () => {
+    // A queue only supervisors can claim from is a report, not a queue.
+    expect(can("rep", "crm.view")).toBe(true);
+    expect(can("rep", "work.claim")).toBe(true);
+  });
+
+  it("does NOT let a rep hand-move a stage", () => {
+    // Stage is derived from evidence — the dispositions a rep already files
+    // move it through the same state machine, with an event written. Hand
+    // edits would make opportunity_events describe a process that didn't run.
+    expect(can("rep", "crm.pipeline.manage")).toBe(false);
+    expect(can("manager", "crm.pipeline.manage")).toBe(true);
+    expect(can("admin", "crm.pipeline.manage")).toBe(true);
+    expect(can("owner", "crm.pipeline.manage")).toBe(true);
+  });
+
+  it("still honours a deliberate per-member grant", () => {
+    expect(can("rep", "crm.pipeline.manage", { "crm.pipeline.manage": true })).toBe(true);
+  });
+
+  it("every role above rep can open the workspace", () => {
+    for (const role of ORG_ROLES) expect(can(role, "crm.view")).toBe(true);
+  });
+});
+
+describe("the permission registry stays complete", () => {
+  it("labels every permission — the member editor renders from this map", () => {
+    // A permission with no label appears in the admin dialog as a blank row.
+    for (const p of PERMISSIONS) {
+      expect(PERMISSION_LABEL[p], `missing label for ${p}`).toBeTruthy();
+    }
+    expect(Object.keys(PERMISSION_LABEL).sort()).toEqual([...PERMISSIONS].sort());
+  });
+
+  it("never labels a permission with a raw schema-style key", () => {
+    for (const p of PERMISSIONS) expect(PERMISSION_LABEL[p]).not.toContain(".");
+  });
+});
 
 describe("role hierarchy", () => {
   it("ranks owner > admin > manager > rep", () => {

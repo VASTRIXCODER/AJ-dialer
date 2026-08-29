@@ -240,6 +240,7 @@ export async function generateOrgBlueprint(
       campaigns: spec.features?.campaigns ?? true,
       reports: spec.features?.reports ?? true,
       aiAgent: spec.features?.aiAgent ?? true,
+      crm: spec.features?.crm ?? true,
     };
 
     const name = (hints.name || spec.name || base.name).trim();

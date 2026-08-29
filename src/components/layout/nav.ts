@@ -6,6 +6,7 @@ import {
   ClipboardList,
   Compass,
   Headphones,
+  KanbanSquare,
   LayoutDashboard,
   type LucideIcon,
   Megaphone,
@@ -86,6 +87,16 @@ export const navGroups: NavGroup[] = [
         href: "/leads",
         icon: Users,
         feature: "leads",
+      },
+      {
+        // The pipeline board, the shared work queue, and audiences. Reps hold
+        // crm.view by default, so this is a floor-wide destination, not an
+        // supervisor one — the queue is where unowned work gets picked up.
+        label: "CRM",
+        href: "/crm",
+        icon: KanbanSquare,
+        feature: "crm",
+        permission: "crm.view",
       },
       {
         // Deliberately NO permission filter: managers land in the Assignment

@@ -99,6 +99,7 @@ const FEATURE_FLAGS: { key: keyof OrgSettings["features"]; label: string }[] = [
   { key: "campaigns", label: "Campaigns" },
   { key: "reports", label: "Reports" },
   { key: "aiAgent", label: "AI agent" },
+  { key: "crm", label: "CRM workspace" },
 ];
 
 export function OrgSettingsForm({

@@ -52,6 +52,7 @@ const FEATURE_LABEL: Record<keyof OrgFeatures, string> = {
   campaigns: "Campaigns",
   reports: "Reports",
   aiAgent: "AI agent",
+  crm: "CRM workspace",
 };
 
 function brandGradient(color: string) {

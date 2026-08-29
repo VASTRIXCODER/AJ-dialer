@@ -59,6 +59,9 @@ export const PERMISSIONS = [
   "appointments.view", // open the appointments calendar
   "appointments.manage", // create, reschedule, approve & cancel appointments
   "appointments.team", // see & manage the WHOLE team's calendar, not just your own — manager+
+  "crm.view", // open the CRM workspace (pipeline board, shared queue, audiences)
+  "work.claim", // take unowned work off the shared queue — every role, or the queue is scenery
+  "crm.pipeline.manage", // move a record's stage BY HAND — manager+, see the note below
 ] as const;
 export type Permission = (typeof PERMISSIONS)[number];
 
@@ -87,6 +90,9 @@ export const ROLE_PERMISSIONS: Record<OrgRole, Permission[]> = {
     "appointments.view",
     "appointments.manage",
     "appointments.team",
+    "crm.view",
+    "work.claim",
+    "crm.pipeline.manage",
   ],
   // Reps dial and work leads. They get the MANUAL dialer; the AI dialer is gated
   // (managers+ only) unless the workspace is AI-only.
@@ -104,7 +110,18 @@ export const ROLE_PERMISSIONS: Record<OrgRole, Permission[]> = {
   // canActOnAppt in src/lib/db/appointments.ts), so a per-member override that
   // revokes `appointments.manage` genuinely locks that account out of every
   // calendar write — not just the buttons.
-  rep: ["appointments.view", "appointments.manage"],
+  //
+  // Reps DO get crm.view + work.claim. The CRM's shared queue exists to hand
+  // out work nobody owns yet; a queue only supervisors can claim from is a
+  // report, not a queue.
+  //
+  // They do NOT get crm.pipeline.manage. Stage is derived from evidence — the
+  // dispositions reps already file move it, through the same state machine,
+  // with an event written. Hand-moving a stage writes the same row with no
+  // evidence behind it, which would make opportunity_events describe a sales
+  // process that didn't happen. A manager correcting a mis-staged record is a
+  // deliberate, attributable exception; a rep tidying their board is not.
+  rep: ["appointments.view", "appointments.manage", "crm.view", "work.claim"],
 };
 
 export const PERMISSION_LABEL: Record<Permission, string> = {
@@ -131,6 +148,9 @@ export const PERMISSION_LABEL: Record<Permission, string> = {
   "appointments.view": "View the appointments calendar",
   "appointments.manage": "Book, reschedule & cancel appointments",
   "appointments.team": "See & manage the whole team's calendar",
+  "crm.view": "Open the CRM workspace",
+  "work.claim": "Claim work from the shared queue",
+  "crm.pipeline.manage": "Move records between pipeline stages by hand",
 };
 
 export function rolePermissions(role: OrgRole | null | undefined): Permission[] {
