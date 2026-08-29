@@ -14,6 +14,7 @@ import {
   KeyRound,
   Loader2,
   Mail,
+  MessageSquare,
   PhoneCall,
   Plug,
   Plus,
@@ -30,6 +31,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { DncManager } from "@/components/admin/dnc-manager";
+import { MessagingReadiness } from "@/components/admin/messaging-readiness";
 import { PlaybooksPanel } from "@/components/admin/playbooks-panel";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
@@ -61,6 +63,7 @@ type Tab =
   | "notifications"
   | "companies"
   | "playbooks"
+  | "messaging"
   | "dnc"
   | "activity"
   | "data";
@@ -126,6 +129,7 @@ export function AdminConsole({
     { key: "notifications", label: "Notifications", icon: Mail, show: has("org.edit") },
     { key: "companies", label: "Companies", icon: Building2, show: has("companies.manage") },
     { key: "playbooks", label: "Playbooks", icon: BookOpenCheck, show: has("org.edit") },
+    { key: "messaging", label: "Messaging", icon: MessageSquare, show: has("org.edit") },
     { key: "dnc", label: "Do Not Call", icon: Ban, show: has("org.edit") },
     { key: "activity", label: "Activity log", icon: History, show: has("members.view") },
     { key: "data", label: "Data & integrations", icon: Database, show: true },
@@ -166,6 +170,7 @@ export function AdminConsole({
       </div>
 
       {tab === "playbooks" && <PlaybooksPanel />}
+      {tab === "messaging" && <MessagingReadiness canFix={has("org.edit")} />}
       {tab === "dnc" && <DncManager canManage={has("org.edit")} />}
       {tab === "members" && (
         <MembersTab org={org} role={role} permissions={permissions} members={members} />
