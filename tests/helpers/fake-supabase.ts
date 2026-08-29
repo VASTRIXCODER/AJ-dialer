@@ -42,6 +42,44 @@ const UNIQUES: UniqueDef[] = [
     cols: ["org_id", "dedupe_key"],
     where: (r) => r.dedupe_key != null && LIVE_WORK.has(String(r.status)),
   },
+  // PART 41. Without these the messaging tests would pass while enforcing
+  // nothing — exactly-once proposal and inbound dedupe are BOTH constraint
+  // behaviours, so a fake that omits them proves the opposite of what it claims.
+  {
+    table: "messages",
+    cols: ["org_id", "idempotency_key"],
+    where: (r) => r.idempotency_key != null,
+  },
+  {
+    // Globally unique, not per-org: Twilio retries an inbound webhook with the
+    // same SID and the dedupe has to hold before we know whose it is.
+    table: "messages",
+    cols: ["provider_sid"],
+    where: (r) => r.provider_sid != null,
+  },
+  {
+    table: "message_threads",
+    cols: ["org_id", "contact_digits", "channel"],
+  },
+  {
+    table: "consent_state",
+    cols: ["org_id", "phone_digits", "channel"],
+  },
+];
+
+/**
+ * CHECK constraints worth modelling. Only one so far, and it is the one the
+ * whole messaging design rests on: a message cannot reach a sendable status
+ * without a named human. A fake that let it would let a test prove auto-send
+ * is impossible while auto-sending.
+ */
+const SENDABLE = new Set(["approved", "queued", "sending", "sent", "delivered"]);
+const CHECKS: { table: string; name: string; ok: (r: Row) => boolean }[] = [
+  {
+    table: "messages",
+    name: "messages_approved_by_required",
+    ok: (r) => !SENDABLE.has(String(r.status)) || r.approved_by != null,
+  },
 ];
 
 type Filter = (r: Row) => boolean;
@@ -53,6 +91,9 @@ const DEFAULTS: Record<string, string[]> = {
   work_items: ["created_at", "updated_at"],
   signals: ["detected_at", "last_seen_at", "created_at"],
   opportunity_events: ["created_at"],
+  messages: ["created_at", "updated_at"],
+  message_threads: ["created_at", "updated_at"],
+  consent_events: ["captured_at", "created_at"],
 };
 
 /**
@@ -113,6 +154,14 @@ export class FakeSupabase {
   nextId(prefix: string): string {
     this.seq += 1;
     return `${prefix}-${this.seq}`;
+  }
+
+  /** The first CHECK constraint this row fails, or null. */
+  failedCheck(table: string, row: Row): string | null {
+    for (const c of CHECKS) {
+      if (c.table === table && !c.ok(row)) return c.name;
+    }
+    return null;
   }
 
   /** Internal to the fake, but the query builder is a separate class. */
@@ -311,6 +360,16 @@ class FakeQuery implements PromiseLike<{ data: unknown; error: unknown; count?: 
         const row: Row = { id: this.db.nextId(this.table), ...raw };
         for (const col of DEFAULTS[this.table] ?? []) {
           if (row[col] == null) row[col] = this.db.now().toISOString();
+        }
+        const check = this.db.failedCheck(this.table, row);
+        if (check) {
+          // 23514 is Postgres' check_violation, and the real database returns
+          // it here — a fake that let the row through would let a test claim
+          // auto-send is impossible while auto-sending.
+          return {
+            data: null,
+            error: { code: "23514", message: `new row violates check constraint "${check}"` },
+          };
         }
         if (this.db.violates(this.table, row)) {
           return {
