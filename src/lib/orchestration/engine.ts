@@ -50,15 +50,17 @@ interface InstanceRow {
 async function stopSnapshot(
   admin: ReturnType<typeof createAdminClient>,
   inst: InstanceRow,
+  opts?: { maxAttempts?: number },
 ): Promise<StopSnapshot | null> {
   const { data: opp } = await admin
     .from("opportunities")
     .select(
-      "stage, op_status, owner_id, first_contacted_at, last_touched_at, attempt_count",
+      "lead_id, stage, op_status, owner_id, first_contacted_at, last_touched_at, attempt_count",
     )
     .eq("id", inst.opportunity_id)
     .maybeSingle();
   if (!opp) return null;
+  const capped = (opts?.maxAttempts ?? 0) > 0;
   const stage = String(opp.stage ?? "new");
   const since = Date.parse(inst.started_at);
   const touchedSince = (v: unknown) =>
@@ -79,7 +81,14 @@ async function stopSnapshot(
     appointmentBooked: stage === "appointment_booked" || stage === "appointment_completed",
     sold: stage === "sold",
     reassigned: false,
-    attemptsSinceActivation: Number(opp.attempt_count ?? 0),
+    // Only paid for when a cap exists — otherwise the value is never read.
+    attemptsSinceActivation: capped
+      ? await attemptsSinceActivation(
+          admin,
+          inst,
+          opp.lead_id ? String(opp.lead_id) : null,
+        )
+      : 0,
   };
 }
 
@@ -99,6 +108,54 @@ async function endInstance(
     })
     .eq("id", inst.id)
     .in("status", ["active", "waiting"]);
+}
+
+/** Move to the next step, or finish when the playbook is out of steps. CAS on
+ *  the current step so a racing tick loses instead of double-advancing. */
+async function advanceOrComplete(
+  admin: ReturnType<typeof createAdminClient>,
+  inst: InstanceRow,
+  stepCount: number,
+  now: Date,
+): Promise<void> {
+  const nextIndex = inst.current_step + 1;
+  if (nextIndex >= stepCount) {
+    await endInstance(admin, inst, "completed");
+    return;
+  }
+  await admin
+    .from("playbook_instances")
+    .update({ current_step: nextIndex, updated_at: now.toISOString() })
+    .eq("id", inst.id)
+    .eq("current_step", inst.current_step);
+}
+
+/**
+ * Attempts made SINCE this instance activated.
+ *
+ * `opportunities.attempt_count` is the lead's LIFETIME total, so using it for
+ * a playbook's maxAttempts cap compares the wrong two numbers: a follow-up
+ * playbook capped at 4 would stop instantly on any lead already dialed four
+ * times — precisely the leads it exists to work. Counted from call_records
+ * since the instance started, and only when a cap is actually configured.
+ */
+async function attemptsSinceActivation(
+  admin: ReturnType<typeof createAdminClient>,
+  inst: InstanceRow,
+  leadId: string | null,
+): Promise<number> {
+  if (!leadId) return 0;
+  try {
+    const { count: n } = await admin
+      .from("call_records")
+      .select("id", { count: "exact", head: true })
+      .eq("org_id", inst.org_id)
+      .eq("lead_id", leadId)
+      .gte("started_at", inst.started_at);
+    return n ?? 0;
+  } catch {
+    return 0;
+  }
 }
 
 /** One deterministic tick. Never throws; returns an operator-readable report. */
@@ -188,7 +245,9 @@ export async function orchestrationTick(now = new Date()): Promise<TickResult> {
         }
 
         // Kill switch 4 — stop rules, before EVERY action.
-        const snap = await stopSnapshot(admin, inst);
+        const snap = await stopSnapshot(admin, inst, {
+          maxAttempts: def.stop?.maxAttempts,
+        });
         if (!snap) {
           await endInstance(admin, inst, "stopped", "opportunity_missing");
           out.stopped++;
@@ -244,9 +303,14 @@ export async function orchestrationTick(now = new Date()): Promise<TickResult> {
           detail: { stepId: step.id },
         });
         if (gateErr) {
-          // 23505 = another worker already executed this step. Anything else:
-          // count it and leave the instance for the next tick.
-          if (gateErr.code !== "23505") {
+          if (gateErr.code === "23505") {
+            // This step already ran — another worker, or a tick that died
+            // between the gate and the advance below. Do NOT re-run the
+            // action, but DO move the instance on: leaving it parked here
+            // means every future tick re-plans the same step, hits the same
+            // conflict, and the instance never progresses again.
+            await advanceOrComplete(admin, inst, steps.length, now);
+          } else {
             count("orchestrate.gate_fail", 1, { orgId: inst.org_id });
             out.failed++;
           }
@@ -312,16 +376,7 @@ export async function orchestrationTick(now = new Date()): Promise<TickResult> {
         }
 
         out.executed++;
-        const nextIndex = inst.current_step + 1;
-        if (nextIndex >= steps.length) {
-          await endInstance(admin, inst, "completed");
-        } else {
-          await admin
-            .from("playbook_instances")
-            .update({ current_step: nextIndex, updated_at: now.toISOString() })
-            .eq("id", inst.id)
-            .eq("current_step", inst.current_step);
-        }
+        await advanceOrComplete(admin, inst, steps.length, now);
       } catch {
         count("orchestrate.instance_fail", 1, { orgId: String(inst.org_id) });
         out.failed++;
@@ -329,6 +384,18 @@ export async function orchestrationTick(now = new Date()): Promise<TickResult> {
     }
   } catch {
     out.skipped = "tick_error";
+  }
+  // Heartbeat, best-effort and last: proof the engine ran at all. A workspace
+  // that turns orchestration on and sees nothing happen otherwise cannot tell
+  // "nothing matched" from "the cron was never scheduled" — which is the
+  // default state, since the orchestrate job is scheduled by hand.
+  try {
+    await admin
+      .from("app_settings")
+      .update({ orchestration_last_tick_at: now.toISOString() })
+      .eq("id", "global");
+  } catch {
+    /* column absent (PART 38 not applied) — the health read says "unknown" */
   }
   return out;
 }

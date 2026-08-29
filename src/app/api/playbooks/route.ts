@@ -29,16 +29,53 @@ async function authz() {
   return { viewer, orgId: viewer.org.id, userId: viewer.user.id };
 }
 
+/**
+ * Is the engine actually running? `orchestration_last_tick_at` is stamped by
+ * every tick; a missing/old value means the orchestrate cron was never
+ * scheduled (its pg_cron job is added by hand — see supabase/cron.sql), which
+ * is the difference between "no work matched" and "nothing can ever happen".
+ */
+async function engineHealth(): Promise<{
+  lastTickAt: string | null;
+  running: boolean;
+  known: boolean;
+}> {
+  try {
+    const { data, error } = await createAdminClient()
+      .from("app_settings")
+      .select("orchestration_last_tick_at")
+      .eq("id", "global")
+      .maybeSingle();
+    if (error) return { lastTickAt: null, running: false, known: false };
+    const raw = data?.orchestration_last_tick_at
+      ? String(data.orchestration_last_tick_at)
+      : null;
+    const ts = raw ? Date.parse(raw) : NaN;
+    return {
+      lastTickAt: raw,
+      // Ticks are meant to be per-minute; five minutes of silence is stalled.
+      running: Number.isFinite(ts) && Date.now() - ts < 5 * 60_000,
+      known: true,
+    };
+  } catch {
+    return { lastTickAt: null, running: false, known: false };
+  }
+}
+
 export async function GET() {
   const a = await authz();
   if ("error" in a) return a.error;
-  const { data } = await createAdminClient()
-    .from("playbooks")
-    .select("id, name, version, status, definition, published_at, updated_at")
-    .eq("org_id", a.orgId)
-    .order("updated_at", { ascending: false })
-    .limit(100);
+  const [{ data }, engine] = await Promise.all([
+    createAdminClient()
+      .from("playbooks")
+      .select("id, name, version, status, definition, published_at, updated_at")
+      .eq("org_id", a.orgId)
+      .order("updated_at", { ascending: false })
+      .limit(100),
+    engineHealth(),
+  ]);
   return NextResponse.json({
+    engine,
     playbooks: data ?? [],
     templates: SEED_TEMPLATES.map((t) => ({
       key: t.key,

@@ -118,6 +118,19 @@ function floatingAsUtcMs(value: string): number {
 }
 
 /**
+ * Minutes from `from` to `to`, both FLOATING wall clocks in the same zone.
+ * Positive means `to` is later. Parsing each as if it were UTC cancels the
+ * zone out, so the difference is exact without either becoming an instant.
+ * Returns 0 when either side is unparseable.
+ */
+export function floatingMinutesBetween(from: string, to: string): number {
+  const a = floatingAsUtcMs(from);
+  const b = floatingAsUtcMs(to);
+  if (Number.isNaN(a) || Number.isNaN(b)) return 0;
+  return (b - a) / 60_000;
+}
+
+/**
  * FLOATING wall clock in `timezone` → the real UTC instant it names.
  *
  * The inverse of the storage convention, needed wherever a promised time has

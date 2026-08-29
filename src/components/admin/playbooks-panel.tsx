@@ -1,12 +1,12 @@
 "use client";
 
-import { BookOpenCheck, Loader2, Pause, Play, Plus, Trash2 } from "lucide-react";
+import { AlertTriangle, BookOpenCheck, Loader2, Pause, Play, Plus, Trash2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { SectionCard } from "@/components/shared/section-card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { cn } from "@/lib/utils";
+import { cn, relativeTime } from "@/lib/utils";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Playbooks (P2.2 Studio-lite) — install the seed templates, publish/pause/
@@ -35,6 +35,12 @@ const STATUS_TONE: Record<PlaybookRow["status"], "success" | "warning" | "neutra
   retired: "neutral",
 };
 
+interface EngineHealth {
+  lastTickAt: string | null;
+  running: boolean;
+  known: boolean;
+}
+
 export function PlaybooksPanel() {
   const router = useRouter();
   const [playbooks, setPlaybooks] = useState<PlaybookRow[]>([]);
@@ -44,6 +50,7 @@ export function PlaybooksPanel() {
   const [busy, setBusy] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [validation, setValidation] = useState<string[]>([]);
+  const [engine, setEngine] = useState<EngineHealth | null>(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -53,10 +60,12 @@ export function PlaybooksPanel() {
         playbooks: PlaybookRow[];
         templates: TemplateRow[];
         orchestrationEnabled: boolean;
+        engine?: EngineHealth;
       };
       setPlaybooks(j.playbooks ?? []);
       setTemplates(j.templates ?? []);
       setEnabled(Boolean(j.orchestrationEnabled));
+      setEngine(j.engine ?? null);
     } finally {
       setLoaded(true);
     }
@@ -123,6 +132,31 @@ export function PlaybooksPanel() {
           className="h-5 w-5 accent-[hsl(var(--primary))]"
         />
       </label>
+
+      {/* Is the engine actually running? Switching orchestration on does
+          nothing until the orchestrate cron is scheduled, and without this
+          line that failure is completely silent — the switch reads ON and no
+          work ever appears. */}
+      {loaded && enabled && engine && !engine.running && (
+        <p
+          className="mt-3 flex items-start gap-2 rounded-xl border border-warning/40 bg-warning/10 px-3 py-2 text-xs text-warning"
+          role="status"
+        >
+          <AlertTriangle className="mt-px h-3.5 w-3.5 shrink-0" />
+          <span>
+            <strong>The engine is not running.</strong>{" "}
+            {engine.lastTickAt
+              ? `Its last tick was ${relativeTime(engine.lastTickAt)}, so published playbooks are not being enforced right now.`
+              : "It has never run, so published playbooks will sit idle no matter what they say."}{" "}
+            Schedule the orchestrate job (see supabase/cron.sql) to start it.
+          </span>
+        </p>
+      )}
+      {loaded && enabled && engine?.running && (
+        <p className="mt-3 text-xs text-muted-foreground">
+          Engine running · last tick {relativeTime(engine.lastTickAt as string)}.
+        </p>
+      )}
 
       {err && (
         <p className="mt-3 text-sm font-medium text-danger" role="alert">

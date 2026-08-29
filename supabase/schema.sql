@@ -4138,4 +4138,17 @@ on conflict (org_id, lead_id) where (op_status <> 'closed') do nothing;
 alter table public.app_settings
   add column if not exists orchestration_paused boolean not null default false;
 
+-- ─────────────────────────────────────────────────────────────────────────────
+-- PART 38 — orchestration heartbeat.
+--
+-- Without this, a workspace that switches orchestration ON and sees nothing
+-- happen has no way to tell the difference between "no work matched" and "the
+-- engine is not running at all" (the orchestrate cron is scheduled by hand —
+-- see cron.sql — so 'not running at all' is the default state). The tick
+-- stamps this column; Admin -> Playbooks reads it and says so plainly.
+-- Additive and safe to run repeatedly.
+-- ─────────────────────────────────────────────────────────────────────────────
+alter table public.app_settings
+  add column if not exists orchestration_last_tick_at timestamptz;
+
 notify pgrst, 'reload schema';

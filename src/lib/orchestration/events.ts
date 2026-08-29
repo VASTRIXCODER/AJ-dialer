@@ -4,6 +4,8 @@ import {
   ensureOpportunitiesForNewLeads,
   getOpenOpportunityByLead,
 } from "@/lib/db/opportunities";
+import { floatingMinutesBetween } from "@/lib/appointments/time";
+import { zonedFloatingNow } from "@/lib/dialer/schedule";
 import { createAdminClient, isAdminConfigured } from "@/lib/supabase/admin";
 import { count } from "@/lib/telemetry";
 import { evaluateConditions, type ConditionContext } from "./conditions";
@@ -65,16 +67,27 @@ async function orgOrchestrationEnabled(
   admin: ReturnType<typeof createAdminClient>,
   orgId: string,
 ): Promise<boolean> {
+  return (await orgOrchestrationConfig(admin, orgId)).enabled;
+}
+
+/** Whether the org runs playbooks, and the zone its promises are written in. */
+async function orgOrchestrationConfig(
+  admin: ReturnType<typeof createAdminClient>,
+  orgId: string,
+): Promise<{ enabled: boolean; timezone: string }> {
   try {
     const { data } = await admin
       .from("organizations")
-      .select("settings")
+      .select("settings, timezone")
       .eq("id", orgId)
       .maybeSingle();
     const s = (data?.settings ?? {}) as { orchestration?: { enabled?: boolean } };
-    return s.orchestration?.enabled === true;
+    return {
+      enabled: s.orchestration?.enabled === true,
+      timezone: String(data?.timezone ?? "") || "America/Chicago",
+    };
   } catch {
-    return false;
+    return { enabled: false, timezone: "America/Chicago" };
   }
 }
 
@@ -212,7 +225,7 @@ export async function runOrchestrationSweeps(now = new Date()): Promise<{
     if (!sweeps.length) return out;
 
     const minuteOfDay = now.getUTCHours() * 60 + now.getUTCMinutes();
-    const enabledCache = new Map<string, boolean>();
+    const enabledCache = new Map<string, { enabled: boolean; timezone: string }>();
 
     for (const pb of sweeps) {
       const trigger = pb.definition.trigger as { kind: "sweep"; intervalMinutes: number };
@@ -221,9 +234,17 @@ export async function runOrchestrationSweeps(now = new Date()): Promise<{
 
       const orgId = String(pb.org_id);
       if (!enabledCache.has(orgId)) {
-        enabledCache.set(orgId, await orgOrchestrationEnabled(admin, orgId));
+        enabledCache.set(orgId, await orgOrchestrationConfig(admin, orgId));
       }
-      if (!enabledCache.get(orgId)) continue;
+      const orgCfg = enabledCache.get(orgId);
+      if (!orgCfg?.enabled) continue;
+      // Promised callback times are FLOATING wall clocks. Comparing them to a
+      // real UTC instant makes a promise that is still an hour away look hours
+      // overdue — and this path ESCALATES, so it would nudge owners and raise
+      // hot work items over promises nobody has broken. Worse, Date.parse on
+      // an offset-less string reads the SERVER's zone, so the error changed
+      // with where the code ran.
+      const floatingNow = zonedFloatingNow(now, orgCfg.timezone);
 
       const needsCallbacks = JSON.stringify(pb.definition.eligibility ?? {}).includes(
         "callback_overdue_minutes",
@@ -242,15 +263,17 @@ export async function runOrchestrationSweeps(now = new Date()): Promise<{
           .eq("org_id", orgId)
           .not("status", "in", '("completed","cancelled")')
           .not("lead_id", "is", null)
-          .lte("due_at", now.toISOString())
+          .lte("due_at", floatingNow)
           .order("due_at", { ascending: true })
           .limit(50);
         for (const cb of cbs ?? []) {
           const opp = await getOpenOpportunityByLead(orgId, String(cb.lead_id));
           if (!opp) continue;
+          // Both sides are wall clocks in the org's zone, so the difference is
+          // exact without either being converted to an instant.
           const overdueMin = Math.max(
             0,
-            Math.round((now.getTime() - Date.parse(String(cb.due_at))) / 60_000),
+            Math.round(floatingMinutesBetween(String(cb.due_at), floatingNow)),
           );
           candidates.push({
             opportunityId: opp.id,
