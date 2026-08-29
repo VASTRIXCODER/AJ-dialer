@@ -137,11 +137,23 @@ end $$;
 -- select cron.schedule('reconcile-data', '*/15 * * * *',
 --   $job$ select public.app_fire_cron('/api/cron/reconcile-data') $job$);
 
--- Phase 2 · P2.1 (run by hand once /api/cron/orchestrate has deployed AND an
--- org actually wants playbooks — every tick is a no-op while all orgs keep
--- settings.orchestration.enabled off, so scheduling early merely burns calls):
--- select cron.schedule('orchestrate', '* * * * *',
---   $job$ select public.app_fire_cron('/api/cron/orchestrate') $job$);
+-- Phase 2 · orchestrate — SCHEDULED 2026-08-29, once both preconditions were
+-- met: /api/cron/orchestrate had deployed and an org (VICC) turned
+-- settings.orchestration.enabled on. Every tick stamps
+-- app_settings.orchestration_last_tick_at (PART 38), which is what Admin ->
+-- Playbooks reads to tell an operator whether the engine is alive.
+--
+-- A tick is a no-op for an org with no PUBLISHED playbook, so the job costs
+-- one call a minute and changes nothing until someone publishes one. Publishing
+-- is the moment automation actually begins.
+--
+-- To stop it:  select cron.unschedule('orchestrate');
+do $$
+begin
+  perform cron.unschedule('orchestrate') where exists (select 1 from cron.job where jobname = 'orchestrate');
+  perform cron.schedule('orchestrate', '* * * * *',
+    $job$ select public.app_fire_cron('/api/cron/orchestrate') $job$);
+end $$;
 
 -- ───────────────────────────────────────────────────────────────────────────
 -- Diagnostics (copy-paste)
