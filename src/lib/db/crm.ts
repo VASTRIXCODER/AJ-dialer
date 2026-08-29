@@ -3,7 +3,6 @@ import "server-only";
 import {
   BOARD_LANES,
   LANE_STAGES,
-  laneForStage,
   UNASSIGNED,
   type BoardLane,
 } from "../opportunities/board";
@@ -374,25 +373,7 @@ export async function getCrmQueue(scope: Scope): Promise<CrmQueue | null> {
   }
 }
 
-/** Human copy for a work-item type — never a raw schema name on screen. */
-const WORK_TYPE_LABEL: Record<string, string> = {
-  first_call: "First call",
-  follow_up_call: "Follow-up call",
-  callback: "Promised callback",
-  hot_response: "Hot response",
-  review: "Review",
-  custom: "Task",
-};
-
-export function workTypeLabel(type: string): string {
-  return WORK_TYPE_LABEL[type] ?? type.replace(/_/g, " ");
-}
-
-/** Playbook `reason` slugs are author-supplied, so this softens rather than maps. */
-export function workReasonLabel(reason: string): string {
-  const words = reason.replace(/_/g, " ").trim();
-  if (!words) return "";
-  return words.charAt(0).toUpperCase() + words.slice(1);
-}
-
-export { laneForStage };
+// Display copy for work items lives in ../opportunities/event-copy — it is
+// PURE, and the Queue that renders it is a Client Component. A label exported
+// from here would be a value crossing the `server-only` boundary, which the
+// type-checker permits and the bundler refuses.

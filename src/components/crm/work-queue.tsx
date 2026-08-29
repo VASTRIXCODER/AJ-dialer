@@ -11,7 +11,8 @@ import { DataTable, type DataTableColumn } from "@/components/ui/data-table";
 import { useToast } from "@/components/ui/toast";
 import { useLead360 } from "@/components/leads/lead-360/lead-360-provider";
 import { dialDeepLink } from "@/lib/dialer/deep-link";
-import { workReasonLabel, workTypeLabel, type CrmQueue, type QueueItem } from "@/lib/db/crm";
+import type { CrmQueue, QueueItem } from "@/lib/db/crm";
+import { workReasonLabel, workTypeLabel } from "@/lib/opportunities/event-copy";
 import { formatPhone, relativeTime } from "@/lib/utils";
 
 // ─────────────────────────────────────────────────────────────────────────────
