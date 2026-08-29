@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import {
+  sanitizeGroups,
   sanitizeSegments,
   type ContactFilter,
   type SessionOrder,
@@ -30,6 +31,8 @@ export async function POST(req: Request) {
     order?: string;
     limit?: number;
     campaignId?: string | null;
+    groups?: string[];
+    orgWide?: boolean;
     leadIds?: string[];
     preview?: boolean;
   };
@@ -47,6 +50,10 @@ export async function POST(req: Request) {
       : "oldest",
     limit: Math.max(1, Math.min(Number(body.limit) || 100, MAX_SESSION_LEADS)),
     campaignId: body.campaignId ?? null,
+    groups: sanitizeGroups(body.groups),
+    // Supervisor-verified server-side (buildSession/countSession silently
+    // own-scope a rep's request) — this flag alone grants nothing.
+    orgWide: body.orgWide === true,
     leadIds: Array.isArray(body.leadIds) ? body.leadIds.slice(0, MAX_SESSION_LEADS) : undefined,
   };
 

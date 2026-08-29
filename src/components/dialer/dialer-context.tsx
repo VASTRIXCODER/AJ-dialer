@@ -3,7 +3,11 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { useToast } from "@/components/ui/toast";
 import { mergeClaimedLeads } from "@/lib/dialer/claims";
-import type { DialerUserPrefs } from "@/lib/dialer/user-prefs";
+import {
+  DEFAULT_SESSION_META,
+  type DialSessionMeta,
+} from "@/lib/dialer/segments";
+import type { DialerSessionPrefs, DialerUserPrefs } from "@/lib/dialer/user-prefs";
 import type { LeadFieldDef } from "@/lib/leads/field-schema";
 import type { AiLockReason, DialerLayout } from "@/lib/org/settings";
 import { useOrgChannel } from "@/lib/realtime/use-org-channel";
@@ -75,6 +79,8 @@ export interface DialerConfig {
   orgTimezone?: string;
   /** The viewer's own dialer prefs (profile preferences.dialerPrefs). */
   userPrefs?: DialerUserPrefs;
+  /** The session builder's remembered choices (profile preferences.dialerSession). */
+  savedSession?: DialerSessionPrefs | null;
   /** Show the "Solar payment" field in the qualification panel (per-tenant). */
   qualifyShowSolarPayment?: boolean;
   /** Label for the third home-profile toggle in the qualification panel. */
@@ -149,6 +155,14 @@ interface DialerContextValue {
   /** Seed initial data + turn the engine on. Called by the dialer page on mount. */
   activate: (initialQueue?: Lead[], campaigns?: Campaign[], initialCampaign?: string) => void;
   activated: boolean;
+  /**
+   * Replace the queue with an explicitly-built session (SessionBuilder). The
+   * meta rides into every claim: its statuses gate eligibility, strictOrder
+   * keeps claims inside this exact list, refill opts into loud pool top-ups.
+   */
+  loadSession: (leads: Lead[], meta: DialSessionMeta) => void;
+  /** The active session's meta — what the queue panel displays. */
+  sessionMeta: DialSessionMeta;
 }
 
 const Ctx = createContext<DialerContextValue | null>(null);
@@ -228,6 +242,19 @@ export function DialerProvider({
   };
   const queueForDialer = queue.filter(matchesFilters);
 
+  // The active dial session's claim behavior. A ref (claims read it at dial
+  // time from an effect closure) mirrored into state for display. Defaults:
+  // STRICT — even a plain "Load leads" queue may only be claimed from itself,
+  // never silently swapped for the org pool.
+  const sessionMetaRef = useRef<DialSessionMeta>({ ...DEFAULT_SESSION_META });
+  const [sessionMeta, setSessionMeta] = useState<DialSessionMeta>({
+    ...DEFAULT_SESSION_META,
+  });
+  const applySessionMeta = useCallback((meta: DialSessionMeta) => {
+    sessionMetaRef.current = meta;
+    setSessionMeta(meta);
+  }, []);
+
   // Assignment scope for queue fetches — a ref, not state: auto-dial's lap
   // refetch runs from an effect closure and must always see the CURRENT scope.
   // Declared BEFORE the engine so the claim context below can read it lazily.
@@ -282,14 +309,22 @@ export function DialerProvider({
       reservations: {
         enabled: Boolean(config.reservationsEnabled),
         // Lazy: read at dial time so mid-session filter changes are honored.
-        // No session-builder statuses are wired into the dialer queue yet, so
-        // claims use the server's default segment set (new/no_answer/callback)
-        // — the same set /api/leads/queue loads.
+        // The session meta carries the builder's statuses + the queue-fidelity
+        // contract (strictOrder/refill) into every claim.
         getContext: () => ({
           campaignId: campaignFilterRef.current || undefined,
           packId: assignmentRef.current || undefined,
+          statuses: sessionMetaRef.current.statuses,
+          strictOrder: sessionMetaRef.current.strictOrder,
+          refill: sessionMetaRef.current.refill,
         }),
         onClaimed,
+        onQueueRefilled: (leads) => {
+          toast({
+            title: "List finished — refilled from your pool",
+            description: `Your loaded session is done, so auto-refill pulled ${leads.length} eligible lead${leads.length === 1 ? "" : "s"} to keep you dialing. Turn refill off in the session builder to stop at the end of a list.`,
+          });
+        },
       },
       onDuplicateLanesDropped,
     }),
@@ -300,6 +335,7 @@ export function DialerProvider({
       config.userPrefs,
       onClaimed,
       onDuplicateLanesDropped,
+      toast,
     ],
   );
 
@@ -342,6 +378,35 @@ export function DialerProvider({
     setQueue((q) => q.map((l) => (l.id === leadId ? { ...l, ...patch } : l)));
   }, []);
 
+  /** SessionBuilder hand-off: the queue becomes exactly this list, and the
+   *  meta governs every claim until the next load. Also remembers the
+   *  builder's choices on the profile so the next visit starts from them. */
+  const loadSession = useCallback(
+    (leads: Lead[], meta: DialSessionMeta) => {
+      setQueue(leads);
+      applySessionMeta(meta);
+      setLoadMsg(
+        meta.summary ??
+          `Loaded ${leads.length} lead${leads.length === 1 ? "" : "s"} into the dialer.`,
+      );
+      fetch("/api/profile", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          preferences: {
+            dialerSession: {
+              statuses: meta.statuses,
+              strictOrder: meta.strictOrder,
+              refill: meta.refill,
+            },
+          },
+        }),
+        keepalive: true,
+      }).catch(() => {});
+    },
+    [applySessionMeta],
+  );
+
   async function loadLeads(): Promise<Lead[]> {
     setLoadingLeads(true);
     setLoadMsg(null);
@@ -371,6 +436,9 @@ export function DialerProvider({
 
       const leads = json.leads;
       setQueue(leads);
+      // A plain load is the DEFAULT session: standard segments, strict order,
+      // no refill — a stale builder meta must not govern a fresh queue.
+      applySessionMeta({ ...DEFAULT_SESSION_META });
       // total counts EVERY lead in scope, leads.length only the dialable subset
       // (dialable status + a 10+ digit phone). Silently loading fewer than the
       // rep's book size — with no explanation — read as "some leads vanished."
@@ -463,6 +531,8 @@ export function DialerProvider({
     loadMsg,
     activate,
     activated,
+    loadSession,
+    sessionMeta,
   };
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;

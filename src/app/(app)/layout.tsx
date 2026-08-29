@@ -7,7 +7,7 @@ import { isAIConfigured } from "@/lib/ai/claude";
 import { getAppSettings, isAccountDisabled } from "@/lib/db/app-control";
 import { listLeadGroups } from "@/lib/db/lead-groups";
 import { getUiPreferences } from "@/lib/db/team";
-import { parseDialerUserPrefs } from "@/lib/dialer/user-prefs";
+import { parseDialerSessionPrefs, parseDialerUserPrefs } from "@/lib/dialer/user-prefs";
 import { getPlatformPool } from "@/lib/dialer/rotation-server";
 import { restrictToAssignedNumbers } from "@/lib/dialer/rotation";
 import { agentLabels, isElevenLabsConfigured, isSecondAgentConfigured } from "@/lib/elevenlabs";
@@ -218,6 +218,8 @@ export default async function AppGroupLayout({
     orgTimezone: viewer.org?.timezone ?? "America/Chicago",
     // The viewer's own dialer prefs (Settings → Dialer preferences).
     userPrefs: parseDialerUserPrefs(uiPreferences),
+    // The session builder's remembered choices, so it reopens as it was left.
+    savedSession: parseDialerSessionPrefs(uiPreferences),
     // Per-tenant qualification-panel shape (solar field + third toggle label).
     // A non-solar vertical drops the solar field regardless of the qualify
     // setting, so a tenant never has to switch off solar wording in two places.

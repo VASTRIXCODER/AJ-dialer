@@ -38,6 +38,13 @@ export interface ClaimOptions {
   packId?: string | null;
   /** Restrict to specific leads (session builder / callback claims). */
   leadIds?: string[] | null;
+  /**
+   * Pick candidates in `leadIds` LIST ORDER instead of never-dialed-first —
+   * the queue-fidelity contract: the dialer sends its display queue from the
+   * rep's position, and the round must follow it. Only meaningful with
+   * leadIds; eligibility (DNC, scope, holds, cooldown) still applies.
+   */
+  preserveOrder?: boolean;
   cooldownMinutes?: number;
   maxAttempts?: number;
   /**
@@ -67,6 +74,7 @@ export async function claimDialLeads(opts: ClaimOptions): Promise<Lead[]> {
       p_cooldown_minutes: Math.max(0, Math.round(opts.cooldownMinutes ?? 0)),
       p_max_attempts: Math.max(0, Math.round(opts.maxAttempts ?? 0)),
       p_lead_ids: opts.leadIds?.length ? opts.leadIds : null,
+      p_preserve_order: Boolean(opts.preserveOrder && opts.leadIds?.length),
     });
     if (error) {
       count("reservation.claim_fail", 1, { orgId: opts.orgId });

@@ -11,6 +11,9 @@ export const dynamic = "force-dynamic";
  * arrays at 1,000 rows. The old dialer reported "1000 leads" against a book of
  * 16,636 and the operator planned campaigns from that number.
  */
-export async function GET() {
-  return NextResponse.json(await getSegmentReport());
+export async function GET(req: Request) {
+  // ?orgWide=1 — supervisors planning an org-wide session (server-verified;
+  // reps are silently own-scoped by getSegmentReport).
+  const orgWide = new URL(req.url).searchParams.get("orgWide") === "1";
+  return NextResponse.json(await getSegmentReport({ orgWide }));
 }

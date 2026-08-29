@@ -68,3 +68,85 @@ export function claimEmptyMessage(queueSize: number): string {
     ? `All eligible leads are claimed or cooling down — ${queueSize} in queue. Try again in a moment.`
     : "No leads are loaded — press “Load leads” to build a session first.";
 }
+
+/**
+ * Strict-mode empty claim: the LOADED LIST is done (or every remaining lead in
+ * it is held/cooling/ineligible) — categorically different from "the org has
+ * nothing to dial", and the rep must be told which one happened.
+ */
+export function strictQueueExhaustedMessage(queueSize: number, refillAvailable: boolean): string {
+  if (queueSize === 0) {
+    return "No leads are loaded — press “Load leads” to build a session first.";
+  }
+  return refillAvailable
+    ? "Your loaded list is finished (or its remaining leads are held or cooling down). Auto-refill found nothing eligible either — load a new session."
+    : "Your loaded list is finished (or its remaining leads are held or cooling down). Load a new session, or turn on “Auto-refill” in the session builder to keep dialing from your eligible pool.";
+}
+
+/**
+ * The ordered claim candidates for the next round: the display queue's lead
+ * ids starting at the rep's CURRENT position, wrapping around the list at most
+ * once, capped at `max`.
+ *
+ * This list is the whole fix for the dialer's worst bug: claims used to carry
+ * NO lead scoping at all, so pressing Start dialed the org pool's
+ * top-eligibility lead — someone who was not in the list the rep loaded, and
+ * the SAME someone on every retry. Constraining the claim to these ids (in
+ * this order, with p_preserve_order) makes the dialer call exactly the list on
+ * screen, top to bottom from where the rep is standing.
+ */
+export function orderedCandidateIds(
+  queue: readonly { id: string }[],
+  cursor: number,
+  max: number,
+): string[] {
+  if (!queue.length || max <= 0) return [];
+  const start = ((Math.floor(cursor) % queue.length) + queue.length) % queue.length;
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (let i = 0; i < queue.length && out.length < max; i++) {
+    const id = queue[(start + i) % queue.length]?.id;
+    if (id && !seen.has(id)) {
+      seen.add(id);
+      out.push(id);
+    }
+  }
+  return out;
+}
+
+/**
+ * Claims come back in server order; the ROUND must run in the rep's order.
+ * Defensive re-sort by the candidate list (unknown ids — a refill claim —
+ * keep their relative order at the end).
+ */
+export function reorderClaimed<T extends { id: string }>(
+  claimed: T[],
+  candidateIds: readonly string[],
+): T[] {
+  if (claimed.length < 2) return claimed;
+  const rank = new Map(candidateIds.map((id, i) => [id, i]));
+  return [...claimed].sort(
+    (a, b) => (rank.get(a.id) ?? Number.MAX_SAFE_INTEGER) - (rank.get(b.id) ?? Number.MAX_SAFE_INTEGER),
+  );
+}
+
+/**
+ * Where the queue cursor should stand after a round was claimed: just past the
+ * FURTHEST claimed lead (so the next Start keeps walking forward instead of
+ * re-offering leads the round already consumed). Claims outside the queue
+ * (refill mode) leave the cursor alone.
+ */
+export function advanceCursorPastClaims(
+  queue: readonly { id: string }[],
+  cursor: number,
+  claimedIds: readonly string[],
+): number {
+  if (!queue.length || !claimedIds.length) return cursor;
+  const claimed = new Set(claimedIds);
+  const start = ((Math.floor(cursor) % queue.length) + queue.length) % queue.length;
+  let furthest = -1;
+  for (let i = 0; i < queue.length; i++) {
+    if (claimed.has(queue[(start + i) % queue.length]?.id)) furthest = i;
+  }
+  return furthest === -1 ? cursor : (start + furthest + 1) % queue.length;
+}

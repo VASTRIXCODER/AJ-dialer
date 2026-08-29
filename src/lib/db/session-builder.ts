@@ -2,6 +2,7 @@ import "server-only";
 
 import {
   BLOCKED_SEGMENTS,
+  sanitizeGroups,
   sanitizeSegments,
   SEGMENTS,
   type ContactFilter,
@@ -9,21 +10,59 @@ import {
 } from "../dialer/segments";
 import { getDncDigits, scrubDnc } from "./dnc";
 import { rowToLead } from "./leads";
+import { createAdminClient, isAdminConfigured } from "../supabase/admin";
 import { isSupabaseConfigured } from "../supabase/config";
 import { createClient } from "../supabase/server";
 import type { Lead } from "../types";
 
-/** The caller's currently active org, so "own leads" never crosses org lines. */
-async function currentOrgId(
+/** Roles allowed to build ORG-WIDE sessions — mirrors getDialQueue's scope. */
+const SUPERVISOR_ROLES = new Set(["owner", "admin", "manager"]);
+
+interface SessionScope {
+  userId: string;
+  orgId: string | null;
+  /** True ⇒ this caller MAY build org-wide (still opt-in per spec.orgWide). */
+  supervisor: boolean;
+}
+
+async function resolveSessionScope(
   supabase: Awaited<ReturnType<typeof createClient>>,
-  userId: string,
-): Promise<string | null> {
+): Promise<SessionScope | null> {
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return null;
   const { data: prof } = await supabase
     .from("profiles")
-    .select("org_id")
-    .eq("id", userId)
+    .select("org_id, role")
+    .eq("id", user.id)
     .maybeSingle();
-  return prof?.org_id ? String(prof.org_id) : null;
+  return {
+    userId: user.id,
+    orgId: prof?.org_id ? String(prof.org_id) : null,
+    supervisor:
+      Boolean(prof?.org_id) &&
+      SUPERVISOR_ROLES.has(String(prof?.role ?? "")) &&
+      isAdminConfigured(),
+  };
+}
+
+/**
+ * Groups filter ("unsorted" = leads with no group). Keys are validated to a
+ * slug charset before entering the PostgREST or() string.
+ */
+function applyGroups<T>(q: T, groups?: string[]): T {
+  const safe = sanitizeGroups(groups).filter((g) => /^[a-z0-9_-]+$/i.test(g));
+  if (!safe.length) return q;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const b = q as any;
+  const named = safe.filter((g) => g !== "unsorted");
+  const unsorted = safe.includes("unsorted");
+  if (unsorted && named.length) {
+    return b.or(`lead_group.is.null,lead_group.in.(${named.join(",")})`);
+  }
+  if (unsorted) return b.is("lead_group", null);
+  return b.in("lead_group", named);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -70,11 +109,11 @@ export interface SegmentReport {
 }
 
 /**
- * Per-segment counts for the whole book. Own-scoped, matching the dial queue:
- * the power dialer only ever calls leads you uploaded, so the planner must count
- * exactly the same population it will later dial.
+ * Per-segment counts for the book the session will actually dial: own-scoped
+ * by default; `orgWide` (supervisors only) counts the whole org's pool so the
+ * planner's numbers match an org-wide session's population.
  */
-export async function getSegmentReport(): Promise<SegmentReport> {
+export async function getSegmentReport(opts?: { orgWide?: boolean }): Promise<SegmentReport> {
   const empty: SegmentReport = {
     total: 0,
     neverContacted: 0,
@@ -86,11 +125,11 @@ export async function getSegmentReport(): Promise<SegmentReport> {
 
   try {
     const supabase = await createClient();
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-    if (!user) return empty;
-    const orgId = await currentOrgId(supabase, user.id);
+    const scope = await resolveSessionScope(supabase);
+    if (!scope) return empty;
+    const orgWide = Boolean(opts?.orgWide && scope.supervisor && scope.orgId);
+    const reader = orgWide ? createAdminClient() : supabase;
+    const orgId = scope.orgId;
 
     // head:true + count:"exact" asks Postgres for a COUNT and ships zero rows —
     // so it is immune to the 1,000-row cap that corrupted every other total.
@@ -101,9 +140,10 @@ export async function getSegmentReport(): Promise<SegmentReport> {
       return count ?? 0;
     };
     function base() {
-      // Own-scoped, AND within the CURRENT org — a lead this account uploaded
-      // under a past org must not count toward a freshly joined/created one.
-      let q = supabase.from("leads").select("id", { count: "exact", head: true }).eq("owner_id", user!.id);
+      // Always within the CURRENT org — a lead this account uploaded under a
+      // past org must not count toward a freshly joined/created one.
+      let q = reader.from("leads").select("id", { count: "exact", head: true });
+      if (!orgWide) q = q.eq("owner_id", scope!.userId);
       if (orgId) q = q.eq("org_id", orgId);
       return q;
     }
@@ -151,20 +191,22 @@ export async function countSession(spec: SessionSpec): Promise<number> {
   if (!isSupabaseConfigured()) return 0;
   try {
     const supabase = await createClient();
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-    if (!user) return 0;
-    const orgId = await currentOrgId(supabase, user.id);
+    const scope = await resolveSessionScope(supabase);
+    if (!scope) return 0;
+    // Org-wide is supervisor-only and requires an org — a rep's spec.orgWide
+    // is silently own-scoped, exactly like getDialQueue.
+    const orgWide = Boolean(spec.orgWide && scope.supervisor && scope.orgId);
+    const reader = orgWide ? createAdminClient() : supabase;
 
-    let q = supabase
+    let q = reader
       .from("leads")
       .select("id", { count: "exact", head: true })
-      .eq("owner_id", user.id)
       .in("status", sanitizeSegments(spec.statuses));
-    // Own-scoped, AND within the CURRENT org — never count a past org's leads.
-    if (orgId) q = q.eq("org_id", orgId);
+    if (!orgWide) q = q.eq("owner_id", scope.userId);
+    // Always within the CURRENT org — never count a past org's leads.
+    if (scope.orgId) q = q.eq("org_id", scope.orgId);
     q = applyContact(q, spec.contact);
+    q = applyGroups(q, spec.groups);
     if (spec.campaignId) q = q.eq("campaign_id", spec.campaignId);
 
     const { count } = await q;
@@ -188,26 +230,28 @@ export async function buildSession(spec: SessionSpec): Promise<Lead[]> {
   if (!isSupabaseConfigured()) return [];
   try {
     const supabase = await createClient();
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-    if (!user) return [];
-    const orgId = await currentOrgId(supabase, user.id);
+    const scope = await resolveSessionScope(supabase);
+    if (!scope) return [];
+    // Org-wide only for supervisors with an org (mirrors getDialQueue); a
+    // rep's spec.orgWide silently stays own-scoped.
+    const orgWide = Boolean(spec.orgWide && scope.supervisor && scope.orgId);
+    const reader = orgWide ? createAdminClient() : supabase;
+    const orgId = scope.orgId;
 
     const limit = Math.max(1, Math.min(spec.limit || 0, MAX_SESSION_LEADS));
 
     // An explicit hand-picked set skips the segment filters entirely — but still
-    // never escapes the owner scope, the current org, or the DNC block.
+    // never escapes the scope, the current org, or the DNC block.
     if (spec.leadIds?.length) {
       const ids = spec.leadIds.slice(0, limit);
       const out: Lead[] = [];
       for (let i = 0; i < ids.length; i += 200) {
-        let q = supabase
+        let q = reader
           .from("leads")
           .select("*")
-          .eq("owner_id", user.id)
           .not("status", "in", `(${BLOCKED_SEGMENTS.join(",")})`)
           .in("id", ids.slice(i, i + 200));
+        if (!orgWide) q = q.eq("owner_id", scope.userId);
         if (orgId) q = q.eq("org_id", orgId);
         const { data } = await q;
         out.push(...(data ?? []).map(rowToLead));
@@ -224,15 +268,16 @@ export async function buildSession(spec: SessionSpec): Promise<Lead[]> {
     const order = spec.order;
 
     const page = (from: number) => {
-      let q = supabase
+      let q = reader
         .from("leads")
         .select("*")
-        .eq("owner_id", user.id)
         .in("status", statuses);
-      // Own-scoped, AND within the CURRENT org — a lead uploaded under a past
-      // org must never join a session dialed in a freshly joined/created one.
+      if (!orgWide) q = q.eq("owner_id", scope.userId);
+      // Always within the CURRENT org — a lead uploaded under a past org must
+      // never join a session dialed in a freshly joined/created one.
       if (orgId) q = q.eq("org_id", orgId);
       q = applyContact(q, spec.contact);
+      q = applyGroups(q, spec.groups);
       if (spec.campaignId) q = q.eq("campaign_id", spec.campaignId);
 
       if (order === "ai_score") {

@@ -49,6 +49,7 @@ import { DialerShell } from "./dialer-shell";
 import { LeadPanel } from "./lead-panel";
 import { groupLabel, LoadLeadsDialog } from "./load-leads-dialog";
 import { QualifyPanel } from "./qualify-panel";
+import { SessionBuilder } from "./session-builder";
 import { Teleprompter } from "./teleprompter";
 
 export function DialerClient({
@@ -100,10 +101,15 @@ export function DialerClient({
     loadingLeads,
     loadMsg,
     activate,
+    loadSession,
   } = useDialerContext();
   const { state } = dialer;
   const vocab = useVocabulary();
   const [showLoadDialog, setShowLoadDialog] = useState(false);
+  // The session builder IS the load-leads flow now (quick load stays one click
+  // away inside it). It was fully built in Phase 1 E and never mounted — the
+  // dialer loaded a fixed default queue while claims ignored even that.
+  const [builderOpen, setBuilderOpen] = useState(false);
 
   // Which dialer panels this workspace shows (template preset ⊕ admin toggles).
   const layout = config.dialerLayout;
@@ -712,7 +718,7 @@ export function DialerClient({
             onNext={dialer.nextLead}
             onSelect={dialer.selectLead}
             navDisabled={state.status !== "idle"}
-            onLoadLeads={loadLeads}
+            onLoadLeads={() => setBuilderOpen(true)}
             loadingLeads={loadingLeads}
             fields={config.leadFields}
             showCallHistory={layout?.callHistory !== false}
@@ -902,6 +908,23 @@ export function DialerClient({
           leadGroups={config.leadGroups}
         />
       )}
+
+      <SessionBuilder
+        open={builderOpen}
+        onClose={() => setBuilderOpen(false)}
+        campaigns={campaignsForSelect}
+        groups={config.leadGroups ?? []}
+        canOrgWide={config.dialScope === "org"}
+        initial={config.savedSession}
+        onLoad={(leads, meta) => {
+          loadSession(leads, meta);
+          setBuilderOpen(false);
+        }}
+        onQuickLoad={() => {
+          void loadLeads();
+          setBuilderOpen(false);
+        }}
+      />
     </DialerShell>
   );
 }

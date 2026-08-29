@@ -33,3 +33,29 @@ export function parseDialerUserPrefs(preferences: unknown): DialerUserPrefs {
     parallelDefault: node?.parallelDefault === true,
   };
 }
+
+/** The session builder's remembered choices (`preferences.dialerSession`). */
+export interface DialerSessionPrefs {
+  statuses: string[];
+  strictOrder: boolean;
+  refill: boolean;
+}
+
+/**
+ * Sanitized `dialerSession` node, or null when the rep has never used the
+ * builder. Status keys are validated downstream (sanitizeSegments) — this
+ * only guards shape, and strictOrder defaults TRUE (the safe reading of any
+ * malformed blob is the queue-fidelity default, never pool claiming).
+ */
+export function parseDialerSessionPrefs(preferences: unknown): DialerSessionPrefs | null {
+  const node = (preferences as { dialerSession?: unknown } | null | undefined)
+    ?.dialerSession as Partial<DialerSessionPrefs> | undefined;
+  if (!node || typeof node !== "object") return null;
+  return {
+    statuses: Array.isArray(node.statuses)
+      ? node.statuses.filter((s): s is string => typeof s === "string").slice(0, 12)
+      : [],
+    strictOrder: node.strictOrder !== false,
+    refill: node.refill === true,
+  };
+}

@@ -8,8 +8,12 @@ import {
   describeCallError,
 } from "./dialer/call-events";
 import {
+  advanceCursorPastClaims,
   claimEmptyMessage,
   computeReleaseSet,
+  orderedCandidateIds,
+  reorderClaimed,
+  strictQueueExhaustedMessage,
   type ClaimReleaseAction,
 } from "./dialer/claims";
 import { dedupeLeadsByPhone } from "./dialer/lane-dedupe";
@@ -35,6 +39,15 @@ export interface DialerClaimContext {
   campaignId?: string;
   /** Assignment (lead pack) id when the queue is scoped to one. */
   packId?: string;
+  /**
+   * Queue fidelity (the mis-dial fix). `strictOrder` (DEFAULT: true) claims
+   * ONLY from the display queue, in the rep's order from their current
+   * position — Start can never ring someone who isn't on the list on screen.
+   * `refill` (default false) opts back into pool-claiming, but only AFTER the
+   * loaded list is exhausted, and the provider is told it happened.
+   */
+  strictOrder?: boolean;
+  refill?: boolean;
 }
 
 /** Optional engine behaviors threaded from org settings via DialerProvider. */
@@ -52,6 +65,9 @@ export interface DialerEngineOptions {
     /** Claimed leads may be absent from the local queue — the provider merges
      *  them into display state so the UI shows what's actually being dialed. */
     onClaimed?: (leads: Lead[]) => void;
+    /** The strict list ran dry and refill mode pulled these from the eligible
+     *  pool instead — the provider says so out loud (never a silent swap). */
+    onQueueRefilled?: (leads: Lead[]) => void;
   };
   /** A dial round contained two leads sharing one phone number, so the later
    *  duplicates were dropped before anything rang (first occurrence kept —
@@ -1948,35 +1964,84 @@ export function useDialer(
         // In-flight guard goes up BEFORE the claim round-trip — mashing Start
         // during the network wait must not stack a second claim + dial.
         dialInFlightRef.current = true;
+        const ctx = reservations.getContext();
+        // ── QUEUE FIDELITY (the mis-dial fix) ──────────────────────────────
+        // The claim used to carry no lead scoping, so the server handed back
+        // the org pool's top-eligibility lead: someone NOT on the list the rep
+        // loaded — and the SAME someone on every retry, because skip releases
+        // the hold and the pool order is deterministic. Strict mode (default)
+        // constrains the claim to the display queue's ids, in the rep's order
+        // from their current position; the server holds the first eligible N
+        // of exactly that list (p_preserve_order).
+        const strict = ctx.strictOrder !== false;
+        const candidates = strict
+          ? orderedCandidateIds(queue, queueIndexRef.current, 100)
+          : [];
+        const postClaim = async (body: Record<string, unknown>): Promise<Lead[]> => {
+          try {
+            const res = await fetch("/api/dialer/claim", {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify(body),
+            });
+            const json = (await res.json().catch(() => ({}))) as { leads?: Lead[] };
+            return res.ok && Array.isArray(json.leads) ? json.leads : [];
+          } catch {
+            return [];
+          }
+        };
         let claimed: Lead[] = [];
-        try {
-          const ctx = reservations.getContext();
-          const res = await fetch("/api/dialer/claim", {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({
-              count: parallelRef.current,
-              statuses: ctx.statuses,
-              campaignId: ctx.campaignId,
-              packId: ctx.packId,
-            }),
+        let refilled = false;
+        if (!strict || candidates.length) {
+          claimed = await postClaim({
+            count: parallelRef.current,
+            statuses: ctx.statuses,
+            campaignId: ctx.campaignId,
+            packId: ctx.packId,
+            ...(strict ? { leadIds: candidates, preserveOrder: true } : {}),
           });
-          const json = (await res.json().catch(() => ({}))) as { leads?: Lead[] };
-          if (res.ok && Array.isArray(json.leads)) claimed = json.leads;
-        } catch {
-          claimed = [];
+        }
+        // Strict list dry + refill opted-in: pull from the eligible pool —
+        // loudly, never as a silent substitution.
+        if (!claimed.length && strict && ctx.refill) {
+          claimed = await postClaim({
+            count: parallelRef.current,
+            statuses: ctx.statuses,
+            campaignId: ctx.campaignId,
+            packId: ctx.packId,
+          });
+          refilled = claimed.length > 0;
         }
         if (!claimed.length) {
-          // Honest: an empty claim means the eligible pool is HELD or cooling
-          // down, not that the book is empty — say so, with the queue for scale.
           dialInFlightRef.current = false;
-          patch({ error: claimEmptyMessage(queue.length), status: "idle", lines: [] });
+          patch({
+            error: strict
+              ? strictQueueExhaustedMessage(queue.length, Boolean(ctx.refill))
+              : claimEmptyMessage(queue.length),
+            status: "idle",
+            lines: [],
+          });
           return;
         }
+        // The round runs in the REP's order, whatever order the rows returned.
+        claimed = reorderClaimed(claimed, candidates);
         for (const l of claimed) claimedIdsRef.current.add(l.id);
-        // Claimed leads may not be in the local queue array — let the provider
-        // merge them into display state so the UI shows the actual round.
+        // Walk the cursor past what this round consumed, so the next Start
+        // continues down the list instead of re-offering the same leads.
+        const nextCursor = advanceCursorPastClaims(
+          queue,
+          queueIndexRef.current,
+          claimed.map((l) => l.id),
+        );
+        if (nextCursor !== queueIndexRef.current) {
+          queueIndexRef.current = nextCursor;
+          patch({ queueIndex: nextCursor });
+        }
+        // Claimed leads may not be in the local queue array (refill mode) —
+        // let the provider merge them into display state so the UI shows the
+        // actual round, and announce a refill when one happened.
         reservations.onClaimed?.(claimed);
+        if (refilled) reservations.onQueueRefilled?.(claimed);
         leads = claimed;
       } else {
         leads = override ?? nextLeads(parallelRef.current);

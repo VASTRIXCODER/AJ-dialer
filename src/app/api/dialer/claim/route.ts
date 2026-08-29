@@ -40,6 +40,8 @@ export async function POST(req: Request) {
     campaignId?: string;
     packId?: string;
     leadIds?: string[];
+    /** Claim in leadIds LIST ORDER (the dialer's queue-fidelity mode). */
+    preserveOrder?: boolean;
   };
 
   // Org-wide dial policy (Admin → Dialing): a max-attempts ceiling and a
@@ -80,6 +82,7 @@ export async function POST(req: Request) {
       ...base,
       limit: limit - leads.length,
       leadIds: explicitIds,
+      preserveOrder: Boolean(body.preserveOrder),
       maxAttempts,
       cooldownMinutes,
     });

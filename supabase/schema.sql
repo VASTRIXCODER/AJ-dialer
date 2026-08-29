@@ -2320,13 +2320,19 @@ create index if not exists leads_dial_order_idx
 -- (src/lib/dialer/eligibility.ts). The per-lead-timezone calling-window check
 -- lives in TS (area-code inference isn't in SQL) — claimDialLeads re-checks and
 -- releases out-of-window leads.
+-- PART 25b: p_preserve_order picks candidates in the CALLER's list order —
+-- the server half of the dialer queue-fidelity fix (claims used to ignore the
+-- rep's loaded queue entirely). Signature changed, so re-applying on a live DB
+-- must DROP the old 11-arg overload first (see the PART 25b migration).
+drop function if exists public.app_claim_dial_leads(uuid, uuid, boolean, int, int, text[], text, uuid, int, int, uuid[]);
 create or replace function public.app_claim_dial_leads(
   p_org uuid, p_user uuid, p_supervisor boolean,
   p_limit int, p_ttl_seconds int default 180,
   p_statuses text[] default array['new','no_answer','callback'],
   p_campaign text default null, p_pack uuid default null,
   p_cooldown_minutes int default 0, p_max_attempts int default 0,
-  p_lead_ids uuid[] default null
+  p_lead_ids uuid[] default null,
+  p_preserve_order boolean default false
 ) returns setof public.leads
 language sql volatile security definer set search_path = public as $$
   update public.leads l
@@ -2350,17 +2356,20 @@ language sql volatile security definer set search_path = public as $$
       and (p_cooldown_minutes <= 0 or x.last_attempt_at is null
            or x.last_attempt_at < now() - make_interval(mins => p_cooldown_minutes))
       and (p_max_attempts <= 0 or x.attempt_count < p_max_attempts)
-    order by x.attempt_count asc,
-             x.last_attempt_at asc nulls first,
-             x.created_at asc, x.id asc
+    order by
+      case when p_preserve_order and p_lead_ids is not null
+           then array_position(p_lead_ids, x.id) end asc nulls last,
+      x.attempt_count asc,
+      x.last_attempt_at asc nulls first,
+      x.created_at asc, x.id asc
     limit greatest(coalesce(p_limit, 0), 0)
     for update skip locked
   ) picked
   where l.id = picked.id
   returning l.*;
 $$;
-revoke all on function public.app_claim_dial_leads(uuid, uuid, boolean, int, int, text[], text, uuid, int, int, uuid[]) from public, anon, authenticated;
-grant execute on function public.app_claim_dial_leads(uuid, uuid, boolean, int, int, text[], text, uuid, int, int, uuid[]) to service_role;
+revoke all on function public.app_claim_dial_leads(uuid, uuid, boolean, int, int, text[], text, uuid, int, int, uuid[], boolean) from public, anon, authenticated;
+grant execute on function public.app_claim_dial_leads(uuid, uuid, boolean, int, int, text[], text, uuid, int, int, uuid[], boolean) to service_role;
 
 create or replace function public.app_release_dial_leads(
   p_org uuid, p_user uuid, p_lead_ids uuid[]

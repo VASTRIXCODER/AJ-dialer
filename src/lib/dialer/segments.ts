@@ -147,6 +147,56 @@ export interface SessionSpec {
   limit: number;
   /** Optional: only these campaigns. */
   campaignId?: string | null;
+  /**
+   * Optional: only these lead-intake groups. "unsorted" = leads with no group.
+   * Empty/absent = every group.
+   */
+  groups?: string[];
+  /**
+   * Supervisors only: build from the WHOLE org's book instead of own uploads.
+   * Ignored (own-scope enforced) for reps, server-side.
+   */
+  orgWide?: boolean;
   /** Optional: an explicit hand-picked set, bypassing the segment filters. */
   leadIds?: string[];
+}
+
+/**
+ * How the DIALER treats the loaded session at claim time — the client half of
+ * the queue-fidelity contract (see orderedCandidateIds in dialer/claims.ts).
+ * Lives beside SessionSpec because the builder chooses both together.
+ */
+export interface DialSessionMeta {
+  /** The statuses the session was built from — claims must honor them. */
+  statuses: LeadStatus[];
+  /**
+   * Claim ONLY from the loaded list, in list order (DEFAULT). Off = the
+   * legacy pool-first claiming, which is what dialed people who weren't on
+   * the rep's list.
+   */
+  strictOrder: boolean;
+  /** When the strict list runs dry, top up from the eligible pool — loudly. */
+  refill: boolean;
+  /** Human line for the queue panel ("212 leads · no answer · upload order"). */
+  summary: string | null;
+}
+
+export const DEFAULT_SESSION_META: DialSessionMeta = {
+  statuses: [...DEFAULT_SEGMENTS],
+  strictOrder: true,
+  refill: false,
+  summary: null,
+};
+
+/** Sanitize a stored/requested group list (client vocabulary; open keys). */
+export function sanitizeGroups(requested: unknown): string[] {
+  if (!Array.isArray(requested)) return [];
+  return [
+    ...new Set(
+      requested
+        .filter((g): g is string => typeof g === "string")
+        .map((g) => g.trim())
+        .filter((g) => g.length > 0 && g.length <= 64),
+    ),
+  ].slice(0, 24);
 }

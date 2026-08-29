@@ -16,9 +16,10 @@ import {
   DEFAULT_SEGMENTS,
   ORDER_LABELS,
   type ContactFilter,
+  type DialSessionMeta,
   type SessionOrder,
 } from "@/lib/dialer/segments";
-import type { Lead } from "@/lib/types";
+import type { Lead, LeadStatus } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 interface Segment {
@@ -36,11 +37,6 @@ interface SegmentReport {
   dialableTotal: number;
 }
 
-export interface LoadedSession {
-  leads: Lead[];
-  summary: string;
-}
-
 /**
  * The session builder.
  *
@@ -52,46 +48,83 @@ export interface LoadedSession {
  * length, and the array was truncated).
  *
  * This makes the session an explicit, visible decision: which dispositions, in
- * what contact state, in what order, and exactly how many.
+ * what contact state, in what order, from which groups/campaign/scope, exactly
+ * how many — and HOW the dialer treats the list (strict order vs pool refill,
+ * the queue-fidelity contract that fixed the mis-dial bug).
  */
 export function SessionBuilder({
   open,
   onClose,
   onLoad,
+  onQuickLoad,
+  campaigns = [],
+  groups = [],
+  canOrgWide = false,
+  initial,
 }: {
   open: boolean;
   onClose: () => void;
-  onLoad: (session: LoadedSession) => void;
+  /** Hand the built session to the dialer: the exact list + its claim contract. */
+  onLoad: (leads: Lead[], meta: DialSessionMeta) => void;
+  /** The one-click legacy load (default dial queue), kept reachable. */
+  onQuickLoad?: () => void;
+  /** The org's campaigns, for the campaign filter. */
+  campaigns?: { id: string; name: string }[];
+  /** The org's lead-intake groups, for the group filter. */
+  groups?: { key: string; label: string }[];
+  /** Supervisors may build from the whole org's book. */
+  canOrgWide?: boolean;
+  /** The rep's remembered builder choices (profile preferences.dialerSession). */
+  initial?: { statuses?: string[]; strictOrder?: boolean; refill?: boolean } | null;
 }) {
   const [report, setReport] = useState<SegmentReport | null>(null);
-  const [statuses, setStatuses] = useState<string[]>(DEFAULT_SEGMENTS);
+  const [statuses, setStatuses] = useState<string[]>(
+    initial?.statuses?.length ? initial.statuses : DEFAULT_SEGMENTS,
+  );
   const [contact, setContact] = useState<ContactFilter>("any");
   // Upload order by default: a rep works a list the way it was handed to them,
   // and it's the only option whose sort key can't shift mid-session (ai_score is
   // rewritten by each call, which re-sorts the list underneath them).
   const [order, setOrder] = useState<SessionOrder>("oldest");
   const [limit, setLimit] = useState(100);
+  const [campaignId, setCampaignId] = useState("");
+  const [selGroups, setSelGroups] = useState<string[]>([]);
+  const [orgWide, setOrgWide] = useState(false);
+  // The queue-fidelity contract. Strict is the DEFAULT and the fix: the dialer
+  // may only claim leads from this exact list, in this order.
+  const [strictOrder, setStrictOrder] = useState(initial?.strictOrder ?? true);
+  const [refill, setRefill] = useState(initial?.refill ?? false);
   const [available, setAvailable] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
   const [previewing, setPreviewing] = useState(false);
 
-  // Exact, uncapped counts — COUNT queries, not array lengths.
+  // Exact, uncapped counts — COUNT queries, not array lengths. Re-fetched when
+  // a supervisor flips the scope, so the cards count the population the
+  // session will actually draw from.
   useEffect(() => {
     if (!open) return;
     let alive = true;
-    void fetch("/api/leads/segments")
+    void fetch(`/api/leads/segments${orgWide ? "?orgWide=1" : ""}`)
       .then((r) => r.json())
       .then((d: SegmentReport) => alive && setReport(d))
       .catch(() => undefined);
     return () => {
       alive = false;
     };
-  }, [open]);
+  }, [open, orgWide]);
 
   // Live "this will call N leads" as the filters change.
   const spec = useCallback(
-    () => ({ statuses, contact, order, limit }),
-    [statuses, contact, order, limit],
+    () => ({
+      statuses,
+      contact,
+      order,
+      limit,
+      campaignId: campaignId || null,
+      groups: selGroups,
+      orgWide: canOrgWide && orgWide,
+    }),
+    [statuses, contact, order, limit, campaignId, selGroups, canOrgWide, orgWide],
   );
 
   useEffect(() => {
@@ -131,12 +164,18 @@ export function SessionBuilder({
       const json = (await res.json()) as { leads: Lead[]; count: number };
       const picked = report?.segments.filter((s) => statuses.includes(s.key)) ?? [];
       const parts = picked.map((s) => `${Math.min(s.count, json.count)} ${s.label.toLowerCase()}`);
-      onLoad({
-        leads: json.leads,
-        summary:
-          `${json.count} leads · ${parts.slice(0, 3).join(", ")}` +
-          (contact === "never" ? " · never contacted" : contact === "contacted" ? " · previously contacted" : "") +
-          ` · ${ORDER_LABELS[order].toLowerCase()}`,
+      const summary =
+        `${json.count} leads · ${parts.slice(0, 3).join(", ")}` +
+        (contact === "never" ? " · never contacted" : contact === "contacted" ? " · previously contacted" : "") +
+        ` · ${ORDER_LABELS[order].toLowerCase()}` +
+        (canOrgWide && orgWide ? " · whole org" : "") +
+        (strictOrder ? " · strict list order" : " · pool order") +
+        (refill ? " · auto-refill on" : "");
+      onLoad(json.leads, {
+        statuses: statuses as LeadStatus[],
+        strictOrder,
+        refill,
+        summary,
       });
     } catch {
       /* the dialer surfaces load failures */
@@ -188,6 +227,98 @@ export function SessionBuilder({
             </div>
 
             <div className="flex-1 space-y-6 overflow-y-auto p-5">
+              {/* Scope — supervisors only. Reps are own-scoped server-side. */}
+              {canOrgWide && (
+                <section>
+                  <h3 className="mb-2 text-xs font-bold uppercase tracking-wide text-muted-foreground">
+                    Whose leads
+                  </h3>
+                  <div className="grid grid-cols-2 gap-2">
+                    {(
+                      [
+                        { on: false, label: "My uploads", hint: "Only leads you brought in." },
+                        { on: true, label: "Whole org", hint: "Every rep's book — supervisor view." },
+                      ] as const
+                    ).map((o) => (
+                      <button
+                        key={o.label}
+                        type="button"
+                        onClick={() => setOrgWide(o.on)}
+                        className={cn(
+                          "rounded-xl border p-3 text-left transition-colors",
+                          orgWide === o.on
+                            ? "border-primary/60 bg-primary-soft"
+                            : "border-border bg-surface/50 hover:bg-muted",
+                        )}
+                      >
+                        <p className="text-sm font-semibold">{o.label}</p>
+                        <p className="text-xs text-muted-foreground">{o.hint}</p>
+                      </button>
+                    ))}
+                  </div>
+                </section>
+              )}
+
+              {/* Campaign + groups — narrow the population before the segments. */}
+              {(campaigns.length > 0 || groups.length > 0) && (
+                <section className="grid gap-4 sm:grid-cols-2">
+                  {campaigns.length > 0 && (
+                    <div>
+                      <h3 className="mb-2 text-xs font-bold uppercase tracking-wide text-muted-foreground">
+                        Campaign
+                      </h3>
+                      <select
+                        value={campaignId}
+                        onChange={(e) => setCampaignId(e.target.value)}
+                        className="h-10 w-full rounded-xl border border-border bg-background px-3 text-sm outline-none focus-visible:border-primary/50"
+                      >
+                        <option value="">All campaigns</option>
+                        {campaigns.map((c) => (
+                          <option key={c.id} value={c.id}>
+                            {c.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+                  {groups.length > 0 && (
+                    <div>
+                      <h3 className="mb-2 text-xs font-bold uppercase tracking-wide text-muted-foreground">
+                        Groups
+                      </h3>
+                      <div className="flex flex-wrap gap-1.5">
+                        {[...groups, { key: "unsorted", label: "Unsorted" }].map((g) => {
+                          const on = selGroups.includes(g.key);
+                          return (
+                            <button
+                              key={g.key}
+                              type="button"
+                              aria-pressed={on}
+                              onClick={() =>
+                                setSelGroups((s) =>
+                                  on ? s.filter((k) => k !== g.key) : [...s, g.key],
+                                )
+                              }
+                              className={cn(
+                                "rounded-lg border px-2.5 py-1.5 text-xs font-semibold transition-colors",
+                                on
+                                  ? "border-primary/60 bg-primary-soft text-primary"
+                                  : "border-border text-muted-foreground hover:bg-muted",
+                              )}
+                            >
+                              {g.label}
+                            </button>
+                          );
+                        })}
+                      </div>
+                      <p className="mt-1.5 text-[11px] text-muted-foreground">
+                        None selected = every group.
+                      </p>
+                    </div>
+                  )}
+                </section>
+              )}
+
               {/* Contact state — the single most important dial decision, so it
                   leads. It's orthogonal to status: they AND together. */}
               <section>
@@ -342,6 +473,50 @@ export function SessionBuilder({
                   </div>
                 </div>
               </section>
+
+              {/* Dialing behavior — the queue-fidelity contract. */}
+              <section>
+                <h3 className="mb-2 text-xs font-bold uppercase tracking-wide text-muted-foreground">
+                  Dialing behavior
+                </h3>
+                <div className="space-y-2">
+                  <label className="flex cursor-pointer items-center justify-between gap-3 rounded-xl border border-border/70 bg-surface/50 px-4 py-3">
+                    <span>
+                      <span className="block text-sm font-medium">
+                        Dial exactly this list, in this order
+                      </span>
+                      <span className="block text-xs text-muted-foreground">
+                        The dialer will only ever call leads from the session you just
+                        built, top to bottom. Turn off to let it pick from your whole
+                        eligible pool instead (never-dialed first).
+                      </span>
+                    </span>
+                    <input
+                      type="checkbox"
+                      checked={strictOrder}
+                      onChange={(e) => setStrictOrder(e.target.checked)}
+                      className="h-5 w-5 accent-[hsl(var(--primary))]"
+                    />
+                  </label>
+                  <label className="flex cursor-pointer items-center justify-between gap-3 rounded-xl border border-border/70 bg-surface/50 px-4 py-3">
+                    <span>
+                      <span className="block text-sm font-medium">
+                        Auto-refill when the list runs out
+                      </span>
+                      <span className="block text-xs text-muted-foreground">
+                        When every lead in this session is done, keep dialing from your
+                        eligible pool — you’ll be told each time a refill happens.
+                      </span>
+                    </span>
+                    <input
+                      type="checkbox"
+                      checked={refill}
+                      onChange={(e) => setRefill(e.target.checked)}
+                      className="h-5 w-5 accent-[hsl(var(--primary))]"
+                    />
+                  </label>
+                </div>
+              </section>
             </div>
 
             {/* Summary + load */}
@@ -366,19 +541,31 @@ export function SessionBuilder({
                   </span>
                 )}
               </div>
-              <Button
-                onClick={load}
-                disabled={loading || !willCall}
-                className="gap-2"
-                size="lg"
-              >
-                {loading ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  <PhoneOutgoing className="h-4 w-4" />
+              <div className="flex items-center gap-2">
+                {onQuickLoad && (
+                  <Button
+                    variant="ghost"
+                    size="lg"
+                    onClick={onQuickLoad}
+                    title="Skip the builder: load your default dial queue (new / no-answer / callback, upload order, strict list)."
+                  >
+                    Quick load
+                  </Button>
                 )}
-                Load {willCall.toLocaleString()} leads
-              </Button>
+                <Button
+                  onClick={load}
+                  disabled={loading || !willCall}
+                  className="gap-2"
+                  size="lg"
+                >
+                  {loading ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <PhoneOutgoing className="h-4 w-4" />
+                  )}
+                  Load {willCall.toLocaleString()} leads
+                </Button>
+              </div>
             </div>
           </motion.div>
         </motion.div>
