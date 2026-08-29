@@ -190,9 +190,57 @@ first real end-to-end evidence for any Phase 2 UI — both new routes loaded on
 - Both nav entries appear in the right groups for an Owner; no console errors
   or hydration warnings on a fresh load of either route.
 
+### Independent adversarial review (4 lenses × 2 refuters, 70 agents)
+
+First run died on a session quota with all four finders lost — recorded as
+**zero coverage, not a pass**, and re-run. The re-run produced 34 distinct
+findings; 5 refuter agents failed on API safeguards, so a few verdicts are
+unresolved and were triaged by hand. Everything below was reproduced before
+being fixed.
+
+**CRITICAL — `9a486af`. Promised callback times were read in the wrong time
+frame.** `callbacks.due_at` and `appointments.scheduled_at` hold FLOATING
+wall-clock strings; the convention is enforced elsewhere (`rescheduleCallback`
+REJECTS any value carrying an offset, and lanes.ts warns that parsing one as
+an instant "shifts by the viewer's UTC offset"). My Day and the Command Center
+compared that column against `new Date().toISOString()`. In America/Chicago a
+callback promised for 2pm was counted overdue from 9am, badged red, and pushed
+by the who-next card as "it's due now" with a primary Call button — driving a
+rep to break a promise by calling five hours early. East-of-UTC orgs failed the
+opposite way, hiding genuinely late callbacks; and after the day's UTC rollover
+the "due later today" range went empty every evening. Fixed with
+`zonedFloatingNow` (comparisons), `floatingRelativeTime` (display, which had
+the same shift on screen) and `floatingToUtcIso` (so
+`opportunities.next_action_due_at` holds a real instant, since
+`app_pipeline_leaks` compares it against `now()`). 12 tests pin all three,
+including one that demonstrates the old comparison's failure directly.
+
+**Demo mode was broken app-wide, not just here.** `createServerClient("", "")`
+throws "Your project's URL and Key are required" — reproduced at a node
+prompt — so `getScope()` threw whenever Supabase was unconfigured, taking down
+every page that resolves a scope during render: `/today` plus five
+**pre-existing** pages (callbacks, leads, dialer, assignments, campaign edit).
+`getScope()` now returns null when Supabase is absent, which every caller
+already handled.
+
+**Also fixed (`318c8e5`):** two more saturating counts on My Day (open tasks
+and appointments-today were page lengths behind LIMIT 50); signals fetched
+org-wide and filtered to the viewer only afterwards, so a rep in a busy org
+could see none of their own; a DST fall-back day collapsing My Day's day
+window to zero width (now+24h can land on the same local date in a 25-hour
+day); `reserveCallWorkItems` taking items explicitly assigned to another rep;
+the Command Center's "untouched new" counting opportunities whose lead was
+archived or DNC'd; a failed scan page leaving `scanCapped` false so a
+truncated rep table read as the whole floor; an unordered speed-to-lead
+sample; the reactivation badge showing a pre-exclusion count directly above a
+sentence promising exclusions; the reactivation exclusion report being written
+to state and then immediately navigated away from (it now travels in the
+session summary the dialer displays); hardcoded "Appointments" where the
+workspace's own noun belongs; and no rate limit on `GET /api/reactivation`.
+
 **Not yet evidenced (honest):** perf/a11y sweeps and multi-role/multi-tenant
 walkthroughs of the Phase 2 surfaces (only the Owner role on one org was
 loaded); the opportunity-parity check riding reconcile-data; orchestrate-cron
-execution (still unscheduled — it activates when the first org opts in). The
-independent adversarial workflow's first run died on a session quota limit
-and was re-run; its confirmed findings are logged separately when they land.
+execution (still unscheduled — it activates when the first org opts in). Five
+refuter agents died mid-review, so a handful of lower-severity verdicts rest
+on hand triage rather than two independent votes.
