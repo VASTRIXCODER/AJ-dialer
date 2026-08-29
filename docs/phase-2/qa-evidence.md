@@ -168,8 +168,31 @@ defects found and fixed in `0d91fe1`:
 and the hot queue) and zero raw hex values — the two mechanical rules from
 docs/final_phase_ui.md that a grep can settle.
 
-**Not yet evidenced (honest):** e2e/perf/a11y sweeps of the Phase 2 surfaces;
-the opportunity-parity check riding reconcile-data; orchestrate-cron execution
-(still unscheduled — it activates when the first org opts in). The independent
-adversarial workflow's first run died on a session quota limit and was
-re-run; its confirmed findings are logged separately when they land.
+**Live production verification (2026-08-29, VICC / Donny's Dialer, Owner):**
+first real end-to-end evidence for any Phase 2 UI — both new routes loaded on
+`aiatworkdialer.vercel.app` against live data.
+
+- `/today` renders: one primary action (the `whoNext`-null fallback, "Open the
+  dialer" — correct, since this Owner holds no callbacks of their own), the
+  honest empty state, and the end-of-day strip labeled "Today so far · you ·
+  org time" with real zeros that are genuinely zero, not loading artifacts.
+- `/command` renders against the real book: **8 overdue callbacks · 76
+  callbacks with no time set · 10,233 untouched new leads · speed to first
+  call 621m (median, first attempts today) · pipeline leaks 12,363 open**,
+  sampled 8 with owner/stage/last-touch and labeled "Showing 8 of 12363".
+  The floor table lists the org's four real reps.
+- **`app_pipeline_leaks` is confirmed working against production data** — the
+  §5 leak detector had shipped in PART 37 with no consumer since.
+- **A design decision validated by live data:** the Callbacks page reports
+  "Due now 77" for this org; the Command Center resolves the same population
+  as 8 genuinely overdue + 76 *unscheduled*. The spec's rule (an item with no
+  agreed time is not "due") turns out to describe 76 of those 77 rows.
+- Both nav entries appear in the right groups for an Owner; no console errors
+  or hydration warnings on a fresh load of either route.
+
+**Not yet evidenced (honest):** perf/a11y sweeps and multi-role/multi-tenant
+walkthroughs of the Phase 2 surfaces (only the Owner role on one org was
+loaded); the opportunity-parity check riding reconcile-data; orchestrate-cron
+execution (still unscheduled — it activates when the first org opts in). The
+independent adversarial workflow's first run died on a session quota limit
+and was re-run; its confirmed findings are logged separately when they land.

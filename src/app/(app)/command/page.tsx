@@ -207,7 +207,7 @@ export default async function CommandCenterPage() {
       {leaks.count > 0 && (
         <SectionCard
           title={`Pipeline leaks · ${leaks.count} open`}
-          description={`Open ${vocab.leadNounPlural} with no next action scheduled and no task holding them — whole org, right now`}
+          description={`Worked at least once, then stalled: no next action scheduled and no task holding them. Never-called ${vocab.leadNounPlural} are the untouched queue above, not a leak.`}
         >
           <ul className="space-y-2">
             {leaks.sample.map((leak) => (

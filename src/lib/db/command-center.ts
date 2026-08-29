@@ -172,9 +172,15 @@ async function readCommandCenter(input: {
       .is("resolved_at", null)
       .gte("severity", 4)
       .or(`expires_at.is.null,expires_at.gt.${nowIso}`),
+    // Leaks = work that WAS in motion and stalled. Never-attempted leads are
+    // excluded on purpose: they are already the "untouched new" queue above,
+    // and counting the same backlog in two panels is how a supervisor ends up
+    // with two numbers describing one problem. attempt_count > 0 is the line.
     admin
       .rpc("app_pipeline_leaks", { p_org: input.orgId }, { count: "exact" })
       .select("id, lead_id, stage, owner_id, last_touched_at")
+      .gt("attempt_count", 0)
+      .order("last_touched_at", { ascending: true, nullsFirst: false })
       .limit(8),
     admin
       .from("playbooks")
