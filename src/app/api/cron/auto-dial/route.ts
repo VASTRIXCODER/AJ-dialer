@@ -1,6 +1,11 @@
 import { NextResponse } from "next/server";
 import { breakerStatus } from "@/lib/ai-call-breaker";
 import { placeAiCallForLead } from "@/lib/ai-dialer";
+import {
+  sanitizeDialingPolicy,
+  sanitizeRetryPolicy,
+  type CampaignDialingMode,
+} from "@/lib/campaign-policy";
 import { touchLeadContacted } from "@/lib/db/leads";
 import {
   claimDialLeads,
@@ -12,7 +17,47 @@ import { nextDialSeq } from "@/lib/dialer/rotation-server";
 import { zonedDayKey } from "@/lib/dialer/schedule";
 import { fetchQuota, isElevenLabsConfigured } from "@/lib/elevenlabs";
 import { listActiveOrgsWithSettings } from "@/lib/org/membership";
+import { createAdminClient, isAdminConfigured } from "@/lib/supabase/admin";
 import { getPublicBaseUrl } from "@/lib/twilio";
+
+/** Guard the batched campaign read: campaign_id is TEXT on leads, and one
+ *  non-uuid value in an `.in()` list would fail the WHOLE policy query. */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * campaign id → the slice of its policy this cron enforces. One batched read
+ * per org tick; campaigns without any policy simply aren't in the map. A
+ * failed read FAILS OPEN (empty map): the org's own automation rules were
+ * already enforced by the claim, so worst case a campaign preference is
+ * skipped for one tick — better than the whole run halting.
+ */
+async function campaignPolicies(
+  orgId: string,
+  campaignIds: (string | undefined)[],
+): Promise<Map<string, { modes: CampaignDialingMode[]; cooldownHours: number }>> {
+  const out = new Map<string, { modes: CampaignDialingMode[]; cooldownHours: number }>();
+  const ids = [...new Set(campaignIds.filter((id): id is string => Boolean(id && UUID_RE.test(id))))];
+  if (!ids.length || !isAdminConfigured()) return out;
+  try {
+    const { data } = await createAdminClient()
+      .from("campaigns")
+      .select("id,dialing_policy,retry_policy")
+      .eq("org_id", orgId)
+      .in("id", ids.slice(0, 200));
+    for (const r of (data ?? []) as Record<string, unknown>[]) {
+      const dp = sanitizeDialingPolicy(r.dialing_policy);
+      const rp = sanitizeRetryPolicy(r.retry_policy);
+      if (!dp && !rp) continue;
+      out.set(String(r.id), {
+        modes: dp?.modes ?? [],
+        cooldownHours: rp?.cooldownHours ?? 0,
+      });
+    }
+  } catch {
+    /* fail open — org-level rules still hold */
+  }
+  return out;
+}
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -118,9 +163,40 @@ async function runAutoDial(req: Request) {
       continue;
     }
 
+    // ── CAMPAIGN POLICY SEAM (Phase 1 · D4) ─────────────────────────────────
+    // The claim above is ORG-wide; a campaign can only narrow it. For claimed
+    // leads that belong to a campaign with a dialing/retry policy:
+    //  • dialing_policy.modes excluding "ai" ⇒ this cron must not touch the
+    //    lead — release it immediately for the manual dialer.
+    //  • retry_policy.cooldownHours LONGER than the org's ⇒ re-check the
+    //    lead's last contact against the campaign's own gate and release it
+    //    while still cooling. (The claim already enforced the org cooldown.)
+    // Per-campaign maxAttempts renders as "exhausted" in the campaign funnel;
+    // enforcing it at claim time stays with the org-wide p_max_attempts knob.
+    const policies = await campaignPolicies(org.id, leads.map((l) => l.campaignId));
+    const blockedIds: string[] = [];
+    const dialable = leads.filter((lead) => {
+      const p = lead.campaignId ? policies.get(lead.campaignId) : undefined;
+      if (!p) return true;
+      const aiAllowed = p.modes.length === 0 || p.modes.includes("ai");
+      const cooldownMs = p.cooldownHours * 3_600_000;
+      const cooling =
+        cooldownMs > 0 &&
+        Boolean(lead.lastContactedAt) &&
+        now.getTime() - Date.parse(lead.lastContactedAt as string) < cooldownMs;
+      if (aiAllowed && !cooling) return true;
+      blockedIds.push(lead.id);
+      return false;
+    });
+    if (blockedIds.length) await releaseDialLeads(org.id, reserver, blockedIds);
+    if (!dialable.length) {
+      results.push({ org: org.name, placed: 0, note: "campaign policy excluded all claims" });
+      continue;
+    }
+
     let placed = 0;
     let capped = false;
-    for (const lead of leads) {
+    for (const lead of dialable) {
       if (placed >= a.callsPerRun) break;
       // Atomic per-day cap — the counter key embeds the org's local day, so it
       // resets every morning without a cleanup job.
@@ -136,8 +212,14 @@ async function runAutoDial(req: Request) {
       // markLeadAttempted additionally bumps attempt_count, sets the
       // next-eligible gate, and releases this lead's reservation in one shot.
       await touchLeadContacted(org.id, lead.id, now.toISOString());
+      // The next-eligible gate honors the STRICTER of the org's and the
+      // lead's campaign's cooldown, so a long campaign cooldown holds even
+      // though the claim itself only knows the org-wide one.
+      const campaignCooldownH = lead.campaignId
+        ? (policies.get(lead.campaignId)?.cooldownHours ?? 0)
+        : 0;
       await markLeadAttempted(org.id, lead.id, {
-        cooldownMinutes: Math.max(0, a.cooldownHours) * 60,
+        cooldownMinutes: Math.max(0, a.cooldownHours, campaignCooldownH) * 60,
         at: now,
       });
       const r = await placeAiCallForLead({
@@ -162,9 +244,10 @@ async function runAutoDial(req: Request) {
     }
     // Release the claims we didn't consume this tick (leads beyond
     // callsPerRun/the daily cap, or everything after a mid-run halt) so
-    // interactive dialers aren't blocked for the TTL.
-    const dialedIds = new Set(leads.slice(0, placed + (halted ? 1 : 0)).map((l) => l.id));
-    const leftover = leads.filter((l) => !dialedIds.has(l.id)).map((l) => l.id);
+    // interactive dialers aren't blocked for the TTL. Campaign-blocked leads
+    // were already released above, so this walks the dialable set only.
+    const dialedIds = new Set(dialable.slice(0, placed + (halted ? 1 : 0)).map((l) => l.id));
+    const leftover = dialable.filter((l) => !dialedIds.has(l.id)).map((l) => l.id);
     if (leftover.length) await releaseDialLeads(org.id, reserver, leftover);
 
     results.push({ org: org.name, placed, ...(capped ? { capped: true } : {}) });

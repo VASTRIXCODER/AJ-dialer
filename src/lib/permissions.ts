@@ -50,6 +50,7 @@ export const PERMISSIONS = [
   "leads.import",
   "leads.export", // pull the book out as a file (bulk-data action, manager+ by default)
   "leads.reverseSearch", // skip-trace a lead's name/address for a phone number
+  "assignments.manage", // allocate lead assignments & run the Assignment Center — manager+
   "dialer.ai", // launch AI agent calls (reps are manual-only by default)
   "monitor.view", // open the Live Monitor (see in-progress AI + rep calls) — manager+ by default
   "monitor.listen", // listen to live audio of in-progress calls — manager+ by default
@@ -76,6 +77,7 @@ export const ROLE_PERMISSIONS: Record<OrgRole, Permission[]> = {
     "leads.import",
     "leads.export",
     "leads.reverseSearch",
+    "assignments.manage",
     "companies.manage",
     "dialer.ai",
     "monitor.view",
@@ -120,6 +122,7 @@ export const PERMISSION_LABEL: Record<Permission, string> = {
   "leads.import": "Import leads",
   "leads.export": "Export leads",
   "leads.reverseSearch": "Reverse-search a lead for a phone number",
+  "assignments.manage": "Allocate & manage lead assignments",
   "dialer.ai": "Use the AI dialer",
   "monitor.view": "Open the Live Monitor",
   "monitor.listen": "Listen to live calls",

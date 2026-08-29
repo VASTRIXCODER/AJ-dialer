@@ -76,6 +76,9 @@ export type DialerCampaign = {
   name: string;
   scriptA?: string;
   scriptB?: string;
+  /** The campaign's wrap-up subset (`disposition_keys`). Empty/absent = every
+   *  enabled disposition; non-empty narrows the OutcomeGrid to these keys. */
+  dispositionKeys?: string[];
 };
 
 type Campaign = DialerCampaign;
@@ -102,6 +105,11 @@ interface DialerContextValue {
    *  is the caller's job — this only moves the client's copy into step. */
   applyLeadPatch: (leadId: string, patch: Partial<Lead>) => void;
   loadLeads: () => Promise<Lead[]>;
+  /** Scope every queue fetch to ONE assignment (?assignment= on the queue
+   *  API — server-verified). null clears the scope. Takes effect on the next
+   *  loadLeads(); stored in a ref so mid-session refetches (auto-dial laps)
+   *  keep the scope without re-rendering the provider. */
+  setAssignmentScope: (id: string | null) => void;
   loadingLeads: boolean;
   loadMsg: string | null;
   /** Seed initial data + turn the engine on. Called by the dialer page on mount. */
@@ -202,11 +210,21 @@ export function DialerProvider({
     setQueue((q) => q.map((l) => (l.id === leadId ? { ...l, ...patch } : l)));
   }, []);
 
+  // Assignment scope for queue fetches — a ref, not state: auto-dial's lap
+  // refetch runs from an effect closure and must always see the CURRENT scope.
+  const assignmentRef = useRef<string | null>(null);
+  const setAssignmentScope = useCallback((id: string | null) => {
+    assignmentRef.current = id;
+  }, []);
+
   async function loadLeads(): Promise<Lead[]> {
     setLoadingLeads(true);
     setLoadMsg(null);
     try {
-      const res = await fetch("/api/leads/queue", { cache: "no-store" });
+      const scoped = assignmentRef.current
+        ? `?assignment=${encodeURIComponent(assignmentRef.current)}`
+        : "";
+      const res = await fetch(`/api/leads/queue${scoped}`, { cache: "no-store" });
       const json = (await res.json().catch(() => ({}))) as {
         leads?: Lead[];
         total?: number;
@@ -315,6 +333,7 @@ export function DialerProvider({
     campaigns,
     applyLeadPatch,
     loadLeads,
+    setAssignmentScope,
     loadingLeads,
     loadMsg,
     activate,

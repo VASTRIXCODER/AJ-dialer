@@ -2,8 +2,10 @@ import { Headphones, Users } from "lucide-react";
 import { DialerClient } from "@/components/dialer/dialer-client";
 import { PageContainer, PageHeader } from "@/components/shared/page-header";
 import { Badge } from "@/components/ui/badge";
+import { getAssignment } from "@/lib/db/assignments";
 import { getCampaigns } from "@/lib/db/pipeline";
 import { getDialQueueCount } from "@/lib/db/leads";
+import { getScope } from "@/lib/db/scope";
 import { getViewer } from "@/lib/org/membership";
 import { isSolarVertical } from "@/lib/org/vertical";
 import { DEFAULT_FEATURES, resolveDialerAccess } from "@/lib/org/settings";
@@ -31,6 +33,18 @@ export default async function DialerPage({
   const campaign = one(sp.campaign);
   const dial = one(sp.dial);
   const name = one(sp.name);
+  // ?assignment= — a "Continue" click from My Assignments. Resolve the pack
+  // label server-side (getAssignment re-checks the caller may see it); an
+  // unresolvable id simply drops the scope rather than erroring the dialer.
+  const assignmentParam = one(sp.assignment);
+  let assignment: { id: string; label: string } | null = null;
+  if (assignmentParam) {
+    const scope = await getScope();
+    if (scope) {
+      const record = await getAssignment(scope, assignmentParam);
+      if (record) assignment = { id: record.id, label: record.label };
+    }
+  }
   // Only used for the header badge copy — the dialer engine + its full access
   // gates now live in the app-wide DialerProvider (AppShell).
   const { manualEnabled } = resolveDialerAccess(
@@ -40,12 +54,28 @@ export default async function DialerPage({
   const dialCampaigns = campaigns
     .filter((c) => c.status !== "completed")
     // Scripts ride along so the in-call Script card can show the assigned
-    // variant without another fetch.
-    .map((c) => ({ id: c.id, name: c.name, scriptA: c.scriptA, scriptB: c.scriptB }));
+    // variant without another fetch; disposition_keys ride along so the wrap-up
+    // grid can narrow to the campaign's own subset.
+    .map((c) => ({
+      id: c.id,
+      name: c.name,
+      scriptA: c.scriptA,
+      scriptB: c.scriptB,
+      dispositionKeys: c.dispositionKeys,
+    }));
 
   // Sanitise callback params — only digits/+ allowed in phone to prevent injection.
   const callbackPhone = dial ? dial.replace(/[^\d+]/g, "") : undefined;
   const callbackName = name ? decodeURIComponent(name).slice(0, 80) : undefined;
+  // ?callback=<uuid> — the Callbacks board's claim→dial deep link. Riding it
+  // onto the disposition is what finally CLOSES the callback when the call is
+  // filed. Strictly a uuid; anything else is dropped, never forwarded.
+  const callbackParam = one(sp.callback);
+  const callbackId =
+    callbackParam &&
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(callbackParam)
+      ? callbackParam
+      : undefined;
 
   return (
     <PageContainer>
@@ -69,9 +99,15 @@ export default async function DialerPage({
       <DialerClient
         queue={[]}
         campaigns={dialCampaigns}
+        // The org's stored disposition taxonomy — the wrap-up grid renders the
+        // admin's own buttons (resolved client-side; absent = the canonical 9).
+        dispositions={viewer.org?.settings.dispositions ?? null}
         initialCampaign={campaign ?? ""}
         callbackPhone={callbackPhone}
         callbackName={callbackName}
+        callbackId={callbackId}
+        assignmentId={assignment?.id}
+        assignmentLabel={assignment?.label}
       />
     </PageContainer>
   );

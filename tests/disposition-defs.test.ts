@@ -149,6 +149,88 @@ describe("resolveDispositionDefs", () => {
   });
 });
 
+describe("keyed round-trip (the new editor's own shape)", () => {
+  it("keeps a renamed SYSTEM row on its key — never demotes it to a custom row", () => {
+    // The exact failure this path exists to prevent: rename "Appointment" to
+    // "Meeting set" and the label no longer alias-matches any system row, so
+    // the legacy path would fork a disabled x_meeting_set neutral_end row.
+    const defs = migrateLegacyDispositions([
+      {
+        key: "appointment_booked",
+        label: "Meeting set",
+        tone: "success",
+        behavior: "books_appointment",
+        enabled: true,
+        system: true,
+        sortOrder: 0,
+      },
+    ]);
+    expect(defs[0].key).toBe("appointment_booked");
+    expect(defs[0].system).toBe(true);
+    expect(defs[0].label).toBe("Meeting set");
+    expect(defs[0].behavior).toBe("books_appointment");
+    expect(defs[0].enabled).toBe(true);
+  });
+
+  it("keeps a custom row's behavior + enabled through a save/load cycle", () => {
+    const saved = {
+      key: "x_left_with_spouse",
+      label: "Left with spouse",
+      tone: "warning",
+      behavior: "schedules_callback",
+      enabled: true,
+      system: false,
+      sortOrder: 0,
+    };
+    const defs = migrateLegacyDispositions([saved]);
+    expect(defs[0]).toMatchObject({
+      key: "x_left_with_spouse",
+      label: "Left with spouse",
+      behavior: "schedules_callback",
+      enabled: true,
+      system: false,
+    });
+    // Idempotent: resolving what resolve produced changes nothing.
+    const again = resolveDispositionDefs(resolveDispositionDefs([saved]));
+    expect(again.find((d) => d.key === "x_left_with_spouse")).toMatchObject({
+      behavior: "schedules_callback",
+      enabled: true,
+    });
+  });
+
+  it("system rows keep their SYSTEM behavior even if the blob claims otherwise", () => {
+    const defs = migrateLegacyDispositions([
+      { key: "do_not_call", label: "DNC", tone: "danger", behavior: "books_appointment" },
+    ]);
+    expect(defs[0].key).toBe("do_not_call");
+    expect(defs[0].behavior).toBe("marks_dnc");
+  });
+
+  it("validates a custom row's behavior against the union (garbage → neutral_end)", () => {
+    const defs = migrateLegacyDispositions([
+      { key: "x_weird", label: "Weird", tone: "neutral", behavior: "explode_lead" },
+    ]);
+    expect(defs[0].behavior).toBe("neutral_end");
+  });
+
+  it("respects enabled:false on keyed rows (except do_not_call, forced on)", () => {
+    const defs = resolveDispositionDefs([
+      { key: "voicemail", label: "Voicemail", tone: "neutral", enabled: false },
+      { key: "do_not_call", label: "Do not call", tone: "danger", enabled: false },
+    ]);
+    expect(defs.find((d) => d.key === "voicemail")!.enabled).toBe(false);
+    expect(defs.find((d) => d.key === "do_not_call")!.enabled).toBe(true);
+  });
+
+  it("falls back to label matching when a keyed row's key is unrecognizable", () => {
+    const defs = migrateLegacyDispositions([
+      { key: "TOTALLY_bogus!", label: "No answer", tone: "neutral" },
+    ]);
+    expect(defs[0].key).toBe("no_answer");
+    expect(defs[0].system).toBe(true);
+  });
+});
+
 describe("customDispositionKey", () => {
   it("slugs spaces and punctuation into x_ keys", () => {
     expect(customDispositionKey("Left with spouse")).toBe("x_left_with_spouse");

@@ -1002,7 +1002,7 @@ export async function getLeadByPhoneAdmin(
   }
 }
 
-export async function getDialQueue(): Promise<Lead[]> {
+export async function getDialQueue(opts?: { assignmentId?: string }): Promise<Lead[]> {
   // Scope matches the Leads tab (getLeads):
   //   • Rep         → own-only. Reps never dial a teammate's leads.
   //   • Supervisor  → the whole org's pool (owner/admin/manager). They see the
@@ -1022,7 +1022,16 @@ export async function getDialQueue(): Promise<Lead[]> {
       (l) => DIALABLE.includes(l.status) && l.phone.replace(/\D/g, "").length >= 10,
     );
 
-  if (!isSupabaseConfigured()) return dialable(fallbackLeads);
+  const assignmentId =
+    opts?.assignmentId && UUID.test(opts.assignmentId) ? opts.assignmentId : null;
+
+  if (!isSupabaseConfigured()) {
+    // Demo book carries no pack ids — an assignment-scoped demo queue is empty
+    // rather than silently the whole book.
+    return assignmentId
+      ? dialable(fallbackLeads.filter((l) => l.leadPackId === assignmentId))
+      : dialable(fallbackLeads);
+  }
   try {
     const supabase = await createClient();
     const {
@@ -1038,6 +1047,25 @@ export async function getDialQueue(): Promise<Lead[]> {
     const orgId = prof?.org_id ? String(prof.org_id) : null;
     const supervisor =
       Boolean(orgId) && isSupervisorRole(prof?.role) && isAdminConfigured();
+
+    // ?assignment= scopes the queue to ONE pack — after proving the pack is
+    // really this caller's to dial: it must live in their org, and a rep may
+    // only work a pack assigned to THEM (supervisors may dial any org pack).
+    // An unverifiable assignment returns an EMPTY queue, never the full book —
+    // silently widening scope is how leads get dialed twice.
+    if (assignmentId) {
+      if (!isAdminConfigured() || !orgId) return [];
+      const admin = createAdminClient();
+      const { data: pack } = await admin
+        .from("lead_packs")
+        .select("id, assigned_to")
+        .eq("id", assignmentId)
+        .eq("org_id", orgId)
+        .maybeSingle();
+      if (!pack) return [];
+      if (!supervisor && String((pack as Row).assigned_to ?? "") !== user.id) return [];
+    }
+
     // Suppression set for this org — scrubbed from the queue so a DNC number never
     // appears in the manual dialer (matching the auto-dialer + placement scrubs).
     const dnc = await getDncDigits(orgId);
@@ -1051,15 +1079,15 @@ export async function getDialQueue(): Promise<Lead[]> {
       // Org-wide pool via the service-role client (RLS would hide other reps'
       // rows), scoped in code to this org — never another org's leads.
       const admin = createAdminClient();
-      const rows = await fetchAllPaged(() =>
-        admin
+      const rows = await fetchAllPaged(() => {
+        let q = admin
           .from("leads")
           .select("*")
           .eq("org_id", orgId as string)
-          .in("status", DIALABLE)
-          .order("created_at", { ascending: true })
-          .order("id", { ascending: true }),
-      );
+          .in("status", DIALABLE);
+        if (assignmentId) q = q.eq("lead_pack_id", assignmentId);
+        return q.order("created_at", { ascending: true }).order("id", { ascending: true });
+      });
       return scrubDnc(dialable(rows.map((r) => rowToLead(r as Row))), dnc);
     }
 
@@ -1075,6 +1103,7 @@ export async function getDialQueue(): Promise<Lead[]> {
         .or(`owner_id.eq.${user.id},assigned_rep_id.eq.${user.id}`)
         .in("status", DIALABLE);
       if (orgId) q = q.eq("org_id", orgId);
+      if (assignmentId) q = q.eq("lead_pack_id", assignmentId);
       return q.order("created_at", { ascending: true }).order("id", { ascending: true });
     });
     return scrubDnc(dialable(rows.map((r) => rowToLead(r as Row))), dnc);

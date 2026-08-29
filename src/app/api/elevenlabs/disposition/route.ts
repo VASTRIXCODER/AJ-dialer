@@ -23,9 +23,13 @@ const VALID: CallOutcome[] = [
  * immediately and persists durably (account-scoped) when Supabase is connected.
  */
 export async function POST(req: Request) {
-  const { conversationId, outcome } = (await req.json().catch(() => ({}))) as {
+  const { conversationId, outcome, dispositionKey } = (await req
+    .json()
+    .catch(() => ({}))) as {
     conversationId?: string;
     outcome?: CallOutcome;
+    /** The disposition-def key pressed (system key or `x_*` custom). */
+    dispositionKey?: string;
   };
 
   if (!conversationId || !outcome || !VALID.includes(outcome)) {
@@ -60,7 +64,13 @@ export async function POST(req: Request) {
   });
 
   // Durable, account-scoped persistence (best-effort; needs Supabase + session).
-  const result = await setConversationDisposition(conversationId, outcome);
+  // Shape-guard the pressed key (system key or x_* slug); it rides along on the
+  // corrected record while `outcome` stays the canonical fact.
+  const key =
+    typeof dispositionKey === "string" && /^(x_)?[a-z0-9_]{1,64}$/.test(dispositionKey)
+      ? dispositionKey
+      : null;
+  const result = await setConversationDisposition(conversationId, outcome, key);
 
   return NextResponse.json({
     ok: true,

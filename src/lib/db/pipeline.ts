@@ -2,11 +2,28 @@ import "server-only";
 
 import { reconcileOwnerActiveCalls } from "../ai-call-reconcile";
 import {
+  emptyFunnel,
+  filterCallerIds,
+  filterDispositionKeys,
+  parseFunnel,
+  sanitizeAudience,
+  sanitizeDialingPolicy,
+  sanitizeGoals,
+  sanitizeRetryPolicy,
+  type CampaignAudience,
+  type CampaignDialingPolicy,
+  type CampaignFunnel,
+  type CampaignGoals,
+  type CampaignRetryPolicy,
+} from "../campaign-policy";
+import {
   scriptTestForCampaign,
   statsForCampaign,
   type CampaignStats,
   type ScriptTestStats,
 } from "../campaign-stats";
+import { resolveDispositionDefs } from "../dispositions/defs";
+import { mergeSettings } from "../org/settings";
 import { createAdminClient, isAdminConfigured } from "../supabase/admin";
 import { isSupabaseConfigured } from "../supabase/config";
 import { createClient } from "../supabase/server";
@@ -113,6 +130,20 @@ export interface CampaignRow {
   scriptA: string;
   /** Second script — when BOTH are set, an A/B test splits leads between them. */
   scriptB: string;
+  // Operational fields (schema PART 34) — sanitized on read, because the jsonb
+  // columns hold whatever the last writer stored (see src/lib/campaign-policy.ts).
+  description: string;
+  objective: string;
+  /** Set = the campaign is archived (hidden from active flows, kept for history). */
+  archivedAt: string | null;
+  audience: CampaignAudience | null;
+  dialingPolicy: CampaignDialingPolicy | null;
+  /** Subset of the org's caller-ID pool this campaign dials from. Empty = pool. */
+  callerIds: string[];
+  retryPolicy: CampaignRetryPolicy | null;
+  /** Disposition keys the wrap-up panel offers on this campaign. Empty = all. */
+  dispositionKeys: string[];
+  goals: CampaignGoals | null;
   stats: CampaignStats;
   /** Per-variant performance over calls where a script was actually shown. */
   scriptTest: ScriptTestStats;
@@ -176,6 +207,19 @@ export async function getCampaigns(): Promise<CampaignRow[]> {
       ownerId: r.owner_id ? s(r.owner_id) : null,
       scriptA: s(r.script_a),
       scriptB: s(r.script_b),
+      description: s(r.description),
+      objective: s(r.objective),
+      archivedAt: r.archived_at ? s(r.archived_at) : null,
+      audience: sanitizeAudience(r.audience),
+      dialingPolicy: sanitizeDialingPolicy(r.dialing_policy),
+      callerIds: Array.isArray(r.caller_ids)
+        ? (r.caller_ids as unknown[]).filter((v): v is string => typeof v === "string")
+        : [],
+      retryPolicy: sanitizeRetryPolicy(r.retry_policy),
+      dispositionKeys: Array.isArray(r.disposition_keys)
+        ? (r.disposition_keys as unknown[]).filter((v): v is string => typeof v === "string")
+        : [],
+      goals: sanitizeGoals(r.goals),
       stats: statsForCampaign(s(r.id), leads, calls),
       scriptTest: scriptTestForCampaign(s(r.id), calls),
     }));
@@ -218,9 +262,16 @@ export async function createCampaign(input: {
 }
 
 /** Load a campaign for a write + confirm the actor may touch it. */
-async function authorizeCampaign(
-  id: string,
-): Promise<{ admin: ReturnType<typeof createAdminClient> } | { error: string }> {
+async function authorizeCampaign(id: string): Promise<
+  | {
+      admin: ReturnType<typeof createAdminClient>;
+      /** The campaign's org (null for pre-org rows) — validation reads its settings. */
+      orgId: string | null;
+      /** The authenticated actor (audit rows, clone ownership). */
+      userId: string;
+    }
+  | { error: string }
+> {
   if (!isAdminConfigured()) return { error: "Service role not configured." };
   const scope = await getScope();
   if (!scope) return { error: "You must be signed in." };
@@ -233,7 +284,30 @@ async function authorizeCampaign(
   if (!data) return { error: "Campaign not found." };
   if (!canActOn(scope, data.owner_id as string, (data.org_id as string) ?? null))
     return { error: "You don't have access to this campaign." };
-  return { admin };
+  return { admin, orgId: (data.org_id as string) ?? null, userId: scope.userId };
+}
+
+/**
+ * The org's merged settings, for validating campaign policy writes against what
+ * the workspace actually has (caller-ID pool, resolved disposition keys). A
+ * failed read returns the defaults — which validate to the EMPTY pool, so a
+ * transient error can never let a foreign caller ID slip into storage.
+ */
+async function orgSettingsFor(
+  admin: ReturnType<typeof createAdminClient>,
+  orgId: string | null,
+) {
+  if (!orgId) return mergeSettings(null);
+  try {
+    const { data } = await admin
+      .from("organizations")
+      .select("settings")
+      .eq("id", orgId)
+      .maybeSingle();
+    return mergeSettings(data?.settings ?? null);
+  } catch {
+    return mergeSettings(null);
+  }
 }
 
 export async function setCampaignStatus(
@@ -254,26 +328,43 @@ const CAMPAIGN_STATUSES: ReadonlySet<string> = new Set<CampaignStatus>([
   "completed",
 ]);
 
+/** The sparse-edit surface PATCH /api/campaigns forwards (see updateCampaign). */
+export interface CampaignPatch {
+  name?: string;
+  utilityProvider?: string;
+  color?: string;
+  status?: CampaignStatus;
+  /** Trimmed on write; an empty string CLEARS the script (columns default ''). */
+  scriptA?: string;
+  scriptB?: string;
+  description?: string;
+  objective?: string;
+  /** true stamps archived_at (now), false clears it. */
+  archived?: boolean;
+  /** Sanitized on write; null clears back to "no audience configured". */
+  audience?: unknown;
+  dialingPolicy?: unknown;
+  /** Filtered to the org's own pool — foreign numbers are dropped, not stored. */
+  callerIds?: unknown;
+  retryPolicy?: unknown;
+  /** Filtered to the org's resolved disposition keys. Empty = all. */
+  dispositionKeys?: unknown;
+  goals?: unknown;
+}
+
 /**
- * Sparse edit of a campaign's own fields — name, utility provider, color,
- * status, scripts. Only the provided keys change; same authorization as
- * setCampaignStatus (any member the campaign's owner/org scope admits).
+ * Sparse edit of a campaign's own fields — identity, scripts, and the PART 34
+ * policy columns. Only the provided keys change; same authorization as
+ * setCampaignStatus (any member the campaign's owner/org scope admits). The
+ * jsonb payloads are UNTRUSTED request-body values and go through the
+ * campaign-policy sanitizers here, so storage only ever holds valid shapes —
+ * and caller IDs / disposition keys are validated against the ORG's own pool
+ * and resolved disposition set, never taken at the client's word.
  */
-export async function updateCampaign(
-  id: string,
-  patch: {
-    name?: string;
-    utilityProvider?: string;
-    color?: string;
-    status?: CampaignStatus;
-    /** Trimmed on write; an empty string CLEARS the script (columns default ''). */
-    scriptA?: string;
-    scriptB?: string;
-  },
-): Promise<Result> {
+export async function updateCampaign(id: string, patch: CampaignPatch): Promise<Result> {
   if (!isSupabaseConfigured())
     return { ok: false, error: "Connect Supabase to edit campaigns." };
-  const update: Record<string, string> = {};
+  const update: Record<string, unknown> = {};
   if (patch.name !== undefined) {
     const name = patch.name.trim();
     if (!name) return { ok: false, error: "Name is required." };
@@ -283,16 +374,129 @@ export async function updateCampaign(
   if (patch.color !== undefined) update.color = patch.color;
   if (patch.scriptA !== undefined) update.script_a = patch.scriptA.trim();
   if (patch.scriptB !== undefined) update.script_b = patch.scriptB.trim();
+  if (patch.description !== undefined) update.description = patch.description.trim().slice(0, 2000);
+  if (patch.objective !== undefined) update.objective = patch.objective.trim().slice(0, 500);
+  if (patch.archived !== undefined)
+    update.archived_at = patch.archived ? new Date().toISOString() : null;
+  if (patch.audience !== undefined)
+    update.audience = patch.audience === null ? null : sanitizeAudience(patch.audience);
+  if (patch.dialingPolicy !== undefined)
+    update.dialing_policy =
+      patch.dialingPolicy === null ? null : sanitizeDialingPolicy(patch.dialingPolicy);
+  if (patch.retryPolicy !== undefined)
+    update.retry_policy =
+      patch.retryPolicy === null ? null : sanitizeRetryPolicy(patch.retryPolicy);
+  if (patch.goals !== undefined)
+    update.goals = patch.goals === null ? null : sanitizeGoals(patch.goals);
   if (patch.status !== undefined) {
     if (!CAMPAIGN_STATUSES.has(patch.status))
       return { ok: false, error: "Status must be active, paused, or completed." };
     update.status = patch.status;
   }
-  if (Object.keys(update).length === 0) return { ok: false, error: "Nothing to update." };
+  const needsSettings = patch.callerIds !== undefined || patch.dispositionKeys !== undefined;
+  if (Object.keys(update).length === 0 && !needsSettings)
+    return { ok: false, error: "Nothing to update." };
   const auth = await authorizeCampaign(id);
   if ("error" in auth) return { ok: false, error: auth.error };
+  if (needsSettings) {
+    const settings = await orgSettingsFor(auth.admin, auth.orgId);
+    if (patch.callerIds !== undefined)
+      update.caller_ids = filterCallerIds(patch.callerIds, settings.dialing.callerIds);
+    if (patch.dispositionKeys !== undefined)
+      update.disposition_keys = filterDispositionKeys(
+        patch.dispositionKeys,
+        resolveDispositionDefs(settings.dispositions).map((d) => d.key),
+      );
+  }
   const { error } = await auth.admin.from("campaigns").update(update).eq("id", id);
   return error ? { ok: false, error: error.message } : { ok: true };
+}
+
+/**
+ * Duplicate a campaign's SETUP — identity, scripts, and every policy column —
+ * as a fresh row named "<name> (copy)". Stats are keyed by campaign_id, so the
+ * clone naturally starts at zero; it also starts PAUSED so duplicating an
+ * active play can't instantly double-dial the same audience. The clone is
+ * recorded in assignment_events (action 'campaign_cloned', pack_id null) so
+ * the audit trail explains where a near-identical campaign came from.
+ */
+export async function cloneCampaign(id: string): Promise<Result & { id?: string }> {
+  if (!isSupabaseConfigured())
+    return { ok: false, error: "Connect Supabase to clone campaigns." };
+  const auth = await authorizeCampaign(id);
+  if ("error" in auth) return { ok: false, error: auth.error };
+  try {
+    const { data: src, error: readErr } = await auth.admin
+      .from("campaigns")
+      .select("*")
+      .eq("id", id)
+      .maybeSingle();
+    if (readErr || !src) return { ok: false, error: "Campaign not found." };
+    const r = src as Row;
+    const { data: created, error } = await auth.admin
+      .from("campaigns")
+      .insert({
+        owner_id: auth.userId,
+        org_id: r.org_id ?? null,
+        name: `${s(r.name) || "Campaign"} (copy)`.slice(0, 200),
+        utility_provider: s(r.utility_provider),
+        status: "paused",
+        color: s(r.color) || "#3B82F6",
+        script_a: s(r.script_a),
+        script_b: s(r.script_b),
+        description: s(r.description),
+        objective: s(r.objective),
+        audience: r.audience ?? null,
+        dialing_policy: r.dialing_policy ?? null,
+        caller_ids: Array.isArray(r.caller_ids) ? r.caller_ids : [],
+        retry_policy: r.retry_policy ?? null,
+        disposition_keys: Array.isArray(r.disposition_keys) ? r.disposition_keys : [],
+        goals: r.goals ?? null,
+      })
+      .select("id")
+      .maybeSingle();
+    if (error || !created) return { ok: false, error: error?.message ?? "Clone failed." };
+    const newId = s((created as Row).id);
+    if (auth.orgId) {
+      // Best-effort audit row — a failed insert must not undo a good clone.
+      await auth.admin.from("assignment_events").insert({
+        org_id: auth.orgId,
+        pack_id: null,
+        actor_id: auth.userId,
+        action: "campaign_cloned",
+        payload: { sourceId: id, newId },
+      });
+    }
+    return { ok: true, id: newId };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Clone failed." };
+  }
+}
+
+/**
+ * The accurate, mutually-exclusive funnel for one campaign — a single RPC scan
+ * (app_campaign_funnel, schema PART 34) so the buckets can never double-count.
+ * Demo / degraded mode reads as all-zero rather than crashing the page.
+ */
+export async function getCampaignFunnel(
+  orgId: string | null,
+  campaignId: string,
+): Promise<CampaignFunnel> {
+  if (!isAdminConfigured() || !orgId) return emptyFunnel();
+  try {
+    const { data, error } = await createAdminClient().rpc("app_campaign_funnel", {
+      p_org: orgId,
+      p_campaign: campaignId,
+    });
+    if (error) {
+      console.error("[pipeline] getCampaignFunnel failed:", error.message);
+      return emptyFunnel();
+    }
+    return parseFunnel(data);
+  } catch (e) {
+    console.error("[pipeline] getCampaignFunnel failed:", e instanceof Error ? e.message : e);
+    return emptyFunnel();
+  }
 }
 
 export async function deleteCampaign(id: string): Promise<Result> {
@@ -386,7 +590,9 @@ export async function getCampaignRecentCalls(
     }
     return ((data ?? []) as Row[]).map((r) => ({
       id: s(r.id),
-      leadName: s(r.lead_name) || "Homeowner",
+      // "" when the record carries no name — the PAGE substitutes the org's
+      // own lead noun (vocabulary), never one vertical's word from down here.
+      leadName: s(r.lead_name),
       outcome: r.outcome ? (s(r.outcome) as CallOutcome) : null,
       durationSec: Number(r.duration_sec ?? 0) || 0,
       startedAt: s(r.started_at),
@@ -782,7 +988,9 @@ export async function getCallbacks(): Promise<CallbacksResult> {
       rows: ((listRes.data ?? []) as Row[]).map((r) => ({
         id: s(r.id),
         leadId: r.lead_id ? s(r.lead_id) : null,
-        leadName: s(r.lead_name) || "Homeowner",
+        // "" when the row carries no name — the callbacks PAGE substitutes the
+        // org's own lead noun (vocabulary), not a hardcoded vertical's word.
+        leadName: s(r.lead_name),
         phone: s(r.phone),
         reason: s(r.reason),
         status: s(r.status) || "due",

@@ -3,6 +3,7 @@ import {
   BarChart3,
   CalendarCheck,
   CheckCircle2,
+  ClipboardList,
   Headphones,
   LayoutDashboard,
   type LucideIcon,
@@ -73,6 +74,14 @@ export const navGroups: NavGroup[] = [
         vocabLabel: "LeadNounPlural",
         href: "/leads",
         icon: Users,
+        feature: "leads",
+      },
+      {
+        // Deliberately NO permission filter: managers land in the Assignment
+        // Center, reps in My Assignments — the route itself does the switch.
+        label: "Assignments",
+        href: "/assignments",
+        icon: ClipboardList,
         feature: "leads",
       },
       {

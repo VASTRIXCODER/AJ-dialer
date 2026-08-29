@@ -170,6 +170,20 @@ function asTone(value: unknown, fallback: DispositionTone): DispositionTone {
   return TONES.includes(value as DispositionTone) ? (value as DispositionTone) : fallback;
 }
 
+/** Every behavior, in a stable order — the admin editor's behavior select. */
+export const DISPOSITION_BEHAVIORS = Object.keys(
+  BEHAVIOR_TO_OUTCOME,
+) as DispositionBehavior[];
+
+function asBehavior(value: unknown, fallback: DispositionBehavior): DispositionBehavior {
+  return typeof value === "string" && value in BEHAVIOR_TO_OUTCOME
+    ? (value as DispositionBehavior)
+    : fallback;
+}
+
+/** key → system def, for the keyed round-trip below. Built once. */
+const SYSTEM_BY_KEY = new Map(SYSTEM_DISPOSITIONS.map((def) => [def.key, def]));
+
 /**
  * Key for an admin-created disposition: `x_` + slug. The prefix guarantees a
  * custom row can never shadow a canonical CallOutcome — today's nine or any
@@ -183,14 +197,23 @@ export function customDispositionKey(label: string): string {
 }
 
 /**
- * Lift the legacy `{ label, tone }[]` rows into keyed, behavior-carrying defs.
+ * Lift stored rows into keyed, behavior-carrying defs. Two generations coexist:
  *
- * Rows whose label matches a system disposition (case-insensitively, aliases
- * included) ADOPT the system key — the admin's wording and tone survive, but
- * the row now drives the real outcome it always visually promised. Labels we
- * can't place become DISABLED custom rows: preserved where the admin can see
- * and re-enable them, never silently dropped — an admin's four hand-typed
- * rows disappearing on upgrade would read as data loss.
+ *  • KEYED rows (the new editor's own DispositionDef shape) round-trip on their
+ *    KEY, never their label. This is load-bearing: an admin who renames
+ *    "Appointment" to "Meeting set" must keep the appointment_booked row —
+ *    re-deriving from the new wording (the legacy path below) would demote the
+ *    rename to a disabled custom row and kill the button they just edited.
+ *    System keys keep their system behavior (the key IS the meaning); custom
+ *    `x_*` keys keep their saved behavior/enabled, validated against the union.
+ *
+ *  • LEGACY `{ label, tone }` rows: labels matching a system disposition
+ *    (case-insensitively, aliases included) ADOPT the system key — the admin's
+ *    wording and tone survive, but the row now drives the real outcome it
+ *    always visually promised. Labels we can't place become DISABLED custom
+ *    rows: preserved where the admin can see and re-enable them, never
+ *    silently dropped — an admin's four hand-typed rows disappearing on
+ *    upgrade would read as data loss.
  */
 export function migrateLegacyDispositions(legacy: unknown): DispositionDef[] {
   if (!Array.isArray(legacy) || legacy.length === 0) {
@@ -200,16 +223,57 @@ export function migrateLegacyDispositions(legacy: unknown): DispositionDef[] {
   const claimed = new Set<string>();
   for (const row of legacy) {
     if (!row || typeof row !== "object") continue;
-    const label = (row as { label?: unknown }).label;
-    if (typeof label !== "string" || !label.trim()) continue;
-    const tone = (row as { tone?: unknown }).tone;
+    const r = row as {
+      key?: unknown;
+      label?: unknown;
+      tone?: unknown;
+      behavior?: unknown;
+      enabled?: unknown;
+    };
+    const label = typeof r.label === "string" ? r.label.trim() : "";
+
+    // ── Keyed rows (new editor shape): trust the key ─────────────────────────
+    if (typeof r.key === "string" && r.key) {
+      const system = SYSTEM_BY_KEY.get(r.key);
+      if (system) {
+        if (claimed.has(system.key)) continue;
+        claimed.add(system.key);
+        out.push({
+          ...system,
+          label: label || system.label,
+          tone: asTone(r.tone, system.tone),
+          // enabled is the admin's choice; behavior stays the system one.
+          enabled: r.enabled !== false,
+          sortOrder: out.length,
+        });
+        continue;
+      }
+      if (/^x_[a-z0-9_]+$/.test(r.key)) {
+        if (claimed.has(r.key)) continue;
+        claimed.add(r.key);
+        out.push({
+          key: r.key,
+          label: label || r.key.slice(2).replace(/_/g, " "),
+          tone: asTone(r.tone, "neutral"),
+          behavior: asBehavior(r.behavior, "neutral_end"),
+          enabled: r.enabled !== false,
+          system: false,
+          sortOrder: out.length,
+        });
+        continue;
+      }
+      // Unrecognizable key — fall through to the legacy label match below.
+    }
+
+    // ── Legacy { label, tone } rows: adopt or preserve by label ──────────────
+    if (!label) continue;
     const system = LABEL_TO_SYSTEM.get(normalizeLabel(label));
     if (system && !claimed.has(system.key)) {
       claimed.add(system.key);
       out.push({
         ...system,
-        label: label.trim(),
-        tone: asTone(tone, system.tone),
+        label,
+        tone: asTone(r.tone, system.tone),
         sortOrder: out.length,
       });
       continue;
@@ -219,8 +283,8 @@ export function migrateLegacyDispositions(legacy: unknown): DispositionDef[] {
     claimed.add(key);
     out.push({
       key,
-      label: label.trim(),
-      tone: asTone(tone, "neutral"),
+      label,
+      tone: asTone(r.tone, "neutral"),
       behavior: "neutral_end",
       enabled: false,
       system: false,

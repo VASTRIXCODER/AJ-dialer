@@ -190,7 +190,11 @@ export function RowActions({
               <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
             </div>
           ) : (
-            <OutcomeGrid onSelect={(outcome: CallOutcome) => post({ action: "disposition", leadId, outcome })} />
+            <OutcomeGrid
+              onSelect={(outcome: CallOutcome, dispositionKey: string) =>
+                post({ action: "disposition", leadId, outcome, dispositionKey })
+              }
+            />
           )}
           {err && <p className="mt-3 text-sm font-medium text-danger">{err}</p>}
         </Modal>

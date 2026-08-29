@@ -11,6 +11,15 @@ Running log of verification evidence per slice. Baseline first; every checkpoint
 
 ## Slice log
 
+### D1–D4 — 2026-08-28 (Checkpoint 4: work distribution & workflows)
+
+- Tests added: `assignments-plan` (progress buckets, due flags, allocation-source resolution), `campaign-policy` (sanitizers + stage-filter mapping), disposition rewires (12 new incl. keyed-row migration round-trip), `callback-lanes` (escalation tiers, claim staleness). Suite: **55 files / 641 tests** green; tsc clean; build passes.
+- Shipped behavior:
+  - **Assignment Center + My Assignments** (`/assignments`, role-switched): managers allocate N eligible leads (pool / smart list / custom filter) with an exact eligibility/exclusion preview before commit, per-assignment priority/due date/dialing mode/max attempts/cooldown, pause/resume/reclaim/reassign/archive with a full `assignment_events` audit feed; reps get Active/Overdue/Paused/Completed lanes with progress rings and "Continue →" into a dialer scoped to that assignment (`?assignment=`, server-verified). Never-dialed-first allocation is atomic (`FOR UPDATE SKIP LOCKED`). New `assignments.manage` permission (manager+).
+  - **Campaign builder v2** (`/campaigns/[id]/edit`): identity/audience (smart list or inline filter with live count)/dialing policy with calling windows/caller-ID subset/retry policy/scripts/disposition subset/goals + clone. The campaign detail page gains the accurate mutually-exclusive current-state funnel (`app_campaign_funnel`), every stage drillable to `/leads?f=`. The auto-dial cron now honors campaign dialing modes + longer campaign cooldowns (releases non-AI-mode leads). Vocab fixes: "Utility provider" label now resolves from the org schema; "Homeowner" fallback is gone.
+  - **Dispositions are real** (dead control fixed): the Admin editor now edits the taxonomy the reps' wrap-up grid actually renders — relabel/reorder/enable/add-custom with behavior picker (books appointment / schedules callback / suppresses number / …); `do_not_call` cannot be disabled; custom buttons ride `call_records.disposition` while `outcome` stays canonical (history + routing untouched); campaign disposition subsets filter the grid.
+  - **Callback workspace v2**: claim-before-dial (`app_claim_callback`, 15-min stale takeover — two reps can never work the same callback), escalating overdue tiers with derived "missed", priority flags, reassignment, source-call linkage, attempts count, and the completion loop — dispositioning a callback-launched call closes the callback automatically.
+
 ### C1–C5 — 2026-08-28 (Checkpoint 3: lead operations)
 
 - Tests added: `lead-timeline` (10), `csv-headerless` (the F8 regression suite incl. the single-row headerless file), `csv-delimiter`, `import-dedupe` (skip/update/create matrix + idempotent retry), `rollback-untouched`, `lead-counts-defs` (5), `leads-filter-demo` (7), `lead-count-filters` (5), `smart-list-migration` (5), `export-spec` (19); `lead-import-integrity` updated for the hasHeader API.

@@ -235,7 +235,23 @@ export interface OrgSettings {
     recordingDisclosure: string;
     consentRequired: boolean;
   };
-  dispositions: { label: string; tone: DispositionTone }[];
+  /**
+   * Stored wrap-up rows. Two generations coexist in live blobs: the legacy
+   * `{ label, tone }` pairs the old editor wrote, and the keyed rows the
+   * Dispositions editor writes now (key/behavior/enabled/system/sortOrder —
+   * see DispositionDef in src/lib/dispositions/defs.ts). NEVER read this array
+   * raw — always resolve through resolveDispositionDefs, which round-trips
+   * keyed rows and migrates legacy ones.
+   */
+  dispositions: {
+    label: string;
+    tone: DispositionTone;
+    key?: string;
+    behavior?: string;
+    enabled?: boolean;
+    system?: boolean;
+    sortOrder?: number;
+  }[];
   /** Qualification-panel customization (solar field + third toggle label). */
   qualify: QualifySettings;
   /**

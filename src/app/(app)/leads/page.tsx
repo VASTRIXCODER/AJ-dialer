@@ -1,4 +1,5 @@
-import { Users } from "lucide-react";
+import { ArrowRight, ClipboardList, Users } from "lucide-react";
+import Link from "next/link";
 import {
   LeadsTable,
   type LeadsTableFilters,
@@ -7,8 +8,8 @@ import {
 import { ExportDialog } from "@/components/leads/export-dialog";
 import { GroupUploadGrid } from "@/components/leads/group-upload-grid";
 import { LeadCountsRow, type LeadCountKey } from "@/components/leads/lead-counts-row";
-import { LeadPacksPanel } from "@/components/leads/lead-packs-panel";
 import { EmptyState } from "@/components/shared/empty-state";
+import { Card } from "@/components/ui/card";
 import { PageContainer, PageHeader } from "@/components/shared/page-header";
 import {
   getLeadsPage,
@@ -299,7 +300,30 @@ export default async function LeadsPage({
         miscCount={miscCount}
         missingCountyCount={missingCountyCount}
       />
-      {canManage && <LeadPacksPanel members={members} />}
+      {/* Pack assignment moved to the Assignment Center (Phase 1 · D1) — one
+          place to allocate, track, and rebalance work instead of an inline
+          panel. LeadPacksPanel stays in the tree, just unused. */}
+      {canManage && (
+        <Link href="/assignments" className="block">
+          <Card className="flex items-center justify-between gap-3 p-5 transition-shadow hover:shadow-lift">
+            <div className="flex items-center gap-2.5">
+              <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary-soft text-primary">
+                <ClipboardList className="h-4 w-4" />
+              </span>
+              <div>
+                <h3 className="font-semibold tracking-tight">Assignments</h3>
+                <p className="mt-0.5 text-sm text-muted-foreground">
+                  Allocate {vocab.leadNounPlural} to reps and track live progress
+                </p>
+              </div>
+            </div>
+            <span className="flex shrink-0 items-center gap-1 text-sm font-semibold text-primary">
+              Manage assignments
+              <ArrowRight className="h-3.5 w-3.5" />
+            </span>
+          </Card>
+        </Link>
+      )}
 
       {/* The 8 drillable tiles (app_lead_counts) — each links straight into
           the typed filter that computes it, so a number and its drilled row

@@ -2,6 +2,8 @@
 
 import {
   AlertTriangle,
+  ArrowDown,
+  ArrowUp,
   Building2,
   CheckCircle2,
   Copy,
@@ -21,11 +23,24 @@ import { SectionCard } from "@/components/shared/section-card";
 import { Button } from "@/components/ui/button";
 import { useConfirm } from "@/components/ui/confirm-dialog";
 import { Input, Label, Select, Textarea } from "@/components/ui/input";
+import { Tooltip } from "@/components/ui/tooltip";
 import { EMILY_SYSTEM_PROMPT } from "@/lib/ai/agent-prompt";
 import { describeDays, describeWindows } from "@/lib/dialer/schedule";
+import {
+  customDispositionKey,
+  DISPOSITION_BEHAVIORS,
+  resolveDispositionDefs,
+  type DispositionBehavior,
+  type DispositionDef,
+} from "@/lib/dispositions/defs";
 import { resolveLeadFields, type LeadFieldDef } from "@/lib/leads/field-schema";
 import type { OrgFull, OrgSettings, OrgUpdate } from "@/lib/org/membership";
-import { DEFAULT_DIALER_LAYOUT, type DialerLayout } from "@/lib/org/settings";
+import {
+  DEFAULT_DIALER_LAYOUT,
+  type DialerLayout,
+  type DispositionTone,
+} from "@/lib/org/settings";
+import { BEHAVIOR_DESCRIPTIONS } from "@/lib/status";
 import { DIALER_TEMPLATES, templateProfile } from "@/lib/org/templates";
 import { ROLE_LABEL } from "@/lib/permissions";
 import { cn } from "@/lib/utils";
@@ -136,9 +151,58 @@ export function OrgSettingsForm({
   const [compliance, setCompliance] = useState<OrgSettings["compliance"]>(
     org.settings.compliance,
   );
-  const [dispositions, setDispositions] = useState<OrgSettings["dispositions"]>(
-    org.settings.dispositions,
+  // The org's RESOLVED disposition taxonomy — keyed, behavior-carrying rows
+  // (legacy { label, tone } blobs are migrated on read). What's edited here is
+  // exactly what the wrap-up OutcomeGrid renders and the AI agent categorizes
+  // into, so this editor is no longer a dead control.
+  const [dispositions, setDispositions] = useState<DispositionDef[]>(() =>
+    resolveDispositionDefs(org.settings.dispositions),
   );
+  // The inline "add a custom disposition" mini-form (null = collapsed).
+  const [newDispo, setNewDispo] = useState<{
+    label: string;
+    behavior: DispositionBehavior;
+    tone: DispositionTone;
+  } | null>(null);
+
+  function updateDisposition(index: number, patch: Partial<DispositionDef>) {
+    setDispositions((prev) => prev.map((d, i) => (i === index ? { ...d, ...patch } : d)));
+  }
+
+  function moveDisposition(index: number, dir: -1 | 1) {
+    setDispositions((prev) => {
+      const j = index + dir;
+      if (j < 0 || j >= prev.length) return prev;
+      const next = [...prev];
+      [next[index], next[j]] = [next[j], next[index]];
+      return next.map((d, i) => ({ ...d, sortOrder: i }));
+    });
+  }
+
+  function addCustomDisposition() {
+    if (!newDispo) return;
+    const label = newDispo.label.trim();
+    if (!label) return;
+    // Key = x_<slug of the label>, minted ONCE here — later renames keep the
+    // key stable so historical call records keep pointing at this row.
+    const base = customDispositionKey(label);
+    const keys = new Set(dispositions.map((d) => d.key));
+    let key = base;
+    for (let n = 2; keys.has(key); n++) key = `${base}_${n}`;
+    setDispositions((prev) => [
+      ...prev,
+      {
+        key,
+        label,
+        tone: newDispo.tone,
+        behavior: newDispo.behavior,
+        enabled: true,
+        system: false,
+        sortOrder: prev.length,
+      },
+    ]);
+    setNewDispo(null);
+  }
   const [features, setFeatures] = useState<OrgSettings["features"]>(
     org.settings.features,
   );
@@ -959,60 +1023,200 @@ export function OrgSettingsForm({
         </div>
       </SectionCard>
 
-      {/* Dispositions */}
+      {/* Dispositions — the org's wrap-up taxonomy, live end-to-end */}
       <SectionCard
         title="Call dispositions"
         description="The outcomes reps & the AI can log on a call."
       >
+        <p className="mb-3 text-xs text-muted-foreground">
+          These are the buttons reps see at wrap-up. Reports keep the canonical outcome;
+          your custom label rides along on every call record.
+        </p>
         <div className="space-y-2">
           {dispositions.map((d, i) => (
-            <div key={i} className="flex items-center gap-2">
+            <div
+              key={d.key}
+              className={cn(
+                "flex flex-wrap items-center gap-2 rounded-xl border border-border/70 bg-surface/50 p-2",
+                !d.enabled && "opacity-60",
+              )}
+            >
+              {/* Reorder — the wrap-up grid renders in exactly this order */}
+              <div className="flex flex-col">
+                <button
+                  type="button"
+                  aria-label={`Move ${d.label} up`}
+                  disabled={i === 0}
+                  onClick={() => moveDisposition(i, -1)}
+                  className="flex h-4 w-6 items-center justify-center rounded text-muted-foreground transition-colors hover:text-foreground disabled:opacity-30"
+                >
+                  <ArrowUp className="h-3 w-3" />
+                </button>
+                <button
+                  type="button"
+                  aria-label={`Move ${d.label} down`}
+                  disabled={i === dispositions.length - 1}
+                  onClick={() => moveDisposition(i, 1)}
+                  className="flex h-4 w-6 items-center justify-center rounded text-muted-foreground transition-colors hover:text-foreground disabled:opacity-30"
+                >
+                  <ArrowDown className="h-3 w-3" />
+                </button>
+              </div>
               <Input
                 value={d.label}
-                onChange={(e) => {
-                  const next = [...dispositions];
-                  next[i] = { ...d, label: e.target.value };
-                  setDispositions(next);
-                }}
+                aria-label="Button label"
+                className="w-40 min-w-[9rem] flex-1"
+                onChange={(e) => updateDisposition(i, { label: e.target.value })}
               />
               <Select
-                className="w-36"
+                className="w-28"
+                aria-label="Tone"
                 value={d.tone}
-                onChange={(e) => {
-                  const next = [...dispositions];
-                  next[i] = { ...d, tone: e.target.value as typeof d.tone };
-                  setDispositions(next);
-                }}
+                onChange={(e) =>
+                  updateDisposition(i, { tone: e.target.value as DispositionTone })
+                }
               >
                 <option value="success">Positive</option>
                 <option value="warning">Neutral</option>
                 <option value="danger">Negative</option>
                 <option value="neutral">Info</option>
               </Select>
-              <button
-                type="button"
-                aria-label="Remove"
-                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-muted-foreground hover:bg-danger/10 hover:text-danger"
-                onClick={() => setDispositions(dispositions.filter((_, x) => x !== i))}
-              >
-                <X className="h-4 w-4" />
-              </button>
+              {d.system ? (
+                // System rows: the behavior IS what the key means — read-only.
+                <span className="inline-flex h-9 items-center rounded-lg bg-muted px-3 text-xs font-medium text-muted-foreground">
+                  {BEHAVIOR_DESCRIPTIONS[d.behavior]}
+                </span>
+              ) : (
+                <Select
+                  className="w-52"
+                  aria-label="What pressing it does"
+                  value={d.behavior}
+                  onChange={(e) =>
+                    updateDisposition(i, {
+                      behavior: e.target.value as DispositionBehavior,
+                    })
+                  }
+                >
+                  {DISPOSITION_BEHAVIORS.map((b) => (
+                    <option key={b} value={b}>
+                      {BEHAVIOR_DESCRIPTIONS[b]}
+                    </option>
+                  ))}
+                </Select>
+              )}
+              {d.key === "do_not_call" ? (
+                <Tooltip content="Legally load-bearing — can't be turned off.">
+                  <span className="inline-flex">
+                    <MiniSwitch checked disabled label="Do not call is always on" />
+                  </span>
+                </Tooltip>
+              ) : (
+                <MiniSwitch
+                  checked={d.enabled}
+                  label={d.enabled ? `Disable ${d.label}` : `Enable ${d.label}`}
+                  onChange={(v) => updateDisposition(i, { enabled: v })}
+                />
+              )}
+              {!d.system && (
+                <button
+                  type="button"
+                  aria-label={`Remove ${d.label}`}
+                  className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-muted-foreground hover:bg-danger/10 hover:text-danger"
+                  onClick={() =>
+                    setDispositions(dispositions.filter((_, x) => x !== i))
+                  }
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              )}
             </div>
           ))}
         </div>
+        {newDispo ? (
+          <div className="mt-3 flex flex-wrap items-end gap-2 rounded-xl border border-dashed border-border p-3">
+            <Field label="Button label" className="min-w-[10rem] flex-1">
+              <Input
+                autoFocus
+                value={newDispo.label}
+                placeholder="e.g. Left with spouse"
+                onChange={(e) => setNewDispo({ ...newDispo, label: e.target.value })}
+              />
+            </Field>
+            <Field label="What pressing it does">
+              <Select
+                className="w-52"
+                value={newDispo.behavior}
+                onChange={(e) =>
+                  setNewDispo({
+                    ...newDispo,
+                    behavior: e.target.value as DispositionBehavior,
+                  })
+                }
+              >
+                {DISPOSITION_BEHAVIORS.map((b) => (
+                  <option key={b} value={b}>
+                    {BEHAVIOR_DESCRIPTIONS[b]}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+            <Field label="Tone">
+              <Select
+                className="w-28"
+                value={newDispo.tone}
+                onChange={(e) =>
+                  setNewDispo({ ...newDispo, tone: e.target.value as DispositionTone })
+                }
+              >
+                <option value="success">Positive</option>
+                <option value="warning">Neutral</option>
+                <option value="danger">Negative</option>
+                <option value="neutral">Info</option>
+              </Select>
+            </Field>
+            <Button
+              size="sm"
+              className="gap-1.5"
+              disabled={!newDispo.label.trim()}
+              onClick={addCustomDisposition}
+            >
+              <Plus className="h-3.5 w-3.5" />
+              Add
+            </Button>
+            <Button size="sm" variant="ghost" onClick={() => setNewDispo(null)}>
+              Cancel
+            </Button>
+          </div>
+        ) : null}
         <div className="mt-3 flex items-center justify-between">
-          <Button
-            size="sm"
-            variant="outline"
-            className="gap-1.5"
+          {newDispo ? (
+            <span />
+          ) : (
+            <Button
+              size="sm"
+              variant="outline"
+              className="gap-1.5"
+              onClick={() =>
+                setNewDispo({ label: "", behavior: "neutral_end", tone: "neutral" })
+              }
+            >
+              <Plus className="h-3.5 w-3.5" />
+              Add disposition
+            </Button>
+          )}
+          <SaveBtn
+            k="disp"
             onClick={() =>
-              setDispositions([...dispositions, { label: "New outcome", tone: "neutral" }])
+              save(
+                {
+                  settings: {
+                    dispositions: dispositions.map((d, i) => ({ ...d, sortOrder: i })),
+                  },
+                },
+                "disp",
+              )
             }
-          >
-            <Plus className="h-3.5 w-3.5" />
-            Add disposition
-          </Button>
-          <SaveBtn k="disp" onClick={() => save({ settings: { dispositions } }, "disp")} />
+          />
         </div>
       </SectionCard>
 
@@ -1403,6 +1607,47 @@ function PillToggle({
       )}
     >
       {label}
+    </button>
+  );
+}
+
+/**
+ * Compact inline switch for dense per-row toggles (the Dispositions editor).
+ * `disabled` renders it inert but still checked — used for do_not_call, whose
+ * enabled state is legally load-bearing and not a preference.
+ */
+function MiniSwitch({
+  checked,
+  label,
+  disabled = false,
+  onChange,
+}: {
+  checked: boolean;
+  /** Accessible name — the visual is just the track. */
+  label: string;
+  disabled?: boolean;
+  onChange?: (v: boolean) => void;
+}) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      aria-label={label}
+      disabled={disabled}
+      onClick={() => onChange?.(!checked)}
+      className={cn(
+        "relative h-6 w-11 shrink-0 rounded-full transition-colors",
+        checked ? "bg-primary" : "bg-muted",
+        disabled && "cursor-not-allowed opacity-60",
+      )}
+    >
+      <span
+        className={cn(
+          "absolute left-0.5 top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform",
+          checked && "translate-x-5",
+        )}
+      />
     </button>
   );
 }

@@ -32,6 +32,9 @@ export const CALLBACK_STATUSES = ["due", "completed", "cancelled"] as const;
 export async function overrideLeadDisposition(
   leadId: string,
   outcome: CallOutcome,
+  /** The disposition-def key pressed (the org's taxonomy). Null/absent falls
+   *  back to the canonical outcome — always a valid system key. */
+  dispositionKey?: string | null,
 ): Promise<Result> {
   if (!isSupabaseConfigured() || !isAdminConfigured())
     return err("Connect Supabase to change dispositions.");
@@ -49,6 +52,7 @@ export async function overrideLeadDisposition(
   return applyManualDisposition(admin, {
     lead: lead as Parameters<typeof applyManualDisposition>[1]["lead"],
     outcome,
+    dispositionKey: dispositionKey ?? null,
     actorLabel: scope.supervisor ? "Re-dispositioned by supervisor" : "Re-dispositioned by rep",
   });
 }

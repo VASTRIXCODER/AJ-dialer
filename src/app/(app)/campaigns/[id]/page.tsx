@@ -1,6 +1,7 @@
 import {
   ArrowLeft,
   CalendarCheck,
+  Pencil,
   PhoneCall,
   PhoneOutgoing,
   Target,
@@ -9,7 +10,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { CampaignEditButton } from "@/components/campaigns/campaign-edit-button";
+import { CampaignFunnel, type FunnelStageView } from "@/components/campaigns/campaign-funnel";
 import { MetricCard } from "@/components/dashboard/metric-card";
 import { LeadOpenLink } from "@/components/leads/lead-360/lead-open-link";
 import { ReportFunnel } from "@/components/reports/report-sections";
@@ -17,9 +18,15 @@ import { PageContainer, PageHeader } from "@/components/shared/page-header";
 import { SectionCard } from "@/components/shared/section-card";
 import { Badge } from "@/components/ui/badge";
 import { buttonVariants } from "@/components/ui/button";
+import {
+  FUNNEL_STAGES,
+  FUNNEL_STAGE_META,
+  stageFilter,
+} from "@/lib/campaign-policy";
 import { isScriptTestRunning } from "@/lib/campaign-scripts";
 import { getLeadsPage } from "@/lib/db/leads";
-import { getCampaign, getCampaignRecentCalls } from "@/lib/db/pipeline";
+import { getCampaign, getCampaignFunnel, getCampaignRecentCalls } from "@/lib/db/pipeline";
+import { encodeFilterParam } from "@/lib/leads/filter-spec";
 import { getViewer } from "@/lib/org/membership";
 import { orgVocabulary } from "@/lib/org/vocabulary";
 import {
@@ -51,11 +58,35 @@ export default async function CampaignDetailPage({
     ]),
   ]);
   if (!c) notFound();
+  // Accurate, mutually-exclusive current-state buckets (one RPC scan). After
+  // the campaign check so a bad id 404s without paying for the scan.
+  const funnel = await getCampaignFunnel(viewer.org?.id ?? null, id);
 
   // The workspace's own nouns and disposition wording.
   const vocab = orgVocabulary(viewer.org);
   const leadStatusConfig = resolveLeadStatusConfig(vocab);
   const outcomeConfig = resolveOutcomeConfig(vocab);
+
+  // Every funnel segment drills into /leads?f=… — the stage's FilterSpec is
+  // encoded server-side so the link IS the filter that ran (stageFilter maps
+  // each bucket to the closest spec; call-derived buckets carry a tooltip).
+  const funnelStages: FunnelStageView[] = FUNNEL_STAGES.map((key) => {
+    const meta = FUNNEL_STAGE_META[key];
+    const spec = stageFilter(id, key, { maxAttempts: c.retryPolicy?.maxAttempts });
+    return {
+      key,
+      // The appointment stage speaks the workspace's own noun.
+      label:
+        key === "appointment"
+          ? vocab.appointmentNounPlural.charAt(0).toUpperCase() +
+            vocab.appointmentNounPlural.slice(1)
+          : meta.label,
+      description: meta.description,
+      approximate: meta.approximate,
+      count: funnel[key],
+      href: `/leads?f=${encodeFilterParam(spec)}`,
+    };
+  });
 
   const st = c.stats;
   const cfg = campaignStatusConfig[c.status];
@@ -80,21 +111,23 @@ export default async function CampaignDetailPage({
 
       <div className="flex items-center gap-3">
         <span className="h-10 w-2 rounded-full" style={{ background: c.color }} />
-        <PageHeader title={c.name} description={c.utilityProvider || "All providers"}>
+        {/* Vertical-neutral: the description (or targeting value) speaks for the
+            campaign — never one industry's noun. */}
+        <PageHeader
+          title={c.name}
+          description={c.description || c.objective || c.utilityProvider || "All segments"}
+        >
           <Badge tone={cfg.tone} dot>
             {cfg.label}
           </Badge>
-          <CampaignEditButton
-            campaign={{
-              id: c.id,
-              name: c.name,
-              utilityProvider: c.utilityProvider,
-              color: c.color,
-              status: c.status,
-              scriptA: c.scriptA,
-              scriptB: c.scriptB,
-            }}
-          />
+          {c.archivedAt && <Badge tone="warning">Archived</Badge>}
+          <Link
+            href={`/campaigns/${c.id}/edit`}
+            className={buttonVariants({ variant: "outline", size: "sm", className: "gap-2" })}
+          >
+            <Pencil className="h-4 w-4" />
+            Edit campaign
+          </Link>
           <Link
             href={`/dialer?campaign=${c.id}`}
             className={buttonVariants({ size: "sm", className: "gap-2" })}
@@ -113,6 +146,13 @@ export default async function CampaignDetailPage({
         <MetricCard label="Connect rate" value={`${st.connectRate}%`} icon={Zap} accent="accent" />
         <MetricCard label="Appointments" value={formatNumber(st.appointments)} icon={CalendarCheck} accent="success" />
       </div>
+
+      <SectionCard
+        title="Campaign funnel"
+        description={`Where every ${vocab.leadNoun} stands right now — mutually-exclusive stages, each one a click into the ${vocab.LeadNounPlural} view.`}
+      >
+        <CampaignFunnel stages={funnelStages} total={funnel.total} />
+      </SectionCard>
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <SectionCard title="Conversion funnel" description="Calls → connects → appointments">
@@ -257,7 +297,11 @@ export default async function CampaignDetailPage({
                 return (
                   <div key={r.id} className="flex items-center justify-between gap-3">
                     <div className="min-w-0">
-                      <p className="truncate text-sm font-medium">{r.leadName}</p>
+                      {/* Nameless records read as the org's own noun, not a
+                          hardcoded vertical's. */}
+                      <p className="truncate text-sm font-medium">
+                        {r.leadName || vocab.LeadNoun}
+                      </p>
                       <p className="mt-0.5 text-xs text-muted-foreground tabular">
                         {formatDuration(r.durationSec)} · {relativeTime(r.startedAt)}
                       </p>

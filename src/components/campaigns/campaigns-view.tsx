@@ -15,7 +15,6 @@ import {
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
-import { EditCampaignDialog } from "@/components/campaigns/edit-campaign-dialog";
 import { SpotlightCard } from "@/components/motion";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -33,13 +32,23 @@ type Campaign = {
   color: string;
   createdAt: string;
   ownerId: string | null;
-  /** Call scripts ("" = unset) — edited in the dialog, shown in the dialer. */
-  scriptA: string;
-  scriptB: string;
+  /** One-line description ("" = none) — shown on the card when present. */
+  description: string;
+  /** Set = archived: kept for history, visually parked. */
+  archivedAt: string | null;
   stats: CampaignStats;
 };
 
-export function CampaignsView({ campaigns }: { campaigns: Campaign[] }) {
+export function CampaignsView({
+  campaigns,
+  providerLabel,
+}: {
+  campaigns: Campaign[];
+  /** The org's resolved label for the utilityProvider core slot — never a
+   *  hardcoded industry noun (vocab audit: this form used to say "Utility
+   *  provider" to every vertical). */
+  providerLabel: string;
+}) {
   const router = useRouter();
   const confirmDialog = useConfirm();
   const [open, setOpen] = useState(false);
@@ -49,7 +58,6 @@ export function CampaignsView({ campaigns }: { campaigns: Campaign[] }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const [pendingId, setPendingId] = useState<string | null>(null);
-  const [editing, setEditing] = useState<Campaign | null>(null);
 
   async function create(e: React.FormEvent) {
     e.preventDefault();
@@ -122,11 +130,16 @@ export function CampaignsView({ campaigns }: { campaigns: Campaign[] }) {
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
             <div>
               <Label>Campaign name</Label>
-              <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Spring Resolution" autoFocus />
+              <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Spring outreach" autoFocus />
             </div>
             <div>
-              <Label>Utility provider</Label>
-              <Input value={utility} onChange={(e) => setUtility(e.target.value)} placeholder="PG&E" />
+              {/* The org's own field label (resolved schema), not a literal. */}
+              <Label>{providerLabel}</Label>
+              <Input
+                value={utility}
+                onChange={(e) => setUtility(e.target.value)}
+                placeholder="Leave blank to target all"
+              />
             </div>
             <div>
               <Label>Color</Label>
@@ -166,19 +179,26 @@ export function CampaignsView({ campaigns }: { campaigns: Campaign[] }) {
             const st = c.stats;
             const pending = pendingId === c.id;
             return (
-              <SpotlightCard key={c.id} className="flex flex-col overflow-hidden">
+              <SpotlightCard
+                key={c.id}
+                className={`flex flex-col overflow-hidden ${c.archivedAt ? "opacity-60" : ""}`}
+              >
                 <div className="h-1.5 w-full" style={{ background: c.color }} />
                 <div className="flex flex-1 flex-col p-5">
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
                       <h3 className="truncate font-semibold leading-tight">{c.name}</h3>
                       <p className="mt-0.5 truncate text-xs text-muted-foreground">
-                        {c.utilityProvider || "All providers"}
+                        {c.description || c.utilityProvider || "All segments"}
                       </p>
                     </div>
-                    <Badge tone={cfg.tone} dot>
-                      {cfg.label}
-                    </Badge>
+                    {c.archivedAt ? (
+                      <Badge tone="warning">Archived</Badge>
+                    ) : (
+                      <Badge tone={cfg.tone} dot>
+                        {cfg.label}
+                      </Badge>
+                    )}
                   </div>
 
                   {/* Stats */}
@@ -201,15 +221,15 @@ export function CampaignsView({ campaigns }: { campaigns: Campaign[] }) {
                       View
                       <ArrowRight className="h-3.5 w-3.5" />
                     </Link>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => setEditing(c)}
-                      disabled={pending}
+                    {/* Editing lives in the Campaign Builder now (retired the
+                        old modal) — one surface, every setting. */}
+                    <Link
+                      href={`/campaigns/${c.id}/edit`}
                       aria-label={`Edit ${c.name}`}
+                      className="inline-flex h-8 items-center justify-center rounded-xl border border-border px-2.5 transition-colors hover:bg-muted"
                     >
                       <Pencil className="h-3.5 w-3.5" />
-                    </Button>
+                    </Link>
                     <Button
                       variant="outline"
                       size="sm"
@@ -241,10 +261,6 @@ export function CampaignsView({ campaigns }: { campaigns: Campaign[] }) {
             );
           })}
         </div>
-      )}
-
-      {editing && (
-        <EditCampaignDialog campaign={editing} onClose={() => setEditing(null)} />
       )}
     </div>
   );

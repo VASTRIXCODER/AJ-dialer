@@ -1,3 +1,9 @@
+import {
+  BEHAVIOR_TO_OUTCOME,
+  resolveDispositionDefs,
+  type DispositionBehavior,
+  type DispositionDef,
+} from "./dispositions/defs";
 import type { OrgVocabulary } from "./org/vocabulary";
 import type {
   AILiveState,
@@ -110,78 +116,118 @@ export function resolveOutcomeConfig(
 }
 
 /**
+ * Plain-language descriptions of what each disposition behavior DOES — shown in
+ * the Admin editor's behavior select, and as the wrap-up description for custom
+ * rows (whose label is the admin's own words, so the description must explain
+ * the pipeline effect the label doesn't).
+ */
+export const BEHAVIOR_DESCRIPTIONS: Record<DispositionBehavior, string> = {
+  books_appointment: "Books an appointment",
+  schedules_callback: "Schedules a callback",
+  marks_dnc: "Suppresses the number forever",
+  marks_qualified: "Marks as qualified",
+  not_interested: "Marks not interested",
+  no_need: "No need right now — revisit later",
+  no_answer_retry: "No answer — stays dialable",
+  voicemail_retry: "Voicemail left — stays dialable",
+  invalid_number: "Flags a bad number",
+  neutral_end: "Just ends the call",
+};
+
+/**
+ * An outcome option plus the disposition KEY that produced it. `value` is
+ * ALWAYS a canonical CallOutcome (what gets stored on `call_records.outcome`
+ * and what reports query); `key` is the def that was pressed — identical to
+ * `value` for the nine system rows, an `x_*` key for admin-created rows.
+ */
+export type ResolvedOutcomeOption = OutcomeOption & { key: string };
+
+/**
  * The disposition buttons a rep sees at wrap-up, in the workspace's own words.
  *
  * This list used to live in the DEMO seed module (`sample-data.ts`) and shipped
  * to production hardcoded with one vertical's copy: "Account review scheduled",
  * "Homeowner asked to be called back", "Bills are fine". A recruiter closing an
  * interview clicked a button that promised an account review.
+ *
+ * It is now the org's OWN disposition taxonomy (resolveDispositionDefs over
+ * `settings.dispositions`): enabled defs, in the admin's order, with the
+ * admin's labels and tones. Called with no settings it renders the canonical
+ * nine — exactly the pre-taxonomy behavior, so demo mode and callers with no
+ * org in scope never change. The workspace vocabulary still re-words
+ * `bills_fine` — unless the admin renamed that row themselves, in which case
+ * their wording (the most specific override) wins.
  */
 export function resolveOutcomeOptions(
   vocabulary?: Pick<
     OrgVocabulary,
     "leadNoun" | "appointmentNoun" | "noNeedLabel"
   > | null,
-): OutcomeOption[] {
+  settingsDispositions?: unknown,
+): ResolvedOutcomeOption[] {
   const noun = vocabulary?.leadNoun || "lead";
   const appt = vocabulary?.appointmentNoun || "appointment";
   const noNeed = vocabulary?.noNeedLabel || outcomeConfig.bills_fine.label;
-  return [
-    {
-      value: "appointment_booked",
-      label: "Appointment booked",
-      description: `${appt.charAt(0).toUpperCase()}${appt.slice(1)} scheduled`,
-      tone: "success",
-    },
-    {
-      value: "callback_scheduled",
-      label: "Callback",
-      description: `The ${noun} asked to be called back`,
-      tone: "warning",
-    },
-    {
-      value: "qualified",
-      label: "Qualified",
-      description: "Good fit, continue nurturing",
-      tone: "success",
-    },
-    {
-      value: "not_interested",
-      label: "Not interested",
-      description: "Declined further contact",
-      tone: "neutral",
-    },
-    {
-      value: "bills_fine",
-      label: noNeed,
-      description: "Not now — revisit later",
-      tone: "warning",
-    },
-    {
-      value: "no_answer",
-      label: "No answer",
-      description: "Rang out, no pickup",
-      tone: "neutral",
-    },
-    {
-      value: "voicemail",
-      label: "Voicemail",
-      description: "Left a voicemail",
-      tone: "neutral",
-    },
-    {
-      value: "wrong_number",
-      label: "Wrong number",
-      description: `Number doesn't reach this ${noun}`,
-      tone: "danger",
-    },
-    {
-      value: "do_not_call",
-      label: "Do not call",
-      description: "Add to the suppression list",
-      tone: "danger",
-    },
-  ];
+  const descriptions: Record<CallOutcome, string> = {
+    appointment_booked: `${appt.charAt(0).toUpperCase()}${appt.slice(1)} scheduled`,
+    callback_scheduled: `The ${noun} asked to be called back`,
+    qualified: "Good fit, continue nurturing",
+    not_interested: "Declined further contact",
+    bills_fine: "Not now — revisit later",
+    no_answer: "Rang out, no pickup",
+    voicemail: "Left a voicemail",
+    wrong_number: `Number doesn't reach this ${noun}`,
+    do_not_call: "Add to the suppression list",
+  };
+  return resolveDispositionDefs(settingsDispositions)
+    .filter((def) => def.enabled)
+    .map((def) => {
+      // System rows store their own key; custom rows collapse to the canonical
+      // outcome their behavior maps to — no new stored outcome values, ever.
+      const value = def.system
+        ? (def.key as CallOutcome)
+        : BEHAVIOR_TO_OUTCOME[def.behavior];
+      const label =
+        def.key === "bills_fine" && def.label === outcomeConfig.bills_fine.label
+          ? noNeed
+          : def.label;
+      return {
+        value,
+        key: def.key,
+        label,
+        description: def.system
+          ? descriptions[value]
+          : BEHAVIOR_DESCRIPTIONS[def.behavior],
+        tone: def.tone,
+      };
+    });
+}
+
+/**
+ * Look one disposition up by its stored key — the server-side validator for a
+ * client-submitted `dispositionKey`. Null = not in this org's taxonomy.
+ */
+export function resolveDispositionByKey(
+  settingsDispositions: unknown,
+  key: string,
+): DispositionDef | null {
+  if (!key) return null;
+  return resolveDispositionDefs(settingsDispositions).find((d) => d.key === key) ?? null;
+}
+
+/**
+ * Narrow the wrap-up options to a campaign's `disposition_keys` subset. Empty
+ * or absent = no narrowing. `do_not_call` always survives the filter — the
+ * suppression button is legally load-bearing and no campaign config may hide
+ * it (the same invariant resolveDispositionDefs enforces on `enabled`).
+ */
+export function filterOutcomeOptionsByKeys(
+  options: ResolvedOutcomeOption[],
+  allowedKeys?: string[] | null,
+): ResolvedOutcomeOption[] {
+  if (!allowedKeys || allowedKeys.length === 0) return options;
+  const allowed = new Set(allowedKeys);
+  return options.filter((o) => allowed.has(o.key) || o.key === "do_not_call");
 }
 
 /**

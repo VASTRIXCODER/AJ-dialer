@@ -3,6 +3,7 @@ import { orgAIContext } from "@/lib/ai/org-context";
 import { getCallSummary } from "@/lib/ai/services";
 import { insertCallRecord } from "@/lib/db/records";
 import { getViewer } from "@/lib/org/membership";
+import { resolveDispositionByKey } from "@/lib/status";
 import { createClient } from "@/lib/supabase/server";
 import { isSupabaseConfigured } from "@/lib/supabase/config";
 import type { CallOutcome, Lead } from "@/lib/types";
@@ -17,6 +18,10 @@ export async function POST(req: Request) {
     phone?: string;
     durationSec?: number;
     outcome?: CallOutcome;
+    /** The disposition-def key the rep pressed — equal to `outcome` for the
+     *  nine system rows, an `x_*` key for admin-created buttons. Validated
+     *  against the org's resolved taxonomy below. */
+    dispositionKey?: string;
     callSid?: string;
     room?: string;
     notes?: string;
@@ -45,6 +50,10 @@ export async function POST(req: Request) {
     clientAttemptId?: string;
     /** Conference room for attempt resolution only (parallel non-winners). */
     attemptRoom?: string;
+    /** The callback this dial was launched from (board claim→dial deep link).
+     *  Filing the disposition completes that callback — the loop that never
+     *  used to close. Must be a uuid; anything else is dropped. */
+    callbackId?: string;
   };
 
   // Strict allowlist — the DB check constraint only admits null | 'a' | 'b',
@@ -72,12 +81,28 @@ export async function POST(req: Request) {
         }
       : null;
 
+  // Validate the pressed button against the ORG's resolved disposition set. An
+  // unknown key (a stale client after the admin deleted a custom row, or a
+  // hand-crafted POST) degrades to null rather than failing the save — the
+  // canonical `outcome` still lands either way, so no disposition is ever lost
+  // to taxonomy drift.
+  let dispositionKey: string | null = null;
+  if (typeof body.dispositionKey === "string" && body.dispositionKey) {
+    const viewer = await getViewer();
+    const def = resolveDispositionByKey(
+      viewer.org?.settings.dispositions,
+      body.dispositionKey,
+    );
+    if (def) dispositionKey = def.key;
+  }
+
   const recordId = await insertCallRecord({
     leadId: body.leadId ?? null,
     leadName: body.leadName,
     phone: body.phone,
     durationSec: body.durationSec,
     outcome: body.outcome,
+    dispositionKey,
     channel: "human",
     callSid: body.callSid ?? null,
     room: body.room ?? null,
@@ -92,6 +117,11 @@ export async function POST(req: Request) {
     attemptRoom:
       typeof body.attemptRoom === "string" && /^hc-[\w-]{1,80}$/.test(body.attemptRoom)
         ? body.attemptRoom
+        : null,
+    callbackId:
+      typeof body.callbackId === "string" &&
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(body.callbackId)
+        ? body.callbackId
         : null,
   });
 

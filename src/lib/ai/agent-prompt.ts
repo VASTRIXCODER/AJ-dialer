@@ -11,6 +11,7 @@
 // respect opt-outs, never over-promise).
 // ─────────────────────────────────────────────────────────────────────────────
 
+import { resolveDispositionDefs } from "../dispositions/defs";
 import type { LeadFieldDef } from "../leads/field-schema";
 import type { AgentKey } from "../elevenlabs";
 import type { OrgSettings } from "../org/settings";
@@ -475,7 +476,12 @@ function genericPrompt(org: AgentOrgLike): string {
   const p = templateProfile(org.dialerTemplate);
   const ai = org.settings.ai;
   const noun = org.settings.leadNoun || "customer";
-  const dispositions = org.settings.dispositions.map((d) => d.label).join(", ");
+  // The org's RESOLVED taxonomy (keyed defs or legacy rows alike), enabled rows
+  // only — the agent should categorize into buttons a rep could actually press.
+  const dispositions = resolveDispositionDefs(org.settings.dispositions)
+    .filter((d) => d.enabled)
+    .map((d) => d.label)
+    .join(", ");
   const qualify = qualifySuffix(org);
   return `# Identity
 You are ${ai.agentName}, a warm, human-sounding outbound representative for ${org.name}${org.productName ? ` (${org.productName})` : ""}, calling a ${noun} at {{address}} on a recorded line.

@@ -6,58 +6,58 @@ Every major requirement from `docs/phase_one.md` → owning workstream/slice →
 
 | Requirement | Slice | Status | Evidence |
 |---|---|---|---|
-| Immutable idempotent call events (event id, provider id, times, source, payload version) | B2 | Not started | |
-| Provider legs distinct from business attempt | B2 | Not started | |
-| One canonical terminal outcome + raw provider reason retained | B2 | Not started | |
+| Immutable idempotent call events (event id, provider id, times, source, payload version) | B2 | **Done** | call_events + applyCallEvent; tests/call-state-machine |
+| Provider legs distinct from business attempt | B2 | **Done** | call_attempts + call_legs; (room, lead_id) per-lead attempts |
+| One canonical terminal outcome + raw provider reason retained | B2 | **Done** | transport_outcome stamped once + terminal_reason |
 | Disposition ≠ transport outcome | B2 + D3 | Not started | |
-| Canonical state machine (queued→…→completed), duplicate/out-of-order safe | B1/B2 | Not started | |
-| Reservation/locking prevents concurrent dialing of one lead | B3 | Not started | |
-| Every state transition auditable | B2 | Not started | |
+| Canonical state machine (queued→…→completed), duplicate/out-of-order safe | B1/B2 | **Done** | state-machine.ts (14×14 tested) + CAS in apply-event |
+| Reservation/locking prevents concurrent dialing of one lead | B3 | **Partial** | engine + claim routes live; AI cron claims; manual dialer switchover lands in E3 |
+| Every state transition auditable | B2 | **Done** | events-first write order; append-only trigger |
 | Custom fields preserved with provenance; unknown columns never dropped | C5 (exists partially) | Partial | custom_fields jsonb exists; provenance lands with import_jobs |
-| Audit history (leads, assignments, dispositions, DNC, appointments) | C1/D1 | Not started | |
-| Saved views / smart lists as first-class data | C3 | Not started | |
+| Audit history (leads, assignments, dispositions, DNC, appointments) | C1/D1 | **Done** | lead_events hooks + assignment_events; timeline renders them |
+| Saved views / smart lists as first-class data | C3 | **Done** | smart_lists table + builder + seeds |
 
 ## §4 Analytics & dashboard sync
 
 | Requirement | Slice | Status | Evidence |
 |---|---|---|---|
-| Metric glossary + single metrics layer for all surfaces | B4 | Not started | metric-glossary.md drafted |
-| Defined: calls today, human connects, connect rate, appts set, avg talk, weekly, outcome mix, hourly, pipeline | B4 | Not started | definitions drafted |
+| Metric glossary + single metrics layer for all surfaces | B4 | **Done** | definitions.ts + app_metrics_summary/hourly; metrics.ts unified; reports consumption completes in F2 |
+| Defined: calls today, human connects, connect rate, appts set, avg talk, weekly, outcome mix, hourly, pipeline | B4 | **Done** | live-probed: outcome mix reconciles exactly (11,055+11=11,066) |
 | Near-real-time dashboard updates / invalidation | E1 | Not started | |
-| Late events repair aggregates; scheduled reconciliation | B4 | Not started | |
+| Late events repair aggregates; scheduled reconciliation | B4 | **Done** | reconcile-data cron every 15 min (drift → audit_log) |
 | Filters: tenant, permission, date/tz, campaign, team, rep, mode | B4/F2 | Not started | |
 | Last-updated, filter chips, tz, definition tooltips | F2 | Not started | |
 | Deterministic fixture + DST + parity tests | B1/B4 | Not started | |
-| **Remove Average AI Score** | B4 | Not started | decision D6 |
+| **Remove Average AI Score** | B4 | **Done** | aggregate gone (4 sites + app_leads_page); per-lead score retained per D6 |
 
 ## §5 Lead 360
 
 | Requirement | Slice | Status | Evidence |
 |---|---|---|---|
-| One reusable Lead 360 from every surface; stable deep-linkable route | C1 | Not started | |
-| Identity, company, lead-provided vs inferred number location (labeled) | C1 | Not started | |
-| Source/campaign/pack/owner/eligibility; DNC state + audit | C1 | Not started | |
-| All custom fields grouped + raw-value toggle | C1 | Not started | |
-| Chronological activity timeline (attempts, transitions, notes, callbacks, appts, recordings, assignments) | C1 | Not started | |
+| One reusable Lead 360 from every surface; stable deep-linkable route | C1 | **Done** | drawer (?lead=) + /leads/[id]; 9 surfaces wired |
+| Identity, company, lead-provided vs inferred number location (labeled) | C1 | **Done** | LocationSection labels the area-code inference |
+| Source/campaign/pack/owner/eligibility; DNC state + audit | C1 | **Done** | eligibility reason pills via evaluateEligibility |
+| All custom fields grouped + raw-value toggle | C1 | **Done** | |
+| Chronological activity timeline (attempts, transitions, notes, callbacks, appts, recordings, assignments) | C1 | **Done** | mergeTimeline over 5 sources; reschedule never double-counts (tested) |
 | Editable notes; recordings + transcript; AI summary with confidence/override history | C1/F1 | Not started | |
-| Context preserved on close; live-updating | C1 | Not started | |
+| Context preserved on close; live-updating | C1 | **Done** | history.replaceState ?lead= (no RSC refetch); 20s visible-poll + focus refetch |
 
 ## §6 Lead inventory, import, filters, smart lists, export
 
 | Requirement | Slice | Status | Evidence |
 |---|---|---|---|
-| Accurate drillable lead totals (8 defined counts) | C2 | Not started | |
-| Import Studio: guided, resumable, preview + manual mapping correction | C5 | Not started | |
-| Mapping templates | C5 | Not started | |
-| Dedupe strategies (skip/merge/create) + dry run + idempotent retry | C5 | Not started | |
-| DNC column detection; imported DNC stored but ineligible | C5 | Not started | |
-| Dialing-preference mapping (ai/manual/either/none) | C5 | Not started | |
-| Observable import job + rollback + reconciliation report + error file | C5 | Not started | |
-| Headerless files import without losing row 1 | C5 | Not started | known bug F8 |
+| Accurate drillable lead totals (8 defined counts) | C2 | **Done** | app_lead_counts + LeadCountsRow tiles → ?f= drill |
+| Import Studio: guided, resumable, preview + manual mapping correction | C5 | **Done** | /leads/import wizard |
+| Mapping templates | C5 | **Done** | import_mapping_templates |
+| Dedupe strategies (skip/merge/create) + dry run + idempotent retry | C5 | **Done** | app_phone_matches probe; tests/import-dedupe |
+| DNC column detection; imported DNC stored but ineligible | C5 | **Done** | status dnc + dnc_numbers(source import) |
+| Dialing-preference mapping (ai/manual/either/none) | C5 | **Done** | leads.dialing_preference |
+| Observable import job + rollback + reconciliation report + error file | C5 | **Done** | import_jobs; rollback removes only provably-untouched rows |
+| Headerless files import without losing row 1 | C5 | **Done** | fixed at BOTH layers; tests/csv-headerless incl. single-row regression |
 | TSV; XLSX | C5 | Not started | XLSX → **Deferred** (no vetted lib) |
-| One typed server-side filter system (nested AND/OR, custom fields, attempt/DNC/eligibility fields) | C2 | Not started | |
-| Smart Lists 2.0 (dynamic saved queries, sharing, validation) | C3 | Not started | |
-| Flexible export (field chooser, templates, formats, current filter, audit, masking, formula-injection safe) | C4 | Not started | |
+| One typed server-side filter system (nested AND/OR, custom fields, attempt/DNC/eligibility fields) | C2 | **Done** | FilterSpec + app_filter_leads (whitelist compiler) + parity fixture |
+| Smart Lists 2.0 (dynamic saved queries, sharing, validation) | C3 | **Done** | |
+| Flexible export (field chooser, templates, formats, current filter, audit, masking, formula-injection safe) | C4 | **Done** | streaming POST + export_audit + leads.export perm |
 | Background generation for large exports | C4 | **Deferred** | no worker on Hobby; synchronous streaming + 50k cap + honest warning |
 
 ## §7 Assignments & eligibility

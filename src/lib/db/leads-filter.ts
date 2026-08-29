@@ -229,6 +229,42 @@ export async function getFilteredLeadsPage(
   }
 }
 
+/**
+ * JUST the ids matching a SANITIZED spec, capped — the allocation path's
+ * candidate resolver (Assignment Center: filter / smart-list sources resolve to
+ * ids here, then travel to app_allocate_assignment as p_lead_ids, keeping ONE
+ * filter compiler). Same RPC as the page read; only the projection differs.
+ */
+export async function getFilteredLeadIds(
+  scope: Scope,
+  filter: FilterSpec,
+  cap = 10_000,
+): Promise<string[]> {
+  const limit = Math.min(Math.max(cap, 1), 10_000);
+  if (!isAdminConfigured()) {
+    return demoMatches(await fallbackBook(), filter)
+      .slice(0, limit)
+      .map((l) => l.id);
+  }
+  try {
+    const { data, error } = await createAdminClient().rpc("app_filter_leads", {
+      p_org: scope.orgId,
+      p_user: scope.userId,
+      p_supervisor: scope.supervisor,
+      p_filter: filter,
+      p_sort: null,
+      p_offset: 0,
+      p_limit: limit,
+      p_count_only: false,
+    });
+    if (error || !data) return [];
+    const payload = data as { rows?: Row[] };
+    return (payload.rows ?? []).map((r) => String(r.id)).filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
 /** Accurate "N match" for a SANITIZED spec — the LiveCount backend. */
 export async function countFilteredLeads(
   scope: Scope,

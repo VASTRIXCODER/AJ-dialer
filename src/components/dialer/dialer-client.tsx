@@ -50,16 +50,31 @@ import { QualifyPanel } from "./qualify-panel";
 export function DialerClient({
   queue: initialQueue,
   campaigns = [],
+  dispositions = null,
   initialCampaign = "",
   callbackPhone,
   callbackName,
+  callbackId,
+  assignmentId,
+  assignmentLabel,
 }: {
   queue: Lead[];
   campaigns?: DialerCampaign[];
+  /** The org's stored `settings.dispositions` — the wrap-up grid renders the
+   *  admin's taxonomy. Null/absent ⇒ the canonical nine. */
+  dispositions?: unknown;
   initialCampaign?: string;
   /** When set, auto-dial this number (from the Callbacks page "Call back" link). */
   callbackPhone?: string;
   callbackName?: string;
+  /** The claimed callback row this visit dials (uuid, already validated by the
+   *  page). Ridden onto the FIRST disposition filed so the server can complete
+   *  the callback — the loop that never used to close. */
+  callbackId?: string;
+  /** Scope the queue to one assignment (?assignment= — already server-verified
+   *  by the page; the queue API re-verifies on every fetch). */
+  assignmentId?: string;
+  assignmentLabel?: string;
 }) {
   // The dialer engine now lives ABOVE the page (in AppShell's DialerProvider) so
   // a live call survives navigating between sections. This page consumes it.
@@ -77,6 +92,7 @@ export function DialerClient({
     campaigns: ctxCampaigns,
     applyLeadPatch,
     loadLeads,
+    setAssignmentScope,
     loadingLeads,
     loadMsg,
     activate,
@@ -148,11 +164,16 @@ export function DialerClient({
   useEffect(() => {
     if (activatedRef.current) return;
     activatedRef.current = true;
+    // Assignment scope FIRST, so the initial fetch (and every auto-dial lap
+    // refetch after it) is already narrowed to the pack being worked.
+    setAssignmentScope(assignmentId ?? null);
     activate(initialQueue, campaigns, initialCampaign);
     // The page no longer serializes the queue into the RSC payload (it ships
     // ONCE as JSON via /api/leads/queue instead of twice) — so fetch it here,
-    // unless the provider still holds a queue from an earlier visit.
-    if (initialQueue.length === 0 && queue.length === 0) void loadLeads();
+    // unless the provider still holds a queue from an earlier visit. An
+    // assignment visit ALWAYS refetches: whatever queue survived from a prior
+    // visit was fetched at a different scope.
+    if (assignmentId || (initialQueue.length === 0 && queue.length === 0)) void loadLeads();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -235,6 +256,13 @@ export function DialerClient({
   }, []);
 
 
+  // The claimed callback this visit came from — consumed by the FIRST
+  // disposition filed and then cleared, so a rep who keeps power-dialing after
+  // the callback call can't accidentally complete the same callback again with
+  // some other lead's outcome. A ref (not state): fileOutcome reads it at
+  // disposition time without re-binding on every render.
+  const pendingCallbackIdRef = useRef<string | null>(callbackId ?? null);
+
   // Auto-dial a callback number as soon as the Twilio device is live and idle.
   const callbackFiredRef = useRef(false);
   useEffect(() => {
@@ -299,8 +327,20 @@ export function DialerClient({
   //                           no due date and sat in "Due now" forever.
   //
   // Every other outcome files straight through, untouched.
-  const [booking, setBooking] = useState<{ lead: Lead; notes: string } | null>(null);
-  const [callback, setCallback] = useState<{ lead: Lead; notes: string } | null>(null);
+  //
+  // The dialogs carry the pressed disposition KEY as well as the lead — a
+  // custom "Left with spouse → callback" button must file with ITS key, not
+  // the generic callback_scheduled it collapses to.
+  const [booking, setBooking] = useState<{
+    lead: Lead;
+    notes: string;
+    dispositionKey?: string;
+  } | null>(null);
+  const [callback, setCallback] = useState<{
+    lead: Lead;
+    notes: string;
+    dispositionKey?: string;
+  } | null>(null);
 
   const fileOutcome = useCallback(
     (
@@ -310,6 +350,7 @@ export function DialerClient({
         appointment?: BookedAppointment | null;
         callback?: ScheduledCallback | null;
       },
+      dispositionKey?: string,
     ) => {
       if (lead) {
         // Durable: on any network failure the disposition is queued in
@@ -321,6 +362,10 @@ export function DialerClient({
           phone: lead.phone,
           durationSec: state.durationSec,
           outcome: o,
+          // The button that was pressed. For system rows this IS the outcome;
+          // for admin-created rows it's their x_* key — the server validates it
+          // against the org's taxonomy and stores it on the call record.
+          dispositionKey: dispositionKey ?? o,
           callSid: state.callSid,
           room: state.room,
           // This lead's idempotency key from dial time — a replayed save is a
@@ -332,7 +377,11 @@ export function DialerClient({
           // Which script (A/B) the rep was shown for this lead — powers the
           // per-variant split on the campaign page. Absent when no script.
           scriptVariant: scriptVariantRef.current ?? undefined,
+          // The claimed callback this dial executes — the server completes it
+          // when the disposition lands (consume-once, see the ref above).
+          callbackId: pendingCallbackIdRef.current ?? undefined,
         });
+        pendingCallbackIdRef.current = null;
       }
       dialer.selectOutcome(o);
     },
@@ -340,16 +389,16 @@ export function DialerClient({
   );
 
   const onOutcome = useCallback(
-    (o: CallOutcome) => {
+    (o: CallOutcome, dispositionKey?: string) => {
       if (o === "appointment_booked" && focusLead) {
-        setBooking({ lead: focusLead, notes: notesRef.current });
+        setBooking({ lead: focusLead, notes: notesRef.current, dispositionKey });
         return;
       }
       if (o === "callback_scheduled" && focusLead) {
-        setCallback({ lead: focusLead, notes: notesRef.current });
+        setCallback({ lead: focusLead, notes: notesRef.current, dispositionKey });
         return;
       }
-      fileOutcome(o, focusLead);
+      fileOutcome(o, focusLead, undefined, dispositionKey);
     },
     [focusLead, fileOutcome],
   );
@@ -527,6 +576,16 @@ export function DialerClient({
             </Badge>
           </button>
         )}
+        {assignmentLabel && (
+          <Badge
+            tone="primary"
+            className="max-w-[220px] gap-1"
+            title={`This queue is scoped to the assignment "${assignmentLabel}".`}
+          >
+            <ListFilter className="h-3 w-3 shrink-0" />
+            <span className="truncate">Working: {assignmentLabel}</span>
+          </Badge>
+        )}
         <span
           className="text-xs font-medium text-muted-foreground tabular"
           title={
@@ -591,6 +650,8 @@ export function DialerClient({
             onSkip={dialer.skip}
             onRedial={() => focusLead && dialer.redial(focusLead)}
             onOutcome={onOutcome}
+            dispositions={dispositions}
+            allowedDispositionKeys={focusCampaign?.dispositionKeys}
             onToggleMute={dialer.toggleMute}
             onToggleHold={dialer.toggleHold}
             onToggleRecording={dialer.toggleRecording}
@@ -676,13 +737,18 @@ export function DialerClient({
           defaultNotes={booking.notes}
           onConfirm={(appt) => {
             setBooking(null);
-            fileOutcome("appointment_booked", booking.lead, { appointment: appt });
+            fileOutcome(
+              "appointment_booked",
+              booking.lead,
+              { appointment: appt },
+              booking.dispositionKey,
+            );
           }}
           onSkip={() => {
             // Books it with no time — the pre-existing behavior. It lands in the
             // calendar's "Needs a time" rail rather than being silently lost.
             setBooking(null);
-            fileOutcome("appointment_booked", booking.lead);
+            fileOutcome("appointment_booked", booking.lead, undefined, booking.dispositionKey);
           }}
           // Backing out files nothing at all: the rep mis-clicked, and the call
           // stays open on the same lead.
@@ -696,13 +762,18 @@ export function DialerClient({
           defaultReason={callback.notes}
           onConfirm={(cb) => {
             setCallback(null);
-            fileOutcome("callback_scheduled", callback.lead, { callback: cb });
+            fileOutcome(
+              "callback_scheduled",
+              callback.lead,
+              { callback: cb },
+              callback.dispositionKey,
+            );
           }}
           onSkip={() => {
             // Files the callback with no time — the pre-existing behavior. It
             // lands in "Due now" rather than being lost.
             setCallback(null);
-            fileOutcome("callback_scheduled", callback.lead);
+            fileOutcome("callback_scheduled", callback.lead, undefined, callback.dispositionKey);
           }}
           // Backing out files nothing at all: the rep mis-clicked, and the call
           // stays open on the same lead.

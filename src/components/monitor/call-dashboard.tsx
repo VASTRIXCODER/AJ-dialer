@@ -371,7 +371,7 @@ export function CallDashboard({
     }
   }
 
-  async function disposition(outcome: CallOutcome) {
+  async function disposition(outcome: CallOutcome, dispositionKey?: string) {
     setBusy("dispo");
     setError("");
     setNote("");
@@ -379,7 +379,7 @@ export function CallDashboard({
       const res = await fetch("/api/elevenlabs/disposition", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ conversationId, outcome }),
+        body: JSON.stringify({ conversationId, outcome, dispositionKey }),
       });
       const json = await res.json().catch(() => ({}));
       if (!res.ok) {

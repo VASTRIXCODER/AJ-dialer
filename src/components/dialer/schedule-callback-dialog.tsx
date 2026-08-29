@@ -77,7 +77,9 @@ export function ScheduleCallbackDialog({
   onSkip,
   onCancel,
 }: {
-  lead: Lead;
+  /** Only the display fields — the Callbacks board reschedules rows that
+   *  don't have a full Lead in hand (a full Lead still satisfies this). */
+  lead: Pick<Lead, "firstName" | "lastName" | "city">;
   /** Prefilled from the rep's in-call notes — usually already the reason. */
   defaultReason?: string;
   onConfirm: (cb: ScheduledCallback) => void;

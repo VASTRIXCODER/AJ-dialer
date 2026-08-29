@@ -71,6 +71,8 @@ export async function POST(req: Request) {
     leadId?: string;
     leadName?: string;
     outcome?: CallOutcome;
+    /** The disposition-def key pressed (system key or `x_*` custom). */
+    dispositionKey?: string;
     id?: string;
     status?: string;
     ids?: string[];
@@ -188,7 +190,15 @@ export async function POST(req: Request) {
   if (action === "disposition") {
     if (!body.leadId || !body.outcome || !OUTCOMES.includes(body.outcome))
       return NextResponse.json({ error: "leadId and a valid outcome are required." }, { status: 400 });
-    const r = await overrideLeadDisposition(body.leadId, body.outcome);
+    // Shape-guard only (system key or x_* slug) — an unknown key rides along on
+    // the record as "the button that was pressed"; the canonical outcome above
+    // is what everything acts on.
+    const dispositionKey =
+      typeof body.dispositionKey === "string" &&
+      /^(x_)?[a-z0-9_]{1,64}$/.test(body.dispositionKey)
+        ? body.dispositionKey
+        : null;
+    const r = await overrideLeadDisposition(body.leadId, body.outcome, dispositionKey);
     return NextResponse.json(r, { status: r.ok ? 200 : 400 });
   }
 

@@ -121,6 +121,8 @@ export function CallStage({
   onReconnect,
   wrapupNotes,
   onNotesChange,
+  dispositions,
+  allowedDispositionKeys,
 }: {
   state: DialerState;
   focusLead: Lead | null;
@@ -150,7 +152,14 @@ export function CallStage({
   /** Re-dial the lead on the wrap-up screen right now, same caller ID, no
    *  disposition filed — see the button's inline comment for why. */
   onRedial: () => void;
-  onOutcome: (o: CallOutcome) => void;
+  /** Fires with the canonical outcome to store AND the disposition-def key
+   *  the rep actually pressed (an `x_*` key for admin-created buttons). */
+  onOutcome: (o: CallOutcome, dispositionKey?: string) => void;
+  /** The org's stored `settings.dispositions` — the wrap-up grid renders the
+   *  admin's own taxonomy. Absent ⇒ the canonical nine. */
+  dispositions?: unknown;
+  /** The active campaign's `disposition_keys` subset (empty/absent = all). */
+  allowedDispositionKeys?: string[];
   onToggleMute: () => void;
   onToggleHold: () => void;
   onToggleRecording: () => void;
@@ -786,7 +795,11 @@ export function CallStage({
                 </div>
               )}
 
-              <OutcomeGrid onSelect={onOutcome} />
+              <OutcomeGrid
+                onSelect={onOutcome}
+                dispositions={dispositions}
+                allowedKeys={allowedDispositionKeys}
+              />
               <div className="flex gap-2">
                 {/* Redial the SAME homeowner right now instead of waiting for
                     them to cycle back through the queue. The stated use case is

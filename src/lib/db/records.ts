@@ -13,6 +13,7 @@ import {
   isTerminalLiveState,
   LIVE_STATES,
 } from "../types";
+import { completeCallbackForLead } from "./callbacks";
 import { addToDnc } from "./dnc";
 import { logLeadEvent } from "./lead-events";
 
@@ -183,11 +184,28 @@ async function routeDisposition(
     });
   } else if (outcome === "callback_scheduled") {
     const cb = input.callback ?? null;
+    // Provenance for the Callbacks board: which call the promise was made on
+    // (the "View call" link), which campaign the lead was being worked under,
+    // and the contact's timezone so the due time can be labeled honestly.
+    let cbCampaignId: string | null = null;
+    let cbTimezone: string | null = null;
+    if (leadId) {
+      const { data: l } = await client
+        .from("leads")
+        .select("campaign_id, timezone")
+        .eq("id", leadId)
+        .maybeSingle();
+      cbCampaignId = l?.campaign_id ? String(l.campaign_id) : null;
+      cbTimezone = l?.timezone ? String(l.timezone) : null;
+    }
     await client.from("callbacks").insert({
       owner_id: ownerId,
       lead_id: leadId,
       lead_name: input.leadName,
       phone: input.phone,
+      call_record_id: input.callRecordId || null,
+      campaign_id: cbCampaignId,
+      timezone: cbTimezone,
       // The rep's own words about the callback beat a generic summary; the
       // agreed time is appended so the reason still reads correctly on a board
       // that only shows a relative "in 3 hours".
@@ -235,6 +253,14 @@ export async function insertCallRecord(input: {
   phone?: string;
   durationSec?: number;
   outcome?: CallOutcome;
+  /**
+   * The disposition-def key the rep actually PRESSED — already validated by the
+   * caller against the org's resolved taxonomy (see /api/calls). For the nine
+   * system rows it equals `outcome`; for admin-created buttons it's their
+   * `x_*` key. Stored on call_records.disposition; `outcome` stays canonical
+   * so historical queries and routeDisposition never change.
+   */
+  dispositionKey?: string | null;
   channel?: "human" | "ai";
   summary?: string;
   callSid?: string | null;
@@ -265,6 +291,12 @@ export async function insertCallRecord(input: {
    * is unique per round and belongs to the rep-dispositioned record).
    */
   attemptRoom?: string | null;
+  /**
+   * The callback this dial was launched from (the board's claim→dial deep
+   * link). Filing ANY outcome closes that callback's loop — see the
+   * completeCallbackForLead call below for the one exception.
+   */
+  callbackId?: string | null;
 }): Promise<string | null> {
   if (!isSupabaseConfigured()) return null;
   try {
@@ -294,6 +326,10 @@ export async function insertCallRecord(input: {
       phone: input.phone ?? "",
       duration_sec: input.durationSec ?? 0,
       outcome: input.outcome ?? null,
+      // The pressed button. Falls back to the outcome itself (every canonical
+      // outcome IS a valid system key) so pre-taxonomy clients and outbox
+      // replays keep the column populated uniformly.
+      disposition: input.dispositionKey ?? input.outcome ?? null,
       channel: input.channel ?? "human",
       summary: input.summary ?? null,
       call_sid: input.callSid ?? null,
@@ -382,6 +418,21 @@ export async function insertCallRecord(input: {
           ...(input.notes != null ? { notes: input.notes } : {}),
         })
         .eq("id", leadUuid);
+    }
+    // Close the loop on a callback-launched call — and do it BEFORE
+    // routeDisposition, whose "latest disposition wins" cleanup DELETES the
+    // lead's open callbacks (`delete … neq status completed`). Run after it and
+    // there is nothing left to complete: the promise vanishes with no history,
+    // no attempt count, no "recently completed" row. Completing first flips the
+    // row to 'completed', which that delete deliberately spares.
+    //
+    // The one EXCEPTION is callback_scheduled: routeDisposition already
+    // replaces open callbacks itself (delete-then-insert of the NEW promise),
+    // so completing here too would double-handle the row — the fresh callback
+    // simply supersedes the old one.
+    const callbackUuid = asUuid(input.callbackId);
+    if (callbackUuid && input.outcome !== "callback_scheduled") {
+      await completeCallbackForLead(leadUuid, recordId, callbackUuid);
     }
     await routeDisposition(supabase, {
       ownerId: user.id,
@@ -716,6 +767,10 @@ export async function completeAIConversation(input: {
         started_at: (existing?.started_at as string) ?? new Date().toISOString(),
         duration_sec: input.durationSec ?? 0,
         outcome: input.outcome,
+        // The AI files canonical outcomes only, so the pressed-key column
+        // mirrors the outcome — keeps `disposition` uniformly populated across
+        // channels for the archive and per-key reporting.
+        disposition: input.outcome,
         failure_kind: input.failureKind ?? null,
         termination_reason: input.terminationReason ?? null,
         channel: "ai",
@@ -744,6 +799,7 @@ export async function completeAIConversation(input: {
         .from("call_records")
         .update({
           outcome: input.outcome,
+          disposition: input.outcome,
           failure_kind: input.failureKind ?? null,
           termination_reason: input.terminationReason ?? null,
           summary: input.summary,
@@ -1121,11 +1177,15 @@ export async function applyManualDisposition(
       phone?: string | null;
     };
     outcome: CallOutcome;
+    /** The disposition-def key chosen, when the override UI offered the org's
+     *  taxonomy. Defaults to the canonical outcome (a valid system key). */
+    dispositionKey?: string | null;
     actorLabel?: string;
   },
 ): Promise<{ ok: boolean; error?: string }> {
   try {
     const { lead, outcome } = input;
+    const disposition = input.dispositionKey ?? outcome;
     // A nameless lead falls back to the number, which is at least actionable —
     // this used to stamp the literal word "Homeowner" onto the call record and
     // the calendar entry, in every vertical.
@@ -1149,13 +1209,16 @@ export async function applyManualDisposition(
       .limit(1)
       .maybeSingle();
     if (rec) {
-      await admin.from("call_records").update({ outcome }).eq("id", rec.id);
+      // The override replaces BOTH facts: the canonical outcome and the pressed
+      // key — leaving the old key would disagree with the corrected outcome.
+      await admin.from("call_records").update({ outcome, disposition }).eq("id", rec.id);
     } else {
       await admin.from("call_records").insert({
         owner_id: lead.owner_id,
         lead_id: lead.id,
         lead_name: leadName,
         outcome,
+        disposition,
         channel: "human",
         summary: input.actorLabel ?? "Manually dispositioned",
       });
@@ -1179,9 +1242,13 @@ export async function applyManualDisposition(
 export async function setConversationDisposition(
   conversationId: string,
   outcome: CallOutcome,
+  /** The disposition-def key chosen, when the override UI offered the org's
+   *  taxonomy. Defaults to the canonical outcome (a valid system key). */
+  dispositionKey?: string | null,
 ): Promise<{ ok: boolean; error?: string }> {
   if (!isSupabaseConfigured())
     return { ok: false, error: "Connect Supabase to save dispositions." };
+  const disposition = dispositionKey ?? outcome;
   try {
     const supabase = await createClient();
     const {
@@ -1207,7 +1274,10 @@ export async function setConversationDisposition(
       .maybeSingle();
 
     if (rec) {
-      await supabase.from("call_records").update({ outcome }).eq("id", rec.id);
+      await supabase
+        .from("call_records")
+        .update({ outcome, disposition })
+        .eq("id", rec.id);
     } else {
       await supabase.from("call_records").insert({
         owner_id: user.id,
@@ -1215,6 +1285,7 @@ export async function setConversationDisposition(
         lead_name: convo?.lead_name ?? "",
         duration_sec: convo?.duration_sec ?? 0,
         outcome,
+        disposition,
         channel: "ai",
         conversation_id: conversationId,
         summary: "Manually dispositioned by supervisor",
