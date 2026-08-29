@@ -83,6 +83,11 @@ export default async function TodayPage() {
   const canOpenAppointments =
     features?.appointments !== false && viewer.permissions.includes("appointments.view");
   const canOpenAssignments = features?.leads !== false;
+  // Capitalized locally — the vocabulary owns the noun ("showings",
+  // "interviews"), this surface owns its label case.
+  const ApptPlural =
+    vocab.appointmentNounPlural.charAt(0).toUpperCase() +
+    vocab.appointmentNounPlural.slice(1);
   const nothingWaiting =
     !whoNext &&
     callbacks.overdue + callbacks.dueToday + callbacks.unscheduled === 0 &&
@@ -268,7 +273,7 @@ export default async function TodayPage() {
       {/* Appointments today. */}
       {appointmentsToday.count > 0 && (
         <SectionCard
-          title={`${vocab.AppointmentNounPlural} today`}
+          title={`${ApptPlural} today`}
           description={`${appointmentsToday.count} on your calendar · today`}
         >
           <ul className="space-y-2">
@@ -346,7 +351,7 @@ export default async function TodayPage() {
             accent="success"
           />
           <MetricCard
-            label={`${vocab.AppointmentNounPlural} booked`}
+            label={`${ApptPlural} booked`}
             value={String(today.appointments)}
             icon={CalendarCheck}
             accent="warning"

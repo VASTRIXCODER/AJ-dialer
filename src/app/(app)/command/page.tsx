@@ -70,6 +70,12 @@ export default async function CommandCenterPage() {
   }
 
   const { today, scanCapped, speedSampled, queues, leaks, reps, playbooks } = data;
+  // Capitalized here rather than via a vocabulary key: `appointmentNounPlural`
+  // is the noun every workspace defines ("showings", "interviews"), and label
+  // case is this surface's concern, not the vocabulary's.
+  const ApptPlural =
+    vocab.appointmentNounPlural.charAt(0).toUpperCase() +
+    vocab.appointmentNounPlural.slice(1);
   const attentionTotal =
     queues.overdueCallbacks +
     queues.unscheduledCallbacks +
@@ -97,7 +103,7 @@ export default async function CommandCenterPage() {
             accent="success"
           />
           <MetricCard
-            label={vocab.AppointmentNounPlural}
+            label={ApptPlural}
             value={String(today.appointments)}
             icon={CalendarCheck}
             accent="warning"
@@ -255,7 +261,7 @@ export default async function CommandCenterPage() {
                   <th className="py-2 pr-3 text-right font-bold">Dials</th>
                   <th className="py-2 pr-3 text-right font-bold">Conversations</th>
                   <th className="py-2 text-right font-bold">
-                    {vocab.AppointmentNounPlural}
+                    {ApptPlural}
                   </th>
                 </tr>
               </thead>
