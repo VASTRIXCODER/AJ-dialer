@@ -1,6 +1,13 @@
 "use client";
 
-import { Droplets, Inbox, KanbanSquare, Layers, Loader2 } from "lucide-react";
+import {
+  Droplets,
+  Inbox,
+  KanbanSquare,
+  Layers,
+  Loader2,
+  MessageSquare,
+} from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
@@ -9,6 +16,7 @@ import { Tab, TabList, TabPanel, Tabs } from "@/components/ui/tabs";
 import { useToast } from "@/components/ui/toast";
 import type { CrmBoard, CrmQueue } from "@/lib/db/crm";
 import { UNASSIGNED } from "@/lib/opportunities/board";
+import { Approvals, type ApprovalCard } from "./approvals";
 import { Audiences } from "./audiences";
 import { PipelineBoard } from "./pipeline-board";
 import { WorkQueue } from "./work-queue";
@@ -27,7 +35,9 @@ export interface AudienceCard {
   href: string | null;
 }
 
-const VIEWS = ["pipeline", "queue", "audiences"] as const;
+// Four views: the segmented-control ceiling in the UI spec, and the point
+// past which a switcher should become a Select instead.
+const VIEWS = ["pipeline", "approvals", "queue", "audiences"] as const;
 type View = (typeof VIEWS)[number];
 
 function isView(v: string | null): v is View {
@@ -59,6 +69,12 @@ export function CrmWorkspace({
   canClaim,
   canOpenLeads,
   owners,
+  approvals,
+  approvalsTotal,
+  canApproveMessages,
+  canApproveBulk,
+  messagingReady,
+  messagingReason,
   appointmentNoun,
   leadNoun,
   leadNounPlural,
@@ -71,6 +87,12 @@ export function CrmWorkspace({
   canOpenLeads: boolean;
   /** Empty for a rep — their board is their own book and cannot be widened. */
   owners: { id: string; name: string }[];
+  approvals: ApprovalCard[];
+  approvalsTotal: number;
+  canApproveMessages: boolean;
+  canApproveBulk: boolean;
+  messagingReady: boolean;
+  messagingReason: string;
   appointmentNoun: string;
   leadNoun: string;
   leadNounPlural: string;
@@ -165,7 +187,14 @@ export function CrmWorkspace({
   // ONE primary action, resolved by a ladder. When nothing is waiting there is
   // no button at all — a disabled primary with nothing behind it is furniture.
   const primary =
-    canClaim && claimable > 0 ? (
+    // Approvals first: a message waiting on a human is time-sensitive in a way
+    // an unclaimed task is not, and the customer is already expecting it.
+    canApproveMessages && approvalsTotal > 0 ? (
+      <Button size="sm" onClick={() => changeView("approvals")}>
+        <MessageSquare className="mr-1.5 h-4 w-4" />
+        {approvalsTotal} to approve
+      </Button>
+    ) : canClaim && claimable > 0 ? (
       <Button size="sm" onClick={claim} disabled={claiming}>
         {claiming ? (
           <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
@@ -237,6 +266,16 @@ export function CrmWorkspace({
           appointmentNoun={appointmentNoun}
           leadNoun={leadNoun}
           leadNounPlural={leadNounPlural}
+        />
+      </TabPanel>
+      <TabPanel value="approvals">
+        <Approvals
+          approvals={approvals}
+          total={approvalsTotal}
+          canApprove={canApproveMessages}
+          canBulk={canApproveBulk}
+          messagingReady={messagingReady}
+          messagingReason={messagingReason}
         />
       </TabPanel>
       <TabPanel value="queue">

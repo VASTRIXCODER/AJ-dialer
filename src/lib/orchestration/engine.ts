@@ -1,6 +1,7 @@
 import "server-only";
 
 import { dncKey, getDncDigits } from "@/lib/db/dnc";
+import { proposeStepMessage } from "./propose-message";
 import { createWorkItem } from "@/lib/db/opportunities";
 import { mergeSettings } from "@/lib/org/settings";
 import { createAdminClient, isAdminConfigured } from "@/lib/supabase/admin";
@@ -91,10 +92,50 @@ async function callbackState(
   return out;
 }
 
+/**
+ * Has the customer answered since this run started?
+ *
+ * Reads the `messages` table directly rather than importing the messaging
+ * layer. That is not fussiness: an architecture test forbids the engine from
+ * reaching anything that can SEND, and the cheapest way to keep that true is
+ * for the engine to know about a table rather than about a module.
+ *
+ * Only queried when the playbook actually lists the rule — the same discipline
+ * as callbackState, so a playbook that does not care about replies pays
+ * nothing for the fact that the feature exists.
+ */
+async function repliedSince(
+  admin: ReturnType<typeof createAdminClient>,
+  inst: InstanceRow,
+  leadId: unknown,
+  opts?: { needsReplied?: boolean },
+): Promise<boolean> {
+  if (!opts?.needsReplied || !leadId) return false;
+  try {
+    const { count: c } = await admin
+      .from("messages")
+      .select("id", { count: "exact", head: true })
+      .eq("org_id", inst.org_id)
+      .eq("lead_id", String(leadId))
+      .eq("direction", "inbound")
+      .gte("created_at", inst.started_at);
+    return (c ?? 0) > 0;
+  } catch {
+    // A read failure must not fake a stop condition — the sequence continues
+    // and the next tick tries again.
+    return false;
+  }
+}
+
 async function stopSnapshot(
   admin: ReturnType<typeof createAdminClient>,
   inst: InstanceRow,
-  opts?: { maxAttempts?: number; needsCallbackState?: boolean; suppressed?: boolean },
+  opts?: {
+    maxAttempts?: number;
+    needsCallbackState?: boolean;
+    needsReplied?: boolean;
+    suppressed?: boolean;
+  },
 ): Promise<(StopSnapshot & { leadId: string | null; ownerId: string | null }) | null> {
   const { data: opp } = await admin
     .from("opportunities")
@@ -119,9 +160,11 @@ async function stopSnapshot(
     managerPause: String(opp.op_status) === "paused",
     contacted: touchedSince(opp.first_contacted_at),
     attempted: touchedSince(opp.last_touched_at),
-    // v0 has no reply/complaint/issue emitters yet — these rules simply can't
-    // trip until their workstreams land (documented in the contracts doc).
-    replied: false,
+    // Real now that inbound messages are persisted: someone answering is the
+    // clearest possible signal to stop working a sequence at them.
+    replied: await repliedSince(admin, inst, opp.lead_id, opts),
+    // Complaints and service issues still have no source, so these two cannot
+    // trip — and publishing refuses a playbook that names them.
     complaint: false,
     openIssue: false,
     ...(await callbackState(admin, inst, opp.lead_id, touchedSince, opts)),
@@ -410,6 +453,7 @@ export async function orchestrationTick(now = new Date()): Promise<TickResult> {
           maxAttempts: def.stop?.maxAttempts,
           needsCallbackState:
             rules.has("callback_completed") || rules.has("callback_set"),
+          needsReplied: rules.has("replied"),
           suppressed,
         });
         if (!snap) {
@@ -544,6 +588,42 @@ export async function orchestrationTick(now = new Date()): Promise<TickResult> {
             sourceId: inst.playbook_id,
             automationEligible: false,
           });
+        } else if (step.kind === "send_message") {
+          // PROPOSE ONLY. This branch cannot send and, by construction, cannot
+          // reach anything that can — see tests/messaging-architecture.test.ts,
+          // which proves the transport is unreachable from this module through
+          // any chain of imports. What lands here is a message row waiting for
+          // a named human, and a task telling one it is waiting.
+          //
+          // The step then ADVANCES. The proposal happened; whether a human
+          // approves it is their decision, recorded on the message row rather
+          // than by parking the instance on a step it already completed.
+          const proposed = await proposeStepMessage(admin, {
+            inst,
+            step,
+            leadId: snap.leadId,
+            ownerId: snap.ownerId,
+            now,
+          });
+          if (proposed.workItemNeeded) {
+            await createWorkItem({
+              orgId: inst.org_id,
+              opportunityId: inst.opportunity_id,
+              leadId: snap.leadId,
+              // Unowned on purpose: an approval is not the rep's job, and
+              // leaving it unassigned puts it in the shared queue where
+              // whoever is free can take it.
+              ownerId: null,
+              type: "review",
+              reason: "approve_message",
+              dedupeKey: `${inst.id}:${step.id}:review`,
+              queue: "approvals",
+              priority: 70,
+              sourceKind: "playbook",
+              sourceId: inst.playbook_id,
+              automationEligible: false,
+            });
+          }
         } else if (step.kind === "set_next_action") {
           const mins =
             (step.next.dueInMinutes ?? 0) + (step.next.dueInDays ?? 0) * 24 * 60;

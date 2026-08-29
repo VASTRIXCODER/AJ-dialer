@@ -63,6 +63,10 @@ export const PERMISSIONS = [
   "work.claim", // take unowned work off the shared queue — every role, or the queue is scenery
   "crm.pipeline.manage", // move a record's stage BY HAND — manager+, see the note below
   "consent.record", // capture or withdraw permission to contact — every role
+  "messaging.draft", // write a 1:1 message to a customer
+  "messaging.approve.own", // send the 1:1 you wrote — self-approval, every role
+  "messaging.approve", // approve what AUTOMATION proposed — manager+
+  "messaging.approve.bulk", // approve a homogeneous batch at once — manager+
 ] as const;
 export type Permission = (typeof PERMISSIONS)[number];
 
@@ -95,6 +99,10 @@ export const ROLE_PERMISSIONS: Record<OrgRole, Permission[]> = {
     "work.claim",
     "crm.pipeline.manage",
     "consent.record",
+    "messaging.draft",
+    "messaging.approve.own",
+    "messaging.approve",
+    "messaging.approve.bulk",
   ],
   // Reps dial and work leads. They get the MANUAL dialer; the AI dialer is gated
   // (managers+ only) unless the workspace is AI-only.
@@ -127,12 +135,21 @@ export const ROLE_PERMISSIONS: Record<OrgRole, Permission[]> = {
   // be contacted is a moment on a phone call, and the rep is the only person
   // there. Routing that through a manager guarantees it never gets captured,
   // and an uncaptured yes is indistinguishable from a no.
+  //
+  // Messaging splits into two shapes that share one code path. A rep may write
+  // a 1:1 message and SELF-approve it, so `approved_by` is their own id and the
+  // audit row shows author == approver — one person, one decision, fully
+  // attributed. What a rep may NOT do is approve what the automation proposed:
+  // that is a batch of messages nobody wrote, to people they have not spoken
+  // to, and it deserves a second pair of eyes with more context.
   rep: [
     "appointments.view",
     "appointments.manage",
     "crm.view",
     "work.claim",
     "consent.record",
+    "messaging.draft",
+    "messaging.approve.own",
   ],
 };
 
@@ -164,6 +181,10 @@ export const PERMISSION_LABEL: Record<Permission, string> = {
   "work.claim": "Claim work from the shared queue",
   "crm.pipeline.manage": "Move records between pipeline stages by hand",
   "consent.record": "Record whether someone agreed to be contacted",
+  "messaging.draft": "Write a message to a customer",
+  "messaging.approve.own": "Send a message they wrote themselves",
+  "messaging.approve": "Approve messages the automation proposed",
+  "messaging.approve.bulk": "Approve a batch of messages at once",
 };
 
 export function rolePermissions(role: OrgRole | null | undefined): Permission[] {

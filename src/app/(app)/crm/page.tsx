@@ -4,6 +4,8 @@ import { CrmWorkspace, type AudienceCard } from "@/components/crm/crm-workspace"
 import { EmptyState } from "@/components/shared/empty-state";
 import { PageContainer, PageHeader } from "@/components/shared/page-header";
 import { getCrmBoard, getCrmQueue } from "@/lib/db/crm";
+import { listPendingApprovals } from "@/lib/db/messages";
+import { isMessagingConfigured } from "@/lib/messaging/config";
 import { getScope } from "@/lib/db/scope";
 import { listSmartLists, validateSmartListFilter } from "@/lib/db/smart-lists";
 import { resolveLeadFields, type CoreFieldOverrides } from "@/lib/leads/field-schema";
@@ -23,10 +25,11 @@ export const dynamic = "force-dynamic";
  * work queue had an atomic claim function with no caller; audiences were
  * filters you could only reach as chips on another page.
  *
- * Three views, one job each:
- *   Pipeline — where every open record stands, and what has stopped moving.
- *   Queue    — what is unowned and claimable right now.
- *   Audiences— which populations exist, and how healthy they are.
+ * Four views, one job each:
+ *   Pipeline  — where every open record stands, and what has stopped moving.
+ *   Approvals — messages the automation proposed, waiting for a human to read.
+ *   Queue     — what is unowned and claimable right now.
+ *   Audiences — which populations exist, and how healthy they are.
  *
  * Deliberately NOT here: a second lead table (/leads owns that), a second
  * filter builder, a personal task list (/today owns that), or KPI tiles
@@ -72,14 +75,34 @@ export default async function CrmPage({
     );
   }
 
+  // Either permission opens the queue. A rep holds `approve.own` so they can
+  // send the 1:1 they wrote; a manager holds `approve` so they can decide on
+  // what the automation proposed. Both read the same list; the routes enforce
+  // which rows each may actually act on.
+  const canApproveMessages =
+    viewer.permissions.includes("messaging.approve") ||
+    viewer.permissions.includes("messaging.approve.own");
+
   // The owner picker is a supervisor's tool. `getCrmBoard` ignores the param
   // for a rep regardless — a URL can never widen a rep past their own book.
-  const [board, queue, smartLists, members] = await Promise.all([
+  const [board, queue, smartLists, members, approvals] = await Promise.all([
     getCrmBoard(scope, { ownerId: owner ?? null }),
     getCrmQueue(scope),
     listSmartLists(scope),
     scope.supervisor && viewer.org?.id ? listMembers(viewer.org.id) : Promise.resolve([]),
+    canApproveMessages
+      ? listPendingApprovals(scope.orgId)
+      : Promise.resolve({ rows: [], total: 0 }),
   ]);
+
+  // Whether messaging is REACHABLE is derived, never a flag: an org must not be
+  // able to switch on a channel that isn't wired. The two reasons are kept
+  // apart because they need different actions from different people.
+  const messagingConfigured = isMessagingConfigured();
+  const orgMessagingOn = viewer.org?.settings.messaging.enabled === true;
+  const messagingReason = !messagingConfigured
+    ? "No messaging credentials are set for this deployment, so nothing can be sent or approved. This is a platform setting, not a workspace one."
+    : "Messaging is switched off for this workspace. An owner or admin can turn it on in Admin.";
 
   const fields = resolveLeadFields(
     viewer.org?.settings.leadFields,
@@ -122,6 +145,23 @@ export default async function CrmPage({
             .filter((m) => m.status === "active")
             .map((m) => ({ id: m.userId, name: m.name || m.email || "Rep" }))
             .sort((a, b) => a.name.localeCompare(b.name))}
+          approvals={approvals.rows.map((m) => ({
+            id: m.id,
+            leadId: m.leadId,
+            leadName: m.leadName,
+            toNumber: m.toNumber,
+            body: m.body,
+            templateKey: m.templateKey,
+            authorName: m.authorName,
+            scope: m.scope,
+            segments: m.segments,
+            createdAt: m.createdAt,
+          }))}
+          approvalsTotal={approvals.total}
+          canApproveMessages={canApproveMessages}
+          canApproveBulk={viewer.permissions.includes("messaging.approve.bulk")}
+          messagingReady={messagingConfigured && orgMessagingOn}
+          messagingReason={messagingReason}
           appointmentNoun={vocab.appointmentNoun}
           leadNoun={vocab.leadNoun}
           leadNounPlural={vocab.leadNounPlural}
