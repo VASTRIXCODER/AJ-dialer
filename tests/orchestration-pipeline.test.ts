@@ -323,6 +323,36 @@ describe("stop rules", () => {
   });
 });
 
+describe("engine heartbeat", () => {
+  // The health readout in Admin → Playbooks is built on this stamp. An idle
+  // engine that fails to record a tick is indistinguishable from a cron that
+  // was never scheduled — which is precisely what the readout exists to tell
+  // apart, and precisely the state a healthy workspace sits in most of the time.
+  const lastTick = () => db.rows("app_settings")[0]?.orchestration_last_tick_at;
+
+  it("stamps a tick when there is nothing at all to do", async () => {
+    world(SPEED_TO_LEAD);
+    const r = await orchestrationTick(NOW);
+    expect(r.executed).toBe(0);
+    expect(lastTick()).toBe(NOW.toISOString());
+  });
+
+  it("stamps a tick while globally paused — paused is running, not dead", async () => {
+    world(SPEED_TO_LEAD);
+    db.rows("app_settings")[0].orchestration_paused = true;
+    const r = await orchestrationTick(NOW);
+    expect(r.skipped).toContain("orchestration_paused");
+    expect(lastTick()).toBe(NOW.toISOString());
+  });
+
+  it("stamps a tick when work was actually executed", async () => {
+    world(SPEED_TO_LEAD);
+    await emitOrchestrationEvent({ orgId: ORG, leadId: LEAD, event: "lead.received" });
+    await orchestrationTick(NOW);
+    expect(lastTick()).toBe(NOW.toISOString());
+  });
+});
+
 describe("sweep trigger", () => {
   it("an overdue promised callback activates and escalates to the owner", async () => {
     world(PROMISED_CALLBACK_PROTECTION);

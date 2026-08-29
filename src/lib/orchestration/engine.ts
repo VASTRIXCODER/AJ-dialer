@@ -384,18 +384,20 @@ export async function orchestrationTick(now = new Date()): Promise<TickResult> {
     }
   } catch {
     out.skipped = "tick_error";
-  }
-  // Heartbeat, best-effort and last: proof the engine ran at all. A workspace
-  // that turns orchestration on and sees nothing happen otherwise cannot tell
-  // "nothing matched" from "the cron was never scheduled" — which is the
-  // default state, since the orchestrate job is scheduled by hand.
-  try {
-    await admin
-      .from("app_settings")
-      .update({ orchestration_last_tick_at: now.toISOString() })
-      .eq("id", "global");
-  } catch {
-    /* column absent (PART 38 not applied) — the health read says "unknown" */
+  } finally {
+    // Heartbeat: proof the engine ran at all. In `finally` on purpose — the
+    // body returns early on the two most common outcomes (globally paused,
+    // and no instances to process), and those are exactly the ticks whose
+    // silence would otherwise be indistinguishable from a cron that was never
+    // scheduled. A healthy idle engine must still say it is alive.
+    try {
+      await admin
+        .from("app_settings")
+        .update({ orchestration_last_tick_at: now.toISOString() })
+        .eq("id", "global");
+    } catch {
+      /* column absent (PART 38 not applied) — the health read says "unknown" */
+    }
   }
   return out;
 }
