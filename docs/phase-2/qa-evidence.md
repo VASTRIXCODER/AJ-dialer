@@ -137,6 +137,39 @@ defects found and fixed in `0d91fe1`:
    — now gated on org features and the viewer's permissions.
 5. Who-next copy rendered "due and overdue" from an always-true branch.
 
+**Second self-review pass (`d2191bc`, `7250101`)** — four more real defects:
+6. **My Day's who-next dialed a promised callback without its callback id.**
+   That id is what CLOSES the promise when the disposition is filed (the
+   contract the callbacks board already relies on), so working the
+   recommendation left the callback open and re-recommended the same person
+   forever. Fixed, and all four "call this person" entry points (My Day,
+   Callbacks board, Leads table, Nurture) now share one tested builder,
+   `src/lib/dialer/deep-link.ts`.
+7. **A 500 on the dialer, reproduced:** the page called `decodeURIComponent()`
+   on `?name=`, but Next.js has already decoded searchParams — a lead named
+   "50% Off Corp" arrives as `50% Off Corp` and the bare `%` throws URIError.
+   Verified the throw at a node prompt, removed the second decode, and pinned
+   the invariant with `tests/dial-deep-link.test.ts` (6 tests, incl. `%`,
+   `&`, unicode, non-uuid callback ids, and the length cap).
+8. `/api/dialer/release` released ALL of a rep's work-item reservations when
+   given an empty leadIds list, while `releaseDialLeads()` no-ops on the same
+   input — the rep kept the leads while their work items became claimable by
+   someone else. Now scoped to the same ids.
+9. My Day's own dials/conversations/appointments came from a 2,000-row fetch
+   (reachable in a long 3-line parallel session) → head+exact COUNT queries.
+   Only talk time still rides the row fetch, because SUM isn't expressible in
+   PostgREST; documented in place.
+10. `getMyDay()` / `getCommandCenter()` had no try/catch — a transient DB
+    error would 500 a rep's first screen of the day. Both now degrade to the
+    page's existing empty state.
+
+**Design-rule spot checks on the new surfaces:** zero sub-11px text
+(`text-[10px]` and below absent from /today, /command, WhyNow, Reactivation
+and the hot queue) and zero raw hex values — the two mechanical rules from
+docs/final_phase_ui.md that a grep can settle.
+
 **Not yet evidenced (honest):** e2e/perf/a11y sweeps of the Phase 2 surfaces;
 the opportunity-parity check riding reconcile-data; orchestrate-cron execution
-(still unscheduled — it activates when the first org opts in).
+(still unscheduled — it activates when the first org opts in). The independent
+adversarial workflow's first run died on a session quota limit and was
+re-run; its confirmed findings are logged separately when they land.
