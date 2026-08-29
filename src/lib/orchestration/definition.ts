@@ -20,6 +20,10 @@ export const EXECUTE_KINDS = [
   "set_next_action",
   "escalate",
   "stop",
+  // Proposes a message and a review task, then advances. It does NOT send —
+  // see the engine, and tests/messaging-architecture.test.ts, which proves the
+  // engine cannot reach the transport at all.
+  "send_message",
 ] as const;
 export type ExecuteKind = (typeof EXECUTE_KINDS)[number];
 
@@ -32,6 +36,10 @@ export const CONTROL_KINDS = ["wait"] as const;
  * never fire.)
  */
 export const RESERVED_KINDS = [
+  // Kept reserved permanently rather than renamed: `message.received` and the
+  // rest of the vocabulary are already channel-neutral, and a single
+  // `send_message` leaves room for email without a second step kind. The error
+  // below redirects authors instead of leaving them stuck.
   "send_sms",
   "place_ai_call",
   "send_email",
@@ -67,6 +75,10 @@ export const LIVE_TRIGGER_EVENTS: readonly string[] = [
   "lead.received",
   "opportunity.assigned",
   "call.completed",
+  // Emitted by the inbound SMS webhook once a message is filed against a lead.
+  // Added ONLY now that the emitter exists — listing it earlier would have let
+  // an operator publish a playbook that validated clean and never ran once.
+  "message.received",
 ];
 
 /** Stop-rule slugs. Two are ALWAYS enforced even when omitted (see resolve). */
@@ -97,7 +109,10 @@ export const ALWAYS_ENFORCED_STOP_RULES: StopRule[] = [
  * Refused at publish until the channel that raises them exists.
  */
 export const UNAVAILABLE_STOP_RULES: Record<string, string> = {
-  replied: "no inbound message channel is connected yet",
+  // `replied` is gone from this list: inbound messages are now persisted and
+  // stopSnapshot consults them. Removed in the SAME change that wired the
+  // emitter and the snapshot — doing it earlier would have let a playbook
+  // promise "stop when they reply" and then not.
   complaint: "nothing reports complaints yet",
   open_issue: "no service-issue source is connected yet",
 };
@@ -192,6 +207,20 @@ export type Step =
       to: "owner" | "managers" | "queue";
       reason: string;
       requiresApproval?: boolean;
+    }
+  | {
+      id: string;
+      kind: "send_message";
+      /** The published template whose wording this step proposes. */
+      templateKey: string;
+      /**
+       * What the message IS, which decides the consent it needs. Defaults to
+       * transactional — the narrower of the two, so an author who does not
+       * think about it gets the safer behaviour.
+       */
+      scope?: "transactional" | "promotional";
+      /** Optional note for whoever reviews the proposal. */
+      reason?: string;
     }
   | { id: string; kind: "stop"; reason?: string }
   | {
@@ -339,8 +368,12 @@ export function validateDefinition(raw: unknown): { ok: boolean; errors: string[
       );
     }
     if ((RESERVED_KINDS as readonly string[]).includes(kind)) {
+      const redirect =
+        kind === "send_sms" || kind === "send_email"
+          ? ` Use "send_message" instead, which proposes a message for a human to approve.`
+          : "";
       errs.push(
-        `${p}: "${kind}" is reserved — its workstream hasn't shipped, so a published playbook may not promise it`,
+        `${p}: "${kind}" is reserved — its workstream hasn't shipped, so a published playbook may not promise it.${redirect}`,
       );
       continue;
     }
@@ -370,6 +403,16 @@ export function validateDefinition(raw: unknown): { ok: boolean; errors: string[
         errs.push(`${p}: to must be owner | managers | queue`);
       }
       if (!SLUG.test(String(step.reason ?? ""))) errs.push(`${p}: reason must be a slug`);
+    } else if (kind === "send_message") {
+      if (!SLUG.test(String(step.templateKey ?? ""))) {
+        errs.push(`${p}: templateKey must be a slug naming a published template`);
+      }
+      if (
+        step.scope != null &&
+        !["transactional", "promotional"].includes(String(step.scope))
+      ) {
+        errs.push(`${p}: scope must be transactional | promotional`);
+      }
     } else if (kind === "wait") {
       const f = step.for as Record<string, unknown> | undefined;
       const hasDelta =
@@ -398,6 +441,49 @@ export function validateDefinition(raw: unknown): { ok: boolean; errors: string[
     }
     if (!(STOP_RULES as readonly string[]).includes(r)) {
       errs.push(`stop.rules: unknown rule "${r}"`);
+    }
+  }
+
+  // ── Extra rules that apply ONLY when the playbook can message a customer.
+  //
+  // A task that turns out to be unnecessary wastes a rep's minute. A message
+  // that turns out to be unnecessary lands on a stranger's phone and cannot be
+  // recalled, so the bar for publishing one is higher and these are refusals,
+  // not warnings.
+  const messagingSteps = steps.filter(
+    (s) => String((s as Record<string, unknown>)?.kind ?? "") === "send_message",
+  );
+  if (messagingSteps.length) {
+    if (!rules.includes("replied")) {
+      errs.push(
+        'stop.rules must include "replied" when the playbook sends messages. A sequence that cannot be silenced by someone answering it will keep messaging a person who is already talking to you.',
+      );
+    }
+    if (!Number.isFinite(Number(d.caps?.touchesPerDay)) || Number(d.caps?.touchesPerDay) <= 0) {
+      errs.push(
+        "caps.touchesPerDay must be set when the playbook sends messages. There is no safe default for how often to text someone.",
+      );
+    }
+    if (t && t.kind === "event" && t.event === "lead.received") {
+      // processLeadIntake emits at most 50 per run against roughly 1,400 new
+      // leads a day, so a lead.received trigger reaches an arbitrary subset.
+      // That is unauditable and treats otherwise-identical customers
+      // differently — tolerable when the output is an internal task, not when
+      // it is a text message.
+      errs.push(
+        'trigger.event "lead.received" cannot be used with send_message: intake emits a capped subset each run, so only some new records would be messaged, chosen arbitrarily. Trigger on the outcome you actually want to follow up.',
+      );
+    }
+    // A message followed immediately by another step would run that step while
+    // the proposal is still sitting in someone's approval queue.
+    for (const [i, s] of steps.entries()) {
+      if (String((s as Record<string, unknown>)?.kind ?? "") !== "send_message") continue;
+      const next = steps[i + 1] as Record<string, unknown> | undefined;
+      if (next && String(next.kind ?? "") !== "wait" && String(next.kind ?? "") !== "stop") {
+        errs.push(
+          `steps[${i}]: a send_message must be the last step or be followed by a wait — otherwise the next step runs while the message is still waiting for a human.`,
+        );
+      }
     }
   }
 

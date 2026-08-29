@@ -1,6 +1,7 @@
 import "server-only";
 
 import { getPublicBaseUrl, getRestClient } from "../twilio";
+import { isMessagingConfigured, isMessagingSimulated } from "./config";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The only place a message actually leaves the building.
@@ -61,24 +62,10 @@ export interface SendMessageResult {
   notAllowlisted?: boolean;
 }
 
-const accountSid = () => process.env.TWILIO_ACCOUNT_SID ?? "";
-const authToken = () => process.env.TWILIO_AUTH_TOKEN ?? "";
-
-/**
- * Enough configured to send a message.
- *
- * Note what is NOT required: a caller ID. A conversation replies from the
- * number it was started on, which lives on the thread — borrowing the voice
- * pool's rotating number would scatter one conversation across eleven numbers.
- */
-export function isMessagingConfigured(): boolean {
-  return Boolean(accountSid() && authToken());
-}
-
-/** Simulation never reaches Twilio, so it is safe with real credentials set. */
-export function isMessagingSimulated(): boolean {
-  return process.env.MESSAGING_SIMULATION === "true";
-}
+// Re-exported so a caller that legitimately holds the transport does not need
+// two imports. The definitions live in ./config precisely so that asking the
+// question never drags in the ability to send — see that module's header.
+export { isMessagingConfigured, isMessagingSimulated } from "./config";
 
 /**
  * The recipients this deployment may reach, or null for "no restriction".

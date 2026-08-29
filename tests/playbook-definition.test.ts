@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   UNAVAILABLE_STOP_RULES,
   ALWAYS_ENFORCED_STOP_RULES,
+  LIVE_TRIGGER_EVENTS,
+  TRIGGER_EVENTS,
   resolveStopRules,
   validateDefinition,
   type PlaybookDefinition,
@@ -58,17 +60,31 @@ describe("validateDefinition — the strict publish gate", () => {
   });
 
   it("an event with no emitter is REFUSED, not quietly accepted", () => {
-    // This inverts the earlier contract, deliberately. A playbook triggered on
-    // `message.received` used to publish clean and then never run once —
-    // nothing emits it. Publishing something that can never fire is the same
-    // lie as a frequency cap that never applies, so it now fails with the
-    // reason and the list of events that DO work.
+    // This inverts the earlier contract, deliberately. Publishing a playbook
+    // that can never fire is the same lie as a frequency cap that never
+    // applies, so it fails with the reason and the list of events that work.
+    //
+    // The example is DERIVED rather than hardcoded. It used to name
+    // `message.received`, which has since gained an emitter and graduated to
+    // LIVE_TRIGGER_EVENTS — at which point the test was asserting the opposite
+    // of the truth. Picking whichever event is still unemitted keeps the rule
+    // pinned as events graduate one by one.
+    const unemitted = TRIGGER_EVENTS.find((e) => !LIVE_TRIGGER_EVENTS.includes(e));
+    expect(unemitted, "every event now has an emitter — delete this test").toBeTruthy();
     const v = validateDefinition({
       ...base,
-      trigger: { kind: "event", event: "message.received" },
+      trigger: { kind: "event", event: unemitted },
     });
     expect(v.ok).toBe(false);
     expect(v.errors.join(" ")).toContain("no emitter yet");
+
+    // And the graduated one is genuinely accepted now.
+    expect(
+      validateDefinition({
+        ...base,
+        trigger: { kind: "event", event: "message.received" },
+      }).ok,
+    ).toBe(true);
 
     // Outside the vocabulary entirely still fails, as before.
     expect(

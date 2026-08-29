@@ -4513,4 +4513,15 @@ end;
 $$;
 revoke all on function public.app_claim_messages(int) from public, anon, authenticated;
 
+-- The platform-wide messaging kill switch, and the send drain's heartbeat.
+--
+-- Flipping `messaging_paused` must leave approved rows exactly as they are, not
+-- cancel them: rollback has to be reversible, and a pause that destroyed the
+-- queue would be a one-way door. The drain simply refuses to claim while it is
+-- on, and resumes where it left off when it is off.
+alter table public.app_settings
+  add column if not exists messaging_paused boolean not null default false;
+alter table public.app_settings
+  add column if not exists messaging_last_tick_at timestamptz;
+
 notify pgrst, 'reload schema';
