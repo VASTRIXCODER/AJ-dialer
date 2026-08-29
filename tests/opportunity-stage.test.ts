@@ -104,8 +104,28 @@ describe("leads.status → stage mapping (LOCKSTEP with the PART 37 backfill)", 
     expect(stageForLeadStatus("dnc", false)).toBe("dnc_suppressed");
   });
 
-  it("closing stages are exactly lost + dnc_suppressed (sold stays open for fulfillment)", () => {
+  it("every ending closes, and the two non-endings stay open", () => {
+    // `sold` stays open because fulfillment mirroring still works the record,
+    // and `nurture` stays open because it is a holding pattern with a review
+    // date, not an ending. The other six all close: an open opportunity with
+    // no next action and no live work item is reported by app_pipeline_leaks
+    // every day forever, so a record parked at `invalid` or `duplicate` while
+    // still marked open would send a supervisor chasing a wrong number that
+    // can never be fixed.
     const closing = STAGES.filter((s) => isClosingStage(s));
-    expect(closing.sort()).toEqual(["dnc_suppressed", "lost"]);
+    expect(closing.slice().sort()).toEqual([
+      "disqualified",
+      "dnc_suppressed",
+      "duplicate",
+      "exhausted",
+      "invalid",
+      "lost",
+    ]);
+    expect(isClosingStage("sold")).toBe(false);
+    expect(isClosingStage("nurture")).toBe(false);
+  });
+
+  it("no progressive stage closes — the ladder is all still in play", () => {
+    for (const s of PROGRESSIVE_STAGES) expect(isClosingStage(s)).toBe(false);
   });
 });

@@ -96,7 +96,41 @@ export async function transitionOpportunityStage(input: {
   if (!verdict.ok) return false;
   try {
     const admin = createAdminClient();
-    await admin.from("opportunity_events").insert({
+    const now = new Date().toISOString();
+    const patch: Record<string, unknown> = {
+      stage: input.to,
+      stage_entered_at: now,
+      updated_at: now,
+    };
+    if (isClosingStage(input.to)) {
+      patch.op_status = "closed";
+      patch.closed_at = now;
+      patch.close_reason = input.to;
+    }
+
+    // CAS on the FROM stage, and ASK whether it landed. A racing writer that
+    // already moved the row wins and this matches zero rows — in which case we
+    // must neither claim we moved it nor log that we did. The move therefore
+    // comes FIRST: opportunity_events is append-only (a trigger refuses UPDATE
+    // and DELETE), so an event written before a CAS that then lost is a
+    // permanently wrong entry in the record's history with no way to retract
+    // it. An unlogged move is recoverable; a fabricated one is not.
+    const { data: moved } = await admin
+      .from("opportunities")
+      .update(patch)
+      .eq("id", input.opportunityId)
+      .eq("org_id", input.orgId)
+      .eq("stage", input.from)
+      .select("id");
+    if (!Array.isArray(moved) || moved.length === 0) {
+      count("opportunity.transition_lost_cas", 1, { orgId: input.orgId });
+      return false;
+    }
+
+    // The stage HAS moved by here, so a failed event write must not report the
+    // move as having failed — the caller asked "did the stage change?", and it
+    // did. Logged separately so a silent history gap is still visible.
+    const { error: logErr } = await admin.from("opportunity_events").insert({
       org_id: input.orgId,
       opportunity_id: input.opportunityId,
       type: "stage_changed",
@@ -106,23 +140,7 @@ export async function transitionOpportunityStage(input: {
       to_stage: input.to,
       detail: { reason: input.reason ?? "", ...(input.detail ?? {}) },
     });
-    // CAS on the FROM stage: a racing writer that already moved the row wins,
-    // and this update becomes a no-op instead of a stomp.
-    const patch: Record<string, unknown> = {
-      stage: input.to,
-      stage_entered_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    };
-    if (isClosingStage(input.to)) {
-      patch.op_status = "closed";
-      patch.closed_at = new Date().toISOString();
-      patch.close_reason = input.to;
-    }
-    await admin
-      .from("opportunities")
-      .update(patch)
-      .eq("id", input.opportunityId)
-      .eq("stage", input.from);
+    if (logErr) count("opportunity.transition_unlogged", 1, { orgId: input.orgId });
     return true;
   } catch {
     count("opportunity.transition_fail", 1, { orgId: input.orgId });

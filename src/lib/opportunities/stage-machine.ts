@@ -141,8 +141,29 @@ export function stageForLeadStatus(
   }
 }
 
-/** Stages whose opportunities are CLOSED operationally (op_status mapping).
- *  `sold` deliberately stays open — fulfillment mirroring (P2.7) works it. */
+/**
+ * Stages whose opportunities are CLOSED operationally (op_status mapping).
+ *
+ * Two stages are deliberately NOT here even though they look final:
+ *   • `sold` — fulfillment mirroring (P2.7) still works the record;
+ *   • `nurture` — a live holding pattern with a review date, not an ending.
+ *
+ * The other five endings all close. `app_pipeline_leaks` reports any OPEN
+ * opportunity with no next action and no live work item, so a record parked at
+ * `invalid` / `duplicate` / `disqualified` / `exhausted` while still marked open
+ * would be reported as a leak every day forever — chasing a supervisor after a
+ * wrong number nobody can ever fix. Nothing has reached those four stages in
+ * production yet, so this closes the hole before it can be dug.
+ */
+const CLOSING_STAGES = new Set<string>([
+  "lost",
+  "dnc_suppressed",
+  "invalid",
+  "duplicate",
+  "disqualified",
+  "exhausted",
+]);
+
 export function isClosingStage(stage: OpportunityStage): boolean {
-  return stage === "lost" || stage === "dnc_suppressed";
+  return CLOSING_STAGES.has(stage);
 }
