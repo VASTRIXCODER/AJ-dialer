@@ -1,7 +1,5 @@
 import { ShieldAlert } from "lucide-react";
 import { AdminConsole } from "@/components/admin/admin-console";
-import { DncManager } from "@/components/admin/dnc-manager";
-import { PlaybooksPanel } from "@/components/admin/playbooks-panel";
 import { EmptyState } from "@/components/shared/empty-state";
 import { PageContainer, PageHeader } from "@/components/shared/page-header";
 import { isAIConfigured } from "@/lib/ai/claude";
@@ -85,12 +83,6 @@ export default async function AdminPage() {
         emailConfigured={isEmailConfigured()}
         emailProblem={emailConfigProblem()}
       />
-      {viewer.permissions.includes("org.edit") && (
-        <div className="mt-6 space-y-6">
-          <PlaybooksPanel />
-          <DncManager canManage />
-        </div>
-      )}
     </PageContainer>
   );
 }

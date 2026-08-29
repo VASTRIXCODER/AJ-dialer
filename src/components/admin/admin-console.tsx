@@ -2,6 +2,7 @@
 
 import {
   Ban,
+  BookOpenCheck,
   Bot,
   Building2,
   Check,
@@ -28,6 +29,8 @@ import {
   XCircle,
 } from "lucide-react";
 import Link from "next/link";
+import { DncManager } from "@/components/admin/dnc-manager";
+import { PlaybooksPanel } from "@/components/admin/playbooks-panel";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { NotificationsSettings } from "@/components/admin/notifications-settings";
@@ -52,7 +55,15 @@ import {
 } from "@/lib/permissions";
 import { cn, formatPhone, initials, relativeTime } from "@/lib/utils";
 
-type Tab = "members" | "organization" | "notifications" | "companies" | "activity" | "data";
+type Tab =
+  | "members"
+  | "organization"
+  | "notifications"
+  | "companies"
+  | "playbooks"
+  | "dnc"
+  | "activity"
+  | "data";
 
 type Integration = { name: string; ok: boolean; detail: string };
 
@@ -114,6 +125,8 @@ export function AdminConsole({
     { key: "organization", label: "Organization", icon: Settings2, show: has("org.edit") },
     { key: "notifications", label: "Notifications", icon: Mail, show: has("org.edit") },
     { key: "companies", label: "Companies", icon: Building2, show: has("companies.manage") },
+    { key: "playbooks", label: "Playbooks", icon: BookOpenCheck, show: has("org.edit") },
+    { key: "dnc", label: "Do Not Call", icon: Ban, show: has("org.edit") },
     { key: "activity", label: "Activity log", icon: History, show: has("members.view") },
     { key: "data", label: "Data & integrations", icon: Database, show: true },
   ];
@@ -129,7 +142,7 @@ export function AdminConsole({
         </p>
       )}
 
-      <div className="flex flex-wrap gap-1 border-b border-border">
+      <div className="flex gap-1 overflow-x-auto border-b border-border">
         {visible.map((t) => {
           const Icon = t.icon;
           const active = tab === t.key;
@@ -152,6 +165,8 @@ export function AdminConsole({
         })}
       </div>
 
+      {tab === "playbooks" && <PlaybooksPanel />}
+      {tab === "dnc" && <DncManager canManage={has("org.edit")} />}
       {tab === "members" && (
         <MembersTab org={org} role={role} permissions={permissions} members={members} />
       )}
