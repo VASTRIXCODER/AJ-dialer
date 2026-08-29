@@ -606,16 +606,16 @@ export function DialerClient({
         </Card>
       ) : (
         <>
-      {/* Load leads into the dialer on demand + the group/campaign picker */}
+      {/* Load leads into the dialer on demand + the group/campaign picker.
+          Both doors lead to the SessionBuilder — two identically-labeled
+          buttons doing different things is how the builder stayed invisible
+          (quick load lives inside it, one click away). */}
       <div className="flex flex-wrap items-center gap-2.5">
         <Button
           size="sm"
           variant="outline"
           className="gap-2"
-          onClick={async () => {
-            const fresh = await loadLeads();
-            if (fresh.length) setShowLoadDialog(true);
-          }}
+          onClick={() => setBuilderOpen(true)}
           disabled={loadingLeads || state.status !== "idle"}
         >
           {loadingLeads ? (
@@ -914,6 +914,7 @@ export function DialerClient({
         onClose={() => setBuilderOpen(false)}
         campaigns={campaignsForSelect}
         groups={config.leadGroups ?? []}
+        leadGroupLabels={config.leadGroupLabels ?? {}}
         canOrgWide={config.dialScope === "org"}
         initial={config.savedSession}
         onLoad={(leads, meta) => {

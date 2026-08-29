@@ -34,9 +34,13 @@ async function resolveSessionScope(
   if (!user) return null;
   const { data: prof } = await supabase
     .from("profiles")
-    .select("org_id, role")
+    .select("org_id, role, disabled")
     .eq("id", user.id)
     .maybeSingle();
+  // A suspended account gets NOTHING here — the org-wide path below reads
+  // through the service-role client, which bypasses the RLS backstop that
+  // suspension otherwise relies on when the auth ban API hiccups.
+  if (prof?.disabled) return null;
   return {
     userId: user.id,
     orgId: prof?.org_id ? String(prof.org_id) : null,

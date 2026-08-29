@@ -1,6 +1,5 @@
 "use client";
 
-import { AnimatePresence, motion } from "framer-motion";
 import {
   AlertTriangle,
   Check,
@@ -10,17 +9,21 @@ import {
   X,
 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
+import { useVocabulary } from "@/components/layout/vocabulary";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Modal } from "@/components/ui/modal";
 import {
   DEFAULT_SEGMENTS,
   ORDER_LABELS,
+  SEGMENTS,
   type ContactFilter,
   type DialSessionMeta,
   type SessionOrder,
 } from "@/lib/dialer/segments";
 import type { Lead, LeadStatus } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import { groupLabel } from "./load-leads-dialog";
 
 interface Segment {
   key: string;
@@ -59,6 +62,7 @@ export function SessionBuilder({
   onQuickLoad,
   campaigns = [],
   groups = [],
+  leadGroupLabels = {},
   canOrgWide = false,
   initial,
 }: {
@@ -72,14 +76,22 @@ export function SessionBuilder({
   campaigns?: { id: string; name: string }[];
   /** The org's lead-intake groups, for the group filter. */
   groups?: { key: string; label: string }[];
+  /** Per-org display-label overrides for the group chips. */
+  leadGroupLabels?: Record<string, string>;
   /** Supervisors may build from the whole org's book. */
   canOrgWide?: boolean;
   /** The rep's remembered builder choices (profile preferences.dialerSession). */
   initial?: { statuses?: string[]; strictOrder?: boolean; refill?: boolean } | null;
 }) {
+  const vocab = useVocabulary();
   const [report, setReport] = useState<SegmentReport | null>(null);
+  // Saved statuses are validated against the REAL segment keys — a stale
+  // stored key would render no checked card while the server silently counted
+  // its default fallback instead.
+  const knownKeys = new Set<string>(SEGMENTS.map((s) => s.key));
+  const savedStatuses = (initial?.statuses ?? []).filter((s) => knownKeys.has(s));
   const [statuses, setStatuses] = useState<string[]>(
-    initial?.statuses?.length ? initial.statuses : DEFAULT_SEGMENTS,
+    savedStatuses.length ? savedStatuses : DEFAULT_SEGMENTS,
   );
   const [contact, setContact] = useState<ContactFilter>("any");
   // Upload order by default: a rep works a list the way it was handed to them,
@@ -129,6 +141,14 @@ export function SessionBuilder({
 
   useEffect(() => {
     if (!open) return;
+    // Nothing selected = nothing to call. The server would silently fall back
+    // to the default segments here — the count must reflect the UI, not the
+    // fallback, or "Load" ships statuses the cards show as unchecked.
+    if (statuses.length === 0) {
+      setAvailable(0);
+      setPreviewing(false);
+      return;
+    }
     let alive = true;
     setPreviewing(true);
     const t = setTimeout(() => {
@@ -148,7 +168,14 @@ export function SessionBuilder({
       alive = false;
       clearTimeout(t);
     };
-  }, [open, spec]);
+  }, [open, spec, statuses.length]);
+
+  // Workspace vocabulary on every rendered word: the segment defs carry the
+  // NEUTRAL defaults, the org's own noun + no-need label win here (a
+  // recruiting tenant must never read solar copy in its load flow).
+  const segLabel = (key: string, label: string) =>
+    key === "bills_fine" ? vocab.noNeedLabel : label.replace(/homeowner/gi, vocab.leadNoun);
+  const segHint = (hint: string) => hint.replace(/homeowner/gi, vocab.leadNoun);
 
   const toggle = (key: string) =>
     setStatuses((s) => (s.includes(key) ? s.filter((k) => k !== key) : [...s, key]));
@@ -163,9 +190,11 @@ export function SessionBuilder({
       });
       const json = (await res.json()) as { leads: Lead[]; count: number };
       const picked = report?.segments.filter((s) => statuses.includes(s.key)) ?? [];
-      const parts = picked.map((s) => `${Math.min(s.count, json.count)} ${s.label.toLowerCase()}`);
+      const parts = picked.map(
+        (s) => `${Math.min(s.count, json.count)} ${segLabel(s.key, s.label).toLowerCase()}`,
+      );
       const summary =
-        `${json.count} leads · ${parts.slice(0, 3).join(", ")}` +
+        `${json.count} ${vocab.leadNounPlural} · ${parts.slice(0, 3).join(", ")}` +
         (contact === "never" ? " · never contacted" : contact === "contacted" ? " · previously contacted" : "") +
         ` · ${ORDER_LABELS[order].toLowerCase()}` +
         (canOrgWide && orgWide ? " · whole org" : "") +
@@ -189,30 +218,22 @@ export function SessionBuilder({
   const willCall = Math.min(available ?? 0, limit);
 
   return (
-    <AnimatePresence>
-      {open && (
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          exit={{ opacity: 0 }}
-          className="fixed inset-0 z-50 flex items-end justify-center bg-background/70 p-0 backdrop-blur-sm sm:items-center sm:p-6"
-          onClick={onClose}
-        >
-          <motion.div
-            initial={{ opacity: 0, y: 24, scale: 0.98 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: 24, scale: 0.98 }}
-            transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
-            onClick={(e: React.MouseEvent) => e.stopPropagation()}
-            className="flex max-h-[92vh] w-full max-w-3xl flex-col overflow-hidden rounded-t-2xl border border-border bg-card shadow-lift sm:rounded-2xl"
-          >
+    <Modal
+      open={open}
+      onClose={onClose}
+      labelledBy="session-builder-title"
+      maxWidth="max-w-3xl"
+      panelClassName="flex max-h-[92vh] flex-col overflow-hidden p-0"
+    >
             {/* Header */}
             <div className="flex items-start justify-between gap-4 border-b border-border p-5">
               <div>
-                <h2 className="text-lg font-bold">Build your calling session</h2>
+                <h2 id="session-builder-title" className="text-lg font-bold">
+                  Build your calling session
+                </h2>
                 <p className="mt-0.5 text-sm text-muted-foreground">
                   {report
-                    ? `${report.total.toLocaleString()} leads in your book · ${report.dialableTotal.toLocaleString()} dialable`
+                    ? `${report.total.toLocaleString()} ${vocab.leadNounPlural} in your book · ${report.dialableTotal.toLocaleString()} dialable`
                     : "Loading your book…"}
                 </p>
               </div>
@@ -287,16 +308,19 @@ export function SessionBuilder({
                         Groups
                       </h3>
                       <div className="flex flex-wrap gap-1.5">
-                        {[...groups, { key: "unsorted", label: "Unsorted" }].map((g) => {
-                          const on = selGroups.includes(g.key);
+                        {/* groupLabel applies the org's own display overrides
+                            and names the no-group bucket the same word the
+                            rest of the dialer uses. */}
+                        {[...groups.map((g) => g.key), "unsorted"].map((key) => {
+                          const on = selGroups.includes(key);
                           return (
                             <button
-                              key={g.key}
+                              key={key}
                               type="button"
                               aria-pressed={on}
                               onClick={() =>
                                 setSelGroups((s) =>
-                                  on ? s.filter((k) => k !== g.key) : [...s, g.key],
+                                  on ? s.filter((k) => k !== key) : [...s, key],
                                 )
                               }
                               className={cn(
@@ -306,7 +330,7 @@ export function SessionBuilder({
                                   : "border-border text-muted-foreground hover:bg-muted",
                               )}
                             >
-                              {g.label}
+                              {groupLabel(key, leadGroupLabels, groups)}
                             </button>
                           );
                         })}
@@ -366,7 +390,7 @@ export function SessionBuilder({
                       <button
                         key={s.key}
                         type="button"
-                        title={s.hint}
+                        title={segHint(s.hint)}
                         onClick={() => toggle(s.key)}
                         className={cn(
                           "relative rounded-xl border p-3 text-left transition-colors",
@@ -385,12 +409,14 @@ export function SessionBuilder({
                             )}
                           />
                         )}
-                        <p className="pr-4 text-sm font-semibold">{s.label}</p>
+                        <p className="pr-4 text-sm font-semibold">{segLabel(s.key, s.label)}</p>
                         <p className="text-xs tabular text-muted-foreground">
                           {s.count.toLocaleString()}
                         </p>
                         {optIn && on && (
-                          <p className="mt-1 text-[10px] leading-tight text-warning">{s.hint}</p>
+                          <p className="mt-1 text-[10px] leading-tight text-warning">
+                            {segHint(s.hint)}
+                          </p>
                         )}
                       </button>
                     );
@@ -402,8 +428,8 @@ export function SessionBuilder({
                     className="mt-2 flex items-center gap-1.5 text-xs text-muted-foreground"
                   >
                     <AlertTriangle className="h-3 w-3 shrink-0" />
-                    {s.count.toLocaleString()} {s.label.toLowerCase()} leads are excluded and can
-                    never be dialed.
+                    {s.count.toLocaleString()} {segLabel(s.key, s.label).toLowerCase()}{" "}
+                    {vocab.leadNounPlural} are excluded and can never be dialed.
                   </p>
                 ))}
               </section>
@@ -523,15 +549,21 @@ export function SessionBuilder({
             <div className="flex flex-col gap-3 border-t border-border bg-surface/50 p-5 sm:flex-row sm:items-center sm:justify-between">
               <div className="flex items-center gap-2 text-sm">
                 <Users className="h-4 w-4 shrink-0 text-muted-foreground" />
-                {previewing ? (
+                {statuses.length === 0 ? (
+                  <span className="text-warning">
+                    Pick at least one disposition to call.
+                  </span>
+                ) : previewing ? (
                   <span className="text-muted-foreground">Counting…</span>
                 ) : available === 0 ? (
-                  <span className="text-warning">No leads match these filters.</span>
+                  <span className="text-warning">
+                    No {vocab.leadNounPlural} match these filters.
+                  </span>
                 ) : (
                   <span>
                     This session will call{" "}
-                    <b className="tabular">{willCall.toLocaleString()}</b> lead
-                    {willCall === 1 ? "" : "s"}
+                    <b className="tabular">{willCall.toLocaleString()}</b>{" "}
+                    {willCall === 1 ? vocab.leadNoun : vocab.leadNounPlural}
                     {available != null && available > willCall && (
                       <span className="text-muted-foreground">
                         {" "}
@@ -554,7 +586,7 @@ export function SessionBuilder({
                 )}
                 <Button
                   onClick={load}
-                  disabled={loading || !willCall}
+                  disabled={loading || !willCall || statuses.length === 0}
                   className="gap-2"
                   size="lg"
                 >
@@ -563,13 +595,10 @@ export function SessionBuilder({
                   ) : (
                     <PhoneOutgoing className="h-4 w-4" />
                   )}
-                  Load {willCall.toLocaleString()} leads
+                  Load {willCall.toLocaleString()} {vocab.leadNounPlural}
                 </Button>
               </div>
             </div>
-          </motion.div>
-        </motion.div>
-      )}
-    </AnimatePresence>
+    </Modal>
   );
 }

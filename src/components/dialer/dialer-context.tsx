@@ -381,10 +381,21 @@ export function DialerProvider({
   /** SessionBuilder hand-off: the queue becomes exactly this list, and the
    *  meta governs every claim until the next load. Also remembers the
    *  builder's choices on the profile so the next visit starts from them. */
-  const loadSession = useCallback(
-    (leads: Lead[], meta: DialSessionMeta) => {
+  // A plain function on purpose (like loadLeads): it closes over the CURRENT
+  // dialer + filter setters, and nothing depends on its identity.
+  function loadSession(leads: Lead[], meta: DialSessionMeta) {
+    {
       setQueue(leads);
       applySessionMeta(meta);
+      // A fresh session starts at the TOP of its list and with a clean slate
+      // of client filters — a lingering campaign/group/my-leads filter from
+      // the toolbar would silently AND against the built list (hiding it, or
+      // instantly "finishing" it at claim time), and a mid-list cursor from
+      // the previous session breaks the builder's "in this order" promise.
+      dialer.resetQueueCursor();
+      setCampaignFilter("");
+      setGroupFilter("all");
+      setMyLeadsOnlyPersisted(false);
       setLoadMsg(
         meta.summary ??
           `Loaded ${leads.length} lead${leads.length === 1 ? "" : "s"} into the dialer.`,
@@ -403,9 +414,8 @@ export function DialerProvider({
         }),
         keepalive: true,
       }).catch(() => {});
-    },
-    [applySessionMeta],
-  );
+    }
+  }
 
   async function loadLeads(): Promise<Lead[]> {
     setLoadingLeads(true);
@@ -496,10 +506,31 @@ export function DialerProvider({
     (async () => {
       await new Promise((r) => setTimeout(r, 2500));
       if (cancelled) return;
+      // A BUILDER session at lap end honors its own contract — the lap
+      // refetch used to call loadLeads() here unconditionally, which swapped
+      // the built list for the default pool queue and reset the meta: the
+      // exact "silent swap into off-list dialing" the fidelity patch forbids,
+      // resurrected through auto-dial. (Caught by review.)
+      const meta = sessionMetaRef.current;
+      if (meta.summary != null && !meta.refill) {
+        dialer.setAutoDial(false);
+        setLoadMsg(
+          "Auto-dial finished — your session's list is done. Load a new session to keep going (or turn on Auto-refill in the builder).",
+        );
+        return;
+      }
+      const swappingFromSession = meta.summary != null;
       const fresh = await loadLeads();
       if (cancelled) return;
       const stillDialable = fresh.filter(matchesFilters);
       if (stillDialable.length > 0) {
+        if (swappingFromSession) {
+          // Refill was opted in: the swap to the default pool is allowed,
+          // but never silent.
+          setLoadMsg(
+            `Session finished — auto-refill loaded ${stillDialable.length} leads from your default queue and auto-dial continues.`,
+          );
+        }
         dialer.restartAutoDialLap();
       } else {
         dialer.setAutoDial(false);

@@ -65,14 +65,27 @@ export async function POST(req: Request) {
   // promises a DUE CALLBACK bypasses cooldown/max-attempts — a "call me back
   // in 30 minutes" promise must not be silently starved by the org's re-dial
   // cooldown. So due-callback leads are claimed FIRST with the knobs off, and
-  // the general pool fills the remainder with the knobs on. DNC and the
-  // calling window are enforced inside the claim either way.
+  // the general claim fills the remainder with the knobs on. When the caller
+  // sent an explicit list (strict queue-fidelity mode — the DEFAULT for every
+  // dial now), the bypass set is the INTERSECTION dueIds ∩ leadIds: the
+  // callback promise survives the knobs, but the claim still never leaves the
+  // rep's loaded list. DNC and the calling window are enforced inside the
+  // claim either way.
   const leads = [] as Awaited<ReturnType<typeof claimDialLeads>>;
-  if ((maxAttempts > 0 || cooldownMinutes > 0) && !explicitIds) {
+  if (maxAttempts > 0 || cooldownMinutes > 0) {
     const dueIds = await dueCallbackLeadIds(scope.orgId);
-    if (dueIds.length) {
+    const bypassIds = explicitIds
+      ? explicitIds.filter((id) => dueIds.includes(id))
+      : dueIds;
+    if (bypassIds.length) {
       leads.push(
-        ...(await claimDialLeads({ ...base, limit, leadIds: dueIds })),
+        ...(await claimDialLeads({
+          ...base,
+          limit,
+          leadIds: bypassIds,
+          // Keep the rep's order when the list came from the rep.
+          preserveOrder: Boolean(explicitIds && body.preserveOrder),
+        })),
       );
     }
   }

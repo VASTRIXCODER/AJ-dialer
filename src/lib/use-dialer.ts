@@ -469,6 +469,11 @@ export function useDialer(
    * fabricate a no_answer record for them — recordNonWinners skips this set.
    */
   const undialedRef = useRef<Set<string>>(new Set());
+  /** A strict claim advanced the cursor for this round; advanceQueue consumes
+   *  it instead of double-advancing. lapWrapped records whether that advance
+   *  wrapped the list (the lap boundary, read by isCompletingLap). */
+  const claimAdvancedRef = useRef(false);
+  const lapWrappedRef = useRef(false);
   /**
    * Conversations we've launched that haven't finished. THIS is what makes
    * `parallelCount` an actual concurrency limit rather than a batch size.
@@ -1959,6 +1964,11 @@ export function useDialer(
       // always was: the DISPLAY. Reservations OFF (and demo mode, and explicit
       // overrides like redial/callback): the legacy local-cursor path, intact.
       let leads: Lead[];
+      // Fresh round: the cursor-advance flags belong to THIS round only — a
+      // stale flag from a previous claimed round would make an override round
+      // (redial, callback launch) skip its advanceQueue.
+      claimAdvancedRef.current = false;
+      lapWrappedRef.current = false;
       const reservations = optionsRef.current.reservations;
       if (!override && reservations?.enabled) {
         // In-flight guard goes up BEFORE the claim round-trip — mashing Start
@@ -1974,8 +1984,9 @@ export function useDialer(
         // from their current position; the server holds the first eligible N
         // of exactly that list (p_preserve_order).
         const strict = ctx.strictOrder !== false;
-        const candidates = strict
-          ? orderedCandidateIds(queue, queueIndexRef.current, 100)
+        const WINDOW = 200; // the claim route's leadIds cap
+        let candidates = strict
+          ? orderedCandidateIds(queue, queueIndexRef.current, WINDOW)
           : [];
         const postClaim = async (body: Record<string, unknown>): Promise<Lead[]> => {
           try {
@@ -2000,6 +2011,28 @@ export function useDialer(
             packId: ctx.packId,
             ...(strict ? { leadIds: candidates, preserveOrder: true } : {}),
           });
+        }
+        // A fully-ineligible head window (held by teammates, cooling down) on
+        // a session larger than the window must not read as "list finished"
+        // while eligible leads sit right behind it — probe the NEXT window
+        // once before declaring the list dry.
+        if (!claimed.length && strict && queue.length > WINDOW) {
+          const nextWindow = orderedCandidateIds(
+            queue,
+            queueIndexRef.current + WINDOW,
+            WINDOW,
+          ).filter((id) => !candidates.includes(id));
+          if (nextWindow.length) {
+            claimed = await postClaim({
+              count: parallelRef.current,
+              statuses: ctx.statuses,
+              campaignId: ctx.campaignId,
+              packId: ctx.packId,
+              leadIds: nextWindow,
+              preserveOrder: true,
+            });
+            if (claimed.length) candidates = nextWindow;
+          }
         }
         // Strict list dry + refill opted-in: pull from the eligible pool —
         // loudly, never as a silent substitution.
@@ -2026,16 +2059,26 @@ export function useDialer(
         // The round runs in the REP's order, whatever order the rows returned.
         claimed = reorderClaimed(claimed, candidates);
         for (const l of claimed) claimedIdsRef.current.add(l.id);
-        // Walk the cursor past what this round consumed, so the next Start
-        // continues down the list instead of re-offering the same leads.
-        const nextCursor = advanceCursorPastClaims(
-          queue,
-          queueIndexRef.current,
-          claimed.map((l) => l.id),
-        );
-        if (nextCursor !== queueIndexRef.current) {
-          queueIndexRef.current = nextCursor;
-          patch({ queueIndex: nextCursor });
+        // STRICT rounds only: walk the cursor past what this round consumed,
+        // flag it so advanceQueue doesn't double-advance, and record whether
+        // the walk wrapped (the lap boundary). Pool/refill claims leave the
+        // cursor alone — their leads aren't positions in the rep's list.
+        if (strict && !refilled) {
+          const prevCursor = queueIndexRef.current;
+          const nextCursor = advanceCursorPastClaims(
+            queue,
+            prevCursor,
+            claimed.map((l) => l.id),
+          );
+          if (nextCursor !== prevCursor) {
+            queueIndexRef.current = nextCursor;
+            patch({ queueIndex: nextCursor });
+          }
+          claimAdvancedRef.current = true;
+          lapWrappedRef.current = nextCursor <= prevCursor;
+        } else {
+          claimAdvancedRef.current = false;
+          lapWrappedRef.current = false;
         }
         // Claimed leads may not be in the local queue array (refill mode) —
         // let the provider merge them into display state so the UI shows the
@@ -2483,8 +2526,26 @@ export function useDialer(
     [patch, startHumanCall],
   );
 
+  /** Rewind to the top of the list — a freshly-loaded session starts at its
+   *  first lead, whatever position the previous session was parked at. */
+  const resetQueueCursor = useCallback(() => {
+    queueIndexRef.current = 0;
+    claimAdvancedRef.current = false;
+    lapWrappedRef.current = false;
+    setState((s) => (s.queueIndex === 0 ? s : { ...s, queueIndex: 0 }));
+  }, []);
+
   const advanceQueue = useCallback(() => {
     if (!queue.length) return;
+    // A strict claim already advanced the cursor past exactly the leads this
+    // round consumed — bumping again here skipped ~parallel leads per round
+    // (and made laps complete at half the list). Consume the flag instead.
+    // (Caught by review: the double advance was the mirror image of the very
+    // mis-dial bug the claim advance fixed.)
+    if (claimAdvancedRef.current) {
+      claimAdvancedRef.current = false;
+      return;
+    }
     queueIndexRef.current =
       (queueIndexRef.current + parallelRef.current) % queue.length;
     patch({ queueIndex: queueIndexRef.current });
@@ -2492,9 +2553,14 @@ export function useDialer(
 
   // True when the CURRENT queue position is the last one this pass will touch
   // — i.e. advanceQueue() is about to wrap back toward the start. Must be
-  // read BEFORE advanceQueue() moves the index.
+  // read BEFORE advanceQueue() moves the index. When a strict claim advanced
+  // the cursor itself, the wrap already happened (or didn't) at claim time —
+  // the flag the claim path recorded is the truth for this round.
   const isCompletingLap = useCallback(
-    () => queue.length > 0 && queueIndexRef.current + parallelRef.current >= queue.length,
+    () =>
+      claimAdvancedRef.current
+        ? lapWrappedRef.current
+        : queue.length > 0 && queueIndexRef.current + parallelRef.current >= queue.length,
     [queue.length],
   );
 
@@ -2876,6 +2942,7 @@ export function useDialer(
     state,
     startCall,
     restartAutoDialLap,
+    resetQueueCursor,
     dialNumber,
     aiDialNumber,
     endCall,

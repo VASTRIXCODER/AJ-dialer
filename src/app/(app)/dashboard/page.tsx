@@ -15,6 +15,7 @@ import { MetricCard } from "@/components/dashboard/metric-card";
 import { DataStamp } from "@/components/reports/data-stamp";
 import { resolveFieldInsights } from "@/components/reports/field-insights";
 import { EmptyState } from "@/components/shared/empty-state";
+import { HotQueue } from "@/components/dashboard/hot-queue";
 import { PageContainer, PageHeader } from "@/components/shared/page-header";
 import { SectionCard } from "@/components/shared/section-card";
 import { Avatar } from "@/components/ui/avatar";
@@ -159,6 +160,10 @@ export default async function DashboardPage() {
 
       {/* Force-dynamic page ⇒ render time IS the data's freshness. */}
       <DataStamp generatedAt={new Date()} timezone={orgTimezone(org)} />
+
+      {/* Hot signals (P2.6): the orchestration engine's escalations + any
+          detector's output. Renders NOTHING when the queue is clear. */}
+      <HotQueue />
 
       {/* Hero metrics */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">

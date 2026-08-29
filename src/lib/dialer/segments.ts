@@ -43,7 +43,9 @@ export const SEGMENTS: SegmentDef[] = [
     key: "callback",
     label: "Callback due",
     tier: "default",
-    hint: "The homeowner asked to be called back.",
+    // Neutral wording — the session builder re-words with the org's own
+    // vocabulary on top, but the DEFAULT must never carry an industry noun.
+    hint: "They asked to be called back.",
   },
   {
     key: "contacted",
@@ -65,9 +67,11 @@ export const SEGMENTS: SegmentDef[] = [
   },
   {
     key: "bills_fine",
-    label: "Bills are fine",
+    // The stored key is forever; the LABEL is the neutral default — the
+    // builder renders vocab.noNeedLabel over it (solar keeps its exact words).
+    label: "No need right now",
     tier: "optin",
-    hint: "Said their bills are fine. Only re-dial on a new offer or after months.",
+    hint: "Said they're fine for now. Only re-dial on a new offer or after months.",
   },
   {
     key: "not_interested",

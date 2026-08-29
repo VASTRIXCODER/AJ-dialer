@@ -1041,9 +1041,12 @@ export async function getDialQueue(opts?: { assignmentId?: string }): Promise<Le
 
     const { data: prof } = await supabase
       .from("profiles")
-      .select("org_id, role")
+      .select("org_id, role, disabled")
       .eq("id", user.id)
       .maybeSingle();
+    // Suspended accounts get nothing — the supervisor branch below reads via
+    // the service-role client, which would bypass the RLS suspension backstop.
+    if (prof?.disabled) return [];
     const orgId = prof?.org_id ? String(prof.org_id) : null;
     const supervisor =
       Boolean(orgId) && isSupervisorRole(prof?.role) && isAdminConfigured();

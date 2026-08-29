@@ -50,3 +50,35 @@ follow-up commit, notably:
 **Not yet evidenced (honest):** any Phase 2 UI, engine behavior against real
 tables (unit-tested pure planning only), backfill row counts, orchestrate
 cron execution, opportunity parity.
+
+## Slice S5 — 2026-08-29 (queue-fidelity review cycle + P2.6-lite)
+
+**Gates:** tsc clean · 76 files / 878 tests green · build passes.
+
+**Adversarial review of 1c5a611** (4 lenses × 2 refuters): 18 raw findings,
+16 confirmed (~11 distinct), 2 refuted. All fixed:
+- CRITICAL: auto-dial's lap refetch swapped a builder session for the default
+  pool queue (off-list dialing resurrected through auto-dial) — the lap now
+  honors the session contract: strict+no-refill ENDS auto-dial with the honest
+  message; refill announces the swap.
+- Double cursor advance (claim-advance + advanceQueue) skipped ~parallel leads
+  per round and halved laps — advanceQueue now consumes the claim-advance
+  flag; lap wrap is recorded at claim time; override rounds reset the flags.
+- Due-callback bypass was dead in strict mode — the claim route now pre-claims
+  dueIds ∩ leadIds with the knobs off.
+- 200-id window + a second-window probe fixes the false "list finished" on
+  large sessions with an ineligible head window.
+- Suspended supervisors could read org books through the admin-client paths
+  (session builder AND the pre-existing getDialQueue) — both now check
+  profiles.disabled and fail closed.
+- loadSession resets the cursor and clears stale campaign/group/my-leads
+  filters; BOTH "Load leads" doors open the SessionBuilder; the builder now
+  uses the Modal primitive (dialog role, focus trap, Escape, reduced-motion),
+  renders org vocabulary (no solar copy for non-solar tenants), refuses an
+  empty disposition selection instead of silently loading defaults, and uses
+  groupLabel()/leadGroupLabels for group chips (incl. "Miscellaneous").
+
+**P2.6-lite shipped:** /api/signals (org-fenced list/acknowledge/dismiss;
+reps see own-opportunity signals, supervisors the org) + the dashboard Hot
+signals card (severity-first, self-explaining rows, renders nothing when
+clear).
