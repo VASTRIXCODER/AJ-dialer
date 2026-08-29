@@ -20,7 +20,7 @@ export async function GET() {
   const { data } = await admin
     .from("signals")
     .select(
-      "id, type, severity, evidence, detected_at, last_seen_at, seen_count, expires_at, acknowledged_at, opportunity_id, lead_id",
+      "id, type, severity, evidence, detected_at, last_seen_at, seen_count, expires_at, acknowledged_at, opportunity_id, lead_id, audience",
     )
     .eq("org_id", scope.orgId)
     .is("resolved_at", null)
@@ -51,9 +51,13 @@ export async function GET() {
   );
 
   const rows = raw
-    // Reps: only signals on opportunities they own (or unowned ones).
+    // Reps: only signals on opportunities they own (or unowned ones), and only
+    // those addressed to the owner. A manager rung of an escalation ladder is
+    // ABOUT the rep — surfacing it back to them makes the two rungs look like
+    // one duplicated alert and buries the supervisor's cue in the rep's queue.
     .filter((r) => {
       if (scope.supervisor) return true;
+      if (String(r.audience ?? "owner") !== "owner") return false;
       const opp = opps.get(String(r.opportunity_id ?? ""));
       return !opp?.owner_id || String(opp.owner_id) === scope.userId;
     })

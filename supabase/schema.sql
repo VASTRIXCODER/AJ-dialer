@@ -4151,4 +4151,19 @@ alter table public.app_settings
 alter table public.app_settings
   add column if not exists orchestration_last_tick_at timestamptz;
 
+-- ─────────────────────────────────────────────────────────────────────────────
+-- PART 39 — signal audience.
+--
+-- A playbook's `escalate` step declares `to: owner | managers | queue`, and the
+-- escalation ladder depends on the distinction: nudge the rep first, tell a
+-- manager only if it is still unresolved. Signals were written identically
+-- either way and every audience saw both, so the ladder had one rung.
+--
+-- 'owner' is the default because it is the narrower audience: an existing row
+-- keeps being visible to exactly who could already see it.
+-- ─────────────────────────────────────────────────────────────────────────────
+alter table public.signals
+  add column if not exists audience text not null default 'owner'
+  check (audience in ('owner','managers'));
+
 notify pgrst, 'reload schema';

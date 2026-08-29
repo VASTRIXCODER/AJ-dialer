@@ -499,6 +499,10 @@ export async function orchestrationTick(now = new Date()): Promise<TickResult> {
             opportunity_id: inst.opportunity_id,
             type: `escalation:${step.reason}`,
             severity: 4,
+            // WHO this rung is for. `queue` has no queue-membership model yet,
+            // so it resolves to the supervisor audience rather than silently
+            // behaving like an owner nudge.
+            audience: step.to === "owner" ? "owner" : "managers",
             evidence: {
               to: step.to,
               playbookId: inst.playbook_id,

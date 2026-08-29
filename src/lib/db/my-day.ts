@@ -219,7 +219,7 @@ async function readMyDay(input: {
       .limit(50),
     admin
       .from("signals")
-      .select("id, lead_id, opportunity_id, type, severity, evidence, detected_at")
+      .select("id, lead_id, opportunity_id, type, severity, evidence, detected_at, audience")
       .eq("org_id", scope.orgId)
       .is("resolved_at", null)
       .or(`expires_at.is.null,expires_at.gt.${nowIso}`)
@@ -299,6 +299,8 @@ async function readMyDay(input: {
   }
   const mySignals = sigRaw.filter((r) => {
     if (scope.supervisor) return true;
+    // Manager-audience rungs belong to supervisors — see /api/signals.
+    if (s(r.audience) && s(r.audience) !== "owner") return false;
     const owner = ownedOpp.get(s(r.opportunity_id));
     return !owner || owner === scope.userId;
   });
