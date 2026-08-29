@@ -99,6 +99,20 @@ export async function getMyDay(input: {
   hours: OrgHours | null;
   orgTz: string;
 }): Promise<MyDayData | null> {
+  // A transient DB hiccup must degrade to the page's empty state, never 500 a
+  // rep's first screen of the day — the idiom every other db module follows.
+  try {
+    return await readMyDay(input);
+  } catch {
+    return null;
+  }
+}
+
+async function readMyDay(input: {
+  scope: Scope;
+  hours: OrgHours | null;
+  orgTz: string;
+}): Promise<MyDayData | null> {
   const { scope, hours, orgTz } = input;
   if (!isAdminConfigured() || !scope.orgId) return null;
   const admin = createAdminClient();
@@ -127,11 +141,27 @@ export async function getMyDay(input: {
       .not("status", "in", '("completed","cancelled")')
       .or(mineCallback);
 
-  const [cbOverdueRes, cbTodayRes, cbUnschedRes] = await Promise.all([
-    openMine().lte("due_at", nowIso),
-    openMine().gt("due_at", nowIso).lt("due_at", dayEnd),
-    openMine().is("due_at", null),
-  ]);
+  // Same rule for today's own numbers: COUNT queries, not array lengths. A
+  // long 3-line parallel session can approach any row bound worth setting.
+  const myCallsToday = () =>
+    admin
+      .from("call_records")
+      .select("id", { count: "exact", head: true })
+      .eq("org_id", scope.orgId as string)
+      .eq("owner_id", scope.userId)
+      .gte("started_at", todayStartIso);
+
+  const [cbOverdueRes, cbTodayRes, cbUnschedRes, dialsRes, convosRes, apptDoneRes] =
+    await Promise.all([
+      openMine().lte("due_at", nowIso),
+      openMine().gt("due_at", nowIso).lt("due_at", dayEnd),
+      openMine().is("due_at", null),
+      myCallsToday(),
+      myCallsToday().or(
+        `human_connected.is.true,outcome.in.(${[...CONNECTED_OUTCOMES].join(",")})`,
+      ),
+      myCallsToday().eq("outcome", "appointment_booked"),
+    ]);
 
   const [cbRes, wiRes, sigRes, apptRes, callsRes, assignments] = await Promise.all([
     admin
@@ -171,7 +201,7 @@ export async function getMyDay(input: {
       .limit(50),
     admin
       .from("call_records")
-      .select("outcome, human_connected, talk_sec")
+      .select("talk_sec")
       .eq("org_id", scope.orgId)
       .eq("owner_id", scope.userId)
       .gte("started_at", todayStartIso)
@@ -269,15 +299,14 @@ export async function getMyDay(input: {
     ),
   };
 
+  // Counts are exact (COUNT queries above); talk time is a SUM that PostgREST
+  // can't express, so it rides the row fetch — under-reporting only in the
+  // physically implausible case of one rep placing 2,000+ calls in a day.
   const callRows = (callsRes.data ?? []) as Row[];
   const today = {
-    dials: callRows.length,
-    conversations: callRows.filter(
-      (r) =>
-        r.human_connected === true ||
-        (CONNECTED_OUTCOMES as Set<string>).has(s(r.outcome)),
-    ).length,
-    appointments: callRows.filter((r) => s(r.outcome) === "appointment_booked").length,
+    dials: dialsRes.count ?? 0,
+    conversations: convosRes.count ?? 0,
+    appointments: apptDoneRes.count ?? 0,
     talkSec: callRows.reduce((sum, r) => sum + n(r.talk_sec), 0),
   };
 

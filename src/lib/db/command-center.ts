@@ -77,6 +77,18 @@ export async function getCommandCenter(input: {
   orgId: string;
   orgTz: string;
 }): Promise<CommandCenterData | null> {
+  // Degrade to the page's empty state rather than 500ing the floor view.
+  try {
+    return await readCommandCenter(input);
+  } catch {
+    return null;
+  }
+}
+
+async function readCommandCenter(input: {
+  orgId: string;
+  orgTz: string;
+}): Promise<CommandCenterData | null> {
   if (!isAdminConfigured() || !input.orgId) return null;
   const admin = createAdminClient();
   const nowIso = new Date().toISOString();

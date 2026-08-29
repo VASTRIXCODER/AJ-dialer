@@ -115,6 +115,24 @@ export function orderedCandidateIds(
 }
 
 /**
+ * A lead the rep PICKED BY NAME could not be claimed.
+ *
+ * The bug this exists for: searching the queue for one person and pressing
+ * Start dialed somebody else entirely. The claim window opens AT the picked
+ * lead but the server returns the first ELIGIBLE lead in it, so a pick that
+ * was held by a teammate / cooling down / over its attempt cap / out of hours
+ * was silently skipped and the next candidate rang instead — a completely
+ * different person, with the panel still showing the one the rep chose.
+ *
+ * An explicit pick is not a starting position, it is an instruction. When it
+ * can't be honored the round is REFUSED and this is why — nobody is dialed in
+ * their place.
+ */
+export function pinnedLeadUnavailableMessage(name: string): string {
+  return `${name} can’t be dialed right now — the lead is held by another rep, cooling down between attempts, at its attempt limit, on the Do-Not-Call list, or outside its calling window. Nobody else was dialed in their place. Try again in a moment, or pick a different lead.`;
+}
+
+/**
  * Claims come back in server order; the ROUND must run in the rep's order.
  * Defensive re-sort by the candidate list (unknown ids — a refill claim —
  * keep their relative order at the end).
