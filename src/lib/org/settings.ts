@@ -157,6 +157,48 @@ export const DEFAULT_DIALER_LAYOUT: DialerLayout = {
   closerNotes: true,
 };
 
+/**
+ * Customer messaging (Phase 2 · W2).
+ *
+ * `enabled` is an org's own switch. Whether messaging is REACHABLE at all is a
+ * derived capability (`isMessagingConfigured()`), never a flag — an org must
+ * not be able to toggle on a channel that isn't wired, because the toggle would
+ * then be a promise the product can't keep.
+ */
+export interface MessagingSettings {
+  enabled: boolean;
+  /**
+   * Local hours a message may be sent, in the RECIPIENT's timezone. Its own
+   * window rather than reusing `hours`: that one defaults to `enforced: false`,
+   * and flipping it on to serve messaging would immediately change live CALL
+   * behaviour for every org. Messaging quiet hours can never be advisory.
+   */
+  quietHours: { startHour: number; endHour: number };
+  /** Ceiling on what the whole workspace may send in a day. 0 = unlimited. */
+  dailyOrgCap: number;
+  /** Per-person limits, counted against sends the carrier accepted. */
+  perContactPerDay: number;
+  perContactPer7Days: number;
+  /**
+   * Ships INERT. The drain refuses to auto-send whatever this says, and the
+   * `messages_approved_by_required` constraint refuses at the database. It
+   * exists so the column doesn't have to be added later under time pressure —
+   * not as a switch someone can find and flip.
+   */
+  autoSend: boolean;
+}
+
+export const DEFAULT_MESSAGING: MessagingSettings = {
+  enabled: false,
+  // Tighter than the statutory 8am–9pm on purpose — see DEFAULT_QUIET_HOURS in
+  // messaging/send-gate.ts for why the boundary hours are the risky ones.
+  quietHours: { startHour: 9, endHour: 20 },
+  dailyOrgCap: 250,
+  perContactPerDay: 1,
+  perContactPer7Days: 3,
+  autoSend: false,
+};
+
 export interface OrgSettings {
   dialing: {
     /**
@@ -338,6 +380,7 @@ export interface OrgSettings {
    * template's preset (see DEFAULT_DIALER_LAYOUT and the (app) layout).
    */
   dialerLayout: Partial<DialerLayout>;
+  messaging: MessagingSettings;
   notifications: NotificationSettings;
   features: OrgFeatures;
   billing: OrgBilling;
@@ -586,6 +629,7 @@ export const DEFAULT_ORG_SETTINGS: OrgSettings = {
   ],
   qualify: { ...DEFAULT_QUALIFY },
   dialerLayout: {},
+  messaging: { ...DEFAULT_MESSAGING },
   notifications: { ...DEFAULT_NOTIFICATIONS },
   features: { ...DEFAULT_FEATURES },
   billing: { ...DEFAULT_BILLING },
@@ -696,6 +740,16 @@ export function mergeSettings(raw: unknown): OrgSettings {
       appointmentEmails: Array.isArray(s.notifications?.appointmentEmails)
         ? s.notifications!.appointmentEmails
         : DEFAULT_NOTIFICATIONS.appointmentEmails,
+    },
+    messaging: {
+      ...DEFAULT_MESSAGING,
+      ...(s.messaging ?? {}),
+      // Nested, so a stored blob carrying only one hour cannot leave the other
+      // undefined and silently disable the window.
+      quietHours: {
+        ...DEFAULT_MESSAGING.quietHours,
+        ...(s.messaging?.quietHours ?? {}),
+      },
     },
     features: { ...DEFAULT_FEATURES, ...(s.features ?? {}) },
     billing: { ...DEFAULT_BILLING, ...(s.billing ?? {}) },

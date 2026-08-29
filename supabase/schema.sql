@@ -4310,4 +4310,207 @@ revoke all on function public.app_record_consent(
   uuid, text, text, text, text, text, text, text, uuid, uuid, timestamptz
 ) from public, anon, authenticated;
 
+-- ─────────────────────────────────────────────────────────────────────────────
+-- PART 41 — CUSTOMER MESSAGING                                    [Phase 2 · W2]
+--
+-- THE ONE ARCHITECTURAL DECISION, ENFORCED HERE RATHER THAN BY CONVENTION:
+--
+--   The engine never sends. The engine proposes. A named human sends.
+--
+-- `messages_approved_by_required` below is that rule as a constraint. A row
+-- cannot reach a sendable status without a named approver, so a future refactor
+-- that tries to auto-send is refused by Postgres rather than by a code review.
+-- Rep-initiated 1:1 messages are not exempt — they are SELF-approved, so
+-- author == approver and the audit row says so. One path, one constraint, two
+-- permission shapes.
+--
+-- Deliberately NOT built on notification_outbox. app_claim_notifications is
+-- kind-agnostic and drainOutbox is not: an SMS row placed there would be
+-- claimed by the email drain, cast to an appointment email kind, and rendered
+-- to the org's appointment recipients. That is a cross-channel content leak,
+-- and it is only the first of five disqualifying reasons.
+-- ─────────────────────────────────────────────────────────────────────────────
+
+-- Versioned, approved wording. A template is authored as a draft and published;
+-- exactly one version per key may be live at a time.
+create table if not exists public.message_templates (
+  id           uuid primary key default gen_random_uuid(),
+  org_id       uuid not null,
+  key          text not null,
+  version      int  not null default 1,
+  name         text not null default '',
+  channel      text not null default 'sms' check (channel in ('sms','email')),
+  -- What this message IS, which decides which consent scope it needs.
+  scope        text not null default 'transactional'
+               check (scope in ('transactional','promotional')),
+  body         text not null,
+  -- Variables the body references, so an unresolved one is a publish-time
+  -- error rather than a customer receiving "Hi {{firstName}}".
+  variables    text[] not null default '{}',
+  status       text not null default 'draft' check (status in ('draft','published','archived')),
+  -- Ships INERT: the drain refuses to auto-send whatever this says. It exists
+  -- so the column does not have to be added later under time pressure.
+  auto_send    boolean not null default false,
+  created_by   uuid,
+  published_by uuid,
+  published_at timestamptz,
+  created_at   timestamptz not null default now(),
+  updated_at   timestamptz not null default now()
+);
+create unique index if not exists message_templates_one_live
+  on public.message_templates (org_id, key) where (status = 'published');
+create index if not exists message_templates_org_idx
+  on public.message_templates (org_id, status, key);
+alter table public.message_templates enable row level security;
+drop policy if exists "message_templates org read" on public.message_templates;
+create policy "message_templates org read" on public.message_templates for select using (
+  public.app_is_superadmin() or (public.app_is_active() and public.app_is_org_member(org_id))
+);
+
+-- One conversation per person per org per channel, keyed on the last 10 digits
+-- so the same human never ends up with two threads. The sender number is
+-- STICKY: caller-ID rotation is right for dialing and catastrophic for a
+-- conversation, where a reply must come from the number they were texted from.
+create table if not exists public.message_threads (
+  id             uuid primary key default gen_random_uuid(),
+  org_id         uuid not null,
+  contact_digits text not null,
+  channel        text not null default 'sms' check (channel in ('sms','email')),
+  lead_id        uuid,
+  opportunity_id uuid references public.opportunities (id) on delete set null,
+  sender_number  text,
+  -- True when the lead could not be resolved unambiguously; the Unmatched
+  -- inbox works these rather than the system guessing.
+  ambiguous_match boolean not null default false,
+  last_inbound_at  timestamptz,
+  last_outbound_at timestamptz,
+  unread_count   int not null default 0,
+  created_at     timestamptz not null default now(),
+  updated_at     timestamptz not null default now()
+);
+create unique index if not exists message_threads_one_per_contact
+  on public.message_threads (org_id, contact_digits, channel);
+create index if not exists message_threads_lead_idx
+  on public.message_threads (org_id, lead_id);
+alter table public.message_threads enable row level security;
+drop policy if exists "message_threads org read" on public.message_threads;
+create policy "message_threads org read" on public.message_threads for select using (
+  public.app_is_superadmin() or (public.app_is_active() and public.app_is_org_member(org_id))
+);
+
+create table if not exists public.messages (
+  id             uuid primary key default gen_random_uuid(),
+  org_id         uuid not null,
+  thread_id      uuid not null references public.message_threads (id) on delete cascade,
+  lead_id        uuid,
+  opportunity_id uuid references public.opportunities (id) on delete set null,
+  direction      text not null check (direction in ('outbound','inbound')),
+  channel        text not null default 'sms' check (channel in ('sms','email')),
+  -- The honest lifecycle. `sent` and `delivered` are written ONLY by a provider
+  -- status callback — never by the send call returning, which reports `queued`.
+  status         text not null check (status in (
+                   'draft','needs_approval','approved','queued','sending',
+                   'sent','delivered','undelivered','failed','blocked',
+                   'rejected','canceled','needs_review','received')),
+  body           text not null default '',
+  -- Rendered ONCE at proposal time and frozen. The approver approved specific
+  -- words to a specific person; re-rendering at send would deliver words nobody
+  -- read.
+  template_id    uuid references public.message_templates (id),
+  template_key   text,
+  template_version int,
+  scope          text not null default 'transactional'
+                 check (scope in ('transactional','promotional')),
+  from_number    text,
+  to_number      text,
+  -- Provider truth, kept separate from our own lifecycle.
+  provider       text not null default 'twilio',
+  provider_sid   text,
+  provider_status text,
+  error_code     text,
+  error_message  text,
+  segments       int,
+  -- Exactly-once creation. The orchestration engine's idempotency discipline.
+  idempotency_key text,
+  -- The approval columns the constraint below depends on.
+  created_by     uuid,
+  approved_by    uuid,
+  approved_at    timestamptz,
+  rejected_by    uuid,
+  rejected_at    timestamptz,
+  reject_reason  text,
+  -- Why the gate refused, when it did. Plural: the gate returns ALL reasons.
+  blocked_reasons text[],
+  next_attempt_at timestamptz,
+  attempts       int not null default 0,
+  queued_at      timestamptz,
+  sent_at        timestamptz,
+  delivered_at   timestamptz,
+  -- An AGENT of ours read it. SMS has no read receipt and this never means the
+  -- customer read anything.
+  read_at        timestamptz,
+  source_kind    text,
+  source_id      text,
+  created_at     timestamptz not null default now(),
+  updated_at     timestamptz not null default now(),
+  -- THE RULE. A message cannot become sendable without a named human.
+  constraint messages_approved_by_required check (
+    status not in ('approved','queued','sending','sent','delivered')
+    or approved_by is not null
+  )
+);
+create unique index if not exists messages_idempotency
+  on public.messages (org_id, idempotency_key) where (idempotency_key is not null);
+-- Globally unique, not per-org: Twilio retries an inbound webhook with the same
+-- SID, and the dedupe has to hold before we know which org it belongs to.
+create unique index if not exists messages_provider_sid
+  on public.messages (provider_sid) where (provider_sid is not null);
+-- The drain's only query. Partial, so it stays tiny behind millions of rows.
+create index if not exists messages_drain_idx
+  on public.messages (next_attempt_at)
+  where (status in ('approved','queued'));
+create index if not exists messages_thread_idx
+  on public.messages (thread_id, created_at desc);
+create index if not exists messages_approvals_idx
+  on public.messages (org_id, status, created_at) where (status = 'needs_approval');
+create index if not exists messages_cap_idx
+  on public.messages (org_id, to_number, created_at)
+  where (direction = 'outbound' and provider_sid is not null);
+
+alter table public.messages enable row level security;
+drop policy if exists "messages org read" on public.messages;
+create policy "messages org read" on public.messages for select using (
+  public.app_is_superadmin() or (public.app_is_active() and public.app_is_org_member(org_id))
+);
+
+-- Atomic claim for the send drain: same FOR UPDATE SKIP LOCKED lease pattern as
+-- app_claim_work_items. Two cron ticks overlapping must never both pick up the
+-- same message, because Twilio's Messages API has NO idempotency key and a
+-- second send is a second real text to a real person.
+create or replace function public.app_claim_messages(
+  p_limit int default 20
+) returns setof public.messages
+language plpgsql security definer set search_path = public as $$
+begin
+  return query
+  with candidates as (
+    select m.id from public.messages m
+    where m.status in ('approved','queued')
+      and (m.next_attempt_at is null or m.next_attempt_at <= now())
+      and m.approved_by is not null
+    order by m.next_attempt_at asc nulls first, m.created_at asc
+    limit greatest(1, least(p_limit, 100))
+    for update skip locked
+  )
+  update public.messages m
+     set status = 'queued',
+         attempts = m.attempts + 1,
+         updated_at = now()
+    from candidates c
+   where m.id = c.id
+  returning m.*;
+end;
+$$;
+revoke all on function public.app_claim_messages(int) from public, anon, authenticated;
+
 notify pgrst, 'reload schema';
