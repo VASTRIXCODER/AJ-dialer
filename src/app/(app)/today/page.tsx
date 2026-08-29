@@ -17,6 +17,7 @@ import { PageContainer, PageHeader } from "@/components/shared/page-header";
 import { Badge } from "@/components/ui/badge";
 import { buttonVariants } from "@/components/ui/button";
 import { SectionCard } from "@/components/shared/section-card";
+import { dialDeepLink } from "@/lib/dialer/deep-link";
 import { getMyDay, type MyDayData } from "@/lib/db/my-day";
 import { getScope } from "@/lib/db/scope";
 import { orgTimezone } from "@/lib/metrics/definitions";
@@ -89,7 +90,13 @@ export default async function TodayPage() {
         {/* The page's ONE primary action: the recommended call, or the dialer. */}
         {whoNext ? (
           <Link
-            href={`/dialer?dial=${encodeURIComponent(whoNext.phone)}&name=${encodeURIComponent(whoNext.name)}`}
+            // The callback id rides along so filing the disposition CLOSES the
+            // promise — the same contract the callbacks board uses.
+            href={dialDeepLink({
+              phone: whoNext.phone,
+              name: whoNext.name,
+              callbackId: whoNext.callbackId,
+            })}
             className={buttonVariants({ size: "sm" })}
           >
             <PhoneCall className="mr-1.5 h-4 w-4" />

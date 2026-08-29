@@ -68,7 +68,11 @@ export default async function DialerPage({
 
   // Sanitise callback params — only digits/+ allowed in phone to prevent injection.
   const callbackPhone = dial ? dial.replace(/[^\d+]/g, "") : undefined;
-  const callbackName = name ? decodeURIComponent(name).slice(0, 80) : undefined;
+  // Next.js has ALREADY percent-decoded searchParams, so decoding again is both
+  // unnecessary and dangerous: a lead legitimately named "50% Off Corp" arrives
+  // here as "50% Off Corp", and decodeURIComponent throws URIError on the bare
+  // "%" — a 500 on the dialer, the one page a rep can't work without.
+  const callbackName = name ? name.slice(0, 80) : undefined;
   // ?callback=<uuid> — the Callbacks board's claim→dial deep link. Riding it
   // onto the disposition is what finally CLOSES the callback when the call is
   // filed. Strictly a uuid; anything else is dropped, never forwarded.

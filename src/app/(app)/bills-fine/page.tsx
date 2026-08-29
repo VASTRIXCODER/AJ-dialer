@@ -20,6 +20,7 @@ import { buttonVariants } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { getBillsFine } from "@/lib/db/pipeline";
+import { dialDeepLink } from "@/lib/dialer/deep-link";
 import { resolveLeadFields } from "@/lib/leads/field-schema";
 import { getViewer } from "@/lib/org/membership";
 import { templateProfile } from "@/lib/org/templates";
@@ -205,11 +206,7 @@ export default async function BillsFinePage({
                   </span>
                 )}
                 <Link
-                  href={
-                    lead.phone
-                      ? `/dialer?dial=${encodeURIComponent(lead.phone)}&name=${encodeURIComponent(lead.leadName)}`
-                      : "/dialer"
-                  }
+                  href={dialDeepLink({ phone: lead.phone, name: lead.leadName })}
                   className={buttonVariants({ size: "sm", variant: "outline", className: "gap-1.5" })}
                 >
                   <PhoneCall className="h-3.5 w-3.5" />

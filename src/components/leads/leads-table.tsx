@@ -49,6 +49,7 @@ import {
   leadFieldValue,
   type LeadFieldDef,
 } from "@/lib/leads/field-schema";
+import { dialDeepLink } from "@/lib/dialer/deep-link";
 import { encodeFilterParam, type FilterSpec } from "@/lib/leads/filter-spec";
 import { leadStatusConfig, resolveLeadStatusConfig } from "@/lib/status";
 import { applyLabelOverride } from "@/lib/leads/group-labels";
@@ -1673,11 +1674,7 @@ export function LeadsTable({
                             set-aside pages use. Bare /dialer just opened the
                             page and forgot who you meant to call. */}
                         <Link
-                          href={
-                            l.phone
-                              ? `/dialer?dial=${encodeURIComponent(l.phone)}&name=${encodeURIComponent(name)}`
-                              : "/dialer"
-                          }
+                          href={dialDeepLink({ phone: l.phone, name })}
                           className={buttonVariants({
                             size: "sm",
                             variant: "ghost",

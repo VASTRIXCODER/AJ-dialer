@@ -19,10 +19,15 @@ export async function POST(req: Request) {
   const leadIds = Array.isArray(body.leadIds) ? body.leadIds.slice(0, 200) : [];
   const released = await releaseDialLeads(scope.orgId, scope.userId, leadIds);
   // Hand back the matching work-item reservations too (P2.3 threading).
-  void releaseCallWorkItemsForRep({
-    orgId: scope.orgId,
-    repId: scope.userId,
-    leadIds: leadIds.length ? leadIds : undefined,
-  });
+  // Scoped to the SAME ids as the lead release — releaseDialLeads no-ops on an
+  // empty list, so releasing every held work item here would leave the rep
+  // holding leads whose work items had become claimable by someone else.
+  if (leadIds.length) {
+    void releaseCallWorkItemsForRep({
+      orgId: scope.orgId,
+      repId: scope.userId,
+      leadIds,
+    });
+  }
   return NextResponse.json({ released });
 }

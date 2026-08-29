@@ -35,6 +35,7 @@ import {
   type CallbackLane,
 } from "@/lib/callbacks/lanes";
 import type { CallbackBoardRow } from "@/lib/db/callbacks";
+import { dialDeepLink } from "@/lib/dialer/deep-link";
 import { cn, formatPhone, initials, relativeTime } from "@/lib/utils";
 import {
   ScheduleCallbackDialog,
@@ -487,9 +488,7 @@ export function CallbackBoard({
           router.refresh();
           return;
         }
-        router.push(
-          `/dialer?dial=${encodeURIComponent(row.phone)}&name=${encodeURIComponent(name)}&callback=${row.id}`,
-        );
+        router.push(dialDeepLink({ phone: row.phone, name, callbackId: row.id }));
       } catch {
         toast({ title: "Network error", description: "Please try again.", tone: "danger" });
       } finally {

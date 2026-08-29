@@ -69,6 +69,13 @@ export interface WhoNext {
   phone: string;
   reason: string;
   source: "callback" | "signal" | "work_item";
+  /**
+   * When the recommendation came from a promised callback, its id — deep-linked
+   * into the dialer so filing the disposition CLOSES the callback (the same
+   * contract the callbacks board relies on). Without it the promise stays open
+   * and this rep gets recommended the same person forever.
+   */
+  callbackId: string | null;
 }
 
 export interface MyDayData {
@@ -291,6 +298,7 @@ export async function getMyDay(input: {
     leadId: string;
     reason: string;
     source: WhoNext["source"];
+    callbackId: string | null;
   }
   const candidates: Candidate[] = [];
   for (const r of cbRows.filter((r) => r.lead_id && r.due_at && s(r.due_at) <= nowIso)) {
@@ -298,6 +306,7 @@ export async function getMyDay(input: {
       leadId: s(r.lead_id),
       reason: "You promised this call back — it's due now.",
       source: "callback",
+      callbackId: s(r.id) || null,
     });
   }
   for (const sig of signals.filter((x) => x.severity >= 4 && x.leadId)) {
@@ -305,6 +314,7 @@ export async function getMyDay(input: {
       leadId: sig.leadId as string,
       reason: sig.reason || `Hot signal: ${sig.type.replace(/_/g, " ")}.`,
       source: "signal",
+      callbackId: null,
     });
   }
   for (const w of wiRows.filter(
@@ -314,6 +324,7 @@ export async function getMyDay(input: {
       leadId: s(w.lead_id),
       reason: s(w.reason) || "An open task points here.",
       source: "work_item",
+      callbackId: null,
     });
   }
   for (const r of cbRows.filter(
@@ -323,6 +334,7 @@ export async function getMyDay(input: {
       leadId: s(r.lead_id),
       reason: "Callback promised for later today.",
       source: "callback",
+      callbackId: s(r.id) || null,
     });
   }
 
@@ -373,6 +385,7 @@ export async function getMyDay(input: {
         phone,
         reason: c.reason,
         source: c.source,
+        callbackId: c.callbackId,
       };
       break;
     }
