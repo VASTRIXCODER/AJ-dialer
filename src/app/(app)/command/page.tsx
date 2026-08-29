@@ -69,7 +69,8 @@ export default async function CommandCenterPage() {
     );
   }
 
-  const { today, scanCapped, speedSampled, queues, leaks, reps, playbooks } = data;
+  const { today, scanCapped, speedSampled, instancesCapped, queues, leaks, reps, playbooks } =
+    data;
   // Capitalized here rather than via a vocabulary key: `appointmentNounPlural`
   // is the noun every workspace defines ("showings", "interviews"), and label
   // case is this surface's concern, not the vocabulary's.
@@ -312,7 +313,8 @@ export default async function CommandCenterPage() {
                   {pb.status}
                 </Badge>
                 <span className="shrink-0 text-xs text-muted-foreground tabular">
-                  v{pb.version} · {pb.activeInstances} running
+                  v{pb.version} · {instancesCapped ? "≥" : ""}
+                  {pb.activeInstances} running
                 </span>
               </li>
             ))}

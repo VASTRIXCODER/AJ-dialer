@@ -19,6 +19,8 @@ const n = (v: unknown) => Number(v ?? 0) || 0;
 const PAGE = 1000;
 /** Row-scan bound for the per-rep breakdown (12 pages = 12,000 calls/day). */
 const SCAN_PAGES = 12;
+/** Bound on the running-playbook-instance scan. */
+const INSTANCE_SCAN = 2000;
 /** Conversation-grade outcomes, as a PostgREST in() list. */
 const CONNECTED_LIST = `(${[...CONNECTED_OUTCOMES].join(",")})`;
 
@@ -64,6 +66,8 @@ export interface CommandCenterData {
   scanCapped: boolean;
   /** True when the speed-to-lead median rode a capped sample, not the day. */
   speedSampled: boolean;
+  /** True when the running-instance scan hit its bound (counts are a floor). */
+  instancesCapped: boolean;
   queues: {
     overdueCallbacks: number;
     unscheduledCallbacks: number;
@@ -203,12 +207,15 @@ async function readCommandCenter(input: {
       .neq("status", "retired")
       .order("name", { ascending: true })
       .limit(20),
+    // Per-playbook counts need the rows (no GROUP BY in PostgREST). Bounded,
+    // and the tally below flags when the bound was reached rather than
+    // presenting a truncated "N running" as exact.
     admin
       .from("playbook_instances")
       .select("playbook_id")
       .eq("org_id", input.orgId)
       .in("status", ["active", "waiting"])
-      .limit(2000),
+      .limit(INSTANCE_SCAN),
     // Ordered, so the sample is the first 1,000 first-attempts of the day
     // rather than whatever order the planner happened to return — an
     // arbitrary sample would make the median wander between refreshes.
@@ -312,8 +319,10 @@ async function readCommandCenter(input: {
   );
 
   // ── Playbooks ──────────────────────────────────────────────────────────────
+  const instanceRows = (instancesRes.data ?? []) as Row[];
+  const instancesCapped = instanceRows.length >= INSTANCE_SCAN;
   const instanceCounts = new Map<string, number>();
-  for (const i of (instancesRes.data ?? []) as Row[]) {
+  for (const i of instanceRows) {
     const id = s(i.playbook_id);
     instanceCounts.set(id, (instanceCounts.get(id) ?? 0) + 1);
   }
@@ -327,5 +336,14 @@ async function readCommandCenter(input: {
     }),
   );
 
-  return { today, scanCapped, speedSampled, queues, leaks, reps, playbooks };
+  return {
+    today,
+    scanCapped,
+    speedSampled,
+    instancesCapped,
+    queues,
+    leaks,
+    reps,
+    playbooks,
+  };
 }

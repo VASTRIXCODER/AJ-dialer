@@ -35,6 +35,9 @@ export function ReactivationStudio() {
   const router = useRouter();
   const dialer = useDialerContextOptional();
   const [cohorts, setCohorts] = useState<CohortRow[] | null>(null);
+  // Supervisors sweep the org's book, reps only their own. The page around
+  // this card is headed "Whole org", so an own-scoped count has to say so.
+  const [orgWide, setOrgWide] = useState(true);
   const [loading, setLoading] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
 
@@ -42,7 +45,10 @@ export function ReactivationStudio() {
     const ac = new AbortController();
     fetch("/api/reactivation", { signal: ac.signal })
       .then((r) => (r.ok ? r.json() : { cohorts: [] }))
-      .then((j: { cohorts?: CohortRow[] }) => setCohorts(j.cohorts ?? []))
+      .then((j: { cohorts?: CohortRow[]; orgWide?: boolean }) => {
+        setCohorts(j.cohorts ?? []);
+        setOrgWide(j.orgWide !== false);
+      })
       .catch(() => setCohorts([]));
     return () => ac.abort();
   }, []);
@@ -119,7 +125,9 @@ export function ReactivationStudio() {
   return (
     <SectionCard
       title="Reactivation"
-      description={`Aged ${vocab.leadNounPlural}, re-entered deliberately — never anyone on the Do-Not-Call list, with an open callback, or already held. Loads as a strict list.`}
+      description={`${
+        orgWide ? "Whole org" : `Your own ${vocab.leadNounPlural}`
+      } · aged ${vocab.leadNounPlural}, re-entered deliberately — never anyone on the Do-Not-Call list, with an open callback, or already held. Loads as a strict list.`}
     >
       <ul className="space-y-3">
         {cohorts
