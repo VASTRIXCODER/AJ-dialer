@@ -238,6 +238,34 @@ to state and then immediately navigated away from (it now travels in the
 session summary the dialer displays); hardcoded "Appointments" where the
 workspace's own noun belongs; and no rate limit on `GET /api/reactivation`.
 
+**Post-fix verification in production (VICC):**
+- Pipeline leaks fell from **12,363 → 2,016** once never-attempted
+  opportunities were excluded, so the leak panel and the "untouched new"
+  queue (10,232) now describe genuinely distinct populations instead of
+  double-counting one backlog.
+- The `leads!inner` join is confirmed working — untouched moved 10,233 →
+  10,232, excluding an archived/DNC'd lead rather than erroring to zero (the
+  one change that could not be verified locally).
+- Overdue callbacks still read 8 after the timezone fix, which is consistent
+  with this org's data rather than evidence the fix is inert: all 8 are from
+  previous days and the other 76 carry no agreed time at all, so there is no
+  callback scheduled for later *today* to reclassify. The behaviour itself is
+  pinned by unit tests, including one asserting the old comparison's failure.
+
+**A process failure worth recording:** commit `318c8e5` failed to build on
+Vercel ("Property 'AppointmentNounPlural' does not exist on type
+'OrgVocabulary'") while local `tsc` passed, so the review fixes sat undeployed
+until `865deda`. Two causes, both from working in a repo with a concurrent
+session: (1) the working tree carried an *uncommitted* change adding the
+capitalized vocabulary keys, so local type-checking validated against a
+definition that was never in the commit; (2) `tsconfig.tsbuildinfo` is
+incremental and had gone stale. Mitigations now in use: stage by explicit
+path, never `git add -A`; verify referenced symbols against
+`git show HEAD:<file>` before committing; run `tsc --noEmit --incremental
+false`; and always confirm the deploy status rather than assuming a push
+shipped. `npm run build` cannot be trusted locally at all while three
+concurrent `next dev` servers share `.next`.
+
 **Not yet evidenced (honest):** perf/a11y sweeps and multi-role/multi-tenant
 walkthroughs of the Phase 2 surfaces (only the Owner role on one org was
 loaded); the opportunity-parity check riding reconcile-data; orchestrate-cron
