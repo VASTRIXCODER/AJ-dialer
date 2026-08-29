@@ -77,6 +77,18 @@ export const ALWAYS_ENFORCED_STOP_RULES: StopRule[] = [
   "opportunity_closed",
 ];
 
+/**
+ * Stop rules with no emitter behind them yet: nothing in the product can ever
+ * report a customer reply, a complaint, or an open service issue, so a
+ * playbook declaring them would advertise a protection it does not have.
+ * Refused at publish until the channel that raises them exists.
+ */
+export const UNAVAILABLE_STOP_RULES: Record<string, string> = {
+  replied: "no inbound message channel is connected yet",
+  complaint: "nothing reports complaints yet",
+  open_issue: "no service-issue source is connected yet",
+};
+
 export const WORK_ITEM_TYPES = [
   "first_call",
   "follow_up_call",
@@ -190,7 +202,6 @@ export interface PlaybookDefinition {
     touchesPer7Days?: number;
   };
   reentry?: { allow: boolean; cooldownHours?: number };
-  routing?: { queue?: string; escalateTo?: "owner" | "managers" | "queue" };
 }
 
 const MAX_STEPS = 30;
@@ -344,6 +355,12 @@ export function validateDefinition(raw: unknown): { ok: boolean; errors: string[
   const rules = Array.isArray(stop?.rules) ? stop!.rules : [];
   if (rules.length === 0) errs.push("stop.rules must name at least one stop rule");
   for (const r of rules) {
+    if (UNAVAILABLE_STOP_RULES[r]) {
+      errs.push(
+        `stop.rules: "${r}" cannot fire — ${UNAVAILABLE_STOP_RULES[r]}. Remove it so the playbook does not claim a protection it lacks.`,
+      );
+      continue;
+    }
     if (!(STOP_RULES as readonly string[]).includes(r)) {
       errs.push(`stop.rules: unknown rule "${r}"`);
     }

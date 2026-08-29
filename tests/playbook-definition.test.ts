@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  UNAVAILABLE_STOP_RULES,
   ALWAYS_ENFORCED_STOP_RULES,
   resolveStopRules,
   validateDefinition,
@@ -202,5 +203,37 @@ describe("plan helpers — determinism", () => {
       "America/Chicago",
     );
     expect(tomorrow.getTime() - now.getTime()).toBe(24 * 60 * 60_000);
+  });
+});
+
+describe("stop rules that cannot fire are refused at publish", () => {
+  // A playbook declaring `replied` would advertise a protection the product
+  // cannot deliver — nothing emits customer replies. Accepting it silently is
+  // the same class of lie as a frequency cap that never applies.
+  const base = SEED_TEMPLATES[0];
+
+  for (const rule of Object.keys(UNAVAILABLE_STOP_RULES)) {
+    it(`refuses "${rule}" and explains why`, () => {
+      const v = validateDefinition({
+        ...base,
+        key: "probe",
+        stop: { rules: [rule, "opportunity_closed"] },
+      });
+      expect(v.ok).toBe(false);
+      const joined = (v.ok ? [] : v.errors).join(" ");
+      expect(joined).toContain(rule);
+      expect(joined).toContain(UNAVAILABLE_STOP_RULES[rule]);
+    });
+  }
+
+  it("still accepts the rules that DO have emitters", () => {
+    const v = validateDefinition({
+      ...base,
+      key: "probe_ok",
+      stop: {
+        rules: ["contacted", "attempted", "callback_completed", "opportunity_closed"],
+      },
+    });
+    expect(v.ok).toBe(true);
   });
 });

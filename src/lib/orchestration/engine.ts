@@ -32,6 +32,8 @@ interface TickResult {
   skipped: string | null;
   woken: number;
   executed: number;
+  /** Steps held back by a frequency cap — waiting, not lost. */
+  deferred: number;
   stopped: number;
   failed: number;
 }
@@ -92,11 +94,11 @@ async function stopSnapshot(
   admin: ReturnType<typeof createAdminClient>,
   inst: InstanceRow,
   opts?: { maxAttempts?: number; needsCallbackState?: boolean },
-): Promise<StopSnapshot | null> {
+): Promise<(StopSnapshot & { leadId: string | null }) | null> {
   const { data: opp } = await admin
     .from("opportunities")
     .select(
-      "lead_id, stage, op_status, owner_id, first_contacted_at, last_touched_at, attempt_count",
+      "lead_id, stage, op_status, owner_id, owner_assigned_at, first_contacted_at, last_touched_at, attempt_count",
     )
     .eq("id", inst.opportunity_id)
     .maybeSingle();
@@ -107,6 +109,7 @@ async function stopSnapshot(
   const touchedSince = (v: unknown) =>
     v != null && Number.isFinite(Date.parse(String(v))) && Date.parse(String(v)) >= since;
   return {
+    leadId: opp.lead_id ? String(opp.lead_id) : null,
     dncOrOptOut: stage === "dnc_suppressed",
     opportunityClosed: String(opp.op_status) === "closed",
     managerPause: String(opp.op_status) === "paused",
@@ -120,7 +123,9 @@ async function stopSnapshot(
     ...(await callbackState(admin, inst, opp.lead_id, touchedSince, opts)),
     appointmentBooked: stage === "appointment_booked" || stage === "appointment_completed",
     sold: stage === "sold",
-    reassigned: false,
+    // Real: ownership moving after the playbook started IS the reassignment
+    // this rule exists to catch (stampOpportunitiesAssigned writes the stamp).
+    reassigned: touchedSince(opp.owner_assigned_at),
     // Only paid for when a cap exists — otherwise the value is never read.
     attemptsSinceActivation: capped
       ? await attemptsSinceActivation(
@@ -148,6 +153,66 @@ async function endInstance(
     })
     .eq("id", inst.id)
     .in("status", ["active", "waiting"]);
+}
+
+/**
+ * Frequency caps (`caps.touchesPerDay` / `caps.touchesPer7Days`).
+ *
+ * These were declared in the grammar, validated on publish and set on a seed
+ * template — and never read, so an operator who configured "at most one touch
+ * a day" got no such limit. A cap that does nothing is worse than no cap,
+ * because it is believed.
+ *
+ * A touch is a real contact attempt on the lead (call_records), not a
+ * bookkeeping step — the cap protects the person on the other end, so it has
+ * to count what actually reaches them, whoever placed it.
+ *
+ * Returns the instant the cap frees up, or null when the step may run now.
+ * Being capped DEFERS the step rather than skipping it: "no more than one
+ * today" means wait for tomorrow, not cancel the follow-up.
+ */
+async function capDeferUntil(
+  admin: ReturnType<typeof createAdminClient>,
+  inst: InstanceRow,
+  leadId: string | null,
+  caps: { touchesPerDay?: number; touchesPer7Days?: number } | undefined,
+  now: Date,
+): Promise<Date | null> {
+  const perDay = Math.max(0, Math.round(Number(caps?.touchesPerDay) || 0));
+  const perWeek = Math.max(0, Math.round(Number(caps?.touchesPer7Days) || 0));
+  if ((!perDay && !perWeek) || !leadId) return null;
+  try {
+    const weekAgo = new Date(now.getTime() - 7 * 86_400_000).toISOString();
+    const { data } = await admin
+      .from("call_records")
+      .select("started_at")
+      .eq("org_id", inst.org_id)
+      .eq("lead_id", leadId)
+      .gte("started_at", weekAgo)
+      .order("started_at", { ascending: true })
+      .limit(200);
+    const times = ((data ?? []) as Record<string, unknown>[])
+      .map((r) => Date.parse(String(r.started_at)))
+      .filter((t) => Number.isFinite(t));
+    if (!times.length) return null;
+
+    const dayAgo = now.getTime() - 86_400_000;
+    const inDay = times.filter((t) => t >= dayAgo);
+    let until: number | null = null;
+    // The window clears one full period after the OLDEST touch inside it, so
+    // the deferral is exact instead of a poll.
+    if (perDay && inDay.length >= perDay) {
+      until = Math.max(until ?? 0, inDay[0] + 86_400_000);
+    }
+    if (perWeek && times.length >= perWeek) {
+      until = Math.max(until ?? 0, times[0] + 7 * 86_400_000);
+    }
+    return until ? new Date(until) : null;
+  } catch {
+    // Never invent a cap breach from a failed read — that would silently
+    // stall a playbook.
+    return null;
+  }
 }
 
 /** Move to the next step, or finish when the playbook is out of steps. CAS on
@@ -200,7 +265,14 @@ async function attemptsSinceActivation(
 
 /** One deterministic tick. Never throws; returns an operator-readable report. */
 export async function orchestrationTick(now = new Date()): Promise<TickResult> {
-  const out: TickResult = { skipped: null, woken: 0, executed: 0, stopped: 0, failed: 0 };
+  const out: TickResult = {
+    skipped: null,
+    woken: 0,
+    executed: 0,
+    deferred: 0,
+    stopped: 0,
+    failed: 0,
+  };
   if (!isAdminConfigured()) {
     out.skipped = "no database";
     return out;
@@ -304,6 +376,31 @@ export async function orchestrationTick(now = new Date()): Promise<TickResult> {
           await endInstance(admin, inst, "stopped", tripped);
           out.stopped++;
           continue;
+        }
+
+        // Frequency caps, before the gate. Deferring after the gate would
+        // burn the step's execution row and skip it permanently.
+        if (step.kind === "create_work_item") {
+          const deferUntil = await capDeferUntil(
+            admin,
+            inst,
+            snap.leadId,
+            def.caps,
+            now,
+          );
+          if (deferUntil) {
+            await admin
+              .from("playbook_instances")
+              .update({
+                status: "waiting",
+                wait_until: deferUntil.toISOString(),
+                updated_at: now.toISOString(),
+              })
+              .eq("id", inst.id)
+              .eq("current_step", inst.current_step);
+            out.deferred++;
+            continue;
+          }
         }
 
         // Waits move the instance to 'waiting' — no execution row needed (the

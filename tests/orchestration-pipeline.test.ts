@@ -87,6 +87,7 @@ function world(
   db.seed("work_items", []);
   db.seed("signals", []);
   db.seed("callbacks", []);
+  db.seed("call_records", []);
 }
 
 const instances = () => db.rows("playbook_instances");
@@ -320,6 +321,106 @@ describe("stop rules", () => {
     const r = await orchestrationTick(NOW);
     expect(r.stopped).toBe(0);
     expect(instances()[0].status).not.toBe("stopped");
+  });
+});
+
+describe("frequency caps are real", () => {
+  // caps.touchesPerDay / touchesPer7Days were declared in the grammar,
+  // validated on publish, set on a seed template — and read by nothing. An
+  // operator who configured "at most one touch a day" had no such limit.
+  const capped: PlaybookDefinition = {
+    ...SPEED_TO_LEAD,
+    steps: [
+      { id: "t1", kind: "create_work_item", type: "follow_up_call", reason: "retry" },
+    ],
+    stop: { rules: ["opportunity_closed"] },
+    caps: { touchesPerDay: 1 },
+  };
+
+  it("defers a touch when the lead was already called today, instead of piling on", async () => {
+    world(capped);
+    // One real call three hours ago — the lead's daily allowance is spent.
+    db.seed("call_records", [
+      {
+        id: "cr-1",
+        org_id: ORG,
+        lead_id: LEAD,
+        started_at: new Date(NOW.getTime() - 3 * 3_600_000).toISOString(),
+      },
+    ]);
+    await emitOrchestrationEvent({ orgId: ORG, leadId: LEAD, event: "lead.received" });
+
+    const r = await orchestrationTick(NOW);
+    expect(r.deferred).toBe(1);
+    expect(workItems()).toHaveLength(0);
+    // Deferred, never dropped: it waits for the window to clear, 24h after
+    // the touch that filled it.
+    expect(instances()[0].status).toBe("waiting");
+    expect(instances()[0].current_step).toBe(0);
+    expect(instances()[0].wait_until).toBe(
+      new Date(NOW.getTime() - 3 * 3_600_000 + 86_400_000).toISOString(),
+    );
+  });
+
+  it("runs the touch once the window has cleared", async () => {
+    world(capped);
+    db.seed("call_records", [
+      {
+        id: "cr-2",
+        org_id: ORG,
+        lead_id: LEAD,
+        started_at: new Date(NOW.getTime() - 30 * 3_600_000).toISOString(), // >24h
+      },
+    ]);
+    await emitOrchestrationEvent({ orgId: ORG, leadId: LEAD, event: "lead.received" });
+    const r = await orchestrationTick(NOW);
+    expect(r.deferred).toBe(0);
+    expect(workItems()).toHaveLength(1);
+  });
+
+  it("a deferred step keeps its execution row free, so it still runs later", async () => {
+    world(capped);
+    db.seed("call_records", [
+      {
+        id: "cr-3",
+        org_id: ORG,
+        lead_id: LEAD,
+        started_at: new Date(NOW.getTime() - 3_600_000).toISOString(),
+      },
+    ]);
+    await emitOrchestrationEvent({ orgId: ORG, leadId: LEAD, event: "lead.received" });
+    await orchestrationTick(NOW);
+    // Nothing was recorded as executed — otherwise the exactly-once gate would
+    // skip this step forever once the cap cleared.
+    expect(db.rows("playbook_executions")).toHaveLength(0);
+  });
+
+  it("no caps configured means no extra work and no deferral", async () => {
+    world({ ...capped, caps: undefined });
+    db.seed("call_records", [
+      { id: "cr-4", org_id: ORG, lead_id: LEAD, started_at: NOW.toISOString() },
+    ]);
+    await emitOrchestrationEvent({ orgId: ORG, leadId: LEAD, event: "lead.received" });
+    const r = await orchestrationTick(NOW);
+    expect(r.deferred).toBe(0);
+    expect(workItems()).toHaveLength(1);
+  });
+});
+
+describe("reassignment is real", () => {
+  it("stops when the opportunity changes hands mid-playbook", async () => {
+    const def: PlaybookDefinition = {
+      ...SPEED_TO_LEAD,
+      stop: { rules: ["opportunity_closed"], stopOnReassign: true },
+    };
+    world(def);
+    await emitOrchestrationEvent({ orgId: ORG, leadId: LEAD, event: "lead.received" });
+    db.rows("opportunities")[0].owner_assigned_at = new Date(
+      NOW.getTime() + 60_000,
+    ).toISOString();
+    const r = await orchestrationTick(new Date(NOW.getTime() + 120_000));
+    expect(r.stopped).toBe(1);
+    expect(instances()[0].stopped_reason).toBe("reassigned");
   });
 });
 
