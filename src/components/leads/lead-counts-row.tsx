@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { Tooltip } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -118,15 +119,11 @@ export function LeadCountsRow({ counts, hrefFor, active, className }: LeadCounts
                 : "border-border/70 hover:border-border",
             )}
           >
-            {/* TODO: swap title= for <Tooltip> once src/components/ui/tooltip.tsx
-                lands (being built in parallel) — native title has no styling
-                and a hover delay we don't control. */}
-            <div
-              title={def.definition}
-              className="truncate text-[11px] font-semibold uppercase tracking-wide text-muted-foreground"
-            >
-              {def.label}
-            </div>
+            <Tooltip content={def.definition}>
+              <div className="truncate text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                {def.label}
+              </div>
+            </Tooltip>
             <div
               className={cn(
                 "tabular mt-0.5 text-lg font-semibold leading-tight",

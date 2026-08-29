@@ -11,6 +11,34 @@ Running log of verification evidence per slice. Baseline first; every checkpoint
 
 ## Slice log
 
+### G — 2026-08-29 (Checkpoint 7: hardening & release readiness)
+
+- Tenant isolation (route layer): `tests/tenant-isolation.test.ts` (7) — cross-org Lead 360 reads resolve 404 with NO row data (existence itself is information), in-org-not-your-book → 403, signed-out → 401, foreign timeline pages refuse, archive gated manager+ (403 never touches the db), anonymous 401. Combined with the A2 suites (answered-auth, hold-scope, ai-routes-auth), every new Phase-1 mutation path has a deny-path test.
+- PII-safe logs: grep audit of every `console.*` under `src/app/api` + `src/lib` for lead names/phones/transcript text — **zero hits**; logging is id-based (leadId/callSid/conversationId) throughout.
+- Accessibility: aria-live call-state announcer verified in the cockpit; Toast region aria-live; Drawer/Modal focus traps with restore; StatusPill renders icon+label (never color alone); the LeadCountsRow `title=` TODO swapped for the focusable Tooltip primitive; teleprompter auto-scroll defaults OFF under prefers-reduced-motion.
+- Observability: `docs/phase-1/performance-baseline.md` (wired metric inventory + targets) + `scripts/perf-report.sql` (percentiles, health red-flags, attempt-lifecycle distribution, reconciler repair trend).
+- Live production validation (from the running system, 2026-08-29): pg_cron 248/248 HTTP 200s over 2h across all 3 jobs; 873 immutable call_events + 160 canonical attempts accumulated from real dialing, with 149 attempts completing the full lifecycle to `dispositioned` and zero stuck states; all six checkpoint deploys READY on Vercel.
+- Deferred from the G plan (subagent session limit hit; each is a clean follow-up): Playwright demo-mode smoke specs (config + 3 journeys designed in implementation-plan §G; the app runs credential-less so no blockers), StatusPill automated contrast script (manual token review done — all pill tones pair `*-foreground` on `*_soft`/`*` tokens from the audited palette).
+
+## Manual RLS checklist (run in the Supabase SQL editor as needed — CI cannot cover RLS)
+
+Impersonate an org-B member (`set role authenticated; set request.jwt.claims ...` or simply use a second test login in the app) and verify each returns ZERO org-A rows:
+
+```sql
+-- 1. Leads:            select count(*) from leads where org_id = '<org-A>';
+-- 2. Call records:     select count(*) from call_records where org_id = '<org-A>';
+-- 3. Smart lists:      select count(*) from smart_lists where org_id = '<org-A>';
+-- 4. Call artifacts:   select count(*) from call_artifacts where org_id = '<org-A>';
+-- 5. Attempts/events:  select count(*) from call_attempts where org_id = '<org-A>';
+--                      select count(*) from call_events   where org_id = '<org-A>';
+-- 6. Import jobs:      select count(*) from import_jobs where org_id = '<org-A>';
+-- 7. Review queue:     select count(*) from call_review_queue where org_id = '<org-A>';
+-- 8. Realtime join:    a client subscribing to org:<org-A>:floor while active in
+--    org-B must get CHANNEL_ERROR (app_can_join_org_topic returns false).
+```
+
+Service-role-only tables (`ops_metrics`, `transcript_cursors`, `export_audit`, `call_records_dupes`) have RLS on with no policies — any authenticated select must return zero rows.
+
 ### F1–F2 — 2026-08-29 (Checkpoint 6: call intelligence + report center)
 
 - Suite: **70 files / 814 tests** green; tsc clean; build passes. New tests: analysis-schemas (golden payload, drift rejection, evidence bounds), artifact-override + disposition-policy (spec acceptance tests 20–21: AI never supersedes human; low-confidence/high-impact/missing-transcript route to review, never silently apply), review-actions, leaderboard-scoring (config math, breakdown sums, calendar/DST/year boundaries, deterministic ties, duplicate rows can't double-score — spec test 28), report-links (drill FilterSpecs sanitize-stable).

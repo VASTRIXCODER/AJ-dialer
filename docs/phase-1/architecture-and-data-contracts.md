@@ -65,5 +65,13 @@ All surfaces consume `src/lib/metrics/service.ts` (backed by `app_metrics_summar
 ### Realtime
 One private broadcast channel per org: `org:{orgId}:floor`. Server publishes via stateless HTTP (`publishOrgEvent`) from webhook/store choke points; join authorized by RLS on `realtime.messages` (`app_can_join_org_topic` — active-org membership). Presence via the Realtime presence extension. Merge rule: webhook-driven call state (`live_calls`/attempts) beats self-reported presence; absent presence = offline. Every consumer keeps a slow poll fallback + snapshot refetch on (re)subscribe — demo mode and outages degrade to polling, never to wrong data.
 
+### As-built deltas (vs the original plan)
+
+- **PART numbering** follows file/apply order: 22 ops_metrics … 36 call-intelligence (see migration-and-rollback.md for the authoritative ledger). All applied to the live DB 2026-08-28.
+- **Attempts are per-LEAD**: a 3X parallel round shares one `room` across three attempts, unique on `(room, lead_id)`; the status callback URL carries both, which is how webhooks resolve their attempt.
+- **Broadcast contract** (E1): events `call.state`, `call.answered`, `transcript.segment`, `leaderboard.delta`, `review.created` on `org:<id>:floor`; the topic validator is LOCKSTEP with `app_can_join_org_topic`.
+- **Artifact supersede rule** (F1): edits insert a superseding row; an AI writer skips any kind with an active `source='human'` row — enforcement is in `analyze-call`/`call-artifacts`, tested.
+- **`completed` vs `dispositioned`**: the human path's practical terminal state is `dispositioned`; the reconcile-data job may advance old rows to `completed`. Reporting treats both as closed.
+
 ### Dual-write & cutover
 During Phase 1, events/attempts are written alongside the legacy rows (events first). `call_records` remains authoritative for reporting until the traceability matrix marks the reader cutover done; `reconcile-data` repairs parity drift meanwhile. Exit criteria for full cutover (Phase 2): zero parity discrepancies for 14 consecutive days.
