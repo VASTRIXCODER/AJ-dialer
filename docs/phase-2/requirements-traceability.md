@@ -32,7 +32,7 @@ to docs/phase_two.md; evidence = file paths / tests. Last updated: 2026-08-29
 
 | Item | Status | Evidence |
 |---|---|---|
-| Opportunity model + events (audit, immutable) | **Partial** — schema + backfill in repo, ⚠ NOT applied to live DB (see migration-and-rollback.md) | supabase/schema.sql PART 37 |
+| Opportunity model + events (audit, immutable) | **Done** — applied to the live DB 2026-08-29 (verified counts in migration-and-rollback.md) | supabase/schema.sql PART 37 |
 | One-open-per-lead uniqueness policy | Done (in DDL) | partial unique index `opportunities_one_open_per_lead` |
 | Sales lifecycle state machine (sold/DNC/regress gates) | Done | src/lib/opportunities/stage-machine.ts; tests/opportunity-stage.test.ts (exhaustive matrix) |
 | Operational work state + leak detector | Partial — `app_pipeline_leaks` shipped; no UI/metric consumes it | PART 37 |
@@ -43,7 +43,7 @@ to docs/phase_two.md; evidence = file paths / tests. Last updated: 2026-08-29
 | Orchestration engine: deterministic, idempotent, kill-switched | **Partial** — v0 executes existing instances (wake/stop-rules/allow-list steps, exactly-once via UNIQUE key); NO activation path yet (event emitters + condition compiler are P2.2/P2.3); escalate lands as a signal, not an email | orchestration/engine.ts, plan.ts; api/cron/orchestrate |
 | Per-opportunity execution locks | Partial — CAS on current_step + single-tick bound; pg_advisory_xact_lock deferred until multi-worker ticks exist | engine.ts |
 | Phase 1 → opportunity sync hooks | Done (fire-and-forget, never-throw, no-ops without PART 37) | opportunities/sync.ts; records.ts (both channels) |
-| Backfill from Phase 1 data | Partial — idempotent SQL in PART 37; ⚠ runs when PART 37 is applied | schema.sql PART 37 |
+| Backfill from Phase 1 data | **Done** — 37,645 opportunities = 37,645 eligible leads, 1:1, all backfilled-flagged (2026-08-29) | schema.sql PART 37; migration-and-rollback.md |
 | Counter/parity reconcile for opportunities | Not started (P2.2 — rides reconcile-data) | — |
 
 ## P2.2 — Lead intake & speed-to-lead (§7)
@@ -102,8 +102,10 @@ Phase 2 surfaces: Not started.
 
 ## Cross-cutting honesty notes
 
-- **PART 37 is not on the live DB yet** — every P2.1 "Partial" above carries
-  that asterisk; the code path is verified no-op-safe without it (suite green).
+- PART 37 was applied to the live DB 2026-08-29 (user-authorized) with one
+  apply-time fix fed back to the repo: the backfill's assigned_rep_id cast is
+  pattern-guarded (the column is TEXT on leads). Fresh/dev environments
+  without PART 37 remain no-op-safe (suite green either way).
 - The engine's `escalate` writes signals, not notifications (outbox is
   email-shaped + trigger-fed; wiring lands with P2.2 templates).
 - `waitUntil`'s local-time resolution is minute-precision and can shift ±1h

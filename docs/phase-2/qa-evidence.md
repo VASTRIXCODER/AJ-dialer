@@ -38,9 +38,14 @@ follow-up commit, notably:
 
 **Live-DB changes verified this session:**
 - VICC flags read back after update: `aiDialer=true`, `defaultMode=manual`.
-- PART 37: **NOT applied** (permission-blocked) — apply per
-  migration-and-rollback.md; all code paths verified green without it
-  (sync hooks and engine no-op, full suite passes on a DB-less run).
+- PART 37: **APPLIED 2026-08-29** (user-authorized; first attempt failed on a
+  text/uuid COALESCE — `leads.assigned_rep_id` is TEXT — fixed with a
+  pattern-guarded cast, fed back to schema.sql, re-applied clean). Post-apply
+  verification: 37,645 opportunities = 37,645 eligible leads (1:1, all
+  `backfilled`); 37,433 open / 212 closed; stage mix new 33,795 · attempting
+  2,167 · assigned 1,320 · dnc_suppressed 112 · lost 100 · contacted 69 ·
+  nurture 58 · appointment_booked 20 · interested 4; orchestration_paused
+  false; all 1,595 assigned_rep_id values matched the UUID pattern (0 bad).
 
 **Not yet evidenced (honest):** any Phase 2 UI, engine behavior against real
 tables (unit-tested pure planning only), backfill row counts, orchestrate

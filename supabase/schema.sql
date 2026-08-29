@@ -4096,7 +4096,13 @@ select
     else 'new'
   end,
   case when l.status in ('not_interested','dnc') then 'closed' else 'open' end,
-  coalesce(l.assigned_rep_id, l.owner_id),
+  -- assigned_rep_id is TEXT on leads (all values are UUIDs in practice);
+  -- pattern-guard the cast so one stray value can't fail the whole backfill.
+  coalesce(
+    case when l.assigned_rep_id ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+         then l.assigned_rep_id::uuid end,
+    l.owner_id
+  ),
   case when l.assigned_rep_id is not null then l.created_at end,
   l.created_at,
   l.last_attempt_at,

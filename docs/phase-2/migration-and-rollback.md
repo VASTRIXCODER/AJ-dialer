@@ -2,17 +2,23 @@
 
 ## PART 37 — opportunity & orchestration foundation (P2.1)
 
-**Status: in the repo, ⚠ NOT YET APPLIED to the live database.** The Phase 1
-convention (PART applied via MCP before push) was interrupted: the automated
-apply was permission-blocked mid-session, so this one is a hand-run step.
+**Status: ✅ APPLIED to the live database 2026-08-29** (user-authorized, via
+MCP migration `part37_opportunity_orchestration_foundation`). Verified after
+apply: 37,645 opportunities = 37,645 eligible (non-archived, org-attached)
+leads, all `backfilled=true`; 37,433 open / 212 closed; stage mix new 33,795 ·
+attempting 2,167 · assigned 1,320 · dnc_suppressed 112 · lost 100 · contacted
+69 · nurture 58 · appointment_booked 20 · interested 4;
+`app_settings.orchestration_paused = false`.
 
-### To apply (idempotent — safe to re-run)
+One apply-time fix fed back into the repo: `leads.assigned_rep_id` is TEXT
+(uuid-valued) while `opportunities.owner_id` is uuid — the backfill's
+coalesce now pattern-guards the cast (schema.sql PART 37 matches what ran).
 
-Open the Supabase SQL editor on the production project and run the **PART 37
-block** — the tail of `supabase/schema.sql`, from the banner line
-`-- PART 37 — OPPORTUNITY & ORCHESTRATION FOUNDATION` to the end of the file.
-(The whole `schema.sql` also applies clean, per house rule, but the tail block
-is the minimal change.)
+### To re-apply / apply elsewhere (idempotent — safe to re-run)
+
+Run the **PART 37 block** — the tail of `supabase/schema.sql`, from the banner
+line `-- PART 37 — OPPORTUNITY & ORCHESTRATION FOUNDATION` to the end of the
+file. (The whole `schema.sql` also applies clean, per house rule.)
 
 What it does, in order:
 1. Creates `opportunities`, `opportunity_events` (+ append-only trigger),
@@ -26,7 +32,7 @@ What it does, in order:
    a NOT-EXISTS guard (any opportunity for the lead, open or closed — the
    partial unique index alone would not protect closed rows on a re-run).
 
-### Until PART 37 is applied
+### On environments WITHOUT PART 37 (fresh/dev DBs)
 
 Everything degrades by design: `syncOpportunityAfterCall` and the engine
 catch-and-count, `/api/cron/orchestrate` no-ops, no Phase 1 surface reads the
