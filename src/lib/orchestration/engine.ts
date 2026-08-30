@@ -230,17 +230,46 @@ async function capDeferUntil(
   if ((!perDay && !perWeek) || !leadId) return null;
   try {
     const weekAgo = new Date(now.getTime() - 7 * 86_400_000).toISOString();
-    const { data } = await admin
-      .from("call_records")
-      .select("started_at")
-      .eq("org_id", inst.org_id)
-      .eq("lead_id", leadId)
-      .gte("started_at", weekAgo)
-      .order("started_at", { ascending: true })
-      .limit(200);
-    const times = ((data ?? []) as Record<string, unknown>[])
-      .map((r) => Date.parse(String(r.started_at)))
-      .filter((t) => Number.isFinite(t));
+    // BOTH channels. A cap protects the person on the other end, so it counts
+    // what actually reached them regardless of how it got there. Counting only
+    // calls meant a playbook could text someone and then immediately raise a
+    // call task "within" a cap of one touch a day — two contacts, one counted.
+    //
+    // Only messages the carrier ACCEPTED count (provider_sid present): one the
+    // gate blocked never reached anybody and must not spend their allowance.
+    const [callsRes, msgsRes] = await Promise.all([
+      admin
+        .from("call_records")
+        .select("started_at")
+        .eq("org_id", inst.org_id)
+        .eq("lead_id", leadId)
+        .gte("started_at", weekAgo)
+        .order("started_at", { ascending: true })
+        .limit(200),
+      admin
+        .from("messages")
+        .select("created_at")
+        .eq("org_id", inst.org_id)
+        .eq("lead_id", leadId)
+        .eq("direction", "outbound")
+        .not("provider_sid", "is", null)
+        .gte("created_at", weekAgo)
+        .order("created_at", { ascending: true })
+        .limit(200),
+    ]);
+    const times = [
+      ...((callsRes.data ?? []) as Record<string, unknown>[]).map((r) =>
+        Date.parse(String(r.started_at)),
+      ),
+      ...((msgsRes.data ?? []) as Record<string, unknown>[]).map((r) =>
+        Date.parse(String(r.created_at)),
+      ),
+    ]
+      .filter((t) => Number.isFinite(t))
+      // Merged from two sources, so re-sort: the per-source ordering says
+      // nothing about the combined sequence, and the deferral maths below
+      // depends on times[0] being the genuinely oldest touch in the window.
+      .sort((a, b) => a - b);
     if (!times.length) return null;
 
     const dayAgo = now.getTime() - 86_400_000;
@@ -473,7 +502,13 @@ export async function orchestrationTick(now = new Date()): Promise<TickResult> {
 
         // Frequency caps, before the gate. Deferring after the gate would
         // burn the step's execution row and skip it permanently.
-        if (step.kind === "create_work_item") {
+        //
+        // Applies to send_message too. Publishing a messaging playbook is
+        // REFUSED unless caps.touchesPerDay is set — so gating only
+        // create_work_item meant the one setting an author was forced to
+        // provide had no effect on the one step it was demanded for. A cap
+        // that cannot fire is worse than no cap: it reads as a protection.
+        if (step.kind === "create_work_item" || step.kind === "send_message") {
           const deferUntil = await capDeferUntil(
             admin,
             inst,

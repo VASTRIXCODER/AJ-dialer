@@ -358,6 +358,92 @@ describe("`replied` stops the sequence", () => {
   });
 });
 
+describe("the frequency cap the author was forced to set actually fires", () => {
+  // Publishing a messaging playbook is REFUSED without caps.touchesPerDay, and
+  // the engine used to consult that cap only for create_work_item steps — so
+  // the one setting an author had to provide had no effect on the one step it
+  // was demanded for.
+
+  it("defers a message when the person has already been called today", async () => {
+    world();
+    db.rows("call_records").push({
+      id: "c1",
+      org_id: ORG,
+      lead_id: LEAD,
+      started_at: "2026-08-29T16:30:00.000Z", // inside the 24h window
+    });
+    const r = await orchestrationTick(NOW);
+    expect(r.deferred).toBe(1);
+    expect(messages()).toHaveLength(0);
+    const inst = db.rows("playbook_instances")[0];
+    expect(inst.status).toBe("waiting");
+    // Deferred, not cancelled: "no more than one a day" means wait for
+    // tomorrow, and the wait ends a full day after the touch that spent it.
+    expect(Date.parse(String(inst.wait_until))).toBe(
+      Date.parse("2026-08-29T16:30:00.000Z") + 86_400_000,
+    );
+  });
+
+  it("counts an ACCEPTED message as a touch, not just a call", async () => {
+    world();
+    const thread = { id: "t-existing", org_id: ORG, contact_digits: "3125550143", channel: "sms" };
+    db.rows("message_threads").push(thread);
+    db.rows("messages").push({
+      id: "m-earlier",
+      org_id: ORG,
+      thread_id: thread.id,
+      lead_id: LEAD,
+      direction: "outbound",
+      status: "sent",
+      provider_sid: "SM-real",
+      created_at: "2026-08-29T16:00:00.000Z",
+    });
+    const r = await orchestrationTick(NOW);
+    // Without messages counting, this playbook would text the same person
+    // twice inside a cap of one touch a day.
+    expect(r.deferred).toBe(1);
+  });
+
+  it("does NOT count a message the carrier never accepted", async () => {
+    world();
+    const thread = { id: "t-blocked", org_id: ORG, contact_digits: "3125550143", channel: "sms" };
+    db.rows("message_threads").push(thread);
+    db.rows("messages").push({
+      id: "m-blocked",
+      org_id: ORG,
+      thread_id: thread.id,
+      lead_id: LEAD,
+      direction: "outbound",
+      status: "blocked",
+      provider_sid: null, // never reached anyone
+      created_at: "2026-08-29T16:00:00.000Z",
+    });
+    const r = await orchestrationTick(NOW);
+    // A blocked message reached nobody, so it must not spend their allowance.
+    expect(r.deferred).toBe(0);
+    expect(messages().filter((m) => m.status === "needs_approval")).toHaveLength(1);
+  });
+
+  it("does not count an INBOUND message against them", async () => {
+    world();
+    const thread = { id: "t-in", org_id: ORG, contact_digits: "3125550143", channel: "sms" };
+    db.rows("message_threads").push(thread);
+    db.rows("messages").push({
+      id: "m-in",
+      org_id: ORG,
+      thread_id: thread.id,
+      lead_id: LEAD,
+      direction: "inbound",
+      status: "received",
+      provider_sid: "SM-in",
+      created_at: "2026-08-29T16:00:00.000Z",
+    });
+    // Them texting us is not us contacting them.
+    const r = await orchestrationTick(NOW);
+    expect(r.deferred).toBe(0);
+  });
+});
+
 describe("a deployment with no credentials proposes nothing sendable", () => {
   it("blocks rather than queueing up messages it could never deliver", async () => {
     // This is the real default for any environment without Twilio configured,
