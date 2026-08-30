@@ -697,6 +697,16 @@ export function CallCockpit({
                   is talking to. The ring says "live" once and then holds
                   still; the beat belongs to the moment of pickup. */}
               <span className="relative">
+                {/* The connect beat. One 240ms ring, keyed on the pickup
+                    timestamp so it replays on every call rather than once per
+                    mount, and gone before the rep has finished registering it.
+                    This is the phase's single sanctioned crossing between the
+                    Stage and the Instrument. */}
+                <span
+                  key={state.connectedAt ?? "live"}
+                  className="animate-connect pointer-events-none absolute inset-0 rounded-full"
+                  aria-hidden
+                />
                 <Avatar
                   initials={initials(name)}
                   tone="success"

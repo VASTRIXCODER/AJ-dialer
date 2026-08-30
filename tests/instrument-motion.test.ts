@@ -191,6 +191,50 @@ describe("colour and opacity move on the 90ms curve", () => {
   });
 });
 
+describe("the connect beat — the one sanctioned crossing", () => {
+  const CSS = readFileSync(resolve(ROOT, "src/app/globals.css"), "utf8");
+  const ENGINE = readFileSync(resolve(ROOT, "src/lib/use-dialer.ts"), "utf8");
+
+  it("fires exactly once", () => {
+    // This is the same shape as the halo that used to run `infinite` behind a
+    // live call for its whole duration. The iteration count IS the difference
+    // between a signal and a decoration.
+    const decl = CSS.match(/--animate-connect:\s*([^;]+);/);
+    expect(decl, "--animate-connect is not declared").toBeTruthy();
+    expect(decl![1]).toMatch(/\b1\b/);
+    expect(decl![1]).not.toMatch(/infinite/);
+    expect(decl![1]).toMatch(/var\(--dur-connect\)/);
+  });
+
+  it("lasts 240ms, the duration the phase specifies", () => {
+    expect(CSS).toMatch(/--dur-connect:\s*240ms/);
+  });
+
+  it("is keyed on the pickup, so it replays on every call", () => {
+    // Without the key React reuses the element, the animation never restarts,
+    // and the beat fires once per page load instead of once per homeowner.
+    for (const path of [
+      "src/components/dialer/call-cockpit.tsx",
+      "src/components/dialer/global-call-bar.tsx",
+    ]) {
+      const source = readFileSync(resolve(ROOT, path), "utf8");
+      expect(source, `${path} uses the beat`).toMatch(/animate-connect/);
+      expect(source, `${path} does not key it on the pickup`).toMatch(
+        /key=\{state\.connectedAt/,
+      );
+    }
+  });
+
+  it("the engine stamps the pickup, and clears it everywhere else", () => {
+    expect(ENGINE).toMatch(/connectedAt: Date\.now\(\)/);
+    // A stale timestamp surviving into the next round would fire the beat on a
+    // call nobody has answered yet.
+    const cleared = [...ENGINE.matchAll(/connectedAt: null/g)].length;
+    expect(cleared, "connectedAt must be cleared on idle and on a new round")
+      .toBeGreaterThanOrEqual(5);
+  });
+});
+
 describe("the page itself does not rise into place", () => {
   it("PageContainer does not apply the Stage reveal to every screen", () => {
     // 44 files render through PageContainer. With `page-reveal` on it, every

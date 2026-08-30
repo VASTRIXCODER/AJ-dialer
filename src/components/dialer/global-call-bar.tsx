@@ -113,8 +113,26 @@ export function GlobalCallBar() {
             <Avatar initials={initials(name)} tone="success" size="sm" />
           )}
           {live && (
-            <span className="absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full border-2 border-card bg-success" />
+            <>
+              {/* The connect beat, on the surface a rep sees when they are NOT
+                  on the dialer page. Until now, a rep working the Leads table
+                  while a round rang got no signal at all that a homeowner had
+                  picked up — they discovered it by noticing a number had
+                  quietly started counting. */}
+              <span
+                key={state.connectedAt ?? "live"}
+                className="animate-connect pointer-events-none absolute inset-0 rounded-full"
+                aria-hidden
+              />
+              <span className="absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full border-2 border-card bg-success" />
+            </>
           )}
+        </span>
+        {/* …and the beat a ring cannot deliver. Assertive: a stranger is on the
+            line right now, which is the one interruption this app is entitled
+            to make. */}
+        <span aria-live="assertive" className="sr-only">
+          {live ? `Connected to ${name}` : ""}
         </span>
         <div className="min-w-0">
           <p className="truncate text-sm font-semibold leading-tight">{ai ? agentName : name}</p>

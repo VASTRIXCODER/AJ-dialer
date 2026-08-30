@@ -396,6 +396,12 @@
   --animate-fade-up: fade-up 0.55s cubic-bezier(0.16, 1, 0.3, 1) both;
   /* Opacity alone — what an Instrument surface uses to appear. */
   --animate-fade-in: fade-in var(--dur-enter) var(--ease-enter) both;
+  /* The connect beat. ONE iteration, 240ms, on human pickup — the single
+     sanctioned crossing between the Stage and the Instrument. Note the `1`:
+     this is the same shape as the halo that used to run `infinite` behind a
+     live call for its whole duration, and the difference between the two is
+     the entire point. */
+  --animate-connect: connect-beat var(--dur-connect) var(--ease-enter) 1 both;
   --animate-float: float 7s ease-in-out infinite;
   --animate-marquee: marquee 32s linear infinite;
   --animate-aurora: aurora 24s ease-in-out infinite;
@@ -437,6 +443,18 @@
   }
   to {
     opacity: 1;
+  }
+}
+
+/* Fired once, at the instant a homeowner says hello. A ring leaves the answered
+   contact and dissipates — it is over before the rep has finished registering
+   it, which is the difference between a signal and a decoration. */
+@keyframes connect-beat {
+  from {
+    box-shadow: 0 0 0 0 hsl(var(--signal-live) / 0.6);
+  }
+  to {
+    box-shadow: 0 0 0 16px hsl(var(--signal-live) / 0);
   }
 }
 
@@ -893,6 +911,11 @@
   }
   .animate-fade-in {
     animation: var(--animate-fade-in);
+  }
+  /* Apply with a `key` that changes per call, so the beat replays on every
+     pickup instead of once per mount. */
+  .animate-connect {
+    animation: var(--animate-connect);
   }
   .animate-float {
     animation: var(--animate-float);

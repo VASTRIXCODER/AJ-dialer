@@ -134,6 +134,10 @@ export interface DialerState {
   sessionMode: SessionMode;
   lines: DialLine[];
   connectedLead: Lead | null;
+  /** Epoch ms of the moment a human answered THIS call — the connect beat's
+   *  trigger. Null while idle; a new value on every pickup, which is what makes
+   *  the beat replay per call instead of once per mount. */
+  connectedAt: number | null;
   durationSec: number;
   muted: boolean;
   /** What the mute control can honestly do for the CURRENT attempt — "arming"
@@ -384,6 +388,7 @@ export function useDialer(
     sessionMode: deriveSessionMode(bootAiMode, bootParallelCount),
     lines: [],
     connectedLead: null,
+    connectedAt: null,
     durationSec: 0,
     muted: false,
     muteCapability: "unsupported",
@@ -1296,6 +1301,9 @@ export function useDialer(
         status: "live",
         connectedLead: lead,
         durationSec: 0,
+        // The moment a human said hello. The views key their one-shot connect
+        // beat off this, so it replays per call rather than once per mount.
+        connectedAt: Date.now(),
         connectsThisSession: s.connectsThisSession + 1,
         lines: s.lines.map((l) =>
           l.lead.id === lead.id
@@ -1390,6 +1398,7 @@ export function useDialer(
         status: "idle",
         lines: [],
         connectedLead: null,
+        connectedAt: null,
         durationSec: 0,
         reconnecting: false,
         muteCapability: "unsupported",
@@ -2249,6 +2258,9 @@ export function useDialer(
         status: "dialing",
         lines,
         connectedLead: null,
+        // A new round is a new beat: clear it here so the one that fires on
+        // pickup is unambiguously about THIS call.
+        connectedAt: null,
         durationSec: 0,
         muted: false,
         // The rep leg joins the conference when connect() resolves (below) —
@@ -2754,12 +2766,12 @@ export function useDialer(
     if (autoDialRef.current && queue.length) {
       if (completingLap) {
         queueLapRef.current += 1;
-        patch({ status: "idle", lines: [], connectedLead: null, durationSec: 0, muteCapability: "unsupported", queueLap: queueLapRef.current });
+        patch({ status: "idle", lines: [], connectedLead: null, connectedAt: null, durationSec: 0, muteCapability: "unsupported", queueLap: queueLapRef.current });
       } else {
         setTimeout(() => startCall(), 400);
       }
     } else {
-      patch({ status: "idle", lines: [], connectedLead: null, durationSec: 0, muteCapability: "unsupported" });
+      patch({ status: "idle", lines: [], connectedLead: null, connectedAt: null, durationSec: 0, muteCapability: "unsupported" });
     }
   }, [
     advanceQueue,
@@ -2813,7 +2825,7 @@ export function useDialer(
         /* noop */
       }
       const pinnedCallerId = state.callerIdInfo?.callerId || undefined;
-      patch({ status: "idle", lines: [], connectedLead: null, durationSec: 0 });
+      patch({ status: "idle", lines: [], connectedLead: null, connectedAt: null, durationSec: 0 });
       void startHumanCall([lead], { pinnedCallerId });
     },
     [
