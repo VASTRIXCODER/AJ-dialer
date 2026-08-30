@@ -10,6 +10,7 @@ import {
 import {
   advanceCursorPastClaims,
   claimEmptyMessage,
+  claimPinnedRound,
   computeReleaseSet,
   orderedCandidateIds,
   reorderClaimed,
@@ -22,7 +23,7 @@ import { decideMuteToggle, type MuteCapability } from "./dialer/mute-intent";
 import type { DialerUserPrefs } from "./dialer/user-prefs";
 import type { AgentKey } from "./elevenlabs";
 import type { CallOutcome, Lead } from "./types";
-import { formatPhone, toE164 } from "./utils";
+import { formatPhone, leadDisplayName, toE164 } from "./utils";
 
 export type DialerStatus = "idle" | "dialing" | "live" | "wrapup" | "ai";
 export type DialerMode = "connecting" | "live" | "offline";
@@ -194,6 +195,9 @@ export interface DialerState {
   activeAgent: AgentKey;
   aiCalls: AiLaunch[];
   aiCampaign: "idle" | "running" | "done";
+  /** The lead the rep picked out of the queue browser. While set, the next
+   *  round dials exactly this lead or refuses — see selectLead. */
+  pinnedLeadId: string | null;
 }
 
 // ── Daily dial counter (persists across refresh / logout) ─────────────────────
@@ -408,6 +412,7 @@ export function useDialer(
     activeAgent: "primary",
     aiCalls: [],
     aiCampaign: "idle",
+    pinnedLeadId: null,
   });
 
   const queueIndexRef = useRef(0);
@@ -474,6 +479,14 @@ export function useDialer(
    *  wrapped the list (the lap boundary, read by isCompletingLap). */
   const claimAdvancedRef = useRef(false);
   const lapWrappedRef = useRef(false);
+  /**
+   * The lead the rep explicitly PICKED out of the queue browser (selectLead).
+   * A pinned round dials that person or refuses — it never substitutes whoever
+   * happens to be eligible nearby. Cleared when the pick is consumed by a round
+   * or abandoned by browsing/skipping/dispositioning away from it; a pin whose
+   * lead has left the queue resolves to nothing and is ignored.
+   */
+  const pinnedLeadIdRef = useRef<string | null>(null);
   /**
    * Conversations we've launched that haven't finished. THIS is what makes
    * `parallelCount` an actual concurrency limit rather than a batch size.
@@ -1487,23 +1500,34 @@ export function useDialer(
   // ── Lead navigation (browse the queue without calling) ────────────────────
   const nextLead = useCallback(() => {
     if (!queue.length) return;
+    pinnedLeadIdRef.current = null; // browsing past the pick abandons it
     queueIndexRef.current = (queueIndexRef.current + 1) % queue.length;
     patch({ queueIndex: queueIndexRef.current });
   }, [patch, queue.length]);
 
   const prevLead = useCallback(() => {
     if (!queue.length) return;
+    pinnedLeadIdRef.current = null;
     queueIndexRef.current =
       (queueIndexRef.current - 1 + queue.length) % queue.length;
     patch({ queueIndex: queueIndexRef.current });
   }, [patch, queue.length]);
 
+  /**
+   * The rep searched the queue and PICKED this person (lead-panel's browser is
+   * the only caller). That is an instruction, not a starting position — so the
+   * pick is PINNED, and the next round must dial exactly them or refuse and say
+   * why. Without the pin, Start opened a 200-wide claim window at this lead and
+   * dialed the first ELIGIBLE lead in it, which is how "I searched for one
+   * person and it called a completely different person" happened.
+   */
   const selectLead = useCallback(
     (leadId: string) => {
       const idx = queue.findIndex((l) => l.id === leadId);
       if (idx >= 0) {
+        pinnedLeadIdRef.current = leadId;
         queueIndexRef.current = idx;
-        patch({ queueIndex: idx });
+        patch({ queueIndex: idx, pinnedLeadId: leadId });
       }
     },
     [patch, queue],
@@ -2003,7 +2027,54 @@ export function useDialer(
         };
         let claimed: Lead[] = [];
         let refilled = false;
-        if (!strict || candidates.length) {
+
+        // ── PINNED PICK (the search-then-call mis-dial fix) ────────────────
+        // The rep searched the queue and picked a person by name. The window
+        // opens AT them, but the server returns the first ELIGIBLE lead in it
+        // — so a pick that was held, cooling down, capped, DNC'd or out of
+        // hours used to be silently skipped and the NEXT candidate rang. The
+        // rep watched the panel name the lead they chose while a complete
+        // stranger picked up. claimPinnedRound dials the pick or refuses.
+        const pinned = pinnedLeadIdRef.current
+          ? (queue.find((l) => l.id === pinnedLeadIdRef.current) ?? null)
+          : null;
+        if (pinned) {
+          const round = await claimPinnedRound({
+            pinned,
+            candidates: candidates.length
+              ? candidates
+              : orderedCandidateIds(queue, queueIndexRef.current, WINDOW),
+            parallel: parallelRef.current,
+            claim: ({ count, leadIds }) =>
+              postClaim({
+                count,
+                statuses: ctx.statuses,
+                campaignId: ctx.campaignId,
+                packId: ctx.packId,
+                leadIds,
+                preserveOrder: true,
+              }),
+            describe: (l) =>
+              leadDisplayName(`${l.firstName} ${l.lastName}`, l.phone),
+          });
+          if (round.status === "refuse") {
+            for (const id of round.release) claimedIdsRef.current.add(id);
+            if (round.release.length) releaseClaimedLeads("skip");
+            // The pin SURVIVES a refusal — the rep asked for this person, and
+            // pressing Start again should retry them, not walk on to someone
+            // else. (Browsing, skipping or dispositioning clears it.)
+            dialInFlightRef.current = false;
+            patch({ error: round.message, status: "idle", lines: [] });
+            return;
+          }
+          claimed = round.leads;
+          candidates = round.candidates;
+          // Consumed: this round IS the pick, and the next Start walks on.
+          pinnedLeadIdRef.current = null;
+          patch({ pinnedLeadId: null });
+        }
+
+        if (!claimed.length && (!strict || candidates.length)) {
           claimed = await postClaim({
             count: parallelRef.current,
             statuses: ctx.statuses,
@@ -2087,7 +2158,14 @@ export function useDialer(
         if (refilled) reservations.onQueueRefilled?.(claimed);
         leads = claimed;
       } else {
+        // No reservations (demo, or the org has them off): the local cursor IS
+        // the round, and selectLead already parked it on the pick — so the pick
+        // leads the round by construction. Just consume the pin.
         leads = override ?? nextLeads(parallelRef.current);
+        if (!override && pinnedLeadIdRef.current) {
+          pinnedLeadIdRef.current = null;
+          patch({ pinnedLeadId: null });
+        }
       }
 
       // ── Phone-duplicate guard ────────────────────────────────────────────
@@ -2532,10 +2610,22 @@ export function useDialer(
     queueIndexRef.current = 0;
     claimAdvancedRef.current = false;
     lapWrappedRef.current = false;
-    setState((s) => (s.queueIndex === 0 ? s : { ...s, queueIndex: 0 }));
+    // A fresh list is a fresh intent — a pick made against the previous session
+    // must not survive into it.
+    pinnedLeadIdRef.current = null;
+    setState((s) =>
+      s.queueIndex === 0 && s.pinnedLeadId === null
+        ? s
+        : { ...s, queueIndex: 0, pinnedLeadId: null },
+    );
   }, []);
 
   const advanceQueue = useCallback(() => {
+    // Skipping / dispositioning moves past whatever the rep picked.
+    if (pinnedLeadIdRef.current) {
+      pinnedLeadIdRef.current = null;
+      patch({ pinnedLeadId: null });
+    }
     if (!queue.length) return;
     // A strict claim already advanced the cursor past exactly the leads this
     // round consumed — bumping again here skipped ~parallel leads per round

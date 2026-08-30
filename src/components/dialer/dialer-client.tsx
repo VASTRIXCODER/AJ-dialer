@@ -29,6 +29,7 @@ import {
   persistDisposition,
   replayQueuedDispositions,
 } from "@/lib/dialer/disposition-queue";
+import { deepLinkChannel } from "@/lib/dialer/deep-link";
 import { describeOrgHours, isWithinOrgHours } from "@/lib/dialer/schedule";
 import { browserWrapupStore, clearWrapupDraft } from "@/lib/dialer/wrapup-draft";
 import { filterOutcomeOptionsByKeys, resolveOutcomeOptions } from "@/lib/status";
@@ -290,15 +291,64 @@ export function DialerClient({
   // disposition time without re-binding on every render.
   const pendingCallbackIdRef = useRef<string | null>(callbackId ?? null);
 
-  // Auto-dial a callback number as soon as the Twilio device is live and idle.
+  // Which channel this workspace can actually place a deep-linked number on.
+  // ONE value, read by both the effect that dials and the banner that narrates
+  // it — so the banner can never describe something that isn't going to happen.
+  const channel = deepLinkChannel({
+    manualEnabled: config.manualEnabled,
+    aiAgentConfigured: config.aiAgentConfigured,
+    aiEnabled: config.aiEnabled,
+  });
+
+  // Auto-dial a deep-linked number (?dial=) as soon as the dialer can place it.
+  //
+  // This used to bail out whenever the dialer was in AI mode — which is the
+  // BOOT mode on every AI-configured workspace. So pressing "Call" on a lead
+  // you searched for landed you on a dialer that just sat there under a
+  // "Dialing now…" banner, and the natural next move — press Start — opened a
+  // session on whoever the loaded queue was parked on. The rep watched the
+  // banner name the person they picked while a completely different person
+  // answered. A ?dial= link is an explicit instruction about WHO to call, so
+  // it is now honored in whichever channel the workspace actually allows:
+  // manual dialing → drop to manual and place it; AI-only → let the agent
+  // place it. Never silently discarded, never left for Start to reinterpret.
+  //
+  // The manual leg is gated on `deepLinkChannel` rather than on Twilio being
+  // live: a workspace with manual dialing turned OFF still has a working Voice
+  // device, and this path used to dial straight through a policy the rest of
+  // the cockpit enforces.
   const callbackFiredRef = useRef(false);
   useEffect(() => {
     if (!callbackPhone || callbackFiredRef.current) return;
-    if (state.mode === "live" && state.status === "idle" && !state.aiMode) {
+    if (state.status !== "idle") return;
+    if (channel === "none") return;
+    if (state.aiMode) {
+      if (channel === "manual") {
+        // Flip once; the effect re-runs with aiMode false and dials below.
+        dialer.setAiMode(false);
+      } else {
+        callbackFiredRef.current = true;
+        const parts = (callbackName ?? "").trim().split(/\s+/).filter(Boolean);
+        void dialer.aiDialNumber(callbackPhone, {
+          firstName: parts[0],
+          lastName: parts.slice(1).join(" ") || undefined,
+        });
+      }
+      return;
+    }
+    if (channel === "manual" && state.mode === "live") {
       callbackFiredRef.current = true;
       dialer.dialNumber(callbackPhone, callbackName);
     }
-  }, [state.mode, state.status, state.aiMode, callbackPhone, callbackName, dialer]);
+  }, [
+    state.mode,
+    state.status,
+    state.aiMode,
+    callbackPhone,
+    callbackName,
+    channel,
+    dialer,
+  ]);
 
   // Which lead the side panels describe right now (null when the queue is empty
   // and no call is active — production ships with no placeholder lead).
@@ -542,18 +592,44 @@ export function DialerClient({
 
       {/* Callback auto-dial banner — shown until the call fires */}
       {callbackPhone && !callbackFiredRef.current && state.status === "idle" && (
-        <Card className="flex flex-col items-start gap-3 border-accent/30 bg-accent/5 p-4 sm:flex-row sm:items-center">
-          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-accent/15 text-accent">
+        <Card
+          className={cn(
+            "flex flex-col items-start gap-3 p-4 sm:flex-row sm:items-center",
+            channel === "none"
+              ? "border-warning/30 bg-warning/5"
+              : "border-accent/30 bg-accent/5",
+          )}
+        >
+          <div
+            className={cn(
+              "flex h-10 w-10 shrink-0 items-center justify-center rounded-xl",
+              channel === "none"
+                ? "bg-warning/15 text-warning"
+                : "bg-accent/15 text-accent",
+            )}
+          >
             <Phone className="h-5 w-5" />
           </div>
           <div className="flex-1">
             <p className="text-sm font-semibold">
-              Callback ready{callbackName ? ` — ${callbackName}` : ""}
+              {channel === "none" ? "Can’t place this call" : "Callback ready"}
+              {callbackName ? ` — ${callbackName}` : ""}
             </p>
+            {/* Three channels, three sentences, and none of them describes a
+                call that isn't going to be placed. The third case is real: an
+                AI-only workspace whose agent isn't set up, or whose plan
+                lapsed, used to sit under "Handing this number to the AI
+                agent…" forever. */}
             <p className="text-sm text-muted-foreground">
-              {state.mode === "live"
-                ? "Dialing now…"
-                : "Connecting to Twilio — will dial automatically once ready."}
+              {channel === "ai"
+                ? "Handing this number to the AI agent…"
+                : channel === "manual"
+                  ? state.mode === "live"
+                    ? "Dialing now…"
+                    : "Connecting to Twilio — will dial automatically once ready."
+                  : config.aiAgentConfigured
+                    ? "Manual dialing is off for this workspace and the AI dialer isn’t available on your plan, so nothing can dial this number. Ask an admin to turn manual dialing back on."
+                    : "Manual dialing is off for this workspace and no AI agent is set up yet, so nothing can dial this number. Ask an admin to connect an agent, or to turn manual dialing back on."}
             </p>
           </div>
         </Card>
@@ -717,6 +793,7 @@ export function DialerClient({
             onPrev={dialer.prevLead}
             onNext={dialer.nextLead}
             onSelect={dialer.selectLead}
+            pinned={Boolean(state.pinnedLeadId) && state.pinnedLeadId === focusLead?.id}
             navDisabled={state.status !== "idle"}
             onLoadLeads={() => setBuilderOpen(true)}
             loadingLeads={loadingLeads}
