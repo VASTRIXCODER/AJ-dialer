@@ -24,9 +24,23 @@ export function Badge({
   className,
   tone = "neutral",
   dot = false,
+  icon: Icon,
   children,
   ...props
-}: React.HTMLAttributes<HTMLSpanElement> & { tone?: Tone; dot?: boolean }) {
+}: React.HTMLAttributes<HTMLSpanElement> & {
+  tone?: Tone;
+  dot?: boolean;
+  /**
+   * A glyph for the state this badge names — the SHAPE channel.
+   *
+   * The tones differ only in fill and text colour, and `dot` draws the identical
+   * 6px circle for every one of them, so "Qualified" and "Appointment" (both
+   * success) or "Wrong number" and "Do not call" (both danger) were separated by
+   * hue alone. The status maps in src/lib/status.ts now carry the icon next to
+   * the tone, so a call site cannot render one and forget the other.
+   */
+  icon?: React.ComponentType<{ className?: string }>;
+}) {
   return (
     <span
       className={cn(
@@ -36,8 +50,10 @@ export function Badge({
       )}
       {...props}
     >
-      {dot && (
-        <span className="h-1.5 w-1.5 rounded-full bg-current opacity-80" />
+      {Icon ? (
+        <Icon className="h-3 w-3 shrink-0" />
+      ) : (
+        dot && <span className="h-1.5 w-1.5 rounded-full bg-current opacity-80" />
       )}
       {children}
     </span>

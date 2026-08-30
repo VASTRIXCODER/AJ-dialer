@@ -78,7 +78,7 @@ export function RecentCalls({ calls }: { calls: RecentCall[] }) {
                   </td>
                   <td className="px-5 py-3">
                     {cfg ? (
-                      <Badge tone={cfg.tone}>{cfg.label}</Badge>
+                      <Badge tone={cfg.tone} icon={cfg.icon}>{cfg.label}</Badge>
                     ) : (
                       <span className="text-xs text-muted-foreground">—</span>
                     )}

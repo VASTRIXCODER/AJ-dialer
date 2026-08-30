@@ -63,7 +63,7 @@ export function SecretValue({
         onClick={() => setShown((s) => !s)}
         aria-pressed={shown}
         aria-label={shown ? `Hide ${label.toLowerCase()}` : `Reveal ${label.toLowerCase()}`}
-        className="shrink-0 rounded-md p-1 text-muted-foreground transition-colors hover:bg-muted/70 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted/70 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       >
         {shown ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
       </button>
@@ -77,7 +77,7 @@ export function SecretValue({
             timer.current = setTimeout(() => setCopied(false), 1500);
           }}
           aria-label={`Copy ${label.toLowerCase()}`}
-          className="shrink-0 rounded-md p-1 text-muted-foreground transition-colors hover:bg-muted/70 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted/70 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
           {copied ? (
             <Check className="h-3.5 w-3.5 text-success" />

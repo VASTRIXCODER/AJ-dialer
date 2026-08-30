@@ -1617,7 +1617,7 @@ export function LeadsTable({
                       </td>
                     )}
                     <td className="px-4 py-3">
-                      <Badge tone={cfg.tone}>{cfg.label}</Badge>
+                      <Badge tone={cfg.tone} icon={cfg.icon}>{cfg.label}</Badge>
                     </td>
                     <td className="px-4 py-3 text-right">
                       <span

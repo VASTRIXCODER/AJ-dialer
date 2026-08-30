@@ -260,7 +260,8 @@ export function LeadGroupManager({
                   <button
                     type="button"
                     onClick={() => setConfirmDelete(null)}
-                    className="rounded-lg p-1 text-muted-foreground hover:bg-muted"
+                    aria-label="Cancel deleting this group"
+                    className="inline-flex h-6 w-6 items-center justify-center rounded-lg text-muted-foreground hover:bg-muted"
                   >
                     <X className="h-3.5 w-3.5" />
                   </button>
@@ -269,7 +270,8 @@ export function LeadGroupManager({
                 <button
                   type="button"
                   onClick={() => setConfirmDelete(g.id)}
-                  className="ml-auto rounded-lg p-1.5 text-muted-foreground transition-colors hover:bg-danger/10 hover:text-danger"
+                  className="ml-auto inline-flex h-6 w-6 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-danger/10 hover:text-danger"
+                  aria-label="Delete this group — its leads move to Miscellaneous"
                   title="Delete this group (its leads move to Miscellaneous)"
                 >
                   <Trash2 className="h-3.5 w-3.5" />

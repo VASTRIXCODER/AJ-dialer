@@ -261,6 +261,7 @@ export function Teleprompter({
                 type="button"
                 onClick={() => setScrolling((v) => !v)}
                 aria-pressed={scrolling}
+                aria-label={scrolling ? "Pause auto-scroll" : "Auto-scroll the script"}
                 title={
                   scrolling
                     ? "Pause auto-scroll"

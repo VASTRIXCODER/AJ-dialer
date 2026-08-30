@@ -501,7 +501,7 @@ export function CallArchive({
                       {isAI ? <Bot className="h-3 w-3" /> : <User className="h-3 w-3" />}
                       {isAI ? "AI" : "Manual"}
                     </Badge>
-                    {cfg && <Badge tone={cfg.tone}>{cfg.label}</Badge>}
+                    {cfg && <Badge tone={cfg.tone} icon={cfg.icon}>{cfg.label}</Badge>}
                     {c.hasTranscript && (
                       <span
                         title="Has a transcript"

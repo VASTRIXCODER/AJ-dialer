@@ -267,7 +267,7 @@ export default async function CampaignDetailPage({
                           </LeadOpenLink>
                         </td>
                         <td className="py-2.5 pr-4">
-                          <Badge tone={lc.tone}>{lc.label}</Badge>
+                          <Badge tone={lc.tone} icon={lc.icon}>{lc.label}</Badge>
                         </td>
                         <td className="py-2.5 pr-4 tabular">{l.aiScore ?? "—"}</td>
                         <td className="whitespace-nowrap py-2.5 text-muted-foreground">
@@ -293,6 +293,7 @@ export default async function CampaignDetailPage({
                 const oc = (r.outcome ? outcomeConfig[r.outcome] : undefined) ?? {
                   label: "No outcome",
                   tone: "neutral" as const,
+                  icon: undefined,
                 };
                 return (
                   <div key={r.id} className="flex items-center justify-between gap-3">
@@ -306,7 +307,7 @@ export default async function CampaignDetailPage({
                         {formatDuration(r.durationSec)} · {relativeTime(r.startedAt)}
                       </p>
                     </div>
-                    <Badge tone={oc.tone}>{oc.label}</Badge>
+                    <Badge tone={oc.tone} icon={oc.icon}>{oc.label}</Badge>
                   </div>
                 );
               })}

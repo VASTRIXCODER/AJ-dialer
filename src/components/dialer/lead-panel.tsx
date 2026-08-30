@@ -1089,6 +1089,7 @@ function CallHistory({ leadId }: { leadId: string }) {
                 {cfg && (
                   <Badge
                     tone={cfg.tone === "success" ? "success" : cfg.tone === "danger" ? "danger" : cfg.tone === "warning" ? "warning" : "neutral"}
+                    icon={cfg.icon}
                     className="ml-auto text-[11px] px-1.5 py-0.5"
                   >
                     {cfg.label}

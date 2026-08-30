@@ -36,16 +36,24 @@ import { cn } from "@/lib/utils";
 function Switch({
   checked,
   onChange,
+  label,
 }: {
   checked: boolean;
   onChange: (v: boolean) => void;
+  /** Required. This control is the ONLY thing on a preference row that a
+   *  screen reader can operate, and it used to announce "button" — no name, no
+   *  state — on every row of the Settings page. */
+  label: string;
 }) {
   return (
     <button
       type="button"
+      role="switch"
+      aria-checked={checked}
+      aria-label={label}
       onClick={() => onChange(!checked)}
       className={cn(
-        "relative h-6 w-11 shrink-0 rounded-full transition-colors",
+        "relative h-6 w-11 shrink-0 rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
         checked ? "bg-primary" : "bg-muted",
       )}
     >
@@ -81,7 +89,7 @@ function PrefRow({
         <p className="text-sm font-semibold">{title}</p>
         <p className="text-xs text-muted-foreground">{desc}</p>
       </div>
-      <Switch checked={checked} onChange={onChange} />
+      <Switch checked={checked} onChange={onChange} label={title} />
     </div>
   );
 }

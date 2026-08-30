@@ -234,7 +234,8 @@ export function SortPreviewReview({
             <button
               type="button"
               onClick={onCancel}
-              className="rounded-lg p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+              className="inline-flex h-7 w-7 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+              aria-label="Cancel the import preview"
               title="Cancel"
             >
               <X className="h-4 w-4" />
