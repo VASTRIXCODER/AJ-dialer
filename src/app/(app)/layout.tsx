@@ -7,6 +7,7 @@ import { isAIConfigured } from "@/lib/ai/claude";
 import { getAppSettings, isAccountDisabled } from "@/lib/db/app-control";
 import { listLeadGroups } from "@/lib/db/lead-groups";
 import { getUiPreferences } from "@/lib/db/team";
+import { parseDensityPreference } from "@/lib/ui-density";
 import { parseDialerSessionPrefs, parseDialerUserPrefs } from "@/lib/dialer/user-prefs";
 import { getPlatformPool } from "@/lib/dialer/rotation-server";
 import { restrictToAssignedNumbers } from "@/lib/dialer/rotation";
@@ -257,6 +258,9 @@ export default async function AppGroupLayout({
       // the shell — so no screen has to hardcode "homeowner" or re-derive the
       // vertical's nouns for itself.
       vocabulary={orgVocabulary(viewer.org)}
+      // One display density for the whole workspace, read from the viewer's own
+      // profile so the first paint is already at the density they chose.
+      density={parseDensityPreference(uiPreferences)}
       role={viewer.role}
       superadmin={superadmin}
       dialerConfig={dialerConfig}

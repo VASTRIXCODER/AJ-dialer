@@ -125,7 +125,9 @@ export function FloorCard({
       className={cn(
         "cursor-pointer overflow-hidden text-left transition-shadow hover:shadow-lift",
         "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-        compact ? "p-3.5" : "p-5",
+        // An all-sides ternary moves the horizontal padding too. Hold px-5.
+        "px-5",
+        compact ? "py-3.5" : "py-5",
         isCall && card.state === "connected" && "ring-1 ring-success/25",
         isCall && card.state === "ringing" && "ring-1 ring-warning/30",
         card.stale && "ring-1 ring-warning/40",
@@ -179,7 +181,8 @@ export function FloorCard({
       <div
         className={cn(
           "mt-3 flex items-center justify-between gap-2 rounded-xl bg-muted/60",
-          compact ? "px-2.5 py-2" : "p-3",
+          "px-3",
+          compact ? "py-2" : "py-3",
         )}
       >
         <span className="min-w-0 text-sm">

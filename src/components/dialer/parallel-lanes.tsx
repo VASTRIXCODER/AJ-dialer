@@ -5,7 +5,8 @@ import { MapPin, Phone } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Avatar, type AvatarTone } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
-import { DensityToggle, useStoredDensity } from "@/components/ui/density-toggle";
+import { DensityToggle } from "@/components/ui/density-toggle";
+import { useDensity } from "@/components/layout/density";
 import { LaneCard } from "@/components/ui/lane-card";
 import { StatusPill } from "@/components/ui/status-pill";
 import {
@@ -183,7 +184,10 @@ export function ParallelLanes({
 }) {
   const { dialer, campaigns } = useDialerContext();
   const { state } = dialer;
-  const [density, setDensity] = useStoredDensity("aj:density:dialer-lanes");
+  // The workspace setting, not a private one. This used to remember its own
+  // answer under "aj:density:dialer-lanes", so a rep who tightened the floor
+  // found the lanes unchanged.
+  const { density, setDensity } = useDensity();
   const { metaFor, now } = useLaneMeta(lines);
 
   const anotherAnswered =
@@ -213,7 +217,6 @@ export function ParallelLanes({
             <DensityToggle
               value={density}
               onChange={setDensity}
-              storageKey="aj:density:dialer-lanes"
             />
           </div>
           {/* Session stats — every number here is counted in THIS browser

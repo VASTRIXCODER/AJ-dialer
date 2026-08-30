@@ -7,9 +7,11 @@ import { CommandPalette } from "@/components/ai/command-palette";
 import { type DialerConfig, DialerProvider } from "@/components/dialer/dialer-context";
 import { GlobalCallBar } from "@/components/dialer/global-call-bar";
 import { Lead360Provider } from "@/components/leads/lead-360/lead-360-provider";
+import { DensityProvider } from "./density";
 import { orgAccentCss } from "@/lib/org/accent";
 import type { OrgFeatures } from "@/lib/org/settings";
 import { DEFAULT_VOCABULARY, type OrgVocabulary } from "@/lib/org/vocabulary";
+import type { Density } from "@/lib/ui-density";
 import { Sidebar } from "./sidebar";
 import { Topbar } from "./topbar";
 import type { Permission } from "@/lib/permissions";
@@ -34,6 +36,7 @@ export function AppShell({
   role = null,
   superadmin = false,
   vocabulary = DEFAULT_VOCABULARY,
+  density = null,
   dialerConfig,
 }: {
   children: React.ReactNode;
@@ -53,6 +56,9 @@ export function AppShell({
   superadmin?: boolean;
   /** The org's own nouns, resolved server-side. See useVocabulary(). */
   vocabulary?: OrgVocabulary;
+  /** The viewer's stored display density, resolved server-side so the first
+   *  paint is already at the density they chose. Null = they never set one. */
+  density?: Density | null;
   /** Config for the app-wide dialer engine (persists calls across navigation). */
   dialerConfig: DialerConfig;
 }) {
@@ -74,6 +80,9 @@ export function AppShell({
 
   return (
     <VocabularyProvider value={vocabulary}>
+    {/* One density for the whole workspace — it used to be three unrelated
+        per-surface toggles, and the biggest grid in the product had none. */}
+    <DensityProvider initial={density}>
     {/* Outside Lead 360 so the drawer's sections can ask what the viewer may
         do without every host threading a prop down to them. Display only —
         every route re-checks server-side. */}
@@ -158,6 +167,7 @@ export function AppShell({
     </Lead360Provider>
     </DialerProvider>
     </PermissionsProvider>
+    </DensityProvider>
     </VocabularyProvider>
   );
 }

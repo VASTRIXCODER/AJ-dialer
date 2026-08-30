@@ -26,6 +26,7 @@ import {
 import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useMemo, useState } from "react";
 import { MetricCard } from "@/components/dashboard/metric-card";
+import { useDensity } from "@/components/layout/density";
 import { OutcomeGrid } from "@/components/dialer/outcome-grid";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -122,7 +123,11 @@ export function AppointmentsWorkspace({
     const d = urlDate ? parseFloating(`${urlDate}T00:00:00`) : null;
     return d ?? startOfDay(new Date());
   });
-  const [density, setDensity] = useState<Density>(prefs.density ?? "comfortable");
+  // A fourth copy of the density preference used to live here, under
+  // `preferences.appointments.density`, saved only when the rep pressed "Save
+  // as default". It is the workspace setting now — one place, applied the
+  // moment it changes, and it follows them to their other machine.
+  const { density, setDensity } = useDensity();
   const [source, setSource] = useState<SourceFilter>(prefs.source ?? "all");
   const [sort, setSort] = useState<SortKey>(prefs.sort ?? "smart");
   const [rep, setRep] = useState<string>("all");
@@ -269,7 +274,9 @@ export function AppointmentsWorkspace({
       const res = await fetch("/api/profile", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ preferences: { appointments: { view, density, source, sort } } }),
+        // Density is deliberately NOT in here: it is a workspace setting that
+        // saves itself, not one of this screen's remembered defaults.
+        body: JSON.stringify({ preferences: { appointments: { view, source, sort } } }),
       });
       if (res.ok) {
         setSavedDefault(true);
@@ -278,7 +285,7 @@ export function AppointmentsWorkspace({
     } catch {
       /* non-fatal */
     }
-  }, [view, density, source, sort]);
+  }, [view, source, sort]);
 
   // ── navigation ─────────────────────────────────────────────────────────────
   const step = useCallback(

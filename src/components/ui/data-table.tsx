@@ -3,7 +3,8 @@
 import { ArrowDown, ArrowUp, ArrowUpDown } from "lucide-react";
 import type { ReactNode } from "react";
 import { cn } from "@/lib/utils";
-import type { Density } from "./density-toggle";
+import { useDensity } from "@/components/layout/density";
+import { cellPadding, rowMinHeight, type Density } from "@/lib/ui-density";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // DataTable — a lightweight, GENERIC table for list views (the floor's list
@@ -35,7 +36,7 @@ export function DataTable<T>({
   rowKey,
   sort,
   onSort,
-  density = "comfortable",
+  density,
   empty,
   stickyHeader = false,
   onRowClick,
@@ -46,6 +47,8 @@ export function DataTable<T>({
   rowKey: (row: T) => string;
   sort?: DataTableSort | null;
   onSort?: (key: string) => void;
+  /** Override the workspace density for this one table. Almost nothing should:
+   *  the setting is a workspace-level choice, not a per-table one. */
   density?: Density;
   /** Rendered (inside the container) when there are no rows. */
   empty: ReactNode;
@@ -53,7 +56,13 @@ export function DataTable<T>({
   onRowClick?: (row: T) => void;
   className?: string;
 }) {
-  const cellPad = density === "compact" ? "px-3 py-1.5" : "px-4 py-3";
+  // Horizontal padding is CONSTANT. This used to switch `px-4 py-3` ↔
+  // `px-3 py-1.5`, moving every column 4px inward on the way to Compact — so a
+  // manager tightening the rows lost the horizontal position of everything
+  // they were reading. globals.css states the rule verbatim.
+  const resolved = useDensity().density;
+  const active = density ?? resolved;
+  const cellPad = cellPadding(active);
 
   return (
     <div className={cn("overflow-x-auto", className)}>
@@ -114,7 +123,11 @@ export function DataTable<T>({
                 key={rowKey(row)}
                 onClick={onRowClick ? () => onRowClick(row) : undefined}
                 className={cn(
-                  "transition-colors",
+                  // A minimum, never a fixed height: a genuinely tall cell (a
+                  // wrapped address) may still grow, it just cannot be the only
+                  // 90px row in a column of 40px ones.
+                  rowMinHeight(active),
+                  "align-middle transition-colors",
                   onRowClick && "cursor-pointer hover:bg-muted/50",
                 )}
               >

@@ -42,7 +42,10 @@ export function LaneCard({
     <div
       className={cn(
         "rounded-2xl border transition-colors duration-[var(--dur-state)]",
-        compact ? "px-3 py-2" : "p-3.5",
+        // Vertical only — `p-3.5` set all four sides, so a compact round
+        // pulled the lane's whole content 2px inward as well as up.
+        "px-3.5",
+        compact ? "py-2" : "py-3.5",
         focused
           ? "border-primary/40 bg-card shadow-2 ring-2 ring-primary/25"
           : "border-border/70 bg-surface shadow-1",

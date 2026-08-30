@@ -254,7 +254,6 @@ export function WorkQueue({
           columns={columns}
           rows={queue.items}
           rowKey={(r) => r.id}
-          density="comfortable"
           empty={
             <EmptyState
               icon={CheckCircle2}

@@ -19,7 +19,7 @@ import { useLiveListen } from "@/components/monitor/use-live-listen";
 import { Avatar } from "@/components/ui/avatar";
 import { Card } from "@/components/ui/card";
 import { DataTable, type DataTableColumn } from "@/components/ui/data-table";
-import { useStoredDensity } from "@/components/ui/density-toggle";
+import { useDensity } from "@/components/layout/density";
 import { Menu, MenuItem, MenuTrigger } from "@/components/ui/dropdown-menu";
 import { StatusPill } from "@/components/ui/status-pill";
 import type { CallStatePayload, PresencePayload } from "@/lib/realtime/events";
@@ -79,7 +79,7 @@ export function FloorBoard({
   const [now, setNow] = useState(() => Date.now());
   const [filters, setFilters] = useState<FloorFilterValue>(FLOOR_FILTER_DEFAULT);
   const [view, setView] = useState<FloorView>("grid");
-  const [density, setDensity] = useStoredDensity("floor:density");
+  const { density, setDensity } = useDensity();
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [endBusyId, setEndBusyId] = useState<string | null>(null);
   const [actionError, setActionError] = useState("");
