@@ -6,7 +6,8 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { formatPhone, relativeTime } from "@/lib/utils";
+import { formatPhone, relativeTime, cn } from "@/lib/utils";
+import { CELL } from "@/lib/ui-density";
 
 interface DncEntry {
   id: string;
@@ -228,32 +229,32 @@ export function DncManager({ canManage }: { canManage: boolean }) {
           <table className="w-full text-sm">
             <thead className="sticky top-0 bg-surface-muted text-left text-muted-foreground">
               <tr>
-                <th className="px-3 py-2 font-medium">Number</th>
-                <th className="px-3 py-2 font-medium">Source</th>
-                <th className="px-3 py-2 font-medium">Reason</th>
+                <th className={cn(CELL, "font-medium")}>Number</th>
+                <th className={cn(CELL, "font-medium")}>Source</th>
+                <th className={cn(CELL, "font-medium")}>Reason</th>
                 {/* The table is already ORDERED by this and never showed it —
                     the one screen that lists suppressions was the only place
                     that hid when they happened. */}
-                <th className="px-3 py-2 font-medium">Added</th>
-                {canManage && <th className="px-3 py-2" />}
+                <th className={cn(CELL, "font-medium")}>Added</th>
+                {canManage && <th className={cn(CELL)} />}
               </tr>
             </thead>
             <tbody>
               {entries.map((e) => (
                 <tr key={e.id} className="border-t border-border">
-                  <td className="px-3 py-2 tabular">{formatPhone(e.phoneDigits)}</td>
-                  <td className="px-3 py-2 text-muted-foreground">
+                  <td className={cn(CELL, "tabular")}>{formatPhone(e.phoneDigits)}</td>
+                  <td className={cn(CELL, "text-muted-foreground")}>
                     {SOURCE_LABEL[e.source] ?? (e.source || "—")}
                   </td>
-                  <td className="px-3 py-2 text-muted-foreground">{e.reason || "—"}</td>
+                  <td className={cn(CELL, "text-muted-foreground")}>{e.reason || "—"}</td>
                   <td
-                    className="whitespace-nowrap px-3 py-2 text-muted-foreground"
+                    className={cn(CELL, "whitespace-nowrap text-muted-foreground")}
                     title={e.createdAt || undefined}
                   >
                     {e.createdAt ? relativeTime(e.createdAt) : "—"}
                   </td>
                   {canManage && (
-                    <td className="px-3 py-2 text-right">
+                    <td className={cn(CELL, "text-right")}>
                       <button
                         type="button"
                         onClick={() => remove(e.phoneDigits)}

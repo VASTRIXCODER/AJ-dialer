@@ -63,6 +63,7 @@ import {
 } from "./shared";
 import { useAppointmentDrag } from "./use-appointment-drag";
 import { Z } from "@/lib/z-layers";
+import { DensityToggle } from "@/components/ui/density-toggle";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The appointments workspace. Four views over one dataset:
@@ -716,6 +717,12 @@ function Toolbar({
                 type="button"
                 onClick={() => setView(key)}
                 className={cn(seg, view === key ? on : off)}
+                // Below `sm` the label span is `hidden`, which removes it from
+                // the accessibility tree — so these read as unlabelled buttons
+                // on a phone. `title` is not a name a screen reader announces
+                // reliably, and aria-pressed is what a segmented control owes.
+                aria-label={label}
+                aria-pressed={view === key}
                 title={label}
               >
                 <Icon className="h-3.5 w-3.5" />
@@ -724,18 +731,22 @@ function Toolbar({
             ))}
           </div>
 
-          {!isCalendar && (
-            <button
-              type="button"
-              onClick={() => setDensity(density === "comfortable" ? "compact" : "comfortable")}
-              className="hidden h-9 items-center gap-1.5 rounded-xl border border-border/60 bg-surface/50 px-3 text-xs font-semibold text-muted-foreground transition-colors hover:text-foreground lg:flex"
-              title="Toggle density"
-            >
-              {density === "comfortable" ? "Comfortable" : "Compact"}
-            </button>
-          )}
+          {/* The shared control. The bespoke one this replaces was invisible
+              below 1024px (`hidden … lg:flex`), absent in the calendar views,
+              had no aria-pressed, and called the value "Comfortable" where the
+              rest of the product says "Cozy" — four ways for one setting to
+              look like two. Unconditional now: the calendars have rows too. */}
+          <DensityToggle value={density} onChange={setDensity} />
 
-          <Button variant="outline" size="sm" onClick={onSaveDefault} className="gap-1.5">
+          {/* Below `sm` the label span is hidden, so this is an icon with no
+              accessible name. */}
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={onSaveDefault}
+            aria-label={savedDefault ? "Default view saved" : "Save this as your default view"}
+            className="gap-1.5"
+          >
             {savedDefault ? (
               <Check className="h-3.5 w-3.5 text-success" />
             ) : (
@@ -745,7 +756,7 @@ function Toolbar({
           </Button>
 
           {access.canManage && (
-            <Button size="sm" onClick={onCreate} className="gap-1.5">
+            <Button size="sm" onClick={onCreate} aria-label="New appointment" className="gap-1.5">
               <Plus className="h-3.5 w-3.5" />
               <span className="hidden sm:inline">New</span>
             </Button>

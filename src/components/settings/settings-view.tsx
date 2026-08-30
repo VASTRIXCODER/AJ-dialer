@@ -32,6 +32,8 @@ import {
   ROLE_LABEL,
 } from "@/lib/permissions";
 import { cn } from "@/lib/utils";
+import { useDensity } from "@/components/layout/density";
+import { DensityToggle } from "@/components/ui/density-toggle";
 
 function Switch({
   checked,
@@ -116,6 +118,7 @@ export function SettingsView({
   dialerPrefs?: DialerUserPrefs;
 }) {
   const { theme, setTheme } = useTheme();
+  const { density, setDensity } = useDensity();
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
 
@@ -329,6 +332,21 @@ export function SettingsView({
                 </button>
               );
             })}
+          </div>
+
+          {/* Density is a workspace-level display setting, persisted to the
+              same profile as the theme — and until now it had no home. It was
+              reachable only from three toolbars (the dialer's lanes, the
+              monitor's floor filters, the leads grid), so a rep who had not
+              opened one of those three screens could not discover it existed. */}
+          <div className="mt-5 flex flex-wrap items-center justify-between gap-3 border-t border-border/60 pt-5">
+            <div>
+              <p className="text-sm font-semibold">Row density</p>
+              <p className="text-xs text-muted-foreground">
+                How tight the rows are in every table and list. Follows you between machines.
+              </p>
+            </div>
+            <DensityToggle value={density} onChange={setDensity} />
           </div>
         </Card>
 

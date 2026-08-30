@@ -59,25 +59,33 @@ export function parseDensityPreference(preferences: unknown): Density | null {
 // the declared tokens so these comments cannot quietly go stale.
 
 /**
- * Table cell padding. Horizontal is a CONSTANT — the whole point of the rule.
+ * Table cell padding — the ONE string every `<td>` and `<th>` in the product
+ * uses.
  *
- * `data-table.tsx` used to switch `px-4 py-3` ↔ `px-3 py-1.5`, moving every
- * column inward on the way to Compact (and landing on 6px vertical, which is
- * more than the 4px `py-2` it looks smaller than).
+ * It takes no argument, and that is the point. The density-taking version below
+ * needed `useDensity()`, so only the two components that called it were ever
+ * affected: the other EIGHT tables were hardcoded at five different paddings,
+ * three of them with no left padding at all, and two of those eight are SERVER
+ * components that cannot call a hook. Reading the density from a CSS variable
+ * on <html> reaches every one of them, at any depth, with no prop.
+ *
+ * Horizontal is a CONSTANT — the whole point of the rule. `data-table.tsx` used
+ * to switch `px-4 py-3` ↔ `px-3 py-1.5`, moving every column inward on the way
+ * to Compact (and landing on 6px vertical, which is MORE than the 4px `py-2` it
+ * looks smaller than).
  */
-export function cellPadding(density: Density): string {
-  // 16px horizontal at both densities; 8px → 4px vertical.
-  return density === "compact" ? "px-5 py-2" : "px-5 py-3";
-}
+export const CELL = "px-5 py-[var(--cell-py)]";
 
 /**
- * A row's minimum height, so rows land on a grid instead of being however tall
- * their longest cell happens to be. Never a fixed `h-` — a genuinely tall cell
- * (a wrapped address, a two-line note) must still be allowed to grow; it just
- * cannot make its neighbours look broken by being the only 90px row in a
- * column of 40px ones.
+ * A row's minimum height, from the same variable.
+ *
+ * A MINIMUM, never a fixed `h-`: a genuinely tall cell (a wrapped address, a
+ * two-line note) must still be allowed to grow. It just cannot make its
+ * neighbours look broken by being the only 90px row in a column of 40px ones.
  */
-export function rowMinHeight(density: Density): string {
-  // 32px → 40px.
-  return density === "compact" ? "min-h-7" : "min-h-8";
-}
+export const ROW_MIN = "min-h-[var(--row-min-h)]";
+
+// cellPadding(density) and rowMinHeight(density) are gone rather than
+// deprecated. A function that still exports gets imported again, and the whole
+// point of this change is that there is exactly ONE cell padding in the
+// product and nothing has to be given the density to use it.

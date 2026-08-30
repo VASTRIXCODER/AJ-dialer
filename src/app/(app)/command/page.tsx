@@ -26,6 +26,7 @@ import { getViewer } from "@/lib/org/membership";
 import { orgVocabulary } from "@/lib/org/vocabulary";
 import { cn, relativeTime } from "@/lib/utils";
 import { STAGE_LABELS } from "@/lib/opportunities/why-now";
+import { CELL } from "@/lib/ui-density";
 
 export const metadata = { title: "Command Center" };
 export const dynamic = "force-dynamic";
@@ -328,10 +329,10 @@ export default async function CommandCenterPage() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-border text-left text-xs font-bold uppercase tracking-wide text-muted-foreground">
-                  <th className="py-2 pr-3 font-bold">Rep</th>
-                  <th className="py-2 pr-3 text-right font-bold">Dials</th>
-                  <th className="py-2 pr-3 text-right font-bold">Conversations</th>
-                  <th className="py-2 text-right font-bold">
+                  <th className={cn(CELL, "font-bold")}>Rep</th>
+                  <th className={cn(CELL, "text-right font-bold")}>Dials</th>
+                  <th className={cn(CELL, "text-right font-bold")}>Conversations</th>
+                  <th className={cn(CELL, "text-right font-bold")}>
                     {ApptPlural}
                   </th>
                 </tr>
@@ -339,10 +340,10 @@ export default async function CommandCenterPage() {
               <tbody>
                 {reps.map((rep) => (
                   <tr key={rep.id} className="border-b border-border/50 last:border-0">
-                    <td className="py-2 pr-3 font-medium">{rep.name}</td>
-                    <td className="py-2 pr-3 text-right tabular">{rep.dials}</td>
-                    <td className="py-2 pr-3 text-right tabular">{rep.conversations}</td>
-                    <td className="py-2 text-right tabular">{rep.appointments}</td>
+                    <td className={cn(CELL, "font-medium")}>{rep.name}</td>
+                    <td className={cn(CELL, "text-right tabular")}>{rep.dials}</td>
+                    <td className={cn(CELL, "text-right tabular")}>{rep.conversations}</td>
+                    <td className={cn(CELL, "text-right tabular")}>{rep.appointments}</td>
                   </tr>
                 ))}
               </tbody>

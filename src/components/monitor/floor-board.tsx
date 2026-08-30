@@ -36,6 +36,7 @@ import {
 import { useOrgChannel } from "@/lib/realtime/use-org-channel";
 import { useVisiblePoll } from "@/lib/use-visible-poll";
 import { cn, formatDuration, initials } from "@/lib/utils";
+import type { Density } from "@/lib/ui-density";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // FloorBoard — the Live Floor: one accurate, push-fed picture of every seat.
@@ -437,7 +438,7 @@ function FloorList({
 }: {
   rows: FloorCardModel[];
   now: number;
-  density: "compact" | "comfortable";
+  density: Density;
   canListen: boolean;
   canIntervene: boolean;
   capabilities: FloorCapabilities;

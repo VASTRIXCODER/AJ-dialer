@@ -2,7 +2,7 @@ import { execSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import { cellPadding, parseDensityPreference, rowMinHeight } from "@/lib/ui-density";
+import { CELL, ROW_MIN, parseDensityPreference } from "@/lib/ui-density";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Display density is ONE setting, and it is a VERTICAL one.
@@ -135,36 +135,48 @@ describe("density changes the vertical rhythm and nothing else", () => {
     expect(SCALE.get("2"), "--spacing-2").toBe(4);
   });
 
-  it("cell padding is 16px horizontally at BOTH densities", () => {
+  it("cell padding is 16px horizontally, and it does not vary", () => {
     // The rule, quoted at the top of this file, in pixels rather than in class
-    // names — which is the only form of it that can actually be checked.
-    for (const d of ["compact", "comfortable"] as const) {
-      const horizontal = cellPadding(d).split(" ").find((c) => c.startsWith("px-"))!;
-      expect(px(horizontal), `${d}: ${horizontal}`).toBe(16);
-    }
+    // names — which is the only form of it that can actually be checked. The
+    // horizontal step is a literal in CELL, so it cannot vary by construction.
+    const horizontal = CELL.split(" ").find((c) => c.startsWith("px-"))!;
+    expect(px(horizontal), horizontal).toBe(16);
+    expect(CELL, "horizontal padding must not read the density variable").not.toMatch(
+      /px-\[var\(/,
+    );
   });
 
-  it("compact is genuinely tighter vertically, and on the real scale", () => {
-    const vertical = (d: "compact" | "comfortable") =>
-      cellPadding(d).split(" ").find((c) => c.startsWith("py-"))!;
-    const compact = px(vertical("compact"));
-    const comfortable = px(vertical("comfortable"));
-    // Off-scale (fractional) steps resolve to null — and a null here is how
-    // `py-1.5` sneaks in at 6px while looking smaller than `py-2`'s 4px.
-    expect(compact, `${vertical("compact")} is not on the scale`).not.toBeNull();
-    expect(comfortable, `${vertical("comfortable")} is not on the scale`).not.toBeNull();
-    expect(compact!).toBeLessThan(comfortable!);
+  it("the vertical step is the ONE variable, declared at both densities", () => {
+    // Density now travels as a CSS variable on <html data-density>, not as a
+    // prop — because two of the product's ten tables are server components and
+    // could not be given one. That is what left eight of them hardcoded.
+    expect(CELL).toMatch(/py-\[var\(--cell-py\)\]/);
+    const root = CSS.match(/:root\s*\{[\s\S]*?--cell-py:\s*(\d+)px;/);
+    const compact = CSS.match(/\[data-density="compact"\]\s*\{[\s\S]*?--cell-py:\s*(\d+)px;/);
+    expect(root, "--cell-py is not declared on :root").toBeTruthy();
+    expect(compact, '--cell-py is not declared for [data-density="compact"]').toBeTruthy();
+    expect(Number(compact![1]), "compact is not tighter").toBeLessThan(Number(root![1]));
   });
 
   it("rows have a minimum, never a fixed height", () => {
-    for (const d of ["compact", "comfortable"] as const) {
-      expect(rowMinHeight(d)).toMatch(/^min-h-/);
-      expect(px(rowMinHeight(d)), `${d} row minimum is off the scale`).not.toBeNull();
-    }
-    expect(px(rowMinHeight("compact"))!).toBeLessThan(px(rowMinHeight("comfortable"))!);
+    expect(ROW_MIN).toMatch(/^min-h-/);
+    expect(ROW_MIN).toMatch(/min-h-\[var\(--row-min-h\)\]/);
+    const root = CSS.match(/:root\s*\{[\s\S]*?--row-min-h:\s*(\d+)px;/);
+    const compact = CSS.match(/\[data-density="compact"\]\s*\{[\s\S]*?--row-min-h:\s*(\d+)px;/);
+    expect(root, "--row-min-h is not declared on :root").toBeTruthy();
+    expect(compact).toBeTruthy();
+    expect(Number(compact![1])).toBeLessThan(Number(root![1]));
     // A row minimum that exceeds a comfortable row is not a minimum, it is a
     // fixed height wearing a different name.
-    expect(px(rowMinHeight("comfortable"))!).toBeLessThanOrEqual(48);
+    expect(Number(root![1])).toBeLessThanOrEqual(48);
+  });
+
+  it("the provider mirrors the setting onto the document", () => {
+    // Without this the CSS variable never changes and every table is stuck at
+    // comfortable — which is the whole mechanism, so it is worth pinning.
+    expect(read("src/components/layout/density.tsx")).toMatch(
+      /document\.documentElement\.dataset\.density = density/,
+    );
   });
 });
 
@@ -199,14 +211,28 @@ describe("there is exactly one density setting", () => {
     expect(parseDensityPreference("compact")).toBeNull();
   });
 
-  it("every grid that has rows obeys it", () => {
-    // The two generic tables plus the biggest hand-rolled one. A grid that
-    // hardcodes its padding is a grid the setting cannot reach — which is
-    // exactly what /leads was.
-    for (const path of ["src/components/ui/data-table.tsx", "src/components/leads/leads-table.tsx"]) {
-      const text = read(path);
-      expect(text, `${path} does not use the shared padding`).toMatch(/cellPadding\(/);
-      expect(text, `${path} still hardcodes a cell padding`).not.toMatch(/"px-4 py-3"/);
+  it("EVERY table in the product obeys it", () => {
+    // Checked per CELL rather than per file: what matters is that each
+    // individual <td> and <th> is on the shared constant. A file-level "does
+    // it mention CELL anywhere" test would pass a table that had migrated
+    // nine cells out of ten.
+    //
+    // Not an allowlist any more, either. Eight of the ten tables in the
+    // product were hardcoded at five different paddings — three with no left
+    // padding at all — while the setting quietly applied to the other two.
+    const offenders: string[] = [];
+    const CELL_RE = /<t[dh]\s+className=(?:"([^"]*)"|\{([\s\S]{0,300}?)\}>)/g;
+    for (const { path, code } of FILES) {
+      if (path === "src/lib/ui-density.ts") continue;
+      for (const m of code.matchAll(CELL_RE)) {
+        const expr = m[1] ?? m[2] ?? "";
+        if (!expr.includes("CELL")) {
+          offenders.push(path + ": " + expr.replace(/\s+/g, " ").trim().slice(0, 70));
+        }
+      }
     }
+    expect(offenders, "Use cn(CELL, ...) from @/lib/ui-density: " + offenders.join(" | ")).toEqual(
+      [],
+    );
   });
 });

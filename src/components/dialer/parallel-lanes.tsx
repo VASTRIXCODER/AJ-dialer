@@ -87,6 +87,7 @@ function LaneRow({
   now,
   campaignName,
   compact,
+  rail,
   anotherAnswered,
 }: {
   line: DialLine;
@@ -94,7 +95,19 @@ function LaneRow({
   meta: LaneMeta | undefined;
   now: number;
   campaignName: string | null;
+  /** DENSITY. Spacing and row height only — never type size, never content. */
   compact: boolean;
+  /**
+   * The narrow released rail under the live cockpit. This is a LAYOUT variant,
+   * not a preference: it genuinely has no room for the number's inferred
+   * location or the campaign badge.
+   *
+   * The two used to be one boolean, so choosing Compact density deleted both
+   * rows from the full-size lanes and re-typeset the monogram 14px → 12px. The
+   * density contract in globals.css says it changes row height and vertical
+   * padding, and nothing else.
+   */
+  rail: boolean;
   anotherAnswered: boolean;
 }) {
   const name = `${line.lead.firstName} ${line.lead.lastName}`.trim();
@@ -117,7 +130,7 @@ function LaneRow({
           <Avatar
             initials={initials(name || formatPhone(line.lead.phone))}
             tone={line.status === "connected" ? "success" : tones[index % tones.length]}
-            size={compact ? "sm" : "md"}
+            size={rail ? "sm" : "md"}
           />
           <div className="min-w-0">
             <p className="flex items-center gap-1.5 truncate text-sm font-semibold">
@@ -140,7 +153,7 @@ function LaneRow({
                 </span>
               )}
             </p>
-            {!compact && loc && (
+            {!rail && loc && (
               <p
                 className="mt-0.5 flex items-center gap-1 text-[11px] text-ink-3"
                 title="Inferred from the phone number's area code — numbers are portable, so this is about the NUMBER, not necessarily where they live."
@@ -163,7 +176,7 @@ function LaneRow({
       body={
         ended && reason ? (
           <p className="text-xs font-medium text-muted-foreground">{reason}</p>
-        ) : !compact && campaignName ? (
+        ) : !rail && campaignName ? (
           <Badge tone="outline" className="max-w-full">
             <span className="truncate">{campaignName}</span>
           </Badge>
@@ -196,6 +209,9 @@ export function ParallelLanes({
   const anotherAnswered =
     lines.some((l) => l.status === "connected") || state.status === "live";
   const shown = variant === "rail" ? lines.filter((l) => l.status !== "connected") : lines;
+  // Two different things, deliberately kept apart. `compact` is the user's
+  // density preference and may only move spacing; `rail` is a layout variant
+  // that genuinely cannot fit two of the rows.
   const compact = variant === "rail" || density === "compact";
 
   if (!shown.length) return null;
@@ -249,6 +265,7 @@ export function ParallelLanes({
               now={now}
               campaignName={line.lead.campaignId ? campaignNameFor(line.lead.campaignId) : null}
               compact={compact}
+              rail={variant === "rail"}
               anotherAnswered={anotherAnswered}
             />
           ))}

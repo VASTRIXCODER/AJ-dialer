@@ -18,7 +18,7 @@ import {
 } from "@/lib/appointments/time";
 import type { AppointmentRow } from "@/lib/db/pipeline";
 import { cn } from "@/lib/utils";
-import { chipTone, isDead, isReview, type ApptAccess } from "./shared";
+import { chipGlyph, chipTone, isDead, isReview, type ApptAccess } from "./shared";
 import type { DragPreview, DraggableAppt, HitTest } from "./use-appointment-drag";
 
 // One component drives both Week and Day: a day view is a week with a single
@@ -337,6 +337,7 @@ function WeekChip({
   onOpen: (a: AppointmentRow) => void;
 }) {
   const draggable = access.canManage && a.status !== "cancelled";
+  const glyph = chipGlyph(a);
   const top = offsetFromSlot(start, PX_PER_HOUR);
   const height = Math.max(20, (durationMin / 60) * PX_PER_HOUR - 2);
   const widthPct = 100 / lane.total;
@@ -358,7 +359,7 @@ function WeekChip({
           onOpen(a);
         }
       }}
-      title={`${a.leadName} — ${formatRange(start, durationMin)}`}
+      title={`${a.leadName} — ${formatRange(start, durationMin)}${glyph ? ` · ${glyph.label}` : ""}`}
       className={cn(
         "absolute z-10 overflow-hidden rounded-lg border px-1.5 py-1 text-left shadow-soft transition-shadow",
         chipTone(a),
@@ -374,6 +375,15 @@ function WeekChip({
       }}
     >
       <div className="flex items-center gap-1">
+        {/* The state, as a character. chipTone is colour only, so completed vs
+            scheduled and cancelled vs no-show were hue-only distinctions —
+            line-through separates the dead states from the living ones, but
+            not from each other. */}
+        {glyph && (
+          <span aria-hidden className="shrink-0 text-[11px] font-bold leading-none">
+            {glyph.glyph}
+          </span>
+        )}
         {a.source === "ai" && <Sparkles className="h-2.5 w-2.5 shrink-0" />}
         {conflicted && <TriangleAlert className="h-2.5 w-2.5 shrink-0 text-danger" />}
         <span

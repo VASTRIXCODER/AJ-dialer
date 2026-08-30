@@ -72,6 +72,18 @@ export function DensityProvider({
     if (stored) setState(stored);
   }, [initial]);
 
+  // Mirrored onto the document so CSS can see it.
+  //
+  // Only two components ever called useDensity(), so the setting reached two of
+  // the ten tables in the product; the other eight were hardcoded at five
+  // different paddings, three of them with no left padding at all. Threading a
+  // prop into each is not possible for the two that are SERVER components, and
+  // is noise for the rest — a data attribute plus a CSS variable reaches all of
+  // them, at any nesting depth, with no prop and no client boundary.
+  useEffect(() => {
+    document.documentElement.dataset.density = density;
+  }, [density]);
+
   const setDensity = useCallback((next: Density) => {
     setState(next);
     persist(next);

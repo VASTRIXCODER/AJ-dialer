@@ -144,8 +144,11 @@ function ApptRow({ a, api }: { a: AppointmentRow; api: ListApi }) {
           review ? "bg-warning/15 text-warning" : "bg-accent-soft text-accent",
         )}
       >
+        {/* Held constant. `h-3.5` is 14px and `h-4` is 12px on this project's
+            spacing scale, so the compact branch made the icon BIGGER — the one
+            thing density is not allowed to touch, in the wrong direction. */}
         {a.source === "ai" ? (
-          <Sparkles className={compact ? "h-3.5 w-3.5" : "h-4 w-4"} />
+          <Sparkles className="h-4 w-4" />
         ) : (
           initials(a.leadName)
         )}
@@ -176,11 +179,14 @@ function ApptRow({ a, api }: { a: AppointmentRow; api: ListApi }) {
 
       {review && api.access.canManage ? (
         <div className="flex shrink-0 items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
+          {/* "Approve" is `hidden sm:inline`, so on a phone these are two
+              unlabelled icons — on the control that books somebody's time. */}
           <Button
             size="sm"
             variant="success"
             onClick={() => api.onApprove(a.id)}
             disabled={busy}
+            aria-label={`Approve the appointment for ${a.leadName}`}
             className="gap-1.5"
           >
             {busy ? (
@@ -190,7 +196,13 @@ function ApptRow({ a, api }: { a: AppointmentRow; api: ListApi }) {
             )}
             <span className="hidden sm:inline">Approve</span>
           </Button>
-          <Button size="sm" variant="outline" onClick={() => api.onOpen(a)} className="gap-1.5">
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => api.onOpen(a)}
+            aria-label={`Open the appointment for ${a.leadName}`}
+            className="gap-1.5"
+          >
             <Pencil className="h-3.5 w-3.5" />
             <span className="hidden sm:inline">Edit</span>
           </Button>

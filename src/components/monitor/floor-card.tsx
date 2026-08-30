@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { StatusPill, type PillState } from "@/components/ui/status-pill";
 import { cn, formatDuration, initials } from "@/lib/utils";
+import type { Density } from "@/lib/ui-density";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // FloorCard — one tile on the Live Floor: who, doing what, with whom, since
@@ -102,7 +103,7 @@ export function FloorCard({
   onEndAi: (conversationId: string) => void;
   endBusy: boolean;
   onOpen: (card: FloorCardModel) => void;
-  density?: "compact" | "comfortable";
+  density?: Density;
 }) {
   const isCall = card.kind === "call";
   const isAi = card.mode === "ai";
@@ -127,6 +128,8 @@ export function FloorCard({
         "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
         // An all-sides ternary moves the horizontal padding too. Hold px-5.
         "px-5",
+        // 14px vs 20px. It was py-3.5 vs py-4 — 14px vs 12px, so compact was
+        // TALLER, which made the setting read as a no-op on this card.
         compact ? "py-3.5" : "py-5",
         isCall && card.state === "connected" && "ring-1 ring-success/25",
         isCall && card.state === "ringing" && "ring-1 ring-warning/30",
@@ -144,7 +147,11 @@ export function FloorCard({
             <Avatar
               initials={initials(card.repName || "?")}
               seed={card.repUserId ?? card.repName}
-              size={compact ? "sm" : "md"}
+              // Density moves row height and vertical padding. It does NOT
+              // re-typeset a monogram from 14px to 12px, which is what the size
+              // ternary here did — and it left the unattributed-AI tile beside
+              // it at 64px while every rep tile shrank to 48.
+              size="md"
             />
           )}
           <div className="min-w-0">

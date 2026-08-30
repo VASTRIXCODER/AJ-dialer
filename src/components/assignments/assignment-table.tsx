@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { workedCount, type AssignmentProgress } from "@/lib/assignments/plan";
 import type { AssignmentRecord } from "@/lib/db/assignments";
 import { cn, initials, relativeTime } from "@/lib/utils";
+import { CELL } from "@/lib/ui-density";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The Assignment Center's table. Rows open the detail drawer; everything shown
@@ -86,13 +87,13 @@ export function AssignmentTable({
       <table className="w-full min-w-[760px] text-sm">
         <thead>
           <tr className="border-b border-border text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-            <th className="px-3 py-2.5">Assignment</th>
-            <th className="px-3 py-2.5">Assignee</th>
-            <th className="px-3 py-2.5">Status</th>
-            <th className="px-3 py-2.5">Priority</th>
-            <th className="px-3 py-2.5">Due</th>
-            <th className="w-[22%] px-3 py-2.5">Progress</th>
-            <th className="px-3 py-2.5">Updated</th>
+            <th className={cn(CELL)}>Assignment</th>
+            <th className={cn(CELL)}>Assignee</th>
+            <th className={cn(CELL)}>Status</th>
+            <th className={cn(CELL)}>Priority</th>
+            <th className={cn(CELL)}>Due</th>
+            <th className={cn(CELL, "w-[22%]")}>Progress</th>
+            <th className={cn(CELL)}>Updated</th>
           </tr>
         </thead>
         <tbody>
@@ -114,7 +115,7 @@ export function AssignmentTable({
                 aria-label={`Open assignment ${a.label}`}
                 className="cursor-pointer border-b border-border/60 transition-colors last:border-0 hover:bg-muted/40 focus-visible:bg-muted/40 focus-visible:outline-none"
               >
-                <td className="max-w-[240px] px-3 py-3">
+                <td className={cn(CELL, "max-w-[240px]")}>
                   <p className="truncate font-semibold" title={a.label}>
                     {a.label}
                   </p>
@@ -122,7 +123,7 @@ export function AssignmentTable({
                     {a.progress.total} lead{a.progress.total === 1 ? "" : "s"}
                   </p>
                 </td>
-                <td className="px-3 py-3">
+                <td className={cn(CELL)}>
                   {a.assignedTo ? (
                     <span className="flex items-center gap-2">
                       <Avatar
@@ -138,11 +139,11 @@ export function AssignmentTable({
                     <Badge tone="neutral">Unassigned</Badge>
                   )}
                 </td>
-                <td className="px-3 py-3">
+                <td className={cn(CELL)}>
                   <Badge tone={status.tone}>{status.label}</Badge>
                 </td>
-                <td className={cn("px-3 py-3 font-medium", prio.className)}>{prio.label}</td>
-                <td className="px-3 py-3">
+                <td className={cn(CELL, "font-medium", prio.className)}>{prio.label}</td>
+                <td className={cn(CELL)}>
                   {a.dueDate ? (
                     <span
                       className={cn(
@@ -161,13 +162,13 @@ export function AssignmentTable({
                     <span className="text-xs text-muted-foreground">—</span>
                   )}
                 </td>
-                <td className="px-3 py-3">
+                <td className={cn(CELL)}>
                   <SegmentedProgress progress={a.progress} />
                   <p className="mt-1 text-xs text-muted-foreground tabular">
                     {workedCount(a.progress)}/{a.progress.total} worked
                   </p>
                 </td>
-                <td className="px-3 py-3 text-xs text-muted-foreground">
+                <td className={cn(CELL, "text-xs text-muted-foreground")}>
                   {relativeTime(a.assignedAt ?? a.createdAt)}
                 </td>
               </tr>

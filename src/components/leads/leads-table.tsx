@@ -43,7 +43,7 @@ import { Input, Label } from "@/components/ui/input";
 import { SelectMenu } from "@/components/ui/select-menu";
 import { DensityToggle } from "@/components/ui/density-toggle";
 import { useDensity } from "@/components/layout/density";
-import { cellPadding, rowMinHeight } from "@/lib/ui-density";
+import { CELL, ROW_MIN } from "@/lib/ui-density";
 import { Modal } from "@/components/ui/modal";
 import { useToast } from "@/components/ui/toast";
 import type { Lead, LeadStatus } from "@/lib/types";
@@ -186,7 +186,7 @@ function SortableTh({
   return (
     <th
       aria-sort={dir ? (dir === "asc" ? "ascending" : "descending") : undefined}
-      className={cn(cellPadding(density), numeric && "text-right")}
+      className={cn(CELL, numeric && "text-right")}
     >
       <button
         type="button"
@@ -278,7 +278,6 @@ export function LeadsTable({
   // table where a manager most wants to see more rows at once was the one
   // table the setting could not reach.
   const { density, setDensity } = useDensity();
-  const cellPad = cellPadding(density);
 
   // Every filter lives in the URL — the server does the actual filtering, so
   // changing one is a navigation, not a state update. replace() keeps the
@@ -1432,7 +1431,7 @@ export function LeadsTable({
             <thead>
               <tr className="border-b border-border/70 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                 {selectable && (
-                  <th className={cellPad}>
+                  <th className={CELL}>
                     <input
                       type="checkbox"
                       checked={allSelected}
@@ -1444,7 +1443,7 @@ export function LeadsTable({
                 )}
                 <SortableTh label={vocab.LeadNoun} sortKey="name" sort={activeSort} onToggle={toggleSort} />
                 <SortableTh label="Location" sortKey="city" sort={activeSort} onToggle={toggleSort} />
-                <th className={cellPad}>Campaign</th>
+                <th className={CELL}>Campaign</th>
                 {valueColumns.map((f) => {
                   const sortKey = f.source === "core" ? CORE_FIELD_SORTS[f.key] : undefined;
                   const numeric = f.type === "currency" || f.type === "number";
@@ -1458,15 +1457,15 @@ export function LeadsTable({
                       onToggle={toggleSort}
                     />
                   ) : (
-                    <th key={f.key} className={cn(cellPad, numeric && "text-right")}>
+                    <th key={f.key} className={cn(CELL, numeric && "text-right")}>
                       {f.label}
                     </th>
                   );
                 })}
-                {flagFields.length > 0 && <th className={cellPad}>Profile</th>}
+                {flagFields.length > 0 && <th className={CELL}>Profile</th>}
                 <SortableTh label="Status" sortKey="status" sort={activeSort} onToggle={toggleSort} />
                 <SortableTh label="AI" sortKey="ai_score" numeric sort={activeSort} onToggle={toggleSort} />
-                <th className={cellPad} />
+                <th className={CELL} />
               </tr>
             </thead>
             <tbody className="divide-y divide-border">
@@ -1477,7 +1476,7 @@ export function LeadsTable({
                 <Fragment key={group.key}>
                   {sectioned && (
                     <tr className="border-t border-border bg-muted/40">
-                      <td colSpan={colSpan} className={cn(cellPad, "py-2.5")}>
+                      <td colSpan={colSpan} className={CELL}>
                         <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wide text-muted-foreground">
                           <UploadCloud className="h-3.5 w-3.5" />
                           {group.label}
@@ -1527,13 +1526,13 @@ export function LeadsTable({
                       // A minimum, not a fixed height — a wrapped address may
                       // still make its row taller; it just cannot be the only
                       // 90px row in a column of 40px ones.
-                      rowMinHeight(density),
+                      ROW_MIN,
                       "group cursor-pointer align-middle transition-colors hover:bg-muted/50",
                       isSel && "bg-primary-soft/30",
                     )}
                   >
                     {selectable && (
-                      <td className={cellPad}>
+                      <td className={CELL}>
                         <input
                           type="checkbox"
                           checked={isSel}
@@ -1543,7 +1542,7 @@ export function LeadsTable({
                         />
                       </td>
                     )}
-                    <td className={cellPad}>
+                    <td className={CELL}>
                       <div className="flex items-center gap-2.5">
                         <Avatar initials={initials(name)} tone="chart-1" size="sm" />
                         <div className="min-w-0">
@@ -1565,7 +1564,7 @@ export function LeadsTable({
                         </div>
                       </div>
                     </td>
-                    <td className={cn(cellPad, "text-muted-foreground")}>
+                    <td className={cn(CELL, "text-muted-foreground")}>
                       <div className="min-w-0 max-w-[280px]">
                         {formatAddress(l) ? (
                           <p className="break-words" title={formatAddress(l)}>
@@ -1584,7 +1583,7 @@ export function LeadsTable({
                         )}
                       </div>
                     </td>
-                    <td className={cellPad}>
+                    <td className={CELL}>
                       <div className="flex flex-wrap items-center gap-1">
                         {l.campaignId && campaignName.get(l.campaignId) ? (
                           <Badge tone="accent">{campaignName.get(l.campaignId)}</Badge>
@@ -1609,7 +1608,7 @@ export function LeadsTable({
                         <td
                           key={f.key}
                           className={cn(
-                            cellPad,
+                            CELL,
                             numeric
                               ? "text-right font-semibold tabular"
                               : "text-muted-foreground",
@@ -1626,7 +1625,7 @@ export function LeadsTable({
                       );
                     })}
                     {flagFields.length > 0 && (
-                      <td className={cellPad}>
+                      <td className={CELL}>
                         <div className="flex flex-wrap items-center gap-1 text-muted-foreground">
                           {flagFields
                             .filter((f) => leadFieldValue(l, f) === true)
@@ -1648,10 +1647,10 @@ export function LeadsTable({
                         </div>
                       </td>
                     )}
-                    <td className={cellPad}>
+                    <td className={CELL}>
                       <Badge tone={cfg.tone} icon={cfg.icon}>{cfg.label}</Badge>
                     </td>
-                    <td className={cn(cellPad, "text-right")}>
+                    <td className={cn(CELL, "text-right")}>
                       <span
                         className={cn(
                           "font-bold tabular",
@@ -1665,7 +1664,7 @@ export function LeadsTable({
                         {l.aiScore ?? "—"}
                       </span>
                     </td>
-                    <td className={cellPad}>
+                    <td className={CELL}>
                       <div className="flex items-center justify-end gap-1">
                         {/* Deep-link into the dialer aimed at THIS number —
                             same ?dial=&name= contract the callbacks and

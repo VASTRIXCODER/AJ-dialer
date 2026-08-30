@@ -35,11 +35,13 @@ import {
   resolveOutcomeConfig,
 } from "@/lib/status";
 import {
+  cn,
   formatDuration,
   formatNumber,
   leadDisplayName,
   relativeTime,
 } from "@/lib/utils";
+import { CELL } from "@/lib/ui-density";
 
 export const dynamic = "force-dynamic";
 
@@ -257,12 +259,12 @@ export default async function CampaignDetailPage({
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-border text-left text-xs uppercase tracking-wide text-muted-foreground">
-                  <th className="pb-2 pr-4 font-semibold">Variant</th>
-                  <th className="pb-2 pr-4 font-semibold">Calls</th>
-                  <th className="pb-2 pr-4 font-semibold">Connects</th>
-                  <th className="pb-2 pr-4 font-semibold">Connect rate</th>
-                  <th className="pb-2 pr-4 font-semibold">Appointments</th>
-                  <th className="pb-2 font-semibold">Appt rate</th>
+                  <th className={cn(CELL, "font-semibold")}>Variant</th>
+                  <th className={cn(CELL, "font-semibold")}>Calls</th>
+                  <th className={cn(CELL, "font-semibold")}>Connects</th>
+                  <th className={cn(CELL, "font-semibold")}>Connect rate</th>
+                  <th className={cn(CELL, "font-semibold")}>Appointments</th>
+                  <th className={cn(CELL, "font-semibold")}>Appt rate</th>
                 </tr>
               </thead>
               <tbody>
@@ -270,16 +272,16 @@ export default async function CampaignDetailPage({
                   const vs = scriptTest[v];
                   return (
                     <tr key={v} className="border-b border-border/60 last:border-0">
-                      <td className="py-2.5 pr-4">
+                      <td className={cn(CELL)}>
                         <Badge tone={v === "a" ? "primary" : "accent"}>
                           Script {v.toUpperCase()}
                         </Badge>
                       </td>
-                      <td className="py-2.5 pr-4 tabular">{formatNumber(vs.calls)}</td>
-                      <td className="py-2.5 pr-4 tabular">{formatNumber(vs.connects)}</td>
-                      <td className="py-2.5 pr-4 tabular">{vs.connectRate}%</td>
-                      <td className="py-2.5 pr-4 tabular">{formatNumber(vs.appointments)}</td>
-                      <td className="py-2.5 tabular">{vs.apptRate}%</td>
+                      <td className={cn(CELL, "tabular")}>{formatNumber(vs.calls)}</td>
+                      <td className={cn(CELL, "tabular")}>{formatNumber(vs.connects)}</td>
+                      <td className={cn(CELL, "tabular")}>{vs.connectRate}%</td>
+                      <td className={cn(CELL, "tabular")}>{formatNumber(vs.appointments)}</td>
+                      <td className={cn(CELL, "tabular")}>{vs.apptRate}%</td>
                     </tr>
                   );
                 })}
@@ -315,10 +317,10 @@ export default async function CampaignDetailPage({
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-border text-left text-xs uppercase tracking-wide text-muted-foreground">
-                    <th className="pb-2 pr-4 font-semibold">Lead</th>
-                    <th className="pb-2 pr-4 font-semibold">Status</th>
-                    <th className="pb-2 pr-4 font-semibold">AI score</th>
-                    <th className="pb-2 font-semibold">Last contacted</th>
+                    <th className={cn(CELL, "font-semibold")}>Lead</th>
+                    <th className={cn(CELL, "font-semibold")}>Status</th>
+                    <th className={cn(CELL, "font-semibold")}>AI score</th>
+                    <th className={cn(CELL, "font-semibold")}>Last contacted</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -326,17 +328,17 @@ export default async function CampaignDetailPage({
                     const lc = leadStatusConfig[l.status];
                     return (
                       <tr key={l.id} className="border-b border-border/60 last:border-0">
-                        <td className="max-w-[220px] py-2.5 pr-4 font-medium">
+                        <td className={cn(CELL, "max-w-[220px] font-medium")}>
                           {/* Name → Lead 360, over this page. */}
                           <LeadOpenLink leadId={l.id}>
                             {leadDisplayName(`${l.firstName} ${l.lastName}`, l.phone, vocab.leadNoun)}
                           </LeadOpenLink>
                         </td>
-                        <td className="py-2.5 pr-4">
+                        <td className={cn(CELL)}>
                           <Badge tone={lc.tone} icon={lc.icon}>{lc.label}</Badge>
                         </td>
-                        <td className="py-2.5 pr-4 tabular">{l.aiScore ?? "—"}</td>
-                        <td className="whitespace-nowrap py-2.5 text-muted-foreground">
+                        <td className={cn(CELL, "tabular")}>{l.aiScore ?? "—"}</td>
+                        <td className={cn(CELL, "whitespace-nowrap text-muted-foreground")}>
                           {l.lastContactedAt ? relativeTime(l.lastContactedAt) : "Never"}
                         </td>
                       </tr>

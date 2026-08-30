@@ -4,7 +4,7 @@ import { ArrowDown, ArrowUp, ArrowUpDown } from "lucide-react";
 import type { KeyboardEvent, ReactNode } from "react";
 import { cn } from "@/lib/utils";
 import { useDensity } from "@/components/layout/density";
-import { cellPadding, rowMinHeight, type Density } from "@/lib/ui-density";
+import { CELL, ROW_MIN, type Density } from "@/lib/ui-density";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // DataTable — a lightweight, GENERIC table for list views (the floor's list
@@ -62,7 +62,7 @@ export function DataTable<T>({
   // they were reading. globals.css states the rule verbatim.
   const resolved = useDensity().density;
   const active = density ?? resolved;
-  const cellPad = cellPadding(active);
+  const cellPad = CELL;
 
   return (
     <div className={cn("overflow-x-auto", className)}>
@@ -144,7 +144,7 @@ export function DataTable<T>({
                   // A minimum, never a fixed height: a genuinely tall cell (a
                   // wrapped address) may still grow, it just cannot be the only
                   // 90px row in a column of 40px ones.
-                  rowMinHeight(active),
+                  ROW_MIN,
                   "align-middle transition-colors",
                   onRowClick &&
                     "cursor-pointer hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",

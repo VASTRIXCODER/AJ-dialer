@@ -94,18 +94,71 @@ describe("every icon-only control says what it is", () => {
    * JSX tags and any expression that cannot produce words, and see whether
    * anything readable is left.
    */
+  /**
+   * Where a JSX opening tag actually ends.
+   *
+   * `[^>]*>` does not work: `onClick={() => …}` contains a `>`, so the match
+   * stops inside the attribute list and every attribute after it leaks into
+   * what the caller thinks is the element's CONTENT. That is not academic —
+   * `title={label}` leaking in made the "does this render words" heuristic
+   * answer yes for a button whose only visible child was an icon, so an entire
+   * class of unnamed controls was invisible to this file. Brace depth is what
+   * distinguishes a `>` inside an expression from the one that closes the tag.
+   */
+  function tagEnd(source: string, from: number): number {
+    let depth = 0;
+    let quote: string | null = null;
+    for (let i = from; i < source.length; i += 1) {
+      const c = source[i];
+      if (quote) {
+        if (c === quote) quote = null;
+        continue;
+      }
+      if (c === '"' || c === "'" || c === "`") quote = c;
+      else if (c === "{") depth += 1;
+      else if (c === "}") depth -= 1;
+      else if (c === ">" && depth === 0) return i;
+    }
+    return -1;
+  }
+
   function iconOnlyButtons(source: string): string[] {
     const out: string[] = [];
-    for (const m of source.matchAll(/<button\b[^>]*>([\s\S]*?)<\/button>/g)) {
-      const block = m[0];
-      const inner = m[1];
-      const withoutTags = inner.replace(/<[^>]*>/g, " ");
-      // An expression renders words when it names a label-ish binding, or when
-      // it contains a quoted string with letters in it — `{open ? "Hide" :
-      // "Show"}` is a visible label, `{on ? <Pause/> : <Play/>}` is not.
+    for (const open of source.matchAll(/<button\b/g)) {
+      const start = open.index!;
+      const gt = tagEnd(source, start);
+      if (gt < 0) continue;
+      const close = source.indexOf("</button>", gt);
+      if (close < 0) continue;
+      const block = source.slice(start, close + "</button>".length);
+      const inner = source.slice(gt + 1, close);
+      // Only the OPENING tag can name the control; the content is what decides
+      // whether it needs one.
+      const openTag = source.slice(start, gt + 1);
+      if (source.slice(start, gt).includes("<button", 1)) continue; // nested, skip
+      void openTag;
+      // A label inside `className="hidden sm:inline"` is display:none below the
+      // breakpoint, which takes it out of the accessibility tree — so on a
+      // phone the control is an icon with no name at all. Words that appear
+      // ONLY in a hidden span therefore do not count as a name, and that
+      // exclusion has to happen BEFORE the checks below or `{label}` inside one
+      // satisfies them. Five appointments controls were built exactly this way.
+      const shown = inner.replace(
+        /<span[^>]*className="[^"]*\bhidden\b[\s\S]*?<\/span>/g,
+        " ",
+      );
+      const withoutTags = shown.replace(/<[^>]*>/g, " ");
+      // An expression renders words when it names a label-ish binding, when it
+      // contains a quoted string with letters in it, or when it is a bare value
+      // — `{open ? "Hide" : "Show"}` and `{col.label}` and `{n}` all put
+      // something readable on screen; `{on ? <Pause/> : <Play/>}` does not,
+      // because everything it can produce is an element.
       const wordy =
         /\{[^{}]*\b(label|title|name|text|children|count|Label)\b[^{}]*\}/.test(withoutTags) ||
-        /\{[\s\S]*?["'`][^"'`]*[A-Za-z]{2}[^"'`]*["'`][\s\S]*?\}/.test(withoutTags);
+        /\{[\s\S]*?["'`][^"'`]*[A-Za-z]{2}[^"'`]*["'`][\s\S]*?\}/.test(withoutTags) ||
+        [...withoutTags.matchAll(/\{([^{}]*)\}/g)].some(
+          (e) => !e[1].includes("<") && /[A-Za-z0-9]/.test(e[1]),
+        );
       const visible = withoutTags.replace(/\{[\s\S]*?\}/g, " ").replace(/\s+/g, " ").trim();
       if (wordy || visible.length > 0) continue;
       // Anything left renders no words at all. That includes the Settings
@@ -128,24 +181,17 @@ describe("every icon-only control says what it is", () => {
     );
   }
 
-  // The primitives and the surfaces a rep works on all day. Deliberately a
-  // list rather than the whole tree: it starts where it matters and grows.
-  const SCOPE = [
-    "src/components/ui/",
-    "src/components/dialer/",
-    "src/components/layout/",
-    "src/components/leads/",
-    "src/components/crm/",
-    "src/components/settings/",
-  ];
-
+  // EVERY component. This was a six-directory allowlist, which is how five
+  // controls in the appointments workspace — the segmented view switcher, the
+  // save-view button, the new-appointment button, and the approve/open pair on
+  // a review row — sat there unnamed while this test passed: it was not
+  // looking at them.
   const FILES = execSync(
     'git ls-files --cached --others --exclude-standard "src/components/**/*.tsx"',
     { cwd: ROOT, encoding: "utf8" },
   )
     .split("\n")
-    .filter(Boolean)
-    .filter((p) => SCOPE.some((s) => p.startsWith(s)));
+    .filter(Boolean);
 
   it("has files to check", () => {
     expect(FILES.length).toBeGreaterThan(30);

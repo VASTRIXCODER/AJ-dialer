@@ -35,6 +35,17 @@
 :root {
   color-scheme: light;
 
+  /* ── Density · the ONE display setting, reachable from CSS ───────────────
+     Mirrored onto <html data-density> by DensityProvider. It lives here rather
+     than in a prop because two of the product's ten tables are SERVER
+     components — they cannot call useDensity(), and that is exactly how they
+     ended up hardcoded while the setting silently applied to two others.
+     VERTICAL ONLY: the horizontal padding is a constant (px-5, 16px) at every
+     density, because moving it re-flows every column sideways and a manager
+     flipping to Compact loses the position of everything they were reading. */
+  --cell-py: 8px;
+  --row-min-h: 40px;
+
   /* ── Surface · four planes. Void never holds content directly. ─────────── */
   --surface-void: 220 20% 97.1%; /* #F6F7F9  app ground */
   --surface-1: 0 0% 100%; /* #FFFFFF  cards, panels, table body */
@@ -193,6 +204,11 @@
   --input: var(--line-strong);
   --ring: var(--accent);
   --glow: var(--accent);
+}
+
+[data-density="compact"] {
+  --cell-py: 4px;
+  --row-min-h: 32px;
 }
 
 @theme inline {
