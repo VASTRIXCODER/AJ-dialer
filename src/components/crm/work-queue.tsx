@@ -43,8 +43,14 @@ export function WorkQueue({
   // Ticks once a second ONLY to redraw lease countdowns, and only while this
   // view has something leased. No fetching — the clock is local.
   const [, setTick] = useState(0);
+  // Rows this rep is holding right now. The list deliberately carries these
+  // alongside the free pool — claiming something used to make it vanish from
+  // the screen, which is exactly the confusion the visible lease exists to
+  // prevent.
   const held = queue?.items.filter((i) => i.reservedByMe && i.reservedUntil) ?? [];
   const hasLease = held.length > 0;
+  const heldIds = new Set(held.map((h) => h.id));
+  const claimableShown = (queue?.items ?? []).filter((i) => !heldIds.has(i.id)).length;
 
   useEffect(() => {
     if (!hasLease) return;
@@ -234,10 +240,15 @@ export function WorkQueue({
             />
           }
         />
-        {queue.claimable > queue.items.length && (
+        {queue.claimable > claimableShown && (
+          // Counts the CLAIMABLE rows on screen, not every row: the list also
+          // carries what this rep is already holding, and folding those into
+          // "showing N of M" would overstate how much of the free pool is
+          // visible.
           <p className="mt-2 text-xs text-muted-foreground">
-            Showing the {queue.items.length} highest-priority of{" "}
-            {queue.claimable.toLocaleString()}.
+            Showing the {claimableShown} highest-priority of{" "}
+            {queue.claimable.toLocaleString()} claimable
+            {held.length > 0 ? `, plus the ${held.length} you're holding` : ""}.
           </p>
         )}
       </SectionCard>

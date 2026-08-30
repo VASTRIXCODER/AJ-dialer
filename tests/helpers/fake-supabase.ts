@@ -121,6 +121,63 @@ function cmpValues(a: unknown, b: unknown): number {
   return sa === sb ? 0 : sa < sb ? -1 : 1;
 }
 
+/** Split on commas that are NOT inside parentheses, so `and(x,y)` stays whole. */
+function splitTopLevel(expr: string): string[] {
+  const out: string[] = [];
+  let depth = 0;
+  let current = "";
+  for (const ch of expr) {
+    if (ch === "(") depth++;
+    if (ch === ")") depth--;
+    if (ch === "," && depth === 0) {
+      out.push(current.trim());
+      current = "";
+      continue;
+    }
+    current += ch;
+  }
+  if (current.trim()) out.push(current.trim());
+  return out;
+}
+
+/** One `col.op.value` term, or a nested `and(...)` / `or(...)` group. */
+function matchTerm(row: Row, term: string): boolean {
+  const group = /^(and|or)\((.*)\)$/s.exec(term);
+  if (group) {
+    const inner = splitTopLevel(group[2]);
+    return group[1] === "and"
+      ? inner.every((t) => matchTerm(row, t))
+      : inner.some((t) => matchTerm(row, t));
+  }
+  const [col, op, ...rest] = term.split(".");
+  const val = rest.join(".");
+  const cell = row[col];
+  switch (op) {
+    case "is":
+      return val === "null" ? cell == null : String(cell ?? "") === val;
+    case "not":
+      // `col.not.is.null`
+      return rest[0] === "is" && rest[1] === "null" ? cell != null : false;
+    case "eq":
+      return String(cell ?? "") === val;
+    case "neq":
+      return String(cell ?? "") !== val;
+    case "gt":
+      return cell != null && cmpValues(cell, val) > 0;
+    case "gte":
+      return cell != null && cmpValues(cell, val) >= 0;
+    case "lt":
+      return cell != null && cmpValues(cell, val) < 0;
+    case "lte":
+      return cell != null && cmpValues(cell, val) <= 0;
+    default:
+      // An operator the fake does not model must NOT silently read as false —
+      // that would quietly narrow a query and make a test pass for the wrong
+      // reason.
+      throw new Error(`FakeSupabase: unsupported operator "${op}" in or(): ${term}`);
+  }
+}
+
 /** Parse the `("a","b")` list form PostgREST uses inside not(...,'in',...). */
 function parseList(raw: string): string[] {
   return raw
@@ -296,20 +353,21 @@ class FakeQuery implements PromiseLike<{ data: unknown; error: unknown; count?: 
     this.filters.push((r) => r[col] != null && cmpValues(r[col], val) > 0);
     return this;
   }
+  /**
+   * `or=(a.eq.1,and(b.eq.2,c.lt.3))`, and REPEATED or() calls AND together.
+   *
+   * Both halves matter. The shared queue builds three chained or() groups whose
+   * combined meaning has to match `app_claim_work_items`, and one of them
+   * contains a nested `and(...)`. Splitting naively on commas tore that group in
+   * half, so the fake could not represent the query at all — and a harness that
+   * silently mis-models a predicate is worse than one that refuses it.
+   *
+   * The AND-between-groups behaviour was verified against the real PostgREST
+   * with a four-row truth table before being modelled here.
+   */
   or(expr: string) {
-    // Only the shapes the pipeline uses: comma-separated `col.op.value` terms.
-    const terms = expr.split(",").map((t) => t.trim());
-    this.filters.push((r) =>
-      terms.some((t) => {
-        const [col, op, ...rest] = t.split(".");
-        const val = rest.join(".");
-        if (op === "is" && val === "null") return r[col] == null;
-        if (op === "eq") return String(r[col] ?? "") === val;
-        if (op === "gt") return r[col] != null && cmpValues(r[col], val) > 0;
-        if (op === "lt") return r[col] != null && cmpValues(r[col], val) < 0;
-        return false;
-      }),
-    );
+    const terms = splitTopLevel(expr);
+    this.filters.push((r) => terms.some((t) => matchTerm(r, t)));
     return this;
   }
   order(col: string, opts?: { ascending?: boolean; nullsFirst?: boolean }) {

@@ -303,8 +303,24 @@ export async function getCrmQueue(scope: Scope): Promise<CrmQueue | null> {
   const dueNow = `due_at.is.null,due_at.lte.${nowIso}`;
   const claimableByMe = `owner_id.is.null,owner_id.eq.${scope.userId}`;
 
+  const COLUMNS =
+    "id, lead_id, type, reason, queue, priority, due_at, reserved_until, reserved_by";
+
   try {
-    const [countRes, rowsRes, heldRes] = await Promise.all([
+    // THREE reads, not two, and the third is the fix for a real bug.
+    //
+    // The claimable predicate matches `pending` or `reserved`-and-EXPIRED. The
+    // instant you claim something it becomes reserved with a lease in the
+    // FUTURE, so it matches neither — and disappeared off the screen. Clicking
+    // "Claim 5" made five rows vanish and left a Release button referring to
+    // work you could no longer see. The lease countdown, which exists
+    // specifically to prevent "why did my work vanish", could never render at
+    // all because no row carrying an unexpired lease was ever returned.
+    //
+    // So the LIST is "what I hold" ∪ "what anyone may claim", while the COUNT
+    // stays strictly claimable — "Claim 5 of 12" has to mean twelve are free,
+    // not twelve including the ones already mine.
+    const [countRes, claimableRes, heldRes, heldCountRes] = await Promise.all([
       admin
         .from("work_items")
         .select("id", { count: "exact", head: true })
@@ -314,7 +330,7 @@ export async function getCrmQueue(scope: Scope): Promise<CrmQueue | null> {
         .or(claimableByMe),
       admin
         .from("work_items")
-        .select("id, lead_id, type, reason, queue, priority, due_at, reserved_until, reserved_by")
+        .select(COLUMNS)
         .eq("org_id", orgId)
         .or(liveStatus)
         .or(dueNow)
@@ -322,6 +338,17 @@ export async function getCrmQueue(scope: Scope): Promise<CrmQueue | null> {
         .order("priority", { ascending: false })
         .order("due_at", { ascending: true, nullsFirst: false })
         .order("created_at", { ascending: true })
+        .limit(QUEUE_LIMIT),
+      // What this rep is holding right now. Deliberately NOT filtered by due
+      // date: once it is yours, when it was due stopped being the question.
+      admin
+        .from("work_items")
+        .select(COLUMNS)
+        .eq("org_id", orgId)
+        .eq("status", "reserved")
+        .eq("reserved_by", scope.userId)
+        .gt("reserved_until", nowIso)
+        .order("reserved_until", { ascending: true })
         .limit(QUEUE_LIMIT),
       admin
         .from("work_items")
@@ -332,7 +359,14 @@ export async function getCrmQueue(scope: Scope): Promise<CrmQueue | null> {
         .gt("reserved_until", nowIso),
     ]);
 
-    const rows = (rowsRes.data ?? []) as Row[];
+    // Held first — it is time-boxed and the lease is ticking, so it is the more
+    // urgent half of the screen. Deduped by id: a lease that expires between
+    // the two reads could legitimately appear in both.
+    const held = (heldRes.data ?? []) as Row[];
+    const claimable = (claimableRes.data ?? []) as Row[];
+    const byId = new Map<string, Row>();
+    for (const r of [...held, ...claimable]) byId.set(s(r.id), r);
+    const rows = [...byId.values()];
     const leadIds = [...new Set(rows.map((r) => s(r.lead_id)).filter(Boolean))];
     const leads = new Map<string, { name: string; phone: string }>();
     if (leadIds.length) {
@@ -350,7 +384,7 @@ export async function getCrmQueue(scope: Scope): Promise<CrmQueue | null> {
 
     return {
       claimable: countRes.count ?? 0,
-      held: heldRes.count ?? 0,
+      held: heldCountRes.count ?? 0,
       items: rows.map((r): QueueItem => {
         const lead = leads.get(s(r.lead_id));
         return {
