@@ -41,6 +41,17 @@ import { CardSkeleton, MetricRowSkeleton, TableSkeleton } from "@/components/sha
  */
 const ACCOUNT_PAGE = 200;
 
+/**
+ * PostgREST's per-response ceiling — what an un-ranged `select` actually
+ * returns, whatever `.limit()` says.
+ *
+ * The organizations and companies lists are un-ranged selects, so past this
+ * they stop and the tiles below read the ceiling forever. Latent at 11 orgs;
+ * disclosed anyway, because the fix that gave Accounts its "≥" stopped one tile
+ * short of the row it sits in.
+ */
+const LIST_PAGE = 1000;
+
 type Settings = { maintenance: boolean; message: string };
 type Account = {
   id: string;
@@ -271,9 +282,15 @@ function Overview({
   return (
     <div className="space-y-5">
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+        {/* These two are LIST LENGTHS, like Accounts beside them. The lists are
+            un-ranged selects, so past the PostgREST response ceiling they stop
+            and the tile reads the ceiling forever. Latent at 11 orgs and a
+            handful of companies — disclosed anyway, because the fix for
+            Accounts stopped one tile short of the row it sits in. */}
         <MetricCard
           label="Organizations"
-          value={String(orgs.length)}
+          value={`${orgs.length >= LIST_PAGE ? "≥" : ""}${orgs.length}`}
+          windowDetail={orgs.length >= LIST_PAGE ? "first page only" : undefined}
           window="current"
           scope="platform"
           icon={Building2}
@@ -281,7 +298,8 @@ function Overview({
         />
         <MetricCard
           label="Companies"
-          value={String(companies.length)}
+          value={`${companies.length >= LIST_PAGE ? "≥" : ""}${companies.length}`}
+          windowDetail={companies.length >= LIST_PAGE ? "first page only" : undefined}
           window="current"
           scope="platform"
           icon={Building2}

@@ -119,6 +119,17 @@ export interface CallbackBoard {
   /** null = the count could not be READ, not zero. See askedCount. */
   completedCount: number | null;
   teamWide: boolean;
+  /**
+   * True when the open list hit OPEN_MAX, so the three lane counts derived from
+   * it are floors rather than totals.
+   *
+   * The board is ordered `due_at ASC, nullsFirst: false`, which means the first
+   * rows lost past the cap are the UNSCHEDULED ones — and /today counts those
+   * exactly and separately, so past the cap the two screens disagree by
+   * construction. A cap that nothing discloses is the thing this exists to
+   * stop.
+   */
+  openTruncated: boolean;
 }
 
 const EMPTY_BOARD: CallbackBoard = {
@@ -126,6 +137,7 @@ const EMPTY_BOARD: CallbackBoard = {
   closed: [],
   completedCount: 0,
   teamWide: false,
+  openTruncated: false,
 };
 
 /** Open callbacks worth showing on the board — closed history stays bounded. */
@@ -281,6 +293,7 @@ export async function getCallbackBoard(scope: Scope | null): Promise<CallbackBoa
       closed: closedRows.map((r) => mapRow(r, names, campaigns)),
       completedCount: askedCount(doneRes),
       teamWide: orgWide,
+      openTruncated: openRows.length >= OPEN_MAX,
     };
   } catch (e) {
     console.error("[callbacks] getCallbackBoard failed:", e instanceof Error ? e.message : e);

@@ -65,11 +65,21 @@ export interface ArchiveQuery {
 
 export interface ArchivePage {
   calls: ArchiveCall[];
-  /** Exact total for the current filter — drives the count and the pager. */
-  total: number;
+  /**
+   * Exact total for the current filter, or null when the count could not be
+   * taken. It used to degrade to `rows.length`, which is the PAGE size — so
+   * `hasMore` evaluated `25 < 25`, the pager stopped at the first page, and the
+   * screen said "25 calls" to somebody with 34,079.
+   */
+  total: number | null;
   hasMore: boolean;
   scope: "org" | "own";
-  /** True when the archive can't be read at all (Supabase unconfigured). */
+  /**
+   * True when the archive could not be read — Supabase unconfigured, OR the
+   * query failed. Both branches used to return false, so the page rendered its
+   * first-run empty state, under a comment already noting that the message "is
+   * a lie when the archive simply can't be read".
+   */
   unavailable: boolean;
 }
 
@@ -213,7 +223,7 @@ export async function searchCallArchive(query: ArchiveQuery): Promise<ArchivePag
       .range(offset, offset + limit - 1);
     if (error) {
       console.error("[call-archive] query failed:", error.message);
-      return { ...EMPTY, scope, unavailable: false };
+      return { ...EMPTY, scope, unavailable: true };
     }
 
     let nameById = new Map<string, string>();
@@ -232,11 +242,15 @@ export async function searchCallArchive(query: ArchiveQuery): Promise<ArchivePag
     }
 
     const rows = (data ?? []) as unknown as Row[];
-    const total = count ?? rows.length;
+    // NOT `count ?? rows.length`. A page length is not a total, and here it was
+    // a self-fulfilling one: `hasMore` then compared the page against itself.
+    const total = count ?? null;
     return {
       calls: rows.map((r) => mapArchiveRow(r, supervisor, nameById, term)),
       total,
-      hasMore: offset + rows.length < total,
+      // Unknown total ⇒ assume there is more, so the pager still moves. A full
+      // page that claims to be the end is the failure to avoid.
+      hasMore: total === null ? rows.length >= limit : offset + rows.length < total,
       scope,
       unavailable: false,
     };
@@ -245,7 +259,7 @@ export async function searchCallArchive(query: ArchiveQuery): Promise<ArchivePag
       "[call-archive] searchCallArchive failed:",
       e instanceof Error ? e.message : e,
     );
-    return { ...EMPTY, unavailable: false };
+    return { ...EMPTY, unavailable: true };
   }
 }
 

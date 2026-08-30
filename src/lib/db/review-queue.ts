@@ -81,7 +81,10 @@ export async function getReviewQueue(scope: Scope | null): Promise<ReviewQueuePa
       .eq("status", "open")
       .order("created_at", { ascending: false })
       .limit(100);
-    if (error) return { rows: [], unavailable: false };
+    // `unavailable: false` on a failed read told /callbacks there was nothing
+    // to adjudicate. An unadjudicated disposition is blocking a call record
+    // right now, so "none" is the one answer that stops anybody looking.
+    if (error) return { rows: [], unavailable: true };
     let rows = ((data ?? []) as unknown as Row[]).map(mapRow);
     // A rep sees only reviews on their own calls. A row with no call record
     // has no owner to grant through — supervisor-only by construction.
@@ -90,14 +93,8 @@ export async function getReviewQueue(scope: Scope | null): Promise<ReviewQueuePa
     }
     return { rows, unavailable: false };
   } catch {
-    return { rows: [], unavailable: false };
+    return { rows: [], unavailable: true };
   }
-}
-
-/** Open-review count for the nav badge — same scoping as the list. */
-export async function getOpenReviewCount(scope: Scope | null): Promise<number> {
-  const page = await getReviewQueue(scope);
-  return page.rows.length;
 }
 
 export interface ReviewRowForAction extends ReviewQueueRow {

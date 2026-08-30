@@ -4688,4 +4688,92 @@ end;
 $$;
 revoke all on function public.app_campaign_call_counts(text, uuid) from public, anon, authenticated;
 
+-- Per-rep call counts for a calendar day in the org's OWN zone.
+--
+-- Both Live Floor surfaces fetched the call ROWS for a 26-hour window with
+-- `.limit(20000)` and no `.range()`, so the real bound was the response ceiling.
+-- The rows are ordered started_at DESC, which means what truncation removed was
+-- THIS MORNING. Measured: the busiest day here is 2,678 calls — already past it,
+-- so a rep has been shown fewer calls than they made.
+--
+-- The day key uses `at time zone`, the same calendar-day rule zonedDayKey
+-- applies in JS; the 26-hour window straddles two of them, which is why the key
+-- is returned rather than assumed.
+create or replace function public.app_floor_calls_by_day(
+  p_org uuid, p_since timestamptz, p_tz text
+) returns table (owner_id uuid, day_key text, n bigint)
+language sql stable security definer set search_path = public as $$
+  select c.owner_id,
+         to_char((c.started_at at time zone p_tz)::date, 'YYYY-MM-DD') as day_key,
+         count(*) as n
+    from public.call_records c
+   where c.org_id = p_org
+     and c.started_at >= p_since
+   group by 1, 2;
+$$;
+revoke all on function public.app_floor_calls_by_day(uuid, timestamptz, text) from public, anon, authenticated;
+
+-- How many leads one person owns, per org. Backs /api/leads/debug, whose entire
+-- job is answering "did my leads vanish?" — and whose decision rule was
+-- `ownedTotalAnyOrg === 0 ⇒ the rows really are gone`, evaluated against a page
+-- length. Seven owners here hold more than the ceiling; the largest holds
+-- 13,347. Only org_id is grouped, so no contact data leaves the table.
+create or replace function public.app_owned_lead_counts(p_owner uuid)
+returns table (org_id uuid, n bigint)
+language sql stable security definer set search_path = public as $$
+  select l.org_id, count(*) as n
+    from public.leads l
+   where l.owner_id = p_owner
+   group by 1;
+$$;
+revoke all on function public.app_owned_lead_counts(uuid) from public, anon, authenticated;
+
+-- ── CSV export enrichment: exactly ONE row per lead ─────────────────────────
+--
+-- These were `.in("lead_id", […1,000 ids]).limit(20_000)` with no `.range()`,
+-- newest-first, first-wins in JS. Measured: 3,201 leads have calls, averaging
+-- 10.6 each, so a 1,000-lead page carries about 890 call rows against a
+-- 1,000-row ceiling — at the edge on an average page, over it on any busier
+-- one. Past it, "latest outcome" exported BLANK for leads that plainly have
+-- call history. The appointments query was ASCENDING, so what it dropped was
+-- every far-future booking.
+--
+-- DISTINCT ON applies the same ordering the loops used, so the definitions of
+-- "latest" and "next" are unchanged, and the row count is now bounded by the
+-- number of leads being enriched rather than by their history.
+create or replace function public.app_export_latest_call(p_lead_ids uuid[])
+returns table (lead_id uuid, outcome text, disposition text)
+language sql stable security definer set search_path = public as $$
+  select distinct on (c.lead_id)
+         c.lead_id, c.outcome::text, c.disposition::text
+    from public.call_records c
+   where c.lead_id = any(p_lead_ids)
+   order by c.lead_id, c.started_at desc;
+$$;
+revoke all on function public.app_export_latest_call(uuid[]) from public, anon, authenticated;
+
+create or replace function public.app_export_next_appointment(p_lead_ids uuid[])
+returns table (lead_id uuid, scheduled_at timestamptz)
+language sql stable security definer set search_path = public as $$
+  select distinct on (a.lead_id) a.lead_id, a.scheduled_at
+    from public.appointments a
+   where a.lead_id = any(p_lead_ids)
+     and a.status = 'scheduled'
+     and a.scheduled_at >= now()
+   order by a.lead_id, a.scheduled_at asc;
+$$;
+revoke all on function public.app_export_next_appointment(uuid[]) from public, anon, authenticated;
+
+create or replace function public.app_export_next_callback(p_lead_ids uuid[])
+returns table (lead_id uuid, due_at text)
+language sql stable security definer set search_path = public as $$
+  select distinct on (cb.lead_id) cb.lead_id, cb.due_at::text
+    from public.callbacks cb
+   where cb.lead_id = any(p_lead_ids)
+     and cb.status not in ('completed', 'cancelled')
+     and cb.due_at is not null
+   order by cb.lead_id, cb.due_at asc;
+$$;
+revoke all on function public.app_export_next_callback(uuid[]) from public, anon, authenticated;
+
 notify pgrst, 'reload schema';

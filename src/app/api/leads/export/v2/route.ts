@@ -120,19 +120,20 @@ async function enrichPage(
   }
 
   if (sources.calls) {
-    // Newest-first + first-wins = the latest call per lead, one query. The
-    // window cap bounds a pathological page (1,000 leads × huge history).
+    // ONE row per lead, picked in SQL. This was newest-first + first-wins over
+    // `.in("lead_id", […1,000]).limit(20_000)` — and a limit above the
+    // PostgREST response ceiling is not a limit. Measured: 3,201 leads have
+    // calls, averaging 10.6 each, so a 1,000-lead page carries ~890 call rows
+    // against a 1,000-row ceiling. Past it, truncation removed the tail, and
+    // "latest outcome" exported BLANK for leads that plainly have call history.
+    // DISTINCT ON applies the same ordering, so "latest" means what it did.
     jobs.push(
       admin
-        .from("call_records")
-        .select("lead_id, outcome, disposition, started_at")
-        .in("lead_id", ids)
-        .order("started_at", { ascending: false })
-        .limit(20_000)
+        .rpc("app_export_latest_call", { p_lead_ids: ids })
         .then(({ data }) => {
           for (const r of (data ?? []) as Row[]) {
             const id = String(r.lead_id ?? "");
-            if (!id || ctx.latestCall.has(id)) continue;
+            if (!id) continue;
             ctx.latestCall.set(id, {
               outcome: r.outcome ? String(r.outcome) : null,
               disposition: r.disposition ? String(r.disposition) : null,
@@ -205,19 +206,15 @@ async function enrichPage(
   if (sources.appointments) {
     // Soonest upcoming scheduled appointment per lead (asc + first-wins) —
     // same definition Lead 360 uses.
+    // Same shape, same cap, and ASCENDING — so what truncation dropped here
+    // was every FAR-FUTURE booking.
     jobs.push(
       admin
-        .from("appointments")
-        .select("lead_id, scheduled_at")
-        .in("lead_id", ids)
-        .eq("status", "scheduled")
-        .gte("scheduled_at", new Date().toISOString())
-        .order("scheduled_at", { ascending: true })
-        .limit(5_000)
+        .rpc("app_export_next_appointment", { p_lead_ids: ids })
         .then(({ data }) => {
           for (const r of (data ?? []) as Row[]) {
             const id = String(r.lead_id ?? "");
-            if (!id || ctx.nextAppt.has(id) || !r.scheduled_at) continue;
+            if (!id || !r.scheduled_at) continue;
             ctx.nextAppt.set(id, String(r.scheduled_at));
           }
         }),
@@ -227,16 +224,11 @@ async function enrichPage(
   if (sources.callbacks) {
     jobs.push(
       admin
-        .from("callbacks")
-        .select("lead_id, due_at")
-        .in("lead_id", ids)
-        .not("status", "in", '("completed","cancelled")')
-        .order("due_at", { ascending: true, nullsFirst: false })
-        .limit(5_000)
+        .rpc("app_export_next_callback", { p_lead_ids: ids })
         .then(({ data }) => {
           for (const r of (data ?? []) as Row[]) {
             const id = String(r.lead_id ?? "");
-            if (!id || ctx.nextCb.has(id) || !r.due_at) continue;
+            if (!id || !r.due_at) continue;
             ctx.nextCb.set(id, String(r.due_at));
           }
         }),

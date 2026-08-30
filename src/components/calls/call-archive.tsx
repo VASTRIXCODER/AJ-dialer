@@ -287,13 +287,17 @@ export function CallArchive({
             </button>
           ))}
           <span className="ml-auto text-xs text-muted-foreground tabular">
+            {/* A null total means the count could not be taken — say so rather
+                than printing the page size, which is what this used to do. */}
             {loading && !page
               ? "Searching…"
-              : page
-                ? `${page.total.toLocaleString()} call${page.total === 1 ? "" : "s"}${
-                    page.scope === "org" ? " · team-wide" : " · yours"
-                  }`
-                : ""}
+              : !page
+                ? ""
+                : page.total === null
+                  ? "Couldn't count these calls"
+                  : `${page.total.toLocaleString()} call${page.total === 1 ? "" : "s"}${
+                      page.scope === "org" ? " · team-wide" : " · yours"
+                    }`}
           </span>
         </div>
 
@@ -435,14 +439,14 @@ export function CallArchive({
             // read — a demo workspace has no database to search, and telling a
             // rep their team has never called is worse than saying nothing.
             page?.unavailable
-              ? "The call archive isn't connected"
+              ? "The call archive can't be read right now"
               : term || activeCount > 0
                 ? "Nothing matches those filters"
                 : "No calls recorded yet"
           }
           description={
             page?.unavailable
-              ? "Recordings and transcripts are stored in your workspace database. Connect Supabase to search them."
+              ? "Recordings and transcripts live in your workspace database. Either it isn't connected, or the search couldn't reach it — this is not the same as having no calls."
               : term || activeCount > 0
                 ? "Try a shorter search, a wider date range, or clear the filters."
                 : "Recordings and transcripts appear here as soon as your team starts dialing."

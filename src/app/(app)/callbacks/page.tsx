@@ -4,6 +4,7 @@ import { CallbackBoard } from "@/components/callbacks/callback-board";
 import { ReviewLane } from "@/components/callbacks/review-lane";
 import { EmptyState } from "@/components/shared/empty-state";
 import { PageContainer, PageHeader } from "@/components/shared/page-header";
+import { SectionCard } from "@/components/shared/section-card";
 import { Badge } from "@/components/ui/badge";
 import { reconcileOwnerActiveCalls } from "@/lib/ai-call-reconcile";
 import { laneOf, orgNowMs } from "@/lib/callbacks/lanes";
@@ -51,11 +52,15 @@ export default async function CallbacksPage() {
           .map((m) => ({ id: m.userId, name: m.name }))
       : [];
 
+  // The all-clear screen. `reviews.unavailable` is part of the test because an
+  // empty review lane and an unreadable one look identical from here, and only
+  // one of them means there is nothing to do.
   if (
     board.open.length === 0 &&
     board.closed.length === 0 &&
     board.completedCount === 0 &&
-    reviews.rows.length === 0
+    reviews.rows.length === 0 &&
+    !reviews.unavailable
   ) {
     return (
       <PageContainer>
@@ -80,6 +85,11 @@ export default async function CallbacksPage() {
   const orgTz = orgTimezone(viewer.org);
   const now = orgNowMs(new Date(), zonedFloatingNow(new Date(), orgTz));
   const count = (k: string) => board.open.filter((c) => laneOf(c.dueAt, now) === k).length;
+  // Past the open-list cap these three are floors, not totals — and the rows
+  // dropped first are the unscheduled ones, which /today counts separately and
+  // exactly. Say so on the tiles rather than letting the two screens disagree
+  // in silence.
+  const laneDetail = board.openTruncated ? "first 500 open only" : undefined;
 
   return (
     <PageContainer>
@@ -98,6 +108,7 @@ export default async function CallbacksPage() {
         <MetricCard
           label="Overdue"
           value={String(count("overdue"))}
+          windowDetail={laneDetail}
           definitionKey="callbacks_overdue"
           window="current"
           scope={board.teamWide ? "org" : "me"}
@@ -107,6 +118,7 @@ export default async function CallbacksPage() {
         <MetricCard
           label="Due now"
           value={String(count("due"))}
+          windowDetail={laneDetail}
           definitionKey="callbacks_due_now"
           window="current"
           scope={board.teamWide ? "org" : "me"}
@@ -116,6 +128,7 @@ export default async function CallbacksPage() {
         <MetricCard
           label="Upcoming"
           value={String(count("upcoming"))}
+          windowDetail={laneDetail}
           // Deliberately NOT keyed. /appointments has a tile with this exact
           // label counting a bounded today→+7d→later window of appointments;
           // this one counts callbacks with any future due time and no horizon
@@ -143,6 +156,15 @@ export default async function CallbacksPage() {
       {/* Needs review comes FIRST: unresolved calls outrank scheduled ones —
           a promise with a due time can wait its lane; an unadjudicated
           disposition is blocking the record right now. */}
+      {reviews.unavailable && (
+        <SectionCard title="Needs review">
+          <p className="text-sm text-muted-foreground">
+            We couldn&rsquo;t read the review queue, so we can&rsquo;t tell you whether any
+            calls are waiting on a decision. That is not the same as none.
+          </p>
+        </SectionCard>
+      )}
+
       {reviews.rows.length > 0 && (
         <ReviewLane
           rows={reviews.rows}

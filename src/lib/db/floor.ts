@@ -58,13 +58,16 @@ export async function getDialerFloor(
         .select("user_id,name")
         .eq("org_id", orgId)
         .eq("status", "active"),
-      admin
-        .from("call_records")
-        .select("owner_id,started_at")
-        .eq("org_id", orgId)
-        .gte("started_at", since)
-        .order("started_at", { ascending: false })
-        .limit(20000),
+      // Counted in SQL. This used to fetch the call rows with `.limit(20000)`
+      // and no `.range()` — and a limit above the PostgREST response ceiling is
+      // not a limit, the response is truncated at the ceiling. The rows are
+      // ordered started_at DESC, so what truncation dropped was THIS MORNING.
+      // Measured: the busiest day here is 2,678 calls, well past the ceiling.
+      admin.rpc("app_floor_calls_by_day", {
+        p_org: orgId,
+        p_since: since,
+        p_tz: timezone,
+      }),
     ]);
     if (membersRes.error)
       console.error("[floor] members query failed:", membersRes.error.message);
@@ -75,13 +78,14 @@ export async function getDialerFloor(
       ((membersRes.data ?? []) as Row[]).map((m) => [String(m.user_id), String(m.name ?? "")]),
     );
 
-    // Calls today per rep — timezone-aware so the org's calendar day is honored.
+    // Calls today per rep. The day key is computed by the RPC with `at time
+    // zone`, which is the same calendar-day rule zonedDayKey applies here — the
+    // 26-hour window it reads over straddles two of them.
     const callsByOwner = new Map<string, number>();
     for (const c of (callsRes.data ?? []) as Row[]) {
-      if (!c.started_at || !c.owner_id) continue;
-      if (zonedDayKey(new Date(String(c.started_at)), timezone) !== todayKey) continue;
+      if (!c.owner_id || String(c.day_key ?? "") !== todayKey) continue;
       const k = String(c.owner_id);
-      callsByOwner.set(k, (callsByOwner.get(k) ?? 0) + 1);
+      callsByOwner.set(k, (callsByOwner.get(k) ?? 0) + Number(c.n ?? 0));
     }
 
     // First (most recent) live call per rep.

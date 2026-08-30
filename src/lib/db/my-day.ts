@@ -30,6 +30,15 @@ type Row = Record<string, unknown>;
 const s = (v: unknown) => (v == null ? "" : String(v));
 const n = (v: unknown) => Number(v ?? 0) || 0;
 
+/**
+ * Row bound on the one query here that is a SUM rather than a COUNT.
+ *
+ * Set to the PostgREST response ceiling, deliberately: a larger number would be
+ * silently clamped to it anyway, and a bound that lies about itself is how
+ * "2,000+ calls" ended up written above a query that stopped at 1,000.
+ */
+const TALK_SCAN = 1000;
+
 export interface MyDayCallback {
   id: string;
   leadId: string | null;
@@ -88,9 +97,11 @@ export interface MyDayData {
     unscheduled: number | null;
     items: MyDayCallback[];
   };
-  workItems: { open: number; items: MyDayWorkItem[] };
+  /** `open` is null when the count could not be taken — never a page length. */
+  workItems: { open: number | null; items: MyDayWorkItem[] };
   signals: MyDaySignal[];
-  appointmentsToday: { count: number; items: MyDayAppointment[] };
+  /** Same: null means the count failed, not that nothing is booked. */
+  appointmentsToday: { count: number | null; items: MyDayAppointment[] };
   /**
    * Self scope, org-timezone "today". Counts are `number | null`, and the null
    * is load-bearing: it means the read FAILED, not that the answer is zero.
@@ -100,7 +111,7 @@ export interface MyDayData {
     dials: number | null;
     conversations: number | null;
     appointments: number | null;
-    talkSec: number;
+    talkSec: number | null;
   };
   assignments: { id: string; label: string; worked: number; total: number }[];
   whoNext: WhoNext | null;
@@ -256,13 +267,33 @@ async function readMyDay(input: {
       .lt("scheduled_at", dayEnd)
       .order("scheduled_at", { ascending: true })
       .limit(50),
+    // Talk time is a SUM, which PostgREST cannot express, so it rides a row
+    // fetch. Two things were wrong with the old one:
+    //
+    //   · it selected `talk_sec` alone. Nothing in the product writes that
+    //     column — 0 of 34,079 rows — so this tile was structurally 0:00, and
+    //     rendered as a confident one, beside three siblings that correctly say
+    //     when they can't be computed.
+    //   · it took every row today, connected or not, where Reports sums only
+    //     connected ones. Two tiles carrying the SAME definitionKey computed
+    //     different things.
+    //
+    // Both now match db/metrics.ts: connected rows (through the one shared
+    // predicate), `talk_sec ?? duration_sec`. The glossary entry already states
+    // that this is a proxy and why.
+    //
+    // RANGED, not `.limit(2000)`: that was above the PostgREST response
+    // ceiling, so the real bound was the ceiling and the comment below claimed
+    // a headroom that did not exist.
     admin
       .from("call_records")
-      .select("talk_sec")
+      .select("talk_sec,duration_sec")
       .eq("org_id", scope.orgId)
       .eq("owner_id", scope.userId)
       .gte("started_at", todayStartIso)
-      .limit(2000),
+      .or(connectedRecordFilter())
+      .order("started_at", { ascending: false })
+      .range(0, TALK_SCAN - 1),
     getMyAssignments(scope.userId, scope.orgId),
   ]);
 
@@ -286,7 +317,7 @@ async function readMyDay(input: {
 
   const wiRows = (wiRes.data ?? []) as Row[];
   const workItems = {
-    open: openWorkRes.count ?? wiRows.length,
+    open: askedCount(openWorkRes),
     items: wiRows.slice(0, 5).map(
       (r): MyDayWorkItem => ({
         id: s(r.id),
@@ -345,7 +376,7 @@ async function readMyDay(input: {
 
   const apptRows = (apptRes.data ?? []) as Row[];
   const appointmentsToday = {
-    count: apptTodayRes.count ?? apptRows.length,
+    count: askedCount(apptTodayRes),
     items: apptRows.slice(0, 5).map(
       (r): MyDayAppointment => ({
         id: s(r.id),
@@ -360,13 +391,17 @@ async function readMyDay(input: {
 
   // Counts are exact (COUNT queries above); talk time is a SUM that PostgREST
   // can't express, so it rides the row fetch — under-reporting only in the
-  // physically implausible case of one rep placing 2,000+ calls in a day.
+  // physically implausible case of one rep CONNECTING with 1,000 people in a
+  // single day. Null when the fetch failed: 0:00 is a real reading, and a rep who has
+  // been on the phone all morning must not be shown one.
   const callRows = (callsRes.data ?? []) as Row[];
   const today = {
     dials: askedCount(dialsRes),
     conversations: askedCount(convosRes),
     appointments: askedCount(apptDoneRes),
-    talkSec: callRows.reduce((sum, r) => sum + n(r.talk_sec), 0),
+    talkSec: callsRes.error
+      ? null
+      : callRows.reduce((sum, r) => sum + n(r.talk_sec ?? r.duration_sec), 0),
   };
 
   const myAssignments = assignments

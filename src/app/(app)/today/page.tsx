@@ -181,7 +181,7 @@ export default async function TodayPage() {
         has(callbacks.dueToday) ||
         has(callbacks.unscheduled) ||
         cb.unknown > 0 ||
-        workItems.open > 0 ||
+        has(workItems.open) ||
         signals.length > 0) && (
         <div className="grid gap-4 lg:grid-cols-2">
           {(has(callbacks.overdue) ||
@@ -243,7 +243,7 @@ export default async function TodayPage() {
             </SectionCard>
           )}
 
-          {(workItems.open > 0 || signals.length > 0) && (
+          {(has(workItems.open) || signals.length > 0) && (
             <SectionCard
               title="Tasks & signals"
               description="Open work and live alerts on your book"
@@ -285,7 +285,10 @@ export default async function TodayPage() {
                   ))}
                 </ul>
               )}
-              {workItems.open > workItems.items.length && (
+              {/* "+N more" is derived from the exact count, so it must not be
+                  derived from a null one — that would print "+NaN more open
+                  tasks". The count query failing is said once, in the tile. */}
+              {workItems.open !== null && workItems.open > workItems.items.length && (
                 <p className="mt-2 text-xs text-muted-foreground">
                   +{workItems.open - workItems.items.length} more open task
                   {workItems.open - workItems.items.length === 1 ? "" : "s"}
@@ -297,7 +300,7 @@ export default async function TodayPage() {
       )}
 
       {/* Appointments today. */}
-      {appointmentsToday.count > 0 && (
+      {has(appointmentsToday.count) && (
         <SectionCard
           title={`${ApptPlural} today`}
           description={`${appointmentsToday.count} on your calendar · today`}
@@ -408,7 +411,11 @@ export default async function TodayPage() {
           />
           <MetricCard
             label="Talk time"
-            value={today.talkSec > 0 ? formatDuration(today.talkSec) : "0:00"}
+            // 0:00 is a real reading — a rep who has dialed all morning and
+            // connected with nobody. It must not also be what a failed read
+            // looks like, which is what `talkSec` folding to 0 made it.
+            value={today.talkSec === null ? null : formatDuration(today.talkSec)}
+            unavailable={UNREAD}
             definitionKey="talk_time_total"
             window="today"
             scope="me"

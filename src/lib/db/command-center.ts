@@ -20,8 +20,19 @@ const n = (v: unknown) => Number(v ?? 0) || 0;
 const PAGE = 1000;
 /** Row-scan bound for the per-rep breakdown (12 pages = 12,000 calls/day). */
 const SCAN_PAGES = 12;
-/** Bound on the running-playbook-instance scan. */
-const INSTANCE_SCAN = 2000;
+/**
+ * Bound on the running-playbook-instance scan.
+ *
+ * It was 2,000 — above PAGE, the response ceiling declared four lines up. A
+ * `.limit()` above that ceiling is not a limit: the response is truncated at
+ * the ceiling instead, so `rows.length >= INSTANCE_SCAN` could never be true
+ * and the "≥" the Command Center renders from it could never appear. The scan
+ * was capped at 1,000 the whole time, silently.
+ *
+ * Set to the ceiling, so the bound and the disclosure agree. Anything larger
+ * needs paging, not a bigger number.
+ */
+const INSTANCE_SCAN = PAGE;
 
 export interface LeakRow {
   id: string;

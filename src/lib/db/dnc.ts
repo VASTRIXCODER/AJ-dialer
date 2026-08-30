@@ -211,23 +211,39 @@ export async function removeFromDnc(
  * failed query — "nobody is on the list" and "we could not ask" are the two
  * answers this screen most needs to keep apart.
  */
-export async function listDnc(orgId: string | null, limit = 5000): Promise<DncEntry[]> {
+export async function listDnc(orgId: string | null, max = 50_000): Promise<DncEntry[]> {
   if (!orgId || !isAdminConfigured()) return [];
   const admin = createAdminClient();
-  const { data, error } = await admin
-    .from("dnc_numbers")
-    .select("id, phone_digits, reason, source, created_at")
-    .eq("org_id", orgId)
-    .order("created_at", { ascending: false })
-    .limit(limit);
-  if (error) throw new DncUnavailableError(error.message);
-  return ((data ?? []) as Row[]).map((r) => ({
-      id: String(r.id),
-      phoneDigits: String(r.phone_digits ?? ""),
-      reason: String(r.reason ?? ""),
-      source: String(r.source ?? ""),
-      createdAt: String(r.created_at ?? ""),
-  }));
+  // PAGED. This was `.limit(5000)` with no `.range()` — capped at the
+  // PostgREST response ceiling, so the list stopped well short and said
+  // nothing. The screen renders `entries.length` as "N suppressed" and builds
+  // the compliance CSV from the same array, so an admin producing a
+  // suppression list for a request got a silently short file. Latent at 164
+  // entries today; the whole point of the list is that it grows.
+  const PAGE = 1000;
+  const out: DncEntry[] = [];
+  for (let from = 0; from < max; from += PAGE) {
+    const { data, error } = await admin
+      .from("dnc_numbers")
+      .select("id, phone_digits, reason, source, created_at")
+      .eq("org_id", orgId)
+      .order("created_at", { ascending: false })
+      .order("id", { ascending: true })
+      .range(from, from + PAGE - 1);
+    if (error) throw new DncUnavailableError(error.message);
+    const rows = (data ?? []) as Row[];
+    out.push(
+      ...rows.map((r) => ({
+        id: String(r.id),
+        phoneDigits: String(r.phone_digits ?? ""),
+        reason: String(r.reason ?? ""),
+        source: String(r.source ?? ""),
+        createdAt: String(r.created_at ?? ""),
+      })),
+    );
+    if (rows.length < PAGE) break;
+  }
+  return out;
 }
 
 /** Drop every lead whose phone is on the suppression set. */
