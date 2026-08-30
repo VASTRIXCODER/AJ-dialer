@@ -845,8 +845,12 @@ begin
 end;
 $$;
 
-grant execute on function public.app_next_dial_seq(text)
-  to anon, authenticated, service_role;
+-- WRITES: upserts and increments dial_counters. Its only caller uses the
+-- service-role client (nextDialSeq in src/lib/dialer/rotation-server.ts), so
+-- nothing else needs it — and an anonymous caller could advance every
+-- caller-ID rotation counter on the platform.
+revoke execute on function public.app_next_dial_seq(text) from public, anon, authenticated;
+grant execute on function public.app_next_dial_seq(text) to service_role;
 -- PART 10 — AI CALL FORENSICS  (idempotent; safe to re-run)
 --
 -- Added after the zero-connect incident, in which 283 calls that the homeowner
@@ -1514,7 +1518,19 @@ language sql stable security definer set search_path = public as $$
   where status = 'active' and coalesce(allow_join, true) = true
   order by name asc;
 $$;
-grant execute on function public.app_list_joinable_orgs() to anon, authenticated;
+-- NOT `to anon`. This is SECURITY DEFINER, and `anon` is the key that ships in
+-- every browser bundle — so granting it here meant anyone could POST to
+-- /rest/v1/rpc/app_list_joinable_orgs and receive the id, name, industry and
+-- slug of EVERY active workspace on the platform. Confirmed over HTTP with the
+-- public key before this was changed; it returned the whole list.
+--
+-- Its only caller is the Hub's workspace picker, behind the auth gate, using
+-- the authenticated session client. There was never an anonymous caller.
+--
+-- `revoke from anon` alone does nothing: PUBLIC holds execute by default and
+-- anon inherits it, which is how this stayed open. Revoke from PUBLIC too.
+revoke execute on function public.app_list_joinable_orgs() from public, anon;
+grant execute on function public.app_list_joinable_orgs() to authenticated, service_role;
 
 -- Organizations: your active org (covers the member-row-less resilience bridge),
 -- orgs you're an active member of (the Hub), or superadmin.

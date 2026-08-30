@@ -26,7 +26,19 @@ language sql stable security definer set search_path = public as $$
   where status = 'active' and coalesce(allow_join, true) = true
   order by name asc;
 $$;
-grant execute on function public.app_list_joinable_orgs() to anon, authenticated;
+-- NOT `to anon`. This is SECURITY DEFINER, and `anon` is the key that ships in
+-- every browser bundle — so granting it here meant anyone could POST to
+-- /rest/v1/rpc/app_list_joinable_orgs and receive the id, name, industry and
+-- slug of EVERY active workspace on the platform. Confirmed over HTTP with the
+-- public key before this was changed; it returned the whole list.
+--
+-- Its only caller is the Hub's workspace picker, behind the auth gate, using
+-- the authenticated session client. There was never an anonymous caller.
+--
+-- `revoke from anon` alone does nothing: PUBLIC holds execute by default and
+-- anon inherits it, which is how this stayed open. Revoke from PUBLIC too.
+revoke execute on function public.app_list_joinable_orgs() from public, anon;
+grant execute on function public.app_list_joinable_orgs() to authenticated, service_role;
 
 -- Organizations: your currently-active org (covers the member-row-less
 -- "resilience bridge" where profiles.org_id is set directly), every org you're

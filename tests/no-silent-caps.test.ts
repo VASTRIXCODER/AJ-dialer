@@ -159,6 +159,42 @@ describe("the totals that used to be page lengths are counted in SQL", () => {
     });
   }
 
+  it("no SECURITY DEFINER function is granted to anon", () => {
+    // `anon` is the key that ships in every browser bundle, and a definer
+    // function runs with the owner's rights — it does not see RLS at all. So a
+    // grant to anon is a public, unauthenticated read of whatever the function
+    // touches.
+    //
+    // app_list_joinable_orgs was granted that way. Confirmed over HTTP with the
+    // public key: POST /rest/v1/rpc/app_list_joinable_orgs returned the id,
+    // name, industry and slug of EVERY active workspace on the platform, to
+    // anybody. Its only caller is the Hub picker, behind the auth gate.
+    // Every `grant ... to ... anon` in the file, matched back to the function it
+    // names — simpler and stricter than trying to pair declarations with
+    // grants, because a definer function is the only kind this schema declares.
+    const offenders: string[] = [];
+    for (const m of schema.matchAll(
+      /grant execute on function (public\.\w+)\([^)]*\)\s*(?:\n\s*)?to ([^;]+);/g,
+    )) {
+      const [, name, roles] = m;
+      if (/\banon\b/.test(roles)) offenders.push(name);
+    }
+    expect(offenders, `Granted to anon: ${offenders.join(", ")}`).toEqual([]);
+  });
+
+  it("revoking from anon also revokes from PUBLIC", () => {
+    // PUBLIC holds execute by default and anon inherits it, so
+    // `revoke ... from anon` on its own changes nothing — which is exactly how
+    // app_list_joinable_orgs stayed reachable after somebody had already
+    // thought about it.
+    const offenders: string[] = [];
+    for (const m of schema.matchAll(/revoke execute on function (public\.\w+)\([^)]*\) from ([^;]+);/g)) {
+      const from = m[2];
+      if (/anon/.test(from) && !/public/.test(from)) offenders.push(m[1]);
+    }
+    expect(offenders, `Revoked from anon but not PUBLIC: ${offenders.join(", ")}`).toEqual([]);
+  });
+
   it("the self-scope guard is the thing it claims to be", () => {
     // service_role may ask anything; anybody else may only ask about
     // themselves. Verified against the live database while writing it: another
