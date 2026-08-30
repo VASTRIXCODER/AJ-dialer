@@ -4607,4 +4607,85 @@ alter table public.profiles alter column avatar_color drop default;
 -- than showing a pre-filled zone nobody picked.
 alter table public.organizations alter column timezone drop default;
 
+-- ── Counts that used to be page lengths ─────────────────────────────────────
+--
+-- Three screens computed their totals by FETCHING rows and taking `.length`,
+-- with a `.limit()` far above the PostgREST response ceiling and no `.range()`.
+-- A limit above that ceiling is not a limit, it is a lie about one: the
+-- response is truncated silently and the count is a share of one page.
+--
+-- Measured before these existed: 9,816 leads across 73 packs shared out among
+-- every pack on the Assignments board, and 34,079 call records sampled at ~59%
+-- and rendered as six campaign totals plus a conversion funnel. Neither screen
+-- said anything.
+--
+-- These functions GROUP only. Every classification rule — which statuses are
+-- dialable, what counts as connected, which bucket a lead lands in — stays in
+-- TypeScript where there is exactly one copy of it; the callers sum the `n`
+-- column. Two definitions of "connected", one in SQL and one in JS, is the
+-- failure mode these deliberately avoid.
+create or replace function public.app_pack_progress(p_pack_ids uuid[])
+returns table (lead_pack_id uuid, status text, contacted boolean, n bigint)
+language sql stable security definer set search_path = public as $$
+  select l.lead_pack_id,
+         coalesce(l.status, 'new')            as status,
+         (l.last_contacted_at is not null)    as contacted,
+         count(*)                             as n
+    from public.leads l
+   where l.lead_pack_id = any(p_pack_ids)
+   group by 1, 2, 3;
+$$;
+revoke all on function public.app_pack_progress(uuid[]) from public, anon, authenticated;
+
+-- p_column is whitelisted rather than interpolated: it reaches format() and
+-- there is no version of this where a caller-supplied identifier goes through
+-- unchecked.
+drop function if exists public.app_campaign_lead_counts(text, uuid);
+create function public.app_campaign_lead_counts(
+  p_column text, p_value uuid
+) returns table (campaign_id text, status text, contacted boolean, n bigint)
+language plpgsql stable security definer set search_path = public as $$
+begin
+  if p_column not in ('org_id', 'owner_id') then
+    raise exception 'app_campaign_lead_counts: p_column must be org_id or owner_id';
+  end if;
+  return query execute format($q$
+    select coalesce(l.campaign_id::text, '')  as campaign_id,
+           coalesce(l.status, 'new')          as status,
+           (l.last_contacted_at is not null)  as contacted,
+           count(*)                           as n
+      from public.leads l
+     where l.%I = $1
+     group by 1, 2, 3
+  $q$, p_column) using p_value;
+end;
+$$;
+revoke all on function public.app_campaign_lead_counts(text, uuid) from public, anon, authenticated;
+
+drop function if exists public.app_campaign_call_counts(text, uuid);
+create function public.app_campaign_call_counts(
+  p_column text, p_value uuid
+) returns table (
+  campaign_id text, outcome text, script_variant text,
+  human_connected boolean, n bigint
+)
+language plpgsql stable security definer set search_path = public as $$
+begin
+  if p_column not in ('org_id', 'owner_id') then
+    raise exception 'app_campaign_call_counts: p_column must be org_id or owner_id';
+  end if;
+  return query execute format($q$
+    select coalesce(c.campaign_id::text, '') as campaign_id,
+           c.outcome::text                   as outcome,
+           c.script_variant::text            as script_variant,
+           c.human_connected                 as human_connected,
+           count(*)                          as n
+      from public.call_records c
+     where c.%I = $1
+     group by 1, 2, 3, 4
+  $q$, p_column) using p_value;
+end;
+$$;
+revoke all on function public.app_campaign_call_counts(text, uuid) from public, anon, authenticated;
+
 notify pgrst, 'reload schema';

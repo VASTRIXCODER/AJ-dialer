@@ -89,16 +89,27 @@ const UNKEYED: Record<string, string> = {
   "super-console.tsx:Suspended": "platform ops, not a sales metric",
   "super-console.tsx:App status": "not a metric at all — a word in a numeric slot",
 
-  // ── Known-wrong math. Fix the query before certifying the number.
+  // ── Campaign tiles.
+  //
+  // The sampling is FIXED: these were computed over a capped, id-ordered prefix
+  // of the org's call history, and `id` is a gen_random_uuid() primary key, so
+  // the cap took an arbitrary ~59% of 34,079 rows rather than a prefix of
+  // anything. They are now counted in SQL (app_campaign_lead_counts /
+  // app_campaign_call_counts) with no ceiling. "Contacted" and "Connect rate"
+  // were also re-based on the product's own definitions.
+  //
+  // What remains is about the LABELS, not the math — which is why these still
+  // carry no definitionKey: a glossary entry would certify a scope the tile
+  // does not disclose.
   "campaigns/[id]/page.tsx:Leads":
-    "org-wide for every viewer (no supervisor check) and computed over an id-ordered prefix of org call history",
-  "campaigns/[id]/page.tsx:Dialable":
-    "a status test that ignores DNC, phone validity, the attempt cap and the calling window",
+    "org-wide for every viewer including a plain rep; scope=\"campaign\" does not disclose that",
+  "campaigns/[id]/page.tsx:Dialable status":
+    "a status test that does not re-check DNC, phone validity, the attempt cap or the calling window — the label now says so",
   "campaigns/[id]/page.tsx:Contacted":
-    "status !== new, so a lead imported straight to dnc counts as contacted",
-  "campaigns/[id]/page.tsx:Calls": "computed over a capped, id-ordered prefix of org call history",
+    "org-wide for every viewer; the math itself is now last_contacted_at, matching the Assignments board",
+  "campaigns/[id]/page.tsx:Calls": "org-wide for every viewer including a plain rep",
   "campaigns/[id]/page.tsx:Connect rate":
-    "the one connect rate that does not go through isConnectedRecord — fix the math first",
+    "goes through isConnectedRecord now, but is still org-wide for every viewer",
   "campaigns/[id]/page.tsx:Appointments":
     "a call-event count sharing its label with the appointments-table count on two other screens",
 };

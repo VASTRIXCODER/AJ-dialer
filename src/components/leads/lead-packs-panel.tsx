@@ -179,9 +179,15 @@ export function LeadPacksPanel({ members }: { members: { id: string; name: strin
                             <Badge tone="neutral">Unassigned</Badge>
                           )}
                         </p>
+                        {/* The counted total is authoritative — it is what the
+                            progress bar is a share of, and `size` is the
+                            allocation the pack was cut at, which drifts the
+                            moment a lead is reassigned or deleted. This used to
+                            read `p.progress.total || p.size`, which only fell
+                            back at zero: back when the count was truncated, a
+                            wrong nonzero total beat the stored one. */}
                         <p className="mt-0.5 text-xs text-muted-foreground">
-                          {p.progress.total || p.size} lead
-                          {(p.progress.total || p.size) === 1 ? "" : "s"}
+                          {p.progress.total} lead{p.progress.total === 1 ? "" : "s"}
                           {p.assignedAt ? ` · handed over ${relativeTime(p.assignedAt)}` : ""}
                         </p>
                       </div>

@@ -166,38 +166,42 @@ export async function getCampaigns(): Promise<CampaignRow[]> {
     const reader = useOrg ? createAdminClient() : await createClient();
     const col = useOrg ? "org_id" : "owner_id";
     const val = useOrg ? (scope.orgId as string) : scope.userId;
-    // The stats inputs MUST page: a bare .limit() above 1,000 is a no-op
-    // (PostgREST silently caps every un-ranged response at 1,000 rows — see
-    // the header comment), so campaign lead counts, connect rates, and the
-    // script A/B split were computed over an arbitrary 1,000-row sample of
-    // any real book. Ordered so pages are stable while paging.
-    const [cRes, leads, calls] = await Promise.all([
+    // The stats inputs are COUNTED, not fetched.
+    //
+    // They used to be paged with a ceiling — 50,000 leads and 20,000 call
+    // records — ordered by `id`, which is a gen_random_uuid() primary key. So
+    // the ceiling did not take the newest rows or the oldest: it took an
+    // arbitrary sample. Measured: 34,079 call records, of which about 59%
+    // arrived, and the campaign page renders six MetricCards and a conversion
+    // funnel from them as totals.
+    //
+    // app_campaign_lead_counts / app_campaign_call_counts group in SQL and
+    // return a handful of rows carrying `n` (the org's 21,301 call records
+    // come back as ten). campaign-stats.ts sums those weights, so the rules for
+    // "dialable", "connected" and the A/B split still live in exactly one
+    // place. No ceiling, at any book size.
+    const [cRes, leadRes, callRes] = await Promise.all([
       reader
         .from("campaigns")
         .select("*")
         .eq(col, val)
         .order("created_at", { ascending: false })
         .limit(useOrg ? 2000 : 500),
-      fetchPagedUpTo(
-        () =>
-          reader
-            .from("leads")
-            .select("campaign_id,status")
-            .eq(col, val)
-            .order("id", { ascending: true }),
-        useOrg ? 50000 : 5000,
-      ),
-      fetchPagedUpTo(
-        () =>
-          reader
-            .from("call_records")
-            .select("campaign_id,outcome,script_variant")
-            .eq(col, val)
-            .order("id", { ascending: true }),
-        useOrg ? 20000 : 2000,
-      ),
+      reader.rpc("app_campaign_lead_counts", { p_column: col, p_value: val }),
+      reader.rpc("app_campaign_call_counts", { p_column: col, p_value: val }),
     ]);
     if (cRes.error) console.error("[pipeline] getCampaigns campaigns query failed:", cRes.error.message);
+    // A failed count is not a campaign with no activity. Every rate below is a
+    // ratio, and a zero numerator over a zero denominator renders as a
+    // confident 0% — the shape of a campaign that is running and converting
+    // nobody, which is a thing someone would switch off.
+    if (leadRes.error || callRes.error) {
+      throw new Error(
+        `Couldn't count campaign activity: ${(leadRes.error ?? callRes.error)?.message}`,
+      );
+    }
+    const leads = (leadRes.data ?? []) as Row[];
+    const calls = (callRes.data ?? []) as Row[];
     return ((cRes.data ?? []) as Row[]).map((r) => ({
       id: s(r.id),
       name: s(r.name),

@@ -139,17 +139,25 @@ export default async function CampaignDetailPage({
       </div>
 
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-6">
-        {/* None of these six carries a definitionKey, deliberately, and
-            tests/metric-registry.test.ts records the reason for each. In short:
-            they are computed in JS over a capped, id-ordered prefix of the
-            ORG's call history (src/lib/db/pipeline.ts) rather than by a scoped
-            query, the scope is org-wide for every viewer including a plain rep,
-            "Dialable" ignores DNC and the calling window, "Contacted" is a
-            status test that counts a lead imported straight to DNC, and
-            "Connect rate" is the one connect rate in the product that does not
-            go through isConnectedRecord. A glossary tooltip on any of them
-            would certify a sample as a total. The math has to be fixed first;
-            that is a different change from labelling. */}
+        {/* Three of the five reasons these carried no definitionKey are now
+            gone, and the fixes are recorded here because the reasons were:
+
+              · they were computed over a CAPPED, id-ordered prefix of the org's
+                call history — an arbitrary sample, since `id` is a random uuid.
+                Now counted in SQL (app_campaign_call_counts), no ceiling.
+              · "Contacted" was `status !== "new"`, which counted a lead
+                imported straight onto the do-not-call list as somebody the
+                floor had spoken to. Now `last_contacted_at`, the same signal
+                the Assignments board uses.
+              · "Connect rate" was the one connect rate in the product that did
+                not go through isConnectedRecord. Now it does.
+
+            Two remain, and both are about what the LABELS claim rather than
+            what the math does: the scope is org-wide for every viewer including
+            a plain rep (campaigns are shared, but `scope="campaign"` does not
+            disclose that), and "Dialable status" counts a status without
+            re-checking DNC or the calling window — which is why it is named
+            after the status rather than after readiness to dial. */}
         <MetricCard
           label="Leads"
           value={formatNumber(st.totalLeads)}
@@ -159,7 +167,12 @@ export default async function CampaignDetailPage({
           accent="primary"
         />
         <MetricCard
-          label="Dialable"
+          label="Dialable status"
+          // Named after what it counts. It is a status test — it does not
+          // re-check the do-not-call list, the calling window, or whether the
+          // number has ten digits, all of which the dialer applies at load.
+          // "Dialable" promised a readiness this number does not measure.
+          sub="not re-checked against DNC"
           value={formatNumber(st.dialableLeads)}
           window="current"
           scope="campaign"

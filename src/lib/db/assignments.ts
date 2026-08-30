@@ -148,27 +148,48 @@ function rowToRecord(
   };
 }
 
-/** One query for EVERY listed pack's leads, folded into per-pack buckets. */
+/**
+ * Per-pack buckets for EVERY listed pack, counted in SQL.
+ *
+ * This used to select the leads themselves — `.in("lead_pack_id", […300 packs])
+ * .limit(100_000)` with no `.range()`. PostgREST caps a response well below
+ * that, so the rows never all arrived: measured, 9,816 leads across 73 packs
+ * read as one truncated page, shared out among every pack on the screen. Every
+ * "N leads" and "worked / total" on the Assignments board was a share of it,
+ * and nothing said so.
+ *
+ * app_pack_progress groups by (pack, status, contacted) — at most a few rows
+ * per pack, exact regardless of book size. It deliberately does not classify:
+ * the bucket rule stays in plan.ts, because two copies of it would drift.
+ *
+ * Throws rather than returning an empty map — see AssignmentProgressError.
+ */
 async function progressByPack(
   packIds: string[],
 ): Promise<Map<string, AssignmentProgress>> {
   const out = new Map<string, AssignmentProgress>();
   if (!packIds.length) return out;
   const admin = createAdminClient();
-  const { data } = await admin
-    .from("leads")
-    .select("lead_pack_id,status,last_contacted_at")
-    .in("lead_pack_id", packIds)
-    .limit(100_000);
+  const { data, error } = await admin.rpc("app_pack_progress", { p_pack_ids: packIds });
+  if (error) {
+    throw new Error(`Couldn't count what's in these packs: ${error.message}`);
+  }
   const grouped = new Map<string, { status: string; lastContactedAt: string | null }[]>();
-  for (const l of (data ?? []) as Row[]) {
-    const pid = String(l.lead_pack_id ?? "");
+  for (const r of (data ?? []) as Row[]) {
+    const pid = String(r.lead_pack_id ?? "");
     if (!pid) continue;
     const arr = grouped.get(pid) ?? [];
-    arr.push({
-      status: String(l.status ?? "new"),
-      lastContactedAt: l.last_contacted_at ? String(l.last_contacted_at) : null,
-    });
+    // Expand each count back into the rows summarizeProgress expects, so the
+    // classifier sees exactly what it always has. `contacted` carries the one
+    // bit classifyLeadBucket needs beyond status; the timestamp itself is not
+    // read, so a sentinel is honest here rather than a fabricated date.
+    const n = Number(r.n ?? 0);
+    for (let i = 0; i < n; i += 1) {
+      arr.push({
+        status: String(r.status ?? "new"),
+        lastContactedAt: r.contacted ? "contacted" : null,
+      });
+    }
     grouped.set(pid, arr);
   }
   for (const [pid, rows] of grouped) out.set(pid, summarizeProgress(rows));
