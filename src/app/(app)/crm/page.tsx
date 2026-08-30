@@ -180,13 +180,20 @@ function buildLeadsHref(param: string): string | null {
   return param ? `/leads?f=${param}` : null;
 }
 
-/** How many conditions the audience actually tests — depth-first, groups too. */
-function countConditions(group: unknown): number {
-  const g = group as { all?: unknown[]; any?: unknown[] } | null;
-  const list = g?.all ?? g?.any;
-  if (!Array.isArray(list)) return 0;
-  return list.reduce<number>((total, item) => {
-    const it = item as { all?: unknown; any?: unknown };
-    return total + (it && (it.all || it.any) ? countConditions(it) : 1);
-  }, 0);
+/**
+ * How many conditions the audience actually tests.
+ *
+ * A FilterSpec is `{ op, groups: [{ op, conditions: [...] }] }` — NOT the
+ * `{ all: [...] } / { any: [...] }` shape the playbook grammar uses. This
+ * counted the wrong shape and therefore returned 0 for every audience in
+ * existence, so each card claimed to select every record with no conditions at
+ * all — a confident, wrong statement about what a saved list does.
+ */
+function countConditions(filter: unknown): number {
+  const spec = filter as { groups?: { conditions?: unknown[] }[] } | null;
+  if (!Array.isArray(spec?.groups)) return 0;
+  return spec.groups.reduce<number>(
+    (total, group) => total + (Array.isArray(group?.conditions) ? group.conditions.length : 0),
+    0,
+  );
 }

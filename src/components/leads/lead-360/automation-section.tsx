@@ -118,7 +118,17 @@ export function AutomationSection({
         setState("idle");
       })
       .catch((e: unknown) => {
-        if ((e as { name?: string })?.name === "AbortError") return;
+        if ((e as { name?: string })?.name === "AbortError") {
+          // Release the "already loaded this lead" claim. Leaving it set after
+          // an abort wedged the tab permanently: `state` was still "loading"
+          // and the guard blocked every future attempt, so switching away
+          // mid-fetch — which arrow-key tab navigation does on the way past,
+          // since selection follows focus — left a spinner with no recovery
+          // short of reopening the record.
+          loadedFor.current = null;
+          setState("idle");
+          return;
+        }
         // Let the rep retry rather than leaving a permanently blank tab.
         loadedFor.current = null;
         setState("error");

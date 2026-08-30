@@ -63,8 +63,19 @@ export interface BoardCard {
 
 export interface BoardLaneData {
   lane: BoardLane;
-  /** Exact — a head count, not the sample size. */
-  count: number;
+  /**
+   * Exact — a head count, not the sample size. NULL when the read failed,
+   * which is a different fact from zero and must render as "—".
+   *
+   * This matters more than it looks: supabase-js does NOT throw on a PostgREST
+   * or network error, it RESOLVES with `{ data: null, count: null, error }`.
+   * So `count ?? 0` silently turns "we could not ask" into "the answer is
+   * none", and the outer try/catch never fires — meaning the honest "pipeline
+   * unavailable" fallback was unreachable for the very case it was written for.
+   */
+  count: number | null;
+  /** True when the CARD read failed, so an empty lane is not asserted as empty. */
+  failed: boolean;
   cards: BoardCard[];
   /**
    * When the sample was ordered longest-in-stage first, the age of the oldest
@@ -86,8 +97,11 @@ export interface CrmBoard {
    * lane reading 12 means something different depending on whose 12 it is.
    */
   ownerFilter: string | null;
-  /** Leaking opportunities in scope — exact, and the board's one headline. */
-  leakCount: number;
+  /**
+   * Leaking opportunities in scope — the board's one headline. Null when the
+   * read failed, for the same reason lane counts are nullable.
+   */
+  leakCount: number | null;
   /** A lane whose read failed. The surface says so instead of showing zero. */
   degraded: boolean;
 }
@@ -193,7 +207,13 @@ export async function getCrmBoard(
     let degraded = false;
     const rawLanes = perLane.map(({ lane, countRes, cardRes }) => {
       if (countRes.error || cardRes.error) degraded = true;
-      return { lane, count: countRes.count ?? 0, rows: (cardRes.data ?? []) as Row[] };
+      return {
+        lane,
+        // null, not 0 — see BoardLaneData.count.
+        count: countRes.error ? null : (countRes.count ?? 0),
+        failed: Boolean(cardRes.error),
+        rows: (cardRes.data ?? []) as Row[],
+      };
     });
 
     const cardIds = rawLanes.flatMap((l) => l.rows.map((r) => s(r.id)));
@@ -238,7 +258,7 @@ export async function getCrmBoard(
       ownerNames.set(s(m.user_id), s(m.name));
     }
 
-    const lanes: BoardLaneData[] = rawLanes.map(({ lane, count, rows }) => {
+    const lanes: BoardLaneData[] = rawLanes.map(({ lane, count, failed, rows }) => {
       const cards = rows.map((r): BoardCard => {
         // PostgREST returns an embedded to-one as an object, but some shapes
         // return a single-element array. Handle both, or every name on the
@@ -267,9 +287,12 @@ export async function getCrmBoard(
       return {
         lane,
         count,
+        failed,
         cards,
-        // Only meaningful when the page really is oldest-first.
-        oldestEnteredAt: laneOrder(lane).ascending ? (cards[0]?.stageEnteredAt ?? null) : null,
+        // Only meaningful when the page really is oldest-first AND the cards
+        // actually arrived — otherwise it is the age of nothing.
+        oldestEnteredAt:
+          !failed && laneOrder(lane).ascending ? (cards[0]?.stageEnteredAt ?? null) : null,
       };
     });
 
@@ -277,7 +300,7 @@ export async function getCrmBoard(
       lanes,
       scope: crmScope,
       ownerFilter,
-      leakCount: leakCountRes.count ?? 0,
+      leakCount: leakCountRes.error ? null : (leakCountRes.count ?? 0),
       degraded,
     };
   } catch {

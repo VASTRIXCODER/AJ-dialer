@@ -351,7 +351,10 @@ export async function getMessagingReadiness(
   return {
     checks,
     numbers,
-    ready: !checks.some((c) => c.state === "fail"),
+    // `unknown` blocks too. A check that could not run has not passed, and
+    // "Ready to send" while the webhook check never reached Twilio is exactly
+    // the reassurance this panel exists to refuse.
+    ready: !checks.some((c) => c.state === "fail" || c.state === "unknown"),
     providerError,
   };
 }

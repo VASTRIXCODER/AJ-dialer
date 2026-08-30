@@ -290,7 +290,7 @@ export async function countAcceptedSends(
       .eq("contact_digits", digits);
     const ids = ((threads ?? []) as Row[]).map((t) => s(t.id));
     if (!ids.length) return 0;
-    const { count: c } = await admin
+    const { count: c, error } = await admin
       .from("messages")
       .select("id", { count: "exact", head: true })
       .eq("org_id", orgId)
@@ -298,6 +298,12 @@ export async function countAcceptedSends(
       .eq("direction", "outbound")
       .not("provider_sid", "is", null)
       .gte("created_at", since.toISOString());
+    // The `catch` below is NOT enough on its own: supabase-js does not throw on
+    // a PostgREST or network failure, it RESOLVES with `{ count: null, error }`.
+    // So `c ?? 0` reported the cap as completely unspent every time the count
+    // failed — the fail-OPEN direction, on a limit that exists to stop us
+    // texting someone too often.
+    if (error) return Number.MAX_SAFE_INTEGER;
     return c ?? 0;
   } catch {
     // Fail CLOSED on a counting error: pretend the cap is spent rather than
@@ -310,13 +316,15 @@ export async function countOrgAcceptedSends(orgId: string, since: Date): Promise
   if (!isAdminConfigured() || !orgId) return 0;
   try {
     const admin = createAdminClient();
-    const { count: c } = await admin
+    const { count: c, error } = await admin
       .from("messages")
       .select("id", { count: "exact", head: true })
       .eq("org_id", orgId)
       .eq("direction", "outbound")
       .not("provider_sid", "is", null)
       .gte("created_at", since.toISOString());
+    // Same trap as countAcceptedSends: a resolved error must not read as zero.
+    if (error) return Number.MAX_SAFE_INTEGER;
     return c ?? 0;
   } catch {
     return Number.MAX_SAFE_INTEGER;

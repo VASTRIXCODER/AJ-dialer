@@ -147,6 +147,29 @@ describe("the status ladder is monotonic", () => {
     expect(canAdvanceStatus("queued", "nonsense")).toBe(false);
     expect(statusRank("nonsense")).toBe(-1);
   });
+
+  it("lets the provider's answer clear a message flagged for review", () => {
+    // needs_review means "we don't know what happened, ask Twilio". Ranked
+    // ABOVE delivered it did the opposite of its purpose: once the stuck-row
+    // sweeper moved a slow message here, every subsequent receipt was rejected
+    // — so the one state whose copy says a human must resolve it was the one
+    // state the provider's own answer could never resolve.
+    expect(canAdvanceStatus("needs_review", "delivered")).toBe(true);
+    expect(canAdvanceStatus("needs_review", "sent")).toBe(true);
+    expect(canAdvanceStatus("needs_review", "undelivered")).toBe(true);
+    expect(canAdvanceStatus("needs_review", "failed")).toBe(true);
+  });
+
+  it("still lets a stuck sending row be flagged for review", () => {
+    // The sweeper has to be able to reach it, so needs_review must outrank the
+    // state it rescues rows from.
+    expect(canAdvanceStatus("sending", "needs_review")).toBe(true);
+  });
+
+  it("does not let a review flag undo a finished message", () => {
+    expect(canAdvanceStatus("delivered", "needs_review")).toBe(false);
+    expect(canAdvanceStatus("rejected", "needs_review")).toBe(false);
+  });
 });
 
 describe("the provider's words are not our words", () => {

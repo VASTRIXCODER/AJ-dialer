@@ -48,15 +48,27 @@ export function WorkQueue({
   // the screen, which is exactly the confusion the visible lease exists to
   // prevent.
   const held = queue?.items.filter((i) => i.reservedByMe && i.reservedUntil) ?? [];
-  const hasLease = held.length > 0;
   const heldIds = new Set(held.map((h) => h.id));
   const claimableShown = (queue?.items ?? []).filter((i) => !heldIds.has(i.id)).length;
+  // The moment the last lease on screen runs out. A number, so it is a stable
+  // effect dependency where the `held` array is not.
+  const lastExpiry = held.reduce(
+    (max, h) => Math.max(max, Date.parse(h.reservedUntil ?? "") || 0),
+    0,
+  );
 
   useEffect(() => {
-    if (!hasLease) return;
-    const t = setInterval(() => setTick((n) => n + 1), 1000);
+    // Stops on its own. Keying the interval to "are any leases present" meant
+    // it never stopped: the props it read are server-rendered and do not change
+    // when a lease expires, so it re-rendered the whole table once a second
+    // forever — behind a hidden CRM tab and a backgrounded browser tab alike.
+    if (!lastExpiry || lastExpiry <= Date.now()) return;
+    const t = setInterval(() => {
+      setTick((n) => n + 1);
+      if (Date.now() >= lastExpiry) clearInterval(t);
+    }, 1000);
     return () => clearInterval(t);
-  }, [hasLease]);
+  }, [lastExpiry]);
 
   if (!queue) {
     return (

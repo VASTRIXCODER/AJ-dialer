@@ -46,29 +46,57 @@ export async function POST(req: Request) {
       .maybeSingle();
     if (!row) return new Response(null, { status: 204 });
 
-    const current = String(row.status ?? "");
-    // Provider truth is recorded whatever happens, because it is a fact about
-    // the carrier even when it does not move our own lifecycle.
-    const patch: Record<string, unknown> = {
+    // Provider truth is a fact about the carrier whether or not it moves our
+    // own lifecycle, so it is written UNCONDITIONALLY and without a CAS. It
+    // used to ride the same compare-and-set as the status, which meant a
+    // receipt that lost the race threw away its error code too — exactly the
+    // A2P deliverability signal this feature exists to surface.
+    const truth: Record<string, unknown> = {
       provider_status: providerStatus,
       updated_at: new Date().toISOString(),
     };
-    if (form.ErrorCode) patch.error_code = String(form.ErrorCode);
-    if (form.ErrorMessage) patch.error_message = String(form.ErrorMessage);
+    if (form.ErrorCode) truth.error_code = String(form.ErrorCode);
+    if (form.ErrorMessage) truth.error_message = String(form.ErrorMessage);
+    await admin.from("messages").update(truth).eq("id", String(row.id));
 
-    if (canAdvanceStatus(current, next)) {
-      patch.status = next;
+    // Then advance the lifecycle under a CAS that is CHECKED and retried.
+    //
+    // Twilio does not order status callbacks and does not replay them, so a
+    // single unchecked compare-and-set silently lost whichever receipt arrived
+    // second — permanently. A `delivered` losing to a concurrent `sent` left
+    // the message reporting no confirmation forever; an `undelivered` losing
+    // left a failed message reading as a clean success.
+    //
+    // This is the discipline calls/apply-event.ts already uses: select the
+    // affected row, and on a miss re-read and re-decide rather than assume.
+    let current = String(row.status ?? "");
+    for (let attempt = 0; attempt < 3; attempt++) {
+      if (!canAdvanceStatus(current, next)) {
+        // Not a loss — the row is already at or past this receipt. Nothing to
+        // do, and nothing lost, because provider truth landed above.
+        return new Response(null, { status: 204 });
+      }
+      const patch: Record<string, unknown> = { status: next, updated_at: new Date().toISOString() };
       const column = timestampColumnFor(next);
       if (column) patch[column] = new Date().toISOString();
-    }
 
-    await admin
-      .from("messages")
-      .update(patch)
-      .eq("id", String(row.id))
-      // CAS on the status we read, so two receipts racing cannot interleave
-      // into a state neither of them intended.
-      .eq("status", current);
+      const { data: moved } = await admin
+        .from("messages")
+        .update(patch)
+        .eq("id", String(row.id))
+        .eq("status", current)
+        .select("id");
+      if (Array.isArray(moved) && moved.length > 0) break;
+
+      // Lost the race. Re-read and decide again against what is actually there.
+      const { data: fresh } = await admin
+        .from("messages")
+        .select("status")
+        .eq("id", String(row.id))
+        .maybeSingle();
+      if (!fresh) break;
+      current = String(fresh.status ?? "");
+    }
 
     return new Response(null, { status: 204 });
   } catch {

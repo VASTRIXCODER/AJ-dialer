@@ -77,7 +77,13 @@ export function PipelineBoard({
   }
 
   const actor = canManage ? "manager" : "rep";
-  const total = board.lanes.reduce((sum, l) => sum + l.count, 0);
+  // A total that silently omits a lane it could not read would be short by a
+  // whole population while looking authoritative. If any lane is unknown, so
+  // is the total.
+  const anyLaneUnknown = board.lanes.some((l) => l.count == null);
+  const total = anyLaneUnknown
+    ? null
+    : board.lanes.reduce((sum, l) => sum + (l.count ?? 0), 0);
 
   async function move(card: BoardCard, to: OpportunityStage, allowRegress: boolean) {
     setBusyId(card.id);
@@ -143,10 +149,10 @@ export function PipelineBoard({
       <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
         <Badge tone="neutral">
           {ownerName ?? (board.scope === "org" ? "Whole org" : "Your book")} ·{" "}
-          {total.toLocaleString()} {leadNounPlural}
+          {total == null ? "—" : total.toLocaleString()} {leadNounPlural}
         </Badge>
         <span>Archived {leadNounPlural} excluded.</span>
-        {board.leakCount > 0 && (
+        {board.leakCount != null && board.leakCount > 0 && (
           <Badge tone="warning" className="gap-1">
             <Droplets className="h-3 w-3" /> {board.leakCount} stalled
           </Badge>
@@ -235,7 +241,7 @@ function Lane({
         <div className="flex items-baseline justify-between gap-2">
           <h3 className="text-sm font-bold">{copy.label}</h3>
           <span className="text-sm font-bold tabular text-muted-foreground">
-            {data.count.toLocaleString()}
+            {data.count == null ? "—" : data.count.toLocaleString()}
           </span>
         </div>
         <p className="mt-0.5 text-xs text-muted-foreground">{copy.blurb}</p>
@@ -247,7 +253,15 @@ function Lane({
         )}
       </header>
 
-      {data.cards.length === 0 ? (
+      {data.failed ? (
+        // NOT the empty state. "Nothing won yet in this view" is an assertion
+        // of fact, and asserting it over a lane we could not read is exactly
+        // the lie the "never render 0 for an unknown" rule exists to stop.
+        <p className="flex items-start gap-1.5 px-0.5 py-2 text-xs text-danger">
+          <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" />
+          This lane couldn&apos;t be read, so what&apos;s in it is unknown.
+        </p>
+      ) : data.cards.length === 0 ? (
         // Collapses to one line rather than reserving a populated lane's height.
         <p className="px-0.5 py-2 text-xs text-muted-foreground">{copy.empty}</p>
       ) : (
@@ -267,7 +281,7 @@ function Lane({
               />
             </li>
           ))}
-          {data.count > data.cards.length && (
+          {data.count != null && data.count > data.cards.length && (
             <li className="px-0.5 pt-1 text-xs text-muted-foreground">
               Showing the {data.cards.length} longest here of {data.count.toLocaleString()}.
             </li>

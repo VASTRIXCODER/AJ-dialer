@@ -4028,6 +4028,16 @@ language sql stable security invoker as $$
   where o.org_id = p_org
     and o.op_status = 'open'
     and (o.next_action_due_at is null or o.next_action_due_at < now())
+    -- An ARCHIVED lead's opportunity is not a leak: the record is out of the
+    -- book, so chasing it is not work anyone can do. Excluding it also keeps
+    -- the CRM board honest — its lane counts inner-join leads and drop
+    -- archived ones, so a headline that counted them contradicted the
+    -- "archived excluded" note sitting beside it.
+    and exists (
+      select 1 from public.leads l
+      where l.id = o.lead_id
+        and l.archived_at is null
+    )
     and not exists (
       select 1 from public.work_items w
       where w.opportunity_id = o.id

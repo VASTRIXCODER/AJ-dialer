@@ -66,7 +66,16 @@ const RANK: Record<MessageStatus, number> = {
   // The gate refusing at send time. Terminal, and deliberately NOT `failed` —
   // see BLOCKED_IS_NOT_FAILED below.
   blocked: 80,
-  needs_review: 8,
+  // BELOW every provider outcome, on purpose. This is the "we don't know what
+  // happened, ask Twilio" state, so the provider's own answer must be able to
+  // clear it. Ranked above `delivered` it did the opposite: once
+  // flagStuckMessages moved a slow row here, canAdvanceStatus rejected the
+  // delivery receipt it was waiting for, and the state whose copy says a human
+  // must resolve it became the one state no receipt could ever resolve.
+  //
+  // Sitting between `sending` (4) and `sent` (5) means a stuck row can still be
+  // flagged, and any later receipt still wins.
+  needs_review: 4.5,
   // Inbound messages have no ladder; they arrive and that is that.
   received: 100,
 };
