@@ -239,6 +239,12 @@ function SelectPopup<T extends string>({
     else if (e.key === "Home") next = 0;
     else if (e.key === "End") next = items.length - 1;
     else if (e.key.length === 1 && !e.metaKey && !e.ctrlKey && !e.altKey) {
+      // Typeahead owns every printable key while the list is open — whether or
+      // not it matches an option. A key that fell through used to reach the
+      // page's window-level shortcut listener: typing "m" for "min" in the
+      // booking dialog's duration picker muted the live call instead.
+      e.preventDefault();
+      e.stopPropagation();
       const now = Date.now();
       typed.current =
         now - typed.current.at < 1000

@@ -2,6 +2,7 @@
 
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import { useEffect, useRef, type ReactNode, type RefObject } from "react";
+import { markOverlayOpen } from "@/lib/overlay-open";
 import { Z } from "@/lib/z-layers";
 import { cn } from "@/lib/utils";
 import { Portal } from "./portal";
@@ -89,6 +90,10 @@ export function Overlay({
 
   useEffect(() => {
     if (!open) return;
+    // Tell the rest of the app the keyboard is spoken for. Window-level
+    // shortcut listeners (the dialer's) cannot see React state and used to keep
+    // firing underneath an open dialog — see src/lib/overlay-open.ts.
+    const releaseOverlayLock = markOverlayOpen();
     const previous = document.activeElement as HTMLElement | null;
 
     // The panel mounts through a portal — focus on the next frame, once it
@@ -141,6 +146,7 @@ export function Overlay({
       cancelAnimationFrame(raf);
       window.removeEventListener("keydown", onKey);
       document.body.style.overflow = prevOverflow;
+      releaseOverlayLock();
       previous?.focus?.({ preventScroll: true });
     };
   }, [open, initialFocus]);

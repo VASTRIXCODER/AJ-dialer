@@ -1,6 +1,6 @@
 "use client";
 
-import { Keyboard } from "lucide-react";
+import { Keyboard, X } from "lucide-react";
 import { Modal } from "@/components/ui/modal";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -33,15 +33,25 @@ export function KbdOverlay({
     { keys: ["m"], label: "Mute / unmute" },
     { keys: ["."], label: "Skip — cancel dialing, or skip wrap-up without a disposition" },
     { keys: ["n"], label: "Focus the notes field" },
-    { keys: ["?"], label: "Show / hide this overlay" },
-    { keys: ["Esc"], label: "Close overlays" },
+    { keys: ["?"], label: "Show this sheet" },
+    { keys: ["Esc"], label: "Close this sheet, or any open dialog" },
   ];
 
   return (
     <Modal open={open} onClose={onClose} label="Keyboard shortcuts" maxWidth="max-w-md">
       <div className="flex items-center gap-2 border-b border-border px-5 py-4">
         <Keyboard className="h-4 w-4 text-muted-foreground" />
-        <h2 className="text-base font-bold">Keyboard shortcuts</h2>
+        <h2 className="flex-1 text-base font-bold">Keyboard shortcuts</h2>
+        {/* Also the sheet's only focusable child: without one, the focus trap
+            parked focus on the panel itself and there was no way out but Esc. */}
+        <button
+          type="button"
+          onClick={onClose}
+          aria-label="Close keyboard shortcuts"
+          className="flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+        >
+          <X className="h-4 w-4" />
+        </button>
       </div>
       <div className="space-y-2.5 overflow-y-auto p-5">
         {rows.map((row) => (
@@ -75,7 +85,8 @@ export function KbdOverlay({
           )}
         </div>
         <p className="pt-2 text-[11px] text-ink-3">
-          Shortcuts pause automatically while you&apos;re typing in a text field.
+          Shortcuts pause automatically while you&apos;re typing in a text field, choosing
+          from a list, or while any dialog — including this one — is open.
         </p>
       </div>
     </Modal>
