@@ -310,7 +310,7 @@ export function SettingsView({
                   type="button"
                   onClick={() => setTheme(t.key)}
                   className={cn(
-                    "flex flex-col items-center gap-2 rounded-xl border p-4 transition-all active:scale-95",
+                    "flex flex-col items-center gap-2 rounded-xl border p-4 transition-colors duration-[var(--dur-state)]",
                     active
                       ? "border-primary bg-primary-soft text-primary"
                       : "border-border bg-surface text-muted-foreground hover:bg-muted",

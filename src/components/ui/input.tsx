@@ -8,7 +8,7 @@ import { cn } from "@/lib/utils";
 // themes. The focus ring is the focus signal; it does not need a colour change
 // underneath the text as well.
 const base =
-  "w-full rounded-xl border border-input bg-surface-2 px-3.5 py-2.5 text-sm text-foreground transition-colors duration-200 placeholder:text-ink-3 focus-visible:border-primary/50 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-primary/15 disabled:cursor-not-allowed disabled:opacity-60";
+  "w-full rounded-xl border border-input bg-surface-2 px-3.5 py-2.5 text-sm text-foreground transition-colors duration-[var(--dur-state)] placeholder:text-ink-3 focus-visible:border-primary/50 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-primary/15 disabled:cursor-not-allowed disabled:opacity-60";
 
 export const Input = React.forwardRef<
   HTMLInputElement,

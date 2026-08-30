@@ -115,7 +115,7 @@ export function SelectMenu<T extends string = string>({
         className={cn(
           // Opaque, matching Input's well — a control that displays a value
           // must not have the page showing through it.
-          "inline-flex items-center gap-2 rounded-xl border border-input bg-surface-2 font-medium text-foreground transition-colors duration-200",
+          "inline-flex items-center gap-2 rounded-xl border border-input bg-surface-2 font-medium text-foreground transition-colors duration-[var(--dur-state)]",
           "focus-visible:border-primary/50 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-primary/15",
           "disabled:cursor-not-allowed disabled:opacity-60",
           size === "sm" ? "px-2.5 py-1.5 text-xs" : "px-3.5 py-2.5 text-sm",
@@ -268,7 +268,7 @@ function SelectPopup<T extends string>({
       aria-label={label}
       onKeyDown={onKeyDown}
       className={cn(
-        "fixed max-h-80 min-w-44 max-w-80 overflow-y-auto rounded-xl border border-border/70 bg-card p-1 shadow-lift",
+        "fixed max-h-80 min-w-44 max-w-80 overflow-y-auto rounded-xl border border-border/70 bg-card p-1 shadow-2",
         pos ? "opacity-100" : "opacity-0",
       )}
       style={{

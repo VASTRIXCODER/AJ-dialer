@@ -91,13 +91,17 @@ export function ToastProvider({ children }: { children: ReactNode }) {
               return (
                 <motion.div
                   key={t.id}
-                  layout={!reduce}
-                  initial={reduce ? { opacity: 0 } : { opacity: 0, y: 12, scale: 0.97 }}
-                  animate={reduce ? { opacity: 1 } : { opacity: 1, y: 0, scale: 1 }}
-                  exit={reduce ? { opacity: 0 } : { opacity: 0, y: 8, scale: 0.97 }}
-                  transition={{ type: "spring", stiffness: 380, damping: 32 }}
+                  // Opacity only. A toast reports the outcome of something the
+                  // rep just did on a working surface, often over a data grid;
+                  // it used to spring in on a translate and a scale, and stack
+                  // with framer's `layout` so the whole column re-flowed each
+                  // time one arrived or left.
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  transition={{ duration: reduce ? 0 : 0.12, ease: "linear" }}
                   className={cn(
-                    "glass pointer-events-auto flex w-full max-w-sm items-start gap-3 rounded-2xl border border-border/60 p-3.5 shadow-lift ring-1 ring-inset",
+                    "pointer-events-auto flex w-full max-w-sm items-start gap-3 rounded-2xl border border-border/60 bg-surface-1 p-3.5 shadow-2 ring-1 ring-inset",
                     tone.ring,
                   )}
                 >

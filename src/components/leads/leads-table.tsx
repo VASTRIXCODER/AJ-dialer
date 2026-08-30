@@ -1166,7 +1166,7 @@ export function LeadsTable({
                   applyFilters({ status: f.value === "all" ? undefined : f.value })
                 }
                 className={cn(
-                  "relative rounded-lg px-3 py-1.5 text-sm font-medium transition-colors duration-200",
+                  "relative rounded-lg px-3 py-1.5 text-sm font-medium transition-colors duration-[var(--dur-state)]",
                   active ? "text-background" : "bg-muted text-muted-foreground hover:bg-secondary",
                 )}
               >
@@ -1476,16 +1476,16 @@ export function LeadsTable({
                       </td>
                     </tr>
                   )}
-                  {group.leads.map((l, i) => {
+                  {group.leads.map((l) => {
                     const name = `${l.firstName} ${l.lastName}`;
                     const cfg = leadStatusConfig[l.status];
                     const isSel = selected.has(l.id);
+                    // A plain row. It used to enter with a 6px rise, staggered
+                    // up to 350ms down the page, on every filter change and
+                    // every page of results — over the densest grid in the app.
                     return (
-                  <motion.tr
+                  <tr
                     key={l.id}
-                    initial={{ opacity: 0, y: 6 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ delay: Math.min(i, 14) * 0.025, duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
                     // Anywhere on the row opens Lead 360 — except clicks that
                     // land on a real control (checkbox, Call, Edit, Delete),
                     // which keep their own behavior.
@@ -1672,7 +1672,7 @@ export function LeadsTable({
                         )}
                       </div>
                     </td>
-                  </motion.tr>
+                  </tr>
                     );
                   })}
                 </Fragment>

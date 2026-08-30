@@ -43,12 +43,14 @@ export function PageContainer({
   className?: string;
 }) {
   return (
-    <div
-      className={cn(
-        "page-reveal mx-auto w-full max-w-[1400px] space-y-6 p-4 sm:p-6 lg:p-8",
-        className,
-      )}
-    >
+    // `page-reveal` used to live here. It is a 600ms staggered translateY(14px)
+    // applied to the top-level sections of EVERY page — 44 files, including
+    // /leads, /admin and /reports — and `(app)/template.tsx` remounts the outlet
+    // on every navigation, so a rep changing route watched tables and numbers
+    // slide up into place, one block at a time, every single time. It is a
+    // Stage effect and it is now opt-in: a Stage route adds the class itself.
+    // The opacity-only cross-fade in template.tsx is the route transition.
+    <div className={cn("mx-auto w-full max-w-[1400px] space-y-6 p-4 sm:p-6 lg:p-8", className)}>
       {children}
     </div>
   );

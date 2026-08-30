@@ -1,6 +1,5 @@
 "use client";
 
-import { motion, useReducedMotion } from "framer-motion";
 import type { ReactNode } from "react";
 import { cn } from "@/lib/utils";
 
@@ -9,9 +8,14 @@ import { cn } from "@/lib/utils";
 // parallel dialer renders one per ringing lane; the AI session renders one per
 // launched call. Purely presentational: header (who), statusPill + timer
 // (what/how long — the caller supplies both so this card never invents state),
-// body, optional footer. `focused` marks THE lane that matters right now (the
-// answered lane) with a ring + a slight scale — the scale is a transform, so
-// it's gated on prefers-reduced-motion; the ring is not motion and stays.
+// body, optional footer.
+//
+// `focused` marks THE lane that matters right now — the answered one — with a
+// ring and a tonal step. It used to also scale to 1.015 with a spring and carry
+// framer's `layout`, so on a parallel round the losing lanes re-flowed and
+// sprang underneath the live cockpit while the rep was talking to somebody. A
+// ring is not motion; a scale is. The lanes each show a name, a number and a
+// running timer, which makes this an Instrument surface.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export function LaneCard({
@@ -29,24 +33,19 @@ export function LaneCard({
   timer?: ReactNode;
   body?: ReactNode;
   footer?: ReactNode;
-  /** The lane the rep should be looking at — ring + slight scale (motion-aware). */
+  /** The lane the rep should be looking at — ring and tone, never motion. */
   focused?: boolean;
   compact?: boolean;
   className?: string;
 }) {
-  const reduce = useReducedMotion();
   return (
-    <motion.div
-      layout={!reduce}
-      initial={false}
-      animate={{ scale: focused && !reduce ? 1.015 : 1 }}
-      transition={{ type: "spring", stiffness: 320, damping: 28 }}
+    <div
       className={cn(
-        "rounded-2xl border",
+        "rounded-2xl border transition-colors duration-[var(--dur-state)]",
         compact ? "px-3 py-2" : "p-3.5",
         focused
-          ? "border-primary/40 bg-card shadow-lift ring-2 ring-primary/25"
-          : "border-border/70 bg-surface/50 shadow-soft backdrop-blur",
+          ? "border-primary/40 bg-card shadow-2 ring-2 ring-primary/25"
+          : "border-border/70 bg-surface shadow-1",
         className,
       )}
     >
@@ -65,6 +64,6 @@ export function LaneCard({
           {footer}
         </div>
       )}
-    </motion.div>
+    </div>
   );
 }

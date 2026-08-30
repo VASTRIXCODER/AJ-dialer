@@ -3,6 +3,7 @@
 import {
   ArrowLeft,
   ChevronDown,
+  ChevronUp,
   Pause,
   Play,
   ScrollText,
@@ -202,12 +203,13 @@ export function Teleprompter({
         {onBranch && branchVariant && (
           <Badge tone="warning">Branch {branchVariant.toUpperCase()}</Badge>
         )}
-        <ChevronDown
-          className={cn(
-            "ml-auto h-4 w-4 text-muted-foreground transition-transform",
-            open && "rotate-180",
-          )}
-        />
+        {/* The glyph swaps; it does not rotate. A rotation is a transform,
+            and this panel sits beside the live call. */}
+        {open ? (
+          <ChevronUp className="ml-auto h-4 w-4 text-muted-foreground" />
+        ) : (
+          <ChevronDown className="ml-auto h-4 w-4 text-muted-foreground" />
+        )}
       </button>
 
       {open && (

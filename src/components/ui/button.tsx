@@ -40,9 +40,14 @@ export function buttonVariants({
   className,
 }: { variant?: Variant; size?: Size; className?: string } = {}) {
   return cn(
-    "inline-flex items-center justify-center whitespace-nowrap font-semibold transition-all duration-200 ease-out",
+    // Colour and opacity on the 90ms state curve, and nothing else. Every
+    // button in the product goes through here, which made `active:scale-[0.98]`
+    // the single largest source of motion on Instrument surfaces: every filter,
+    // every Save, every Apply in a data grid shrank when pressed. Buttons that
+    // want a press signal get a darker fill from their variant.
+    "inline-flex items-center justify-center whitespace-nowrap font-semibold transition-colors duration-[var(--dur-state)]",
     "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
-    "disabled:pointer-events-none disabled:opacity-50 active:scale-[0.98]",
+    "disabled:pointer-events-none disabled:opacity-50",
     variants[variant],
     sizes[size],
     className,

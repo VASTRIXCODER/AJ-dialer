@@ -156,8 +156,11 @@ describe("cinema stays on the Stage", () => {
     "src/components/layout/ambient-background.tsx", // the field itself
     "src/app/page.tsx", // marketing landing
     "src/components/marketing/", // marketing surfaces
-    "src/components/dialer/call-cockpit.tsx", // the live-call signal ring (W3)
   ];
+  // call-cockpit.tsx used to sit on that list "for the live-call signal ring",
+  // and a whole-file exemption is how a 72px-blurred glow orb, a 1.8s halo and
+  // a floating idle icon survived three waves of this phase. The ring is gone;
+  // the file is policed again, here and in tests/instrument-motion.test.ts.
 
   it("the ambient field is not mounted behind the working app", () => {
     const shell = FILES.find((f) => f.path === "src/components/layout/app-shell.tsx");

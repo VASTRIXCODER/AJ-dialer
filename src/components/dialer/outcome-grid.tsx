@@ -1,6 +1,5 @@
 "use client";
 
-import { motion } from "framer-motion";
 import {
   Ban,
   CalendarCheck,
@@ -68,24 +67,23 @@ export function OutcomeGrid({
   );
   return (
     <div className="grid grid-cols-2 gap-2.5">
-      {options.map((opt, i) => {
+      {options.map((opt) => {
         const Icon = icons[opt.value];
         return (
-          <motion.button
+          <button
             key={opt.key}
             type="button"
             onClick={() => onSelect(opt.value, opt.key)}
-            initial={{ opacity: 0, y: 10, scale: 0.97 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            transition={{ delay: i * 0.04, duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
-            whileHover={{ y: -3 }}
-            whileTap={{ scale: 0.95 }}
             className={cn(
-              "group flex items-start gap-3 rounded-xl border border-border bg-surface p-3 text-left transition-colors duration-200",
+              // Colour on the 90ms state curve, and nothing else. This grid
+              // used to cascade in one button at a time over two thirds of a
+              // second at the end of every single call, lift 3px under the
+              // cursor and shrink on press. A rep files 150 of these a day.
+              "group flex items-start gap-3 rounded-xl border border-border bg-surface p-3 text-left transition-colors duration-[var(--dur-state)]",
               toneRing[opt.tone],
             )}
           >
-            <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-muted transition-all duration-200 group-hover:scale-110 group-hover:bg-surface">
+            <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-muted transition-colors duration-[var(--dur-state)] group-hover:bg-surface">
               <Icon className="h-4 w-4" />
             </span>
             <span className="min-w-0">
@@ -96,7 +94,7 @@ export function OutcomeGrid({
                 {opt.description}
               </span>
             </span>
-          </motion.button>
+          </button>
         );
       })}
     </div>

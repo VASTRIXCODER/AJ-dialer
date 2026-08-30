@@ -118,13 +118,14 @@ function LaneRow({
           <div className="min-w-0">
             <p className="flex items-center gap-1.5 truncate text-sm font-semibold">
               <span className="truncate">{name || formatPhone(line.lead.phone)}</span>
-              {/* Event pulse — pings on every observed state change; the dot
-                  itself stays under reduced motion (state ≠ motion alone). */}
+              {/* Marks the lane that just changed state. It used to ping —
+                  a scale(2) transform — on a row carrying a name, a number and
+                  a running timer. Colour alone now. */}
               {pulsing && (
-                <span className="relative flex h-1.5 w-1.5 shrink-0">
-                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary opacity-60 motion-reduce:hidden" />
-                  <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-primary" />
-                </span>
+                <span
+                  className="inline-flex h-1.5 w-1.5 shrink-0 rounded-full bg-primary"
+                  aria-hidden
+                />
               )}
             </p>
             <p className="flex flex-wrap items-center gap-x-1.5 truncate text-xs text-muted-foreground">

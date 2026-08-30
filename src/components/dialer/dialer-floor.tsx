@@ -1,6 +1,6 @@
 "use client";
 
-import { ChevronDown, PhoneCall, Radio } from "lucide-react";
+import { ChevronDown, ChevronUp, PhoneCall, Radio } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useDialerContextOptional } from "@/components/dialer/dialer-context";
 import { Avatar } from "@/components/ui/avatar";
@@ -101,10 +101,10 @@ export function DialerFloor() {
         </span>
         {data.activeCount > 0 ? (
           <span className="flex items-center gap-1.5 text-xs font-medium text-success">
-            <span className="relative flex h-2 w-2">
-              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-success opacity-60" />
-              <span className="relative inline-flex h-2 w-2 rounded-full bg-success" />
-            </span>
+            {/* Static. `animate-ping` is a scale(2) transform, and this dot
+                sits inside the strip that reports how many calls the rep and
+                the team have logged today — numbers, on the Instrument. */}
+            <span className="inline-flex h-2 w-2 rounded-full bg-success" aria-hidden />
             {data.activeCount} dialing now
           </span>
         ) : (
@@ -120,7 +120,9 @@ export function DialerFloor() {
           <span>
             <b className="font-bold text-foreground tabular">{data.totalCallsToday}</b> team today
           </span>
-          <ChevronDown className={cn("h-4 w-4 transition-transform", open && "rotate-180")} />
+          {/* Swap the glyph rather than rotating it — a rotation is a transform,
+              and this strip carries the day's call counts. */}
+          {open ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
         </span>
       </button>
 
@@ -136,10 +138,7 @@ export function DialerFloor() {
                 </p>
                 {d.live ? (
                   <p className="flex items-center gap-1.5 truncate text-xs text-success">
-                    <span className="relative flex h-1.5 w-1.5">
-                      <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-success opacity-60" />
-                      <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-success" />
-                    </span>
+                    <span className="inline-flex h-1.5 w-1.5 shrink-0 rounded-full bg-success" aria-hidden />
                     {d.live.state === "connected" ? "On a call" : "Dialing"}
                     {d.live.leadName ? ` · ${d.live.leadName}` : ""}
                   </p>

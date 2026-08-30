@@ -39,7 +39,7 @@ export function FilterChip({
   return (
     <span
       className={cn(
-        "inline-flex items-stretch overflow-hidden rounded-full text-xs font-semibold transition-colors duration-200",
+        "inline-flex items-stretch overflow-hidden rounded-full text-xs font-semibold transition-colors duration-[var(--dur-state)]",
         active
           ? "bg-primary-soft text-primary ring-1 ring-inset ring-primary/25"
           : "bg-muted text-muted-foreground ring-1 ring-inset ring-border/60 hover:bg-secondary hover:text-foreground",
