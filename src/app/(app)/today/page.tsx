@@ -365,14 +365,21 @@ export default async function TodayPage() {
       {/* End-of-day readout — always rendered: real zeros are information here,
           and the scope + window are on the card ("You · today"). */}
       <div>
+        {/* The heading used to be the only place the window and the scope were
+            stated, so all four tiles had an empty caption line and lost their
+            meaning the moment one was screenshotted or drilled into. Each tile
+            says it for itself now. */}
         <p className="mb-3 text-xs font-bold uppercase tracking-wide text-muted-foreground">
-          Today so far · you · org time
+          Today so far
         </p>
         <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
           <MetricCard
             label="Dials"
             value={num(today.dials)}
             unavailable={UNREAD}
+            definitionKey="calls_today"
+            window="today"
+            scope="me"
             icon={Phone}
             accent="accent"
           />
@@ -380,19 +387,31 @@ export default async function TodayPage() {
             label="Conversations"
             value={num(today.conversations)}
             unavailable={UNREAD}
+            definitionKey="human_connects"
+            window="today"
+            scope="me"
             icon={PhoneCall}
             accent="success"
           />
           <MetricCard
+            // Call outcomes, not rows in the appointments table — a different
+            // quantity from the dashboard's "Appointments", and now labelled
+            // as one rather than sharing its name.
             label={`${ApptPlural} booked`}
             value={num(today.appointments)}
             unavailable={UNREAD}
+            definitionKey="appointment_outcomes"
+            window="today"
+            scope="me"
             icon={CalendarCheck}
             accent="warning"
           />
           <MetricCard
             label="Talk time"
             value={today.talkSec > 0 ? formatDuration(today.talkSec) : "0:00"}
+            definitionKey="talk_time_total"
+            window="today"
+            scope="me"
             icon={Timer}
             accent="accent"
           />

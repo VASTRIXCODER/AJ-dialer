@@ -139,6 +139,8 @@ export default async function BillsFinePage({
           label="Total"
           value={total === null ? null : String(total)}
           unavailable="Couldn't count this list"
+          window="current"
+          scope={teamWide ? "org" : "me"}
           icon={CheckCircle2}
           accent="warning"
         />
@@ -151,6 +153,8 @@ export default async function BillsFinePage({
           label={`With ${primaryLabel.toLowerCase()} and payment`}
           value={withBills === null ? null : String(withBills)}
           unavailable="Couldn't count these"
+          window="current"
+          scope={teamWide ? "org" : "me"}
           icon={Zap}
           accent="accent"
         />
@@ -163,6 +167,8 @@ export default async function BillsFinePage({
             avgEnergyCost && avgEnergyCost > 0 ? formatCurrency(Math.round(avgEnergyCost)) : null
           }
           unavailable="No leads here have both figures on file"
+          window="current"
+          scope={teamWide ? "org" : "me"}
           icon={Zap}
           accent="success"
         />

@@ -350,8 +350,14 @@ export function AppointmentsWorkspace({
 
       <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
         <MetricCard
+          // Deliberately unkeyed. /callbacks has a heading with this exact
+          // label counting OPEN call_review_queue rows — a different table
+          // entirely. Two screens sharing a label is bad enough; sharing a
+          // glossary entry would assert they are the same number.
           label="Needs review"
           value={String(kpi.review)}
+          scope={access.canManage ? "org" : "me"}
+          window="current"
           // "All caught up" was a claim about the whole workspace made by a tile
           // that only ever counted one bucket — it read as reassurance while
           // appointments sat overdue two tiles away. The caption now says only
@@ -363,25 +369,33 @@ export function AppointmentsWorkspace({
         <MetricCard
           label="Upcoming"
           value={String(kpi.upcoming)}
+          // Also unkeyed, and for the same reason: /callbacks has an "Upcoming"
+          // that counts open callbacks with any future due time, where this
+          // counts appointments in a bounded today→+7d→later window.
           sub={
             kpi.overdue
               ? `${kpi.overdue} already overdue`
-              : "Scheduled ahead"
+              : "scheduled ahead"
           }
+          window="current"
+          scope={access.canManage ? "org" : "me"}
           icon={CalendarClock}
           accent={kpi.overdue ? "warning" : "accent"}
         />
         <MetricCard
           label="Completed"
           value={String(kpi.completed)}
-          sub="Reviews held"
+          window="current"
+          scope={access.canManage ? "org" : "me"}
           icon={CalendarCheck}
           accent="success"
         />
         <MetricCard
           label="Show rate"
           value={`${kpi.showRate}%`}
-          sub="Held vs no-show"
+          definitionKey="appointment_show_rate"
+          window="current"
+          scope={access.canManage ? "org" : "me"}
           icon={Star}
           accent="primary"
         />

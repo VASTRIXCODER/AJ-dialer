@@ -2,7 +2,13 @@ import { ArrowDownRight, ArrowUpRight, Info, type LucideIcon } from "lucide-reac
 import { CountUp } from "@/components/motion";
 import { Card } from "@/components/ui/card";
 import { Tooltip } from "@/components/ui/tooltip";
-import { METRICS, type MetricId } from "@/lib/metrics/definitions";
+import {
+  METRICS,
+  metricCaption,
+  type MetricId,
+  type MetricScope,
+  type MetricWindow,
+} from "@/lib/metrics/definitions";
 import { cn } from "@/lib/utils";
 
 type Accent = "primary" | "accent" | "success" | "warning" | "danger";
@@ -61,6 +67,9 @@ function parseMetric(value: string) {
 export function MetricCard({
   label,
   value,
+  window,
+  scope,
+  windowDetail,
   sub,
   unavailable,
   delta,
@@ -83,7 +92,23 @@ export function MetricCard({
    * `number | null` and pass `null` through rather than defaulting it.
    */
   value: string | null;
-  /** The window and the scope this number covers. "today", "90d · whole org". */
+  /**
+   * The window this number covers, and whose rows it counts.
+   *
+   * Enums rather than prose, deliberately. Before this, the same window was
+   * written three different ways on three screens ("today", "dials placed
+   * today", "Today so far · you") and "Appointments" meant five different
+   * things with nothing on any tile to tell them apart. A screen chooses WHICH
+   * window it is showing; the words come from src/lib/metrics/definitions.ts,
+   * so two tiles covering the same window cannot describe it differently.
+   */
+  window?: MetricWindow;
+  scope?: MetricScope;
+  /** The resolved dates, for the one window that can't be named in advance —
+   *  a range bar's selection. Reads "selected period (1–30 Aug) · whole org". */
+  windowDetail?: string;
+  /** A caption that isn't a window and a scope. Prefer the two above; this is
+   *  for the handful of tiles whose caption is genuinely something else. */
   sub?: string;
   /** Why the number is missing. Required when `value` is null, shown in place
    *  of `sub` — an em dash with no explanation is its own small mystery. */
@@ -119,7 +144,10 @@ export function MetricCard({
   const resolved =
     value === "null" || value === "undefined" || value === "NaN" ? null : value;
   const parsed = resolved === null ? null : parseMetric(resolved);
-  const caption = resolved === null ? unavailable : sub;
+  // The window and the scope ARE the caption when both are given; `sub` is the
+  // exception, not the rule.
+  const scopeLine = window && scope ? metricCaption(window, scope, windowDetail) : sub;
+  const caption = resolved === null ? unavailable : scopeLine;
 
   return (
     // Fixed minimum height and a reserved caption line, so a row of tiles is a

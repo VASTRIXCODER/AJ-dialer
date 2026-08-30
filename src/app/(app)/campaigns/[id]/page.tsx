@@ -139,12 +139,65 @@ export default async function CampaignDetailPage({
       </div>
 
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-6">
-        <MetricCard label="Leads" value={formatNumber(st.totalLeads)} icon={Users} accent="primary" />
-        <MetricCard label="Dialable" value={formatNumber(st.dialableLeads)} icon={PhoneOutgoing} accent="accent" />
-        <MetricCard label="Contacted" value={formatNumber(st.contactedLeads)} icon={Users} accent="primary" />
-        <MetricCard label="Calls" value={formatNumber(st.calls)} icon={PhoneCall} accent="warning" />
-        <MetricCard label="Connect rate" value={`${st.connectRate}%`} icon={Zap} accent="accent" />
-        <MetricCard label="Appointments" value={formatNumber(st.appointments)} icon={CalendarCheck} accent="success" />
+        {/* None of these six carries a definitionKey, deliberately, and
+            tests/metric-registry.test.ts records the reason for each. In short:
+            they are computed in JS over a capped, id-ordered prefix of the
+            ORG's call history (src/lib/db/pipeline.ts) rather than by a scoped
+            query, the scope is org-wide for every viewer including a plain rep,
+            "Dialable" ignores DNC and the calling window, "Contacted" is a
+            status test that counts a lead imported straight to DNC, and
+            "Connect rate" is the one connect rate in the product that does not
+            go through isConnectedRecord. A glossary tooltip on any of them
+            would certify a sample as a total. The math has to be fixed first;
+            that is a different change from labelling. */}
+        <MetricCard
+          label="Leads"
+          value={formatNumber(st.totalLeads)}
+          window="all_time"
+          scope="campaign"
+          icon={Users}
+          accent="primary"
+        />
+        <MetricCard
+          label="Dialable"
+          value={formatNumber(st.dialableLeads)}
+          window="current"
+          scope="campaign"
+          icon={PhoneOutgoing}
+          accent="accent"
+        />
+        <MetricCard
+          label="Contacted"
+          value={formatNumber(st.contactedLeads)}
+          window="current"
+          scope="campaign"
+          icon={Users}
+          accent="primary"
+        />
+        <MetricCard
+          label="Calls"
+          value={formatNumber(st.calls)}
+          window="all_time"
+          scope="campaign"
+          icon={PhoneCall}
+          accent="warning"
+        />
+        <MetricCard
+          label="Connect rate"
+          value={`${st.connectRate}%`}
+          window="all_time"
+          scope="campaign"
+          icon={Zap}
+          accent="accent"
+        />
+        <MetricCard
+          label="Appointments"
+          value={formatNumber(st.appointments)}
+          window="all_time"
+          scope="campaign"
+          icon={CalendarCheck}
+          accent="success"
+        />
       </div>
 
       <SectionCard

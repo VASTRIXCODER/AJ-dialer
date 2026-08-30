@@ -286,6 +286,12 @@ export default async function ReportsPage({
   }
 
   const teamWide = scope === "org";
+  // Every tile on this page covers the range bar's selection over the same
+  // rows, so they all carry the same window and scope. The page badge said the
+  // scope once, at the top; the tiles say it for themselves now — a KPI that
+  // gets screenshotted or drilled into loses its badge, not its caption.
+  const tileScope = teamWide ? "org" : "me";
+  const tileWindow = rangeDays == null ? "all_time" : "period";
   // Book-wide insights in the ORG's own field labels. The panel this replaced
   // was gated on `dialerTemplate === "solar"` and hardcoded "Avg bill / Avg
   // solar / Total cost" over "qualified homeowners" — the same five typed
@@ -352,6 +358,10 @@ export default async function ReportsPage({
             value={formatNumber(metrics.totalCalls)}
             icon={PhoneCall}
             accent="primary"
+            definitionKey="calls_dialed"
+            window={tileWindow}
+            scope={tileScope}
+            windowDetail={rangeLabel}
             delta={kpiDelta(metrics.totalCalls, prev?.totalCalls ?? null, formatNumber, prevLabel)}
           />
         </DrillLink>
@@ -362,6 +372,9 @@ export default async function ReportsPage({
             icon={Zap}
             accent="accent"
             definitionKey="connect_rate"
+            window={tileWindow}
+            scope={tileScope}
+            windowDetail={rangeLabel}
             delta={kpiDelta(
               metrics.connectRate,
               prev?.connectRate ?? null,
@@ -377,6 +390,9 @@ export default async function ReportsPage({
             icon={Users}
             accent="primary"
             definitionKey="human_connects"
+            window={tileWindow}
+            scope={tileScope}
+            windowDetail={rangeLabel}
             delta={kpiDelta(metrics.connections, prev?.connections ?? null, formatNumber, prevLabel)}
           />
         </DrillLink>
@@ -392,8 +408,10 @@ export default async function ReportsPage({
             value={formatNumber(metrics.appointmentsBooked)}
             icon={Target}
             accent="success"
-            sub={`${vocab.appointmentNounPlural} on the books`}
             definitionKey="appointments_set"
+            window={tileWindow}
+            scope={tileScope}
+            windowDetail={rangeLabel}
             delta={kpiDelta(
               metrics.appointmentsBooked,
               prev?.appointmentsBooked ?? null,
@@ -409,6 +427,9 @@ export default async function ReportsPage({
           icon={Clock}
           accent="warning"
           definitionKey="avg_talk_time"
+          window={tileWindow}
+          scope={tileScope}
+          windowDetail={rangeLabel}
           delta={kpiDelta(
             metrics.avgCallLenSec,
             prev?.avgCallLenSec ?? null,
@@ -447,6 +468,10 @@ export default async function ReportsPage({
             value={formatCurrency(costs.totalCost)}
             icon={Wallet}
             accent="primary"
+            definitionKey="estimated_call_spend"
+            window={tileWindow}
+            scope={tileScope}
+            windowDetail={rangeLabel}
           />
           {aiDialerEnabled && aiCost && (
             <MetricCard
@@ -454,7 +479,10 @@ export default async function ReportsPage({
               value={formatCurrency(aiCost.cost)}
               icon={Bot}
               accent="accent"
-              sub={`${formatNumber(aiCost.minutes)} min · ${formatNumber(aiCost.calls)} calls`}
+              definitionKey="estimated_call_spend"
+              scope={tileScope}
+              window={tileWindow}
+              windowDetail={`${formatNumber(aiCost.minutes)} min · ${formatNumber(aiCost.calls)} calls`}
             />
           )}
           {humanCost && (
@@ -463,7 +491,10 @@ export default async function ReportsPage({
               value={formatCurrency(humanCost.cost)}
               icon={PhoneCall}
               accent="warning"
-              sub={`${formatNumber(humanCost.minutes)} min · ${formatNumber(humanCost.calls)} calls`}
+              definitionKey="estimated_call_spend"
+              scope={tileScope}
+              window={tileWindow}
+              windowDetail={`${formatNumber(humanCost.minutes)} min · ${formatNumber(humanCost.calls)} calls`}
             />
           )}
           <MetricCard
@@ -479,7 +510,15 @@ export default async function ReportsPage({
             unavailable="Nothing booked in this period to divide by"
             icon={Target}
             accent="success"
-            sub={`${formatNumber(costs.appointments)} booked on calls`}
+            // Its denominator is the CALL-OUTCOME count, not the appointments
+            // table — so it reconciles with "booked on calls" and deliberately
+            // NOT with the "Appointments" tile at the top of this same page.
+            // The definition says so rather than leaving a reader to discover
+            // it by subtracting one from the other.
+            definitionKey="cost_per_appointment"
+            scope={tileScope}
+            window={tileWindow}
+            windowDetail={`${formatNumber(costs.appointments)} booked on calls`}
           />
         </div>
         <p className="mt-3 text-xs text-muted-foreground">

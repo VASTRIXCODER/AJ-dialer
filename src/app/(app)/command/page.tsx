@@ -134,14 +134,19 @@ export default async function CommandCenterPage() {
 
       {/* Today strip — org scope, org-time today. */}
       <div>
+        {/* The window and the scope were stated once, here, so every tile
+            below had an empty caption line. Each one says it for itself now. */}
         <p className="mb-3 text-xs font-bold uppercase tracking-wide text-muted-foreground">
-          Today · whole org · org time
+          Today so far
         </p>
         <div className="grid grid-cols-2 gap-4 lg:grid-cols-3 xl:grid-cols-6">
           <MetricCard
             label="Dials"
             value={n(today.dials)}
             unavailable={UNREAD}
+            definitionKey="calls_today"
+            window="today"
+            scope="org"
             icon={Phone}
             accent="accent"
           />
@@ -149,20 +154,32 @@ export default async function CommandCenterPage() {
             label="Conversations"
             value={n(today.conversations)}
             unavailable={UNREAD}
+            definitionKey="human_connects"
+            window="today"
+            scope="org"
             icon={PhoneCall}
             accent="success"
           />
           <MetricCard
-            label={ApptPlural}
+            // Counts call dispositions, not rows in the appointments table.
+            // The dashboard's tile of the same name counts the other thing;
+            // they are different numbers and now carry different definitions.
+            label={`${ApptPlural} booked`}
             value={n(today.appointments)}
             unavailable={UNREAD}
+            definitionKey="appointment_outcomes"
+            window="today"
+            scope="org"
             icon={CalendarCheck}
             accent="warning"
           />
           <MetricCard
             label={`${vocab.LeadNounPlural} worked`}
             value={`${scanCapped ? "≥" : ""}${today.leadsWorked}`}
-            sub={scanCapped ? "at least — very high call volume today" : undefined}
+            definitionKey="leads_worked"
+            window="today"
+            scope="org"
+            windowDetail={scanCapped ? "at least — capped scan" : undefined}
             icon={Users}
             accent="accent"
           />
@@ -170,6 +187,14 @@ export default async function CommandCenterPage() {
             label={`New ${vocab.leadNounPlural}`}
             value={n(today.newLeads)}
             unavailable={UNREAD}
+            // Unkeyed on purpose: a single-screen operational count. "New"
+            // here means every lead row created today, however it arrived —
+            // an import of 5,000 counts as 5,000 — which is not what the
+            // phrase suggests, so the caption says it rather than a glossary
+            // entry implying it was reconciled with anything.
+            windowDetail="every lead row created today"
+            window="today"
+            scope="org"
             icon={Sparkles}
             accent="accent"
           />
@@ -180,11 +205,10 @@ export default async function CommandCenterPage() {
             // there is nothing to show — can never render.
             value={today.speedToLeadMin != null ? `${today.speedToLeadMin}m` : null}
             unavailable="Not enough first attempts today to take a median"
-            sub={
-              speedSampled
-                ? "median · first 1,000 attempts today"
-                : "median · first attempts today"
-            }
+            definitionKey="speed_to_first_call"
+            window="today"
+            scope="org"
+            windowDetail={speedSampled ? "median of the first 1,000" : "median"}
             icon={Timer}
             accent={today.speedToLeadMin != null && today.speedToLeadMin > 60 ? "danger" : "success"}
           />

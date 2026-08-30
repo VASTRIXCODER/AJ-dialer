@@ -106,12 +106,26 @@ describe("outcomeMix", () => {
 
 describe("METRICS glossary", () => {
   it("defines every MetricId with a non-empty description and consistent id", () => {
+    // W5 added eleven ids for the numbers that appear on two or more screens
+    // or are actively contested between them. tests/metric-registry.test.ts
+    // owns the rules about which tiles carry which; this only checks the
+    // glossary is complete and self-consistent.
     const ids: MetricId[] = [
       "calls_today",
+      "calls_dialed",
       "human_connects",
       "connect_rate",
       "appointments_set",
+      "appointment_outcomes",
+      "appointment_show_rate",
       "avg_talk_time",
+      "talk_time_total",
+      "leads_worked",
+      "speed_to_first_call",
+      "callbacks_overdue",
+      "callbacks_due_now",
+      "estimated_call_spend",
+      "cost_per_appointment",
       "weekly_performance",
       "outcome_mix",
       "hourly_productivity",

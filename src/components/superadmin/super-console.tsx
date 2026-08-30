@@ -30,6 +30,17 @@ import { type Org, OrganizationsTab } from "./super-orgs";
 import { SelectMenu } from "@/components/ui/select-menu";
 import { CardSkeleton, MetricRowSkeleton, TableSkeleton } from "@/components/shared/skeletons";
 
+/**
+ * -- LOCKSTEP: keep in sync with ACCOUNT_PAGE in src/lib/db/app-control.ts --
+ *
+ * The page size `listAccounts` reads. Declared here rather than imported
+ * because app-control.ts is `server-only`, and this is a client component —
+ * importing a VALUE across that boundary type-checks fine and breaks the
+ * production bundle. tests/superadmin-account-cap.test.ts asserts the two
+ * numbers agree.
+ */
+const ACCOUNT_PAGE = 200;
+
 type Settings = { maintenance: boolean; message: string };
 type Account = {
   id: string;
@@ -245,13 +256,62 @@ function Overview({
   return (
     <div className="space-y-5">
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
-        <MetricCard label="Organizations" value={String(orgs.length)} icon={Building2} accent="primary" />
-        <MetricCard label="Companies" value={String(companies.length)} icon={Building2} accent="accent" />
-        <MetricCard label="Accounts" value={String(accounts.length)} icon={Users} accent="success" />
-        <MetricCard label="Pending" value={String(pending)} icon={UserCheck} accent="warning" />
-        <MetricCard label="Suspended" value={String(suspended)} icon={Ban} accent="danger" />
+        <MetricCard
+          label="Organizations"
+          value={String(orgs.length)}
+          window="current"
+          scope="platform"
+          icon={Building2}
+          accent="primary"
+        />
+        <MetricCard
+          label="Companies"
+          value={String(companies.length)}
+          window="current"
+          scope="platform"
+          icon={Building2}
+          accent="accent"
+        />
+        <MetricCard
+          label="Accounts"
+          // listAccounts reads ONE page of auth users (perPage: 200,
+          // src/lib/db/app-control.ts). Past 200 accounts this tile reads "200"
+          // forever — a page size rendered as a platform total. The number is
+          // still a page size; it no longer claims not to be. Paging the real
+          // total is a change to app-control.ts, not to a caption.
+          value={`${accounts.length >= ACCOUNT_PAGE ? "≥" : ""}${accounts.length}`}
+          windowDetail={accounts.length >= ACCOUNT_PAGE ? "first page only" : undefined}
+          window="current"
+          scope="platform"
+          icon={Users}
+          accent="success"
+        />
+        <MetricCard
+          label="Pending"
+          value={String(pending)}
+          window="current"
+          scope="platform"
+          icon={UserCheck}
+          accent="warning"
+        />
+        <MetricCard
+          label="Suspended"
+          value={String(suspended)}
+          // Inherits the same one-page cap as Accounts: account 201 can be
+          // suspended and never appear here.
+          windowDetail={accounts.length >= ACCOUNT_PAGE ? "first page only" : undefined}
+          window="current"
+          scope="platform"
+          icon={Ban}
+          accent="danger"
+        />
         <MetricCard
           label="App status"
+          // Not a metric — a word in a 40px numeric slot, next to five counts.
+          // It should be a Badge; converting it means restructuring this row,
+          // which is a visual change I cannot verify from here. It at least
+          // stops pretending it covers a window.
+          sub="global kill switch"
           value={settings.maintenance ? "Offline" : "Live"}
           icon={Power}
           accent={settings.maintenance ? "danger" : "success"}

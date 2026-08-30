@@ -200,11 +200,15 @@ export interface AccountRow {
   companyId: string | null;
 }
 
+/** One page of auth users. Exported so the console's tile can say when it has
+ *  saturated rather than rendering a page size as a platform total. */
+export const ACCOUNT_PAGE = 200;
+
 export async function listAccounts(): Promise<AccountRow[]> {
   if (!isAdminConfigured()) return [];
   try {
     const admin = createAdminClient();
-    const { data: usersData } = await admin.auth.admin.listUsers({ perPage: 200 });
+    const { data: usersData } = await admin.auth.admin.listUsers({ perPage: ACCOUNT_PAGE });
     const users = usersData?.users ?? [];
     const [{ data: profiles }, { data: platform }] = await Promise.all([
       admin.from("profiles").select("id, full_name, role, disabled, org_id, company_id"),

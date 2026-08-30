@@ -95,9 +95,36 @@ export default async function CallbacksPage() {
       </PageHeader>
 
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-        <MetricCard label="Overdue" value={String(count("overdue"))} icon={AlarmClock} accent="danger" />
-        <MetricCard label="Due now" value={String(count("due"))} icon={Clock} accent="warning" />
-        <MetricCard label="Upcoming" value={String(count("upcoming"))} icon={CheckCircle2} accent="accent" />
+        <MetricCard
+          label="Overdue"
+          value={String(count("overdue"))}
+          definitionKey="callbacks_overdue"
+          window="current"
+          scope={board.teamWide ? "org" : "me"}
+          icon={AlarmClock}
+          accent="danger"
+        />
+        <MetricCard
+          label="Due now"
+          value={String(count("due"))}
+          definitionKey="callbacks_due_now"
+          window="current"
+          scope={board.teamWide ? "org" : "me"}
+          icon={Clock}
+          accent="warning"
+        />
+        <MetricCard
+          label="Upcoming"
+          value={String(count("upcoming"))}
+          // Deliberately NOT keyed. /appointments has a tile with this exact
+          // label counting a bounded today→+7d→later window of appointments;
+          // this one counts callbacks with any future due time and no horizon
+          // at all. Naming them the same in a glossary would assert a
+          // reconciliation that has not happened.
+          sub="promised for later · open callbacks"
+          icon={CheckCircle2}
+          accent="accent"
+        />
         <MetricCard
           label="Completed"
           // `completedCount` is `number | null` precisely so a failed count can
@@ -106,6 +133,8 @@ export default async function CallbacksPage() {
           // "null", in 40px tabular numerals, where a total should be.
           value={board.completedCount === null ? null : String(board.completedCount)}
           unavailable="Couldn't count completed callbacks"
+          window="all_time"
+          scope={board.teamWide ? "org" : "me"}
           icon={PhoneCall}
           accent="success"
         />
