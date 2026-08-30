@@ -148,7 +148,11 @@ export function ConsentSection({
         // about it, and covering it up is how the note ends up wrong.
         <div className="mt-3 space-y-2.5">
           <div>
-            <Label htmlFor="consent-scope">What did they agree to?</Label>
+            {/* No htmlFor: SelectMenu renders a button, not a form control
+                with an id, and carries this same text as its aria-label. A
+                dangling htmlFor is worse than none — it tells a screen reader
+                to look for something that isn't there. */}
+            <Label>What did they agree to?</Label>
             <SelectMenu
               label="What did they agree to?"
               value={scope}

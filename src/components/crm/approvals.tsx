@@ -5,6 +5,7 @@ import {
   Check,
   CheckCircle2,
   Loader2,
+  Lock,
   MessageSquare,
   PlugZap,
   X,
@@ -129,9 +130,23 @@ export function Approvals({
     }
   }
 
-  if (!messagingReady) {
-    // No simulated messaging. If the channel isn't wired, this stays dark and
-    // says why, rather than showing a queue that could never drain.
+  if (!canApprove) {
+    // "Nothing waiting" would be a lie: there may be plenty waiting, this
+    // viewer simply cannot see or action it. Say which it is.
+    return (
+      <EmptyState
+        icon={Lock}
+        title="You can't approve messages"
+        description="Your role doesn't include approving customer messages, so this queue is hidden rather than shown empty. An owner or admin can grant it in Admin → Members."
+      />
+    );
+  }
+
+  // If the channel isn't wired there is nothing to drain — but only say the
+  // queue is empty when it actually is. Proposals made before messaging was
+  // switched off are still real, and someone should be able to reject them
+  // rather than find a dead end where their work went.
+  if (!messagingReady && approvals.length === 0) {
     return (
       <EmptyState
         icon={PlugZap}
@@ -156,12 +171,28 @@ export function Approvals({
       title={`Waiting for approval · ${total}`}
       description="Nothing here has been sent. Read the message, then approve or reject it."
     >
+      {!messagingReady && (
+        // Real proposals, but nothing can leave. Approving one would park it in
+        // the send queue indefinitely, so say so before someone tries.
+        <p className="mb-3 flex items-start gap-2 rounded-xl border border-warning/30 bg-warning/5 p-2.5 text-sm text-warning">
+          <PlugZap className="mt-0.5 h-4 w-4 shrink-0" />
+          <span>
+            {messagingReason} These are still here and can be rejected, but nothing will
+            send until it&apos;s connected.
+          </span>
+        </p>
+      )}
+
       <div className="mb-3 flex flex-wrap items-center gap-2">
         <Button
           size="sm"
-          disabled={!canApprove || !canBulk || !homogeneous || busy || bulkable.length === 0}
+          disabled={
+            !canApprove || !canBulk || !homogeneous || busy || bulkable.length === 0 || !messagingReady
+          }
           title={
-            !canApprove
+            !messagingReady
+              ? "Messaging isn't connected, so approving these would only queue them."
+              : !canApprove
               ? "You don't have permission to approve messages."
               : !canBulk
                 ? "Approving a batch at once needs the bulk permission."
@@ -267,9 +298,13 @@ export function Approvals({
             <div className="mt-3">
               <Button
                 size="sm"
-                disabled={!canApprove || busy || (!canApproveAutomation && !selected.isOwn)}
+                disabled={
+                  !canApprove || busy || !messagingReady || (!canApproveAutomation && !selected.isOwn)
+                }
                 title={
-                  !canApprove
+                  !messagingReady
+                    ? "Messaging isn't connected, so approving this would only queue it."
+                    : !canApprove
                     ? "You don't have permission to approve messages."
                     : !canApproveAutomation && !selected.isOwn
                       ? "The automation proposed this one, so it needs a manager to read it. You can approve messages you wrote yourself."
