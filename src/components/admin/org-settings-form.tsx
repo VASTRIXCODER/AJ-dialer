@@ -23,6 +23,7 @@ import { SectionCard } from "@/components/shared/section-card";
 import { Button } from "@/components/ui/button";
 import { useConfirm } from "@/components/ui/confirm-dialog";
 import { Input, Label, Select, Textarea } from "@/components/ui/input";
+import { SecretValue } from "@/components/ui/secret-value";
 import { Tooltip } from "@/components/ui/tooltip";
 import { EMILY_SYSTEM_PROMPT } from "@/lib/ai/agent-prompt";
 import { describeDays, describeWindows } from "@/lib/dialer/schedule";
@@ -481,7 +482,11 @@ export function OrgSettingsForm({
             <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
               Join code
             </p>
-            <p className="font-mono text-xl font-bold tracking-[0.25em]">{joinCode}</p>
+            <SecretValue
+              value={joinCode}
+              label="Join code"
+              valueClassName="text-xl font-bold tracking-[0.25em]"
+            />
           </div>
           <Button
             size="sm"

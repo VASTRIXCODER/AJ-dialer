@@ -12,7 +12,7 @@ import type { OrgFeatures } from "@/lib/org/settings";
 import { DEFAULT_VOCABULARY, type OrgVocabulary } from "@/lib/org/vocabulary";
 import { ROLE_LABEL, type OrgRole, isOrgRole } from "@/lib/permissions";
 import { cn } from "@/lib/utils";
-import { navGroups, navLabel } from "./nav";
+import { activeNavHref, navGroups, navLabel } from "./nav";
 import { ReviewCountBadge } from "./review-count-badge";
 
 type Account = { name: string; email: string; initials: string };
@@ -65,6 +65,12 @@ export function Sidebar({
       ),
     }))
     .filter((g) => g.items.length > 0);
+
+  // Decided once across every visible item, not per item — see `activeNavHref`.
+  const activeHref = activeNavHref(
+    pathname,
+    groups.flatMap((g) => g.items.map((it) => it.href)),
+  );
 
   return (
     <div className="glass flex h-full flex-col gap-6 border-r border-border/60">
@@ -136,8 +142,7 @@ export function Sidebar({
             </p>
             <ul className="space-y-0.5">
               {group.items.map((item) => {
-                const active =
-                  pathname === item.href || pathname.startsWith(`${item.href}/`);
+                const active = item.href === activeHref;
                 const Icon = item.icon;
                 const delay = order++ * 0.035;
                 return (

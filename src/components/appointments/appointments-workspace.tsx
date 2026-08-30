@@ -141,19 +141,25 @@ export function AppointmentsWorkspace({
   // moves when you type in a search box isn't a KPI.
   const kpi = useMemo(() => {
     let review = 0;
+    let overdue = 0;
     let upcoming = 0;
     let completed = 0;
     let noShow = 0;
     for (const a of appts) {
       const b = bucketOf(a);
       if (b === "review") review += 1;
-      if (b === "overdue" || b === "today" || b === "tomorrow" || b === "week" || b === "later")
-        upcoming += 1;
+      // Overdue is counted on its own and kept OUT of "upcoming". It used to be
+      // folded in, so an appointment whose time had already passed was reported
+      // under the caption "Scheduled ahead" — the one bucket that most needs
+      // someone to act on it was hidden inside the number that says nothing
+      // needs doing yet.
+      if (b === "overdue") overdue += 1;
+      if (b === "today" || b === "tomorrow" || b === "week" || b === "later") upcoming += 1;
       if (a.status === "completed") completed += 1;
       if (a.status === "no_show") noShow += 1;
     }
     const showRate = completed + noShow ? Math.round((completed / (completed + noShow)) * 100) : 0;
-    return { review, upcoming, completed, showRate };
+    return { review, overdue, upcoming, completed, showRate };
   }, [appts]);
 
   const buckets = useMemo(() => {
@@ -337,16 +343,24 @@ export function AppointmentsWorkspace({
         <MetricCard
           label="Needs review"
           value={String(kpi.review)}
-          sub={kpi.review ? "Awaiting approval" : "All caught up"}
+          // "All caught up" was a claim about the whole workspace made by a tile
+          // that only ever counted one bucket — it read as reassurance while
+          // appointments sat overdue two tiles away. The caption now says only
+          // what this number actually measures.
+          sub={kpi.review ? "Awaiting approval" : "None waiting"}
           icon={Sparkles}
           accent={kpi.review ? "warning" : "success"}
         />
         <MetricCard
           label="Upcoming"
           value={String(kpi.upcoming)}
-          sub="Scheduled ahead"
+          sub={
+            kpi.overdue
+              ? `${kpi.overdue} already overdue`
+              : "Scheduled ahead"
+          }
           icon={CalendarClock}
-          accent="accent"
+          accent={kpi.overdue ? "warning" : "accent"}
         />
         <MetricCard
           label="Completed"

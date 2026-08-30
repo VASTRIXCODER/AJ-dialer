@@ -45,6 +45,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useConfirm } from "@/components/ui/confirm-dialog";
 import { Input } from "@/components/ui/input";
+import { SecretValue } from "@/components/ui/secret-value";
 import { MAX_CALLER_IDS_PER_REP } from "@/lib/dialer/rotation";
 import type { Member, OrgCompany, OrgFull } from "@/lib/org/membership";
 import {
@@ -383,9 +384,11 @@ function MembersTab({
               <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
                 Join code
               </p>
-              <p className="truncate font-mono text-sm font-bold tracking-widest">
-                {org.joinCode}
-              </p>
+              <SecretValue
+                value={org.joinCode}
+                label="Join code"
+                valueClassName="text-sm font-bold tracking-widest"
+              />
             </div>
             <Button
               size="sm"

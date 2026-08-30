@@ -4,10 +4,8 @@ import {
   AlertTriangle,
   Ban,
   Building2,
-  Check,
   CheckCircle2,
   ChevronDown,
-  Copy,
   Lock,
   Loader2,
   Plus,
@@ -22,6 +20,7 @@ import { useCallback, useEffect, useState } from "react";
 import { SectionCard } from "@/components/shared/section-card";
 import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
+import { SecretValue } from "@/components/ui/secret-value";
 import { Button } from "@/components/ui/button";
 import { useConfirm } from "@/components/ui/confirm-dialog";
 import { Input, Label, Select, Textarea } from "@/components/ui/input";
@@ -168,9 +167,12 @@ export function OrganizationsTab({
               <Badge tone={o.status === "active" ? "success" : "warning"} className="capitalize">
                 {o.status}
               </Badge>
-              <code className="rounded bg-muted px-2 py-1 text-xs font-bold tracking-widest">
-                {o.joinCode}
-              </code>
+              <SecretValue
+                value={o.joinCode}
+                label="Join code"
+                className="rounded bg-muted px-2 py-1"
+                valueClassName="text-xs font-bold tracking-widest"
+              />
               <Button
                 size="sm"
                 variant="outline"
@@ -410,7 +412,6 @@ function OrgEditor({ detail, onSaved }: { detail: OrgDetail; onSaved: () => void
   });
   const [busy, setBusy] = useState(false);
   const [saved, setSaved] = useState(false);
-  const [copied, setCopied] = useState(false);
 
   async function save() {
     setBusy(true);
@@ -427,18 +428,13 @@ function OrgEditor({ detail, onSaved }: { detail: OrgDetail; onSaved: () => void
     <div className="rounded-xl border border-border bg-card p-4">
       <div className="mb-3 flex items-center justify-between">
         <p className="text-sm font-semibold">Settings</p>
-        <button
-          type="button"
-          onClick={() => {
-            navigator.clipboard?.writeText(detail.joinCode);
-            setCopied(true);
-            setTimeout(() => setCopied(false), 1500);
-          }}
-          className="inline-flex items-center gap-1.5 rounded-lg border border-border px-2 py-1 text-xs font-semibold"
-        >
-          {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
-          {detail.joinCode}
-        </button>
+        <SecretValue
+          value={detail.joinCode}
+          label="Join code"
+          copyable
+          className="rounded-lg border border-border px-2 py-1"
+          valueClassName="text-xs font-semibold"
+        />
       </div>
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <Cell label="Name">
