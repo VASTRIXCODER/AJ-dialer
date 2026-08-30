@@ -1,5 +1,20 @@
 import type { CallOutcome } from "../types";
-import { CONNECTED_OUTCOMES } from "../call-analytics";
+
+/**
+ * The outcomes that mean a real conversation happened.
+ *
+ * This lives here, in the canonical metric module, rather than in the reporting
+ * helper that used to own it — `call-analytics.ts` now re-exports it. The
+ * direction matters: `isConnectedRow` there delegates to `isConnectedRecord`
+ * here, and the old arrangement would have made that a circular import.
+ */
+export const CONNECTED_OUTCOMES = new Set<CallOutcome>([
+  "appointment_booked",
+  "callback_scheduled",
+  "qualified",
+  "not_interested",
+  "do_not_call",
+]);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The metric glossary as code — the twin of docs/phase-1/metric-glossary.md.
@@ -129,6 +144,24 @@ export const METRICS: Record<MetricId, MetricDef> = {
  * because AMD race conditions have set the flag on machine pickups and a
  * voicemail must never inflate the connect rate.
  */
+/**
+ * Is this appointment cancelled?
+ *
+ * Both spellings, because `appointments.status` is a bare `text` column with no
+ * CHECK constraint (supabase/schema.sql) — nothing has ever prevented a
+ * `canceled` row from arriving via an import or a direct edit, and
+ * src/lib/metrics/compute.ts has excluded both spellings all along while
+ * src/lib/db/metrics.ts — the code that actually feeds the two shipped tiles
+ * carrying `definitionKey="appointments_set"` — excluded only the British one.
+ *
+ * Whether any US-spelled row exists in this database today is unverified; there
+ * is no DB access from here. What is verifiable is that two modules disagreed
+ * about the same exclusion, and now they cannot.
+ */
+export function isCancelledAppointment(status: string | null | undefined): boolean {
+  return status === "cancelled" || status === "canceled";
+}
+
 export function isConnectedRecord(r: {
   humanConnected?: boolean | null;
   outcome?: string | null;
@@ -136,6 +169,50 @@ export function isConnectedRecord(r: {
   if (r.outcome === "voicemail") return false;
   if (typeof r.humanConnected === "boolean") return r.humanConnected;
   return r.outcome != null && CONNECTED_OUTCOMES.has(r.outcome as CallOutcome);
+}
+
+/**
+ * The SAME predicate, as a PostgREST filter — for the counts that must be done
+ * in the database rather than over fetched rows.
+ *
+ * This exists because two screens had hand-rolled their own version of it and
+ * both were wrong in the same two ways. `/today` and `/command` each counted
+ * today's conversations with
+ *
+ *     .or("human_connected.is.true,outcome.in.(…connected outcomes…)")
+ *
+ * which differs from `isConnectedRecord` in exactly the cases the predicate was
+ * written to handle:
+ *
+ *   · a VOICEMAIL row carrying `human_connected = true` — the flag that AMD
+ *     race conditions are documented above as setting on machine pickups —
+ *     matched the first arm and counted as a conversation. The whole point of
+ *     the voicemail short-circuit is that it must not.
+ *   · a row where the answer pipeline positively recorded `human_connected =
+ *     false` still counted if its outcome happened to be a connected one. The
+ *     verified flag is supposed to WIN over the legacy outcome inference; the
+ *     `.or()` let the outcome overrule it.
+ *
+ * Both errors push the same way — up — so a rep's "Conversations" tile read
+ * higher than the same rep's connect rate on the dashboard, every single day.
+ *
+ * The three arms below are the JS branches, in order:
+ *   1. verified true, and not a voicemail
+ *   2. verified true with no outcome recorded yet (a live/unfiled row)
+ *   3. not verified either way — fall back to the outcome, which cannot be
+ *      voicemail because voicemail is not in CONNECTED_OUTCOMES
+ *
+ * `human_connected = false` matches none of them, which is the point.
+ * tests/metric-registry.test.ts evaluates this expression against
+ * `isConnectedRecord` over every combination and fails if they ever disagree.
+ */
+export function connectedRecordFilter(): string {
+  const list = [...CONNECTED_OUTCOMES].join(",");
+  return [
+    "and(human_connected.is.true,outcome.neq.voicemail)",
+    "and(human_connected.is.true,outcome.is.null)",
+    `and(human_connected.is.null,outcome.in.(${list}))`,
+  ].join(",");
 }
 
 /**

@@ -20,7 +20,11 @@ import {
   type Funnel,
 } from "../call-analytics";
 import { zonedDayHour, zonedDayKey } from "../dialer/schedule";
-import { isConnectedRecord, orgTimezone } from "../metrics/definitions";
+import {
+  isCancelledAppointment,
+  isConnectedRecord,
+  orgTimezone,
+} from "../metrics/definitions";
 import {
   composeLeaderboard,
   type ComposedBoard,
@@ -613,7 +617,8 @@ export async function getReportingData(
       // keeps its history — but a review the rep re-dispositioned away was never a
       // booking, and counting it here would quietly inflate every report the day
       // that change shipped. Excluding cancelled reproduces the old count exactly.
-      appointmentsBooked: periodAppts.filter((a) => a.status !== "cancelled").length,
+      appointmentsBooked: periodAppts.filter((a) => !isCancelledAppointment(a.status == null ? null : String(a.status)))
+        .length,
       appointmentsCompleted: periodAppts.filter((a) => a.status === "completed").length,
       noShows: periodAppts.filter((a) => a.status === "no_show").length,
       reschedules: periodAppts.filter((a) => a.status === "rescheduled").length,
@@ -682,7 +687,7 @@ export async function getReportingData(
     // Cancelled reviews are dead weight in the dashboard's upcoming list — and
     // they'd eat the 30 slots the live ones need.
     const appointments: ApptLite[] = appts
-      .filter((a) => a.status !== "cancelled")
+      .filter((a) => !isCancelledAppointment(a.status == null ? null : String(a.status)))
       .slice(0, 30)
       .map((a, i) => ({
         id: String(a.id ?? i),

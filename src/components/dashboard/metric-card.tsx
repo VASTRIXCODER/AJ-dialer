@@ -105,8 +105,21 @@ export function MetricCard({
   };
   // No hover glow. A blurred accent light woke behind every KPI tile on
   // pointer-over — depth on the surface a rep reads most, for no information.
-  const parsed = value === null ? null : parseMetric(value);
-  const caption = value === null ? unavailable : sub;
+  // A stringified nothing is nothing. Two shipped pages built their value with
+  // `String(x)` where x was `number | null` — the DB layer had plumbed the null
+  // all the way up, exactly as the zero rule intends, and the last line threw
+  // it away. `String(null)` is the four-character string "null", which
+  // parseMetric cannot read a number out of, so the card fell through to
+  // rendering `value` verbatim: the word "null", in 40px tabular numerals,
+  // where a total belongs.
+  //
+  // Guarding here rather than only at the call sites, because this is the one
+  // place that can be sure — and because the next person to write `String(...)`
+  // in a tile will not have read the two commits about it.
+  const resolved =
+    value === "null" || value === "undefined" || value === "NaN" ? null : value;
+  const parsed = resolved === null ? null : parseMetric(resolved);
+  const caption = resolved === null ? unavailable : sub;
 
   return (
     // Fixed minimum height and a reserved caption line, so a row of tiles is a
@@ -131,11 +144,11 @@ export function MetricCard({
               />
             ) : (
               // The zero rule: an em dash, never a fabricated zero.
-              (value ?? <span className="text-ink-3">—</span>)
+              (resolved ?? <span className="text-ink-3">—</span>)
             )}
           </p>
           <div className="mt-auto flex min-h-[18px] items-center gap-2">
-            {delta && value !== null && (
+            {delta && resolved !== null && (
               <span
                 className={cn(
                   "inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-xs font-bold",
@@ -163,7 +176,7 @@ export function MetricCard({
                 title={caption}
                 className={cn(
                   "min-w-0 truncate text-label-12",
-                  value === null ? "text-signal-ring" : "text-muted-foreground",
+                  resolved === null ? "text-signal-ring" : "text-muted-foreground",
                 )}
               >
                 {caption}

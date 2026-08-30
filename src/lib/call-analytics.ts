@@ -1,4 +1,10 @@
 import type { CallOutcome } from "./types";
+import { CONNECTED_OUTCOMES, isConnectedRecord } from "./metrics/definitions";
+
+// The set moved to the canonical metric module (see the note there); it is
+// re-exported from its old home so the seven files that import it from here
+// keep working.
+export { CONNECTED_OUTCOMES };
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Pure call-analytics helpers shared by the reports + dashboard data layer.
@@ -7,15 +13,6 @@ import type { CallOutcome } from "./types";
 // ─────────────────────────────────────────────────────────────────────────────
 
 type Row = Record<string, unknown>;
-
-/** Outcomes that mean a real conversation happened. */
-export const CONNECTED_OUTCOMES = new Set<CallOutcome>([
-  "appointment_booked",
-  "callback_scheduled",
-  "qualified",
-  "not_interested",
-  "do_not_call",
-]);
 
 /** Every disposition, in funnel-ish order, with a label + chart color. */
 export const OUTCOME_META: Record<CallOutcome, { label: string; color: string }> = {
@@ -38,10 +35,23 @@ const avg = (a: number[]) =>
   a.length ? Math.round(a.reduce((x, y) => x + y, 0) / a.length) : 0;
 
 const outcomeOf = (r: Row): CallOutcome | null => (r.outcome as CallOutcome) ?? null;
-export const isConnectedRow = (r: Row): boolean => {
-  const o = outcomeOf(r);
-  return o != null && CONNECTED_OUTCOMES.has(o);
-};
+/**
+ * Did a human answer? Delegates to the one predicate rather than re-deciding.
+ *
+ * This used to test the OUTCOME ALONE, ignoring `human_connected` — the
+ * verified flag the answer pipeline writes. The visible consequence was on
+ * /reports: the "Connections" tile and the conversion funnel about sixty pixels
+ * below it are computed from the SAME array over the SAME window, and printed
+ * different numbers, because the tile used isConnectedRecord and the funnel
+ * used this. It also counted a row the pipeline had positively marked
+ * human_connected=false, and it had no voicemail veto of its own — it only
+ * avoided voicemail by accident, because voicemail is not a connected outcome.
+ */
+export const isConnectedRow = (r: Row): boolean =>
+  isConnectedRecord({
+    humanConnected: typeof r.human_connected === "boolean" ? r.human_connected : null,
+    outcome: outcomeOf(r),
+  });
 
 export interface DispositionRow {
   key: CallOutcome;

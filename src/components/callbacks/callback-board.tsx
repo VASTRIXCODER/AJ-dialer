@@ -31,11 +31,13 @@ import {
   compareCallbacks,
   isClaimActive,
   laneOf,
+  orgNowMs,
   overdueTier,
   type CallbackLane,
 } from "@/lib/callbacks/lanes";
 import type { CallbackBoardRow } from "@/lib/db/callbacks";
 import { dialDeepLink } from "@/lib/dialer/deep-link";
+import { zonedFloatingNow } from "@/lib/dialer/schedule";
 import { cn, formatPhone, initials, relativeTime } from "@/lib/utils";
 import { SelectMenu } from "@/components/ui/select-menu";
 import {
@@ -398,6 +400,7 @@ export function CallbackBoard({
   canManage,
   userId,
   initialNow,
+  orgTimezone,
 }: {
   open: CallbackBoardRow[];
   closed: CallbackBoardRow[];
@@ -409,6 +412,10 @@ export function CallbackBoard({
   /** Server render's clock — first client render uses the SAME value so lanes
    *  and relative labels hydrate identically; a 30s tick takes over after. */
   initialNow: number;
+  /** The ORG's IANA zone. The tick below has to advance on the same wall clock
+   *  the server rendered against, or the board disagrees with the tiles above
+   *  it the moment the first 30s interval fires — see orgNowMs. */
+  orgTimezone: string;
 }) {
   const router = useRouter();
   const { toast } = useToast();
@@ -417,9 +424,11 @@ export function CallbackBoard({
 
   const [now, setNow] = useState(initialNow);
   useEffect(() => {
-    const t = setInterval(() => setNow(Date.now()), 30_000);
+    const tick = () =>
+      setNow(orgNowMs(new Date(), zonedFloatingNow(new Date(), orgTimezone)));
+    const t = setInterval(tick, 30_000);
     return () => clearInterval(t);
-  }, []);
+  }, [orgTimezone]);
 
   const [busy, setBusy] = useState<string | null>(null);
   const [resched, setResched] = useState<CallbackBoardRow | null>(null);

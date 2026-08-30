@@ -135,17 +135,47 @@ export default async function BillsFinePage({
       </PageHeader>
 
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-        <MetricCard label="Total" value={String(total)} icon={CheckCircle2} accent="warning" />
-        <MetricCard label={`With ${primaryLabel.toLowerCase()} data`} value={String(withBills)} icon={Zap} accent="accent" />
+        <MetricCard
+          label="Total"
+          value={total === null ? null : String(total)}
+          unavailable="Couldn't count this list"
+          icon={CheckCircle2}
+          accent="warning"
+        />
+        <MetricCard
+          // BOTH money fields have to be positive for a lead to be in here —
+          // the old label implied one. `withBills` is `number | null` so a
+          // failed count can say so; `String(null)` is the string "null", which
+          // MetricCard cannot parse and therefore rendered verbatim, in 40px
+          // tabular numerals, where a count should be.
+          label={`With ${primaryLabel.toLowerCase()} and payment`}
+          value={withBills === null ? null : String(withBills)}
+          unavailable="Couldn't count these"
+          icon={Zap}
+          accent="accent"
+        />
         <MetricCard
           label="Avg monthly spend"
+          // null, not a dash. Handing MetricCard the string "—" makes `value`
+          // truthy, so the card takes its normal path and `unavailable` — the
+          // line that would say WHY there is no number — becomes unreachable.
           value={
-            avgEnergyCost && avgEnergyCost > 0 ? formatCurrency(Math.round(avgEnergyCost)) : "—"
+            avgEnergyCost && avgEnergyCost > 0 ? formatCurrency(Math.round(avgEnergyCost)) : null
           }
+          unavailable="No leads here have both figures on file"
           icon={Zap}
           accent="success"
         />
-        <MetricCard label="Ready to re-dial" value={String(total)} icon={Phone} accent="primary" />
+        {/* "Ready to re-dial" used to live here, rendering `String(total)` —
+            byte-for-byte the same expression as the Total tile two cards to the
+            left. Two of the four KPIs on this screen always printed the
+            identical number under different labels, and the second label made a
+            claim about dialability that the query never checked: not phone
+            validity, not DNC, not the attempt cap, not the calling window. It
+            is gone rather than renamed. The number that belongs here is a real
+            eligibility count, and the app already knows how to compute one
+            (src/lib/db/my-day.ts's who-next ladder) — wiring that is a
+            different change from removing a tile that was lying. */}
       </div>
 
       <Card className="overflow-hidden">

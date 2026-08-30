@@ -468,18 +468,18 @@ export default async function ReportsPage({
           )}
           <MetricCard
             label="Cost per appointment"
+            // null, not a dash — a dash keeps `value` truthy, which makes the
+            // `unavailable` line unreachable and leaves the reader with a
+            // mystery instead of a reason.
             value={
               costs.costPerAppointment != null
                 ? formatCurrency(costs.costPerAppointment)
-                : "—"
+                : null
             }
+            unavailable="Nothing booked in this period to divide by"
             icon={Target}
             accent="success"
-            sub={
-              costs.appointments > 0
-                ? `${formatNumber(costs.appointments)} booked on calls`
-                : "none booked in this period"
-            }
+            sub={`${formatNumber(costs.appointments)} booked on calls`}
           />
         </div>
         <p className="mt-3 text-xs text-muted-foreground">

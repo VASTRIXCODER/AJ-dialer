@@ -6,7 +6,9 @@ import { EmptyState } from "@/components/shared/empty-state";
 import { PageContainer, PageHeader } from "@/components/shared/page-header";
 import { Badge } from "@/components/ui/badge";
 import { reconcileOwnerActiveCalls } from "@/lib/ai-call-reconcile";
-import { laneOf } from "@/lib/callbacks/lanes";
+import { laneOf, orgNowMs } from "@/lib/callbacks/lanes";
+import { zonedFloatingNow } from "@/lib/dialer/schedule";
+import { orgTimezone } from "@/lib/metrics/definitions";
 import { getCallbackBoard } from "@/lib/db/callbacks";
 import { getReviewQueue } from "@/lib/db/review-queue";
 import { getScope } from "@/lib/db/scope";
@@ -71,8 +73,12 @@ export default async function CallbacksPage() {
     );
   }
 
-  // One clock for the KPIs AND the board's first client render — see lanes.ts.
-  const now = Date.now();
+  // One clock for the KPIs AND the board's first client render — and it is the
+  // ORG's wall clock, not the server's. `due_at` is a floating time, so
+  // comparing it against a bare Date.now() on a UTC server read a Chicago org's
+  // 5pm promise as overdue from noon. See orgNowMs.
+  const orgTz = orgTimezone(viewer.org);
+  const now = orgNowMs(new Date(), zonedFloatingNow(new Date(), orgTz));
   const count = (k: string) => board.open.filter((c) => laneOf(c.dueAt, now) === k).length;
 
   return (
@@ -92,7 +98,17 @@ export default async function CallbacksPage() {
         <MetricCard label="Overdue" value={String(count("overdue"))} icon={AlarmClock} accent="danger" />
         <MetricCard label="Due now" value={String(count("due"))} icon={Clock} accent="warning" />
         <MetricCard label="Upcoming" value={String(count("upcoming"))} icon={CheckCircle2} accent="accent" />
-        <MetricCard label="Completed" value={String(board.completedCount)} icon={PhoneCall} accent="success" />
+        <MetricCard
+          label="Completed"
+          // `completedCount` is `number | null` precisely so a failed count can
+          // say so. `String(null)` is the string "null", which MetricCard
+          // cannot parse as a number and therefore rendered VERBATIM — the word
+          // "null", in 40px tabular numerals, where a total should be.
+          value={board.completedCount === null ? null : String(board.completedCount)}
+          unavailable="Couldn't count completed callbacks"
+          icon={PhoneCall}
+          accent="success"
+        />
       </div>
 
       {/* Needs review comes FIRST: unresolved calls outrank scheduled ones —
@@ -115,6 +131,7 @@ export default async function CallbacksPage() {
         canManage={canManage}
         userId={scope?.userId ?? ""}
         initialNow={now}
+        orgTimezone={orgTz}
       />
     </PageContainer>
   );

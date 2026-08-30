@@ -175,13 +175,15 @@ export default async function CommandCenterPage() {
           />
           <MetricCard
             label="Speed to first call"
-            value={today.speedToLeadMin != null ? `${today.speedToLeadMin}m` : "—"}
+            // null, not a dash. A dash keeps `value` truthy, so the card takes
+            // its has-a-number path and `unavailable` — the line that says WHY
+            // there is nothing to show — can never render.
+            value={today.speedToLeadMin != null ? `${today.speedToLeadMin}m` : null}
+            unavailable="Not enough first attempts today to take a median"
             sub={
-              today.speedToLeadMin != null
-                ? speedSampled
-                  ? "median · first 1,000 attempts today"
-                  : "median · first attempts today"
-                : "not enough data today"
+              speedSampled
+                ? "median · first 1,000 attempts today"
+                : "median · first attempts today"
             }
             icon={Timer}
             accent={today.speedToLeadMin != null && today.speedToLeadMin > 60 ? "danger" : "success"}

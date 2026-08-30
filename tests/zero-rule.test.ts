@@ -114,3 +114,93 @@ describe("the zero rule", () => {
     expect(askedCount({ count: null, error: null })).toBe(0);
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// …and the half of the rule this file used to miss entirely.
+//
+// Everything above scans src/lib/db. The DB layer was CORRECT — it plumbed
+// `number | null` all the way up, exactly as intended — and two pages threw it
+// away on the last line:
+//
+//     <MetricCard value={String(board.completedCount)} …/>
+//     <MetricCard value={String(withBills)} …/>
+//
+// `String(null)` is the four-character string "null". MetricCard's parseMetric
+// cannot read a number out of it, so it falls through to rendering `value`
+// verbatim — the word "null", in 40px tabular numerals, where a total belongs.
+// Not a fabricated zero: visible nonsense, on /callbacks and /bills-fine.
+//
+// A tile is where the rule is finally kept or broken, so the tiles are checked
+// too.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const RENDER_FILES = execSync(
+  'git ls-files --cached --others --exclude-standard "src/app/**/*.tsx" "src/components/**/*.tsx"',
+  { cwd: ROOT, encoding: "utf8" },
+)
+  .split("\n")
+  .filter(Boolean)
+  .map((path) => ({
+    path,
+    code: stripComments(readFileSync(resolve(ROOT, path), "utf8")),
+  }));
+
+/** Every `<MetricCard … />` call site, as source text. */
+function metricCards(code: string): string[] {
+  return [...code.matchAll(/<MetricCard[\s\S]{0,900}?\/>/g)].map((m) => m[0]);
+}
+
+describe("the render layer keeps the rule the db layer plumbed", () => {
+  it("the card itself refuses a stringified nothing", () => {
+    // Guarding in the card rather than only at the call sites is what makes the
+    // class impossible: `String(x)` on a nullable count is an easy thing to
+    // write, and the next person to write it will not have read this file.
+    const card = readFileSync(
+      resolve(ROOT, "src/components/dashboard/metric-card.tsx"),
+      "utf8",
+    );
+    for (const nothing of ['value === "null"', 'value === "undefined"', 'value === "NaN"']) {
+      expect(card, `the card does not guard ${nothing}`).toContain(nothing);
+    }
+    // …and every read downstream uses the GUARDED value. Otherwise the card
+    // would render an em dash while its caption and its delta still took the
+    // has-a-number branch — a tile that says two things at once.
+    const body = card.slice(card.indexOf("const resolved"));
+    expect(body, "a downstream read still tests the raw `value`").not.toMatch(
+      /\bvalue (?:===|!==) null/,
+    );
+  });
+
+  it("no tile passes an em dash as if it were a value", () => {
+    // Handing MetricCard the string "—" defeats the rule from the other side:
+    // `value` is truthy, so the card takes its normal path and `unavailable` —
+    // the line that would say WHY the number is missing — becomes unreachable.
+    const offenders: string[] = [];
+    for (const { path, code } of RENDER_FILES) {
+      for (const tile of metricCards(code)) {
+        if (/value=\{[\s\S]*?:\s*"—"\s*\}/.test(tile)) {
+          offenders.push(`${path}: ${tile.replace(/\s+/g, " ").slice(0, 90)}`);
+        }
+      }
+    }
+    expect(
+      offenders,
+      `Pass null and an \`unavailable\` reason, not a dash:\n` + offenders.join("\n"),
+    ).toEqual([]);
+  });
+
+  it("a tile that can be unavailable says why", () => {
+    // An em dash with no explanation is its own small mystery — MetricCard's
+    // own prop doc says so. If a call site can pass null, it must pass a reason.
+    const offenders: string[] = [];
+    for (const { path, code } of RENDER_FILES) {
+      for (const tile of metricCards(code)) {
+        const canBeNull = /value=\{[^}]*(?:===\s*null|!==\s*null|\?\?\s*null|:\s*null)/.test(tile);
+        if (canBeNull && !/unavailable=/.test(tile)) {
+          offenders.push(`${path}: ${tile.replace(/\s+/g, " ").slice(0, 90)}`);
+        }
+      }
+    }
+    expect(offenders, offenders.join("\n")).toEqual([]);
+  });
+});

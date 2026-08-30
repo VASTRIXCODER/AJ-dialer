@@ -1,6 +1,6 @@
 import "server-only";
 
-import { CONNECTED_OUTCOMES } from "../call-analytics";
+import { connectedRecordFilter } from "../metrics/definitions";
 import {
   isWithinOrgHours,
   zonedDayKey,
@@ -185,9 +185,11 @@ async function readMyDay(input: {
       openMine().gt("due_at", floatingNow).lt("due_at", dayEnd),
       openMine().is("due_at", null),
       myCallsToday(),
-      myCallsToday().or(
-        `human_connected.is.true,outcome.in.(${[...CONNECTED_OUTCOMES].join(",")})`,
-      ),
+      // The canonical connect predicate — this used to be a hand-rolled `.or()`
+      // that counted voicemails flagged human_connected=true and rows the
+      // answer pipeline had positively marked human_connected=false. Both
+      // errors inflated the rep's own "Conversations" tile.
+      myCallsToday().or(connectedRecordFilter()),
       myCallsToday().eq("outcome", "appointment_booked"),
     ]);
 

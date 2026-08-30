@@ -1,6 +1,6 @@
 import "server-only";
 
-import { CONNECTED_OUTCOMES } from "../call-analytics";
+import { connectedRecordFilter, isConnectedRecord } from "../metrics/definitions";
 import { zonedDayStartMs, zonedFloatingNow } from "../dialer/schedule";
 import { createAdminClient, isAdminConfigured } from "../supabase/admin";
 import { askedCount } from "./counts";
@@ -22,8 +22,6 @@ const PAGE = 1000;
 const SCAN_PAGES = 12;
 /** Bound on the running-playbook-instance scan. */
 const INSTANCE_SCAN = 2000;
-/** Conversation-grade outcomes, as a PostgREST in() list. */
-const CONNECTED_LIST = `(${[...CONNECTED_OUTCOMES].join(",")})`;
 
 export interface LeakRow {
   id: string;
@@ -119,7 +117,11 @@ async function readCommandCenter(input: {
 
   const [dialsRes, convosRes, apptCountRes] = await Promise.all([
     callsToday(),
-    callsToday().or(`human_connected.is.true,outcome.in.${CONNECTED_LIST}`),
+    // The canonical connect predicate, not a hand-rolled approximation of
+    // it — see connectedRecordFilter. The old expression counted a voicemail
+    // carrying human_connected=true, and counted a row the answer pipeline had
+    // positively marked human_connected=false.
+    callsToday().or(connectedRecordFilter()),
     callsToday().eq("outcome", "appointment_booked"),
   ]);
 
@@ -243,8 +245,15 @@ async function readCommandCenter(input: {
   ]);
 
   // ── Today strip ────────────────────────────────────────────────────────────
+  // The same predicate the headline count uses, and the same one the dashboard
+  // and reports use. This was a THIRD hand-rolled version — it counted a
+  // voicemail flagged human_connected=true, and let a connected outcome
+  // overrule a positively-recorded human_connected=false.
   const isConversation = (r: Row) =>
-    r.human_connected === true || (CONNECTED_OUTCOMES as Set<string>).has(s(r.outcome));
+    isConnectedRecord({
+      humanConnected: typeof r.human_connected === "boolean" ? r.human_connected : null,
+      outcome: s(r.outcome) || null,
+    });
   // `count ?? 0` is the wrong default on every one of these. supabase-js does
   // not throw on a failed read — it RESOLVES `{ data: null, count: null,
   // error }` — so the nullish coalesce silently turns "we could not ask" into
