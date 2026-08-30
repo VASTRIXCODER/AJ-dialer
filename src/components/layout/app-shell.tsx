@@ -10,7 +10,6 @@ import { Lead360Provider } from "@/components/leads/lead-360/lead-360-provider";
 import { orgAccentCss } from "@/lib/org/accent";
 import type { OrgFeatures } from "@/lib/org/settings";
 import { DEFAULT_VOCABULARY, type OrgVocabulary } from "@/lib/org/vocabulary";
-import { AmbientBackground } from "./ambient-background";
 import { Sidebar } from "./sidebar";
 import { Topbar } from "./topbar";
 import type { Permission } from "@/lib/permissions";
@@ -84,7 +83,16 @@ export function AppShell({
     <Lead360Provider>
     {accentCss ? <style dangerouslySetInnerHTML={{ __html: accentCss }} /> : null}
     <div className="relative flex min-h-screen" {...(accentCss ? { "data-org-accent": "" } : {})}>
-      <AmbientBackground />
+      {/* No ambient field here, deliberately.
+          It used to render behind the whole authenticated app, which put a
+          drifting aurora and three animated glow orbs underneath every table,
+          every form and every number a rep reads for eight hours. Depth behind
+          content-layer text is the one thing the design system rules out
+          outright.
+          The field belongs to the Stage and is mounted there instead: the
+          sign-in routes, /hub, the marketing page, and the maintenance and
+          paywall locks. The dialer's idle state gets it back in W3, scoped to
+          the idle state alone — it goes dark the moment a call connects. */}
       <CommandPalette />
 
       {/* Desktop sidebar */}

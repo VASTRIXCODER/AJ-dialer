@@ -8,112 +8,179 @@
 
 @custom-variant dark (&:is(.dark *));
 
+/* ─────────────────────────────────────────────────────────────────────────────
+   THE PALETTE
+
+   Every value below is measured, not chosen by eye. The ratios in the comments
+   are real WCAG 2.x contrast figures against the surface each token is allowed
+   to sit on, and `tests/tokens-contrast.test.ts` recomputes all of them from
+   this file on every run — if someone nudges a lightness, the suite says so.
+
+   Two rules the numbers depend on:
+
+   1. NO OPACITY MODIFIER ON AN INK TOKEN. `text-ink-2/60` has no measured
+      ratio and is banned. If text needs to be quieter it takes the next token
+      down, which does.
+   2. `--surface-4` NEVER CARRIES TEXT AT REST. It is the control-hover and
+      keycap plane; `--ink-3` measures 4.14:1 on it, under the 4.5:1 body-text
+      floor. Surfaces void through 3 are the ones text may land on.
+
+   The older semantic names (--background, --card, --primary, --danger …) are
+   kept as aliases at the bottom so the 176 components that use them keep
+   working and immediately inherit the measured colour. They are var() chains,
+   which resolve in the *element's* theme context — so they are declared once,
+   here, and never need repeating in .dark.
+   ───────────────────────────────────────────────────────────────────────────── */
+
 :root {
   color-scheme: light;
 
-  /* Surfaces — cool, icy light mode (blue-tinted, never warm/paper) */
-  --background: 213 40% 97.5%;
-  --surface: 0 0% 100%;
-  --surface-muted: 214 38% 95.5%;
-  --foreground: 222 47% 11%;
-  --muted: 214 32% 93.5%;
-  --muted-foreground: 215 16% 42%;
+  /* ── Surface · four planes. Void never holds content directly. ─────────── */
+  --surface-void: 220 20% 97.1%; /* #F6F7F9  app ground */
+  --surface-1: 0 0% 100%; /* #FFFFFF  cards, panels, table body */
+  --surface-2: 216 20% 95.1%; /* #F0F2F5  table header, toolbar, wells */
+  --surface-3: 214.3 17.1% 92%; /* #E7EAEE  row selected, popover ground */
+  --surface-4: 213.3 15.3% 88.4%; /* #DDE1E6  control hover, keycap — no text */
 
-  --card: 0 0% 100%;
-  --card-foreground: 222 47% 11%;
+  /* ── Ink · worst ratio is against surface-3 ────────────────────────────── */
+  --ink: 214.3 14.9% 9.2%; /* #14171B  14.90 : 1 */
+  --ink-2: 212 8.7% 33.9%; /* #4F565E   6.16 : 1 */
+  --ink-3: 212 7.1% 41.4%; /* #626971   4.61 : 1 */
 
-  --popover: 0 0% 100%;
-  --popover-foreground: 222 47% 11%;
+  /* ── Line · line is decorative (1.4.11 exempt); the other two are not ──── */
+  --line: 213.3 16.4% 89.2%; /* #DFE3E8 */
+  --line-strong: 220 3.9% 54.7%; /* #878A90  3.09 : 1  meets non-text 3:1 */
+  --line-active: 220 3.7% 47.3%; /* #74777D  4.00 : 1 */
 
-  /* Brand — electric azure (one dominant accent) */
-  --primary: 214 90% 52%;
-  --primary-foreground: 0 0% 100%;
-  --primary-soft: 214 100% 95.5%;
+  /* ── Accent and signal · always paired with SHAPE, never colour alone:
+        live ● filled dot · ringing ○ hollow ring · stopped ■ filled square ─ */
+  --accent: 218.5 78.1% 48.4%; /* #1B60DC  4.99 : 1 */
+  --accent-bg: 220 85.7% 94.5%; /* #E5EDFD */
+  --accent-line: 217.9 82.9% 83.9%; /* #B4CDF8 */
 
-  /* Secondary accent — cyan highlight */
-  --accent: 190 90% 42%;
-  --accent-foreground: 0 0% 100%;
-  --accent-soft: 190 88% 94%;
+  --signal-live: 154.6 72.9% 26.1%; /* #12734A  5.23 : 1 */
+  --signal-live-bg: 150 50% 92.2%; /* #E1F5EB */
+  --signal-live-line: 151.2 42.6% 76.1%; /* #A8DCC3 */
 
-  --secondary: 214 32% 93.5%;
-  --secondary-foreground: 222 40% 18%;
+  --signal-ring: 37.3 85.2% 29.2%; /* #8A5A0B  5.28 : 1 */
+  --signal-ring-bg: 38.7 79.5% 92.4%; /* #FBF0DC */
+  --signal-ring-line: 40.5 62.5% 74.9%; /* #E7CD97 */
 
-  /* Semantic */
-  --success: 158 64% 38%;
-  --success-foreground: 0 0% 100%;
-  --warning: 36 95% 47%;
-  --warning-foreground: 36 100% 10%;
-  --danger: 352 78% 53%;
-  --danger-foreground: 0 0% 100%;
+  --signal-stop: 356.8 65.2% 45.1%; /* #BE2830  5.30 : 1 */
+  --signal-stop-bg: 356.8 76% 95.1%; /* #FCE9EA */
+  --signal-stop-line: 356.5 66.2% 84.9%; /* #F2BFC2 */
 
-  --border: 214 28% 88%;
-  --input: 214 28% 88%;
-  --ring: 214 90% 52%;
+  /* Text drawn ON a filled accent/signal. Light fills are dark enough to take
+     white (worst case 5.60:1); dark fills are bright and take the void. */
+  --on-fill: 0 0% 100%;
+
+  /* ── Chart · six slots, each with a fixed series meaning so the same thing
+        is the same colour on every screen. ──────────────────────────────── */
+  --chart-1: 218.5 78.1% 48.4%; /* #1B60DC  dials */
+  --chart-2: 154.6 72.9% 26.1%; /* #12734A  connects */
+  --chart-3: 37.3 85.2% 29.2%; /* #8A5A0B  appointments */
+  --chart-4: 260.6 50.4% 49.8%; /* #6B3FBF  callbacks */
+  --chart-5: 187.3 79.3% 26.5%; /* #0E6C79  voicemail */
+  --chart-6: 212 7.7% 38.2%; /* #5A6169  other / no answer */
 
   --radius: 0.95rem;
-
-  /* Ambient lighting + elevation reference colors */
-  --glow: 214 95% 56%;
   --shadow-color: 222 60% 22%;
-
-  /* Chart palette — blue family with violet/teal support */
-  --chart-1: 214 92% 54%;
-  --chart-2: 190 90% 46%;
-  --chart-3: 234 84% 62%;
-  --chart-4: 270 78% 62%;
-  --chart-5: 162 68% 42%;
 }
 
 .dark {
   color-scheme: dark;
 
-  /* Deep midnight navy — illuminated from within */
-  --background: 222 48% 5%;
-  --surface: 220 42% 8.5%;
-  --surface-muted: 219 38% 12%;
-  --foreground: 210 40% 96%;
-  --muted: 219 32% 15%;
-  --muted-foreground: 215 22% 65%;
+  --surface-void: 220 13% 4.5%; /* #0A0B0D */
+  --surface-1: 216 13.5% 7.3%; /* #101215 */
+  --surface-2: 214.3 13.2% 10.4%; /* #171A1E */
+  --surface-3: 213.3 13% 13.5%; /* #1E2227 */
+  --surface-4: 212.7 12.6% 17.1%; /* #262B31  no text */
 
-  --card: 220 40% 9.5%;
-  --card-foreground: 210 40% 96%;
+  --ink: 210 15.8% 92.5%; /* #E9ECEF  13.48 : 1 */
+  --ink-2: 213.8 9.4% 66.7%; /* #A2A9B2   6.74 : 1 */
+  --ink-3: 213.8 7% 54.9%; /* #848B94   4.65 : 1 */
 
-  --popover: 221 44% 8%;
-  --popover-foreground: 210 40% 96%;
+  --line: 212.7 13.3% 16.3%; /* #24292F */
+  --line-strong: 218.2 5.3% 41%; /* #63676E  3.07 : 1 */
+  --line-active: 218.2 4.5% 48.4%; /* #767A81  4.05 : 1 */
 
-  /* Brand — electric azure that glows on dark glass */
-  --primary: 212 100% 62%;
-  --primary-foreground: 222 60% 6%;
-  --primary-soft: 214 70% 17%;
+  --accent: 218.2 100% 64.9%; /* #4C8DFF  5.45 : 1 */
+  --accent-bg: 217.7 50.6% 16.7%; /* #152540 */
+  --accent-line: 218.1 49.7% 33.5%; /* #2B4A80 */
 
-  /* Cyan accent */
-  --accent: 190 95% 55%;
-  --accent-foreground: 222 60% 6%;
-  --accent-soft: 192 70% 16%;
+  --signal-live: 149 58.6% 49.2%; /* #34C77B  7.98 : 1 */
+  --signal-live-bg: 152.1 50% 11%; /* #0E2A1D */
+  --signal-live-line: 150.9 54.2% 23.1%; /* #1B5B3C */
 
-  --secondary: 219 30% 16%;
-  --secondary-foreground: 210 36% 92%;
+  --signal-ring: 35.8 78.8% 57.5%; /* #E8A33D  8.09 : 1 */
+  --signal-ring-bg: 34.3 46.7% 11.8%; /* #2C2010 */
+  --signal-ring-line: 38.3 58% 23.3%; /* #5E4519 */
 
-  --success: 156 64% 46%;
-  --success-foreground: 222 60% 6%;
-  --warning: 38 95% 58%;
-  --warning-foreground: 38 100% 8%;
-  --danger: 352 84% 62%;
-  --danger-foreground: 0 0% 100%;
+  --signal-stop: 357.3 83.8% 63.7%; /* #F0555C  5.12 : 1 */
+  --signal-stop-bg: 353.6 43.8% 12.5%; /* #2E1215 */
+  --signal-stop-line: 355.8 49.7% 28%; /* #6B2429 */
 
-  /* Borders are whispers — depth carries hierarchy, not boxes */
-  --border: 215 32% 20%;
-  --input: 216 30% 22%;
-  --ring: 212 100% 62%;
+  /* Dark fills are bright — white on them measures 2.16-3.41:1 and fails.
+     The void reads 5.77-9.13:1 on the same fills. */
+  --on-fill: var(--surface-void);
 
-  --glow: 212 100% 60%;
+  --chart-1: 218.2 100% 64.9%; /* #4C8DFF  dials */
+  --chart-2: 149 58.6% 49.2%; /* #34C77B  connects */
+  --chart-3: 35.8 78.8% 57.5%; /* #E8A33D  appointments */
+  --chart-4: 266 84.1% 75.3%; /* #B98BF5  callbacks */
+  --chart-5: 186.7 64.9% 56.5%; /* #48C8D8  voicemail */
+  --chart-6: 216 6.8% 57.1%; /* #8A9099  other / no answer */
+
   --shadow-color: 224 70% 2%;
+}
 
-  --chart-1: 212 100% 64%;
-  --chart-2: 190 95% 56%;
-  --chart-3: 234 90% 72%;
-  --chart-4: 270 84% 74%;
-  --chart-5: 162 70% 52%;
+/* ─────────────────────────────────────────────────────────────────────────────
+   COMPATIBILITY ALIASES
+
+   Declared once, in :root, and never repeated in .dark — a custom property
+   holding `var(--x)` is substituted lazily, in the context of the element that
+   uses it, so these resolve to the dark palette inside `.dark` automatically.
+
+   Two of the old names change meaning rather than value, per the migration
+   map: `--accent` was a second cyan hue and is now the one accent (the product
+   had two competing brand colours), and `--glow` no longer names a separate
+   luminous colour. Both now point at `--accent`, which is what collapsing to a
+   single accent means in practice.
+   ───────────────────────────────────────────────────────────────────────────── */
+:root {
+  --background: var(--surface-void);
+  --surface: var(--surface-1);
+  --surface-muted: var(--surface-2);
+  --card: var(--surface-1);
+  --popover: var(--surface-3);
+  --muted: var(--surface-2);
+  --secondary: var(--surface-3);
+
+  --foreground: var(--ink);
+  --card-foreground: var(--ink);
+  --popover-foreground: var(--ink);
+  --secondary-foreground: var(--ink);
+  --muted-foreground: var(--ink-2);
+
+  --primary: var(--accent);
+  --primary-foreground: var(--on-fill);
+  --primary-soft: var(--accent-bg);
+  --accent-foreground: var(--on-fill);
+  --accent-soft: var(--accent-bg);
+
+  --success: var(--signal-live);
+  --success-foreground: var(--on-fill);
+  --warning: var(--signal-ring);
+  --warning-foreground: var(--on-fill);
+  --danger: var(--signal-stop);
+  --danger-foreground: var(--on-fill);
+
+  --border: var(--line);
+  /* An input's boundary is what identifies it as a control, so it needs the
+     3:1 of 1.4.11 — the old value was ~1.3:1 in light mode and failed. */
+  --input: var(--line-strong);
+  --ring: var(--accent);
+  --glow: var(--accent);
 }
 
 @theme inline {
@@ -156,6 +223,40 @@
   --color-chart-3: hsl(var(--chart-3));
   --color-chart-4: hsl(var(--chart-4));
   --color-chart-5: hsl(var(--chart-5));
+  --color-chart-6: hsl(var(--chart-6));
+
+  /* ── The measured palette, addressable directly ─────────────────────────
+     Everything above this line is a compatibility alias. New work names the
+     plane or the signal it means — `bg-surface-2`, `text-ink-3`,
+     `border-line-strong`, `text-signal-live` — because those names carry a
+     verified contrast ratio and `bg-card` no longer says which plane it is. */
+  --color-surface-void: hsl(var(--surface-void));
+  --color-surface-1: hsl(var(--surface-1));
+  --color-surface-2: hsl(var(--surface-2));
+  --color-surface-3: hsl(var(--surface-3));
+  --color-surface-4: hsl(var(--surface-4));
+
+  --color-ink: hsl(var(--ink));
+  --color-ink-2: hsl(var(--ink-2));
+  --color-ink-3: hsl(var(--ink-3));
+  --color-on-fill: hsl(var(--on-fill));
+
+  --color-line: hsl(var(--line));
+  --color-line-strong: hsl(var(--line-strong));
+  --color-line-active: hsl(var(--line-active));
+
+  --color-accent-bg: hsl(var(--accent-bg));
+  --color-accent-line: hsl(var(--accent-line));
+
+  --color-signal-live: hsl(var(--signal-live));
+  --color-signal-live-bg: hsl(var(--signal-live-bg));
+  --color-signal-live-line: hsl(var(--signal-live-line));
+  --color-signal-ring: hsl(var(--signal-ring));
+  --color-signal-ring-bg: hsl(var(--signal-ring-bg));
+  --color-signal-ring-line: hsl(var(--signal-ring-line));
+  --color-signal-stop: hsl(var(--signal-stop));
+  --color-signal-stop-bg: hsl(var(--signal-stop-bg));
+  --color-signal-stop-line: hsl(var(--signal-stop-line));
 
   --radius-sm: calc(var(--radius) - 5px);
   --radius-md: calc(var(--radius) - 3px);

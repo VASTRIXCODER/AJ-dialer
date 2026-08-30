@@ -18,7 +18,6 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { MetricCard } from "@/components/dashboard/metric-card";
-import { AmbientBackground } from "@/components/layout/ambient-background";
 import { SectionCard } from "@/components/shared/section-card";
 import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
@@ -109,7 +108,9 @@ export function SuperConsole() {
 
   return (
     <div className="superadmin-theme relative min-h-screen bg-background text-foreground">
-      <AmbientBackground />
+      {/* The console is an Instrument, not a Stage: it is org tables, KPI tiles
+          and destructive controls. The ambient field is not mounted here for
+          the same reason it is not mounted in the app shell. */}
 
       {/* Header */}
       <header className="relative border-b border-border/60 surface-glass">
