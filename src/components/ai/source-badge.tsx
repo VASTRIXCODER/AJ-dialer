@@ -37,7 +37,7 @@ export function AiSourceBadge({
             : "Showing simulated intelligence — connect an Anthropic API key for live analysis."
       }
       className={cn(
-        "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide",
+        "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-bold uppercase tracking-wide",
         live
           ? "bg-accent-soft text-accent"
           : reason

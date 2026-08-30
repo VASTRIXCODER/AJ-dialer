@@ -408,7 +408,7 @@ export function ExportDialog({
               <div>
                 <Label>
                   Columns &amp; headers{" "}
-                  <span className="normal-case tracking-normal text-muted-foreground/80 tabular">
+                  <span className="normal-case tracking-normal text-ink-3 tabular">
                     ({columns.length}/{EXPORT_MAX_COLUMNS})
                   </span>
                 </Label>

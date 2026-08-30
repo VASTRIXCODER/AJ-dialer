@@ -308,7 +308,7 @@ export function AiLiveMonitor({
 
         {board.length === 0 ? (
           <Card className="flex flex-col items-center gap-1 p-8 text-center">
-            <Bot className="mb-1 h-8 w-8 text-muted-foreground/50" />
+            <Bot className="mb-1 h-8 w-8 text-ink-3" />
             <p className="text-sm font-medium">No live AI calls right now</p>
             <p className="text-sm text-muted-foreground">
               Start an AI session from the{" "}

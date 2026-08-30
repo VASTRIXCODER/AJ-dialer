@@ -989,7 +989,7 @@ export function LeadsTable({
                       "py-1 pl-0.5 pr-2 transition-colors",
                       active
                         ? "text-white/80 hover:text-white"
-                        : "text-muted-foreground/60 hover:text-warning",
+                        : "text-ink-3 hover:text-warning",
                     )}
                   >
                     {favBusy === sl.id ? (

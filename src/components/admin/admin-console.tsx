@@ -855,7 +855,7 @@ function PermissionsEditor({
                 {on && <Check className="h-3 w-3" />}
               </span>
               <span className="flex-1">{PERMISSION_LABEL[p]}</span>
-              {!isDefault && <span className="text-[10px] font-bold text-primary">●</span>}
+              {!isDefault && <span className="text-[11px] font-bold text-primary">●</span>}
             </button>
           );
         })}

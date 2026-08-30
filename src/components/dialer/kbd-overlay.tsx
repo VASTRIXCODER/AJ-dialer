@@ -74,7 +74,7 @@ export function KbdOverlay({
             </p>
           )}
         </div>
-        <p className="pt-2 text-[11px] text-muted-foreground/70">
+        <p className="pt-2 text-[11px] text-ink-3">
           Shortcuts pause automatically while you&apos;re typing in a text field.
         </p>
       </div>

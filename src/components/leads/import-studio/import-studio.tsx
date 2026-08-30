@@ -359,7 +359,7 @@ export function ImportStudio({
       <ol className="flex flex-wrap items-center gap-1.5 text-xs" aria-label="Import steps">
         {STEPS.map((s, i) => (
           <li key={s.id} className="flex items-center gap-1.5">
-            {i > 0 && <span className="text-muted-foreground/50">→</span>}
+            {i > 0 && <span className="text-ink-3">→</span>}
             <span
               aria-current={s.id === step ? "step" : undefined}
               className={cn(

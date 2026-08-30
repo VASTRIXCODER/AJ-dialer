@@ -202,7 +202,7 @@ export function AiCallSummary({
                 </span>
               </button>
               {suggestion.rationale && (
-                <p className="mt-1.5 text-[11px] text-muted-foreground/80">
+                <p className="mt-1.5 text-[11px] text-ink-3">
                   {suggestion.rationale} — your click files it; nothing applies on its own.
                 </p>
               )}

@@ -186,12 +186,12 @@ export function HubView({
                   {m.tagline || m.productName || templateLabel(m.dialerTemplate)}
                 </p>
                 {m.description ? (
-                  <p className="mt-1.5 line-clamp-2 text-xs text-muted-foreground/80">
+                  <p className="mt-1.5 line-clamp-2 text-xs text-ink-3">
                     {m.description}
                   </p>
                 ) : null}
                 {m.website ? (
-                  <p className="mt-1 truncate text-[11px] text-muted-foreground/70">
+                  <p className="mt-1 truncate text-[11px] text-ink-3">
                     {m.website.replace(/^https?:\/\//, "")}
                   </p>
                 ) : null}

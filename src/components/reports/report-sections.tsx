@@ -149,22 +149,22 @@ export function ChannelCompare({ channelStats }: { channelStats: ChannelRow[] })
             <div className="grid grid-cols-2 gap-2 text-center">
               <div className="rounded-lg bg-muted/60 p-2">
                 <p className="text-lg font-bold tabular">{c.connectRate}%</p>
-                <p className="text-[10px] text-muted-foreground">Connect</p>
+                <p className="text-[11px] text-muted-foreground">Connect</p>
               </div>
               <div className="rounded-lg bg-muted/60 p-2">
                 <p className="text-lg font-bold tabular">{c.apptRate}%</p>
-                <p className="text-[10px] text-muted-foreground">Appt rate</p>
+                <p className="text-[11px] text-muted-foreground">Appt rate</p>
               </div>
               <div className="rounded-lg bg-muted/60 p-2">
                 <p className="text-lg font-bold tabular">{formatNumber(c.appointments)}</p>
-                <p className="text-[10px] text-muted-foreground">Appointments</p>
+                <p className="text-[11px] text-muted-foreground">Appointments</p>
               </div>
               <div className="rounded-lg bg-muted/60 p-2">
                 <p className="text-lg font-bold tabular">
                   <PhoneOutgoing className="mr-1 inline h-3 w-3 text-muted-foreground" />
                   {formatDuration(c.avgTalkSec)}
                 </p>
-                <p className="text-[10px] text-muted-foreground">Avg talk</p>
+                <p className="text-[11px] text-muted-foreground">Avg talk</p>
               </div>
             </div>
           </div>

@@ -137,7 +137,7 @@ export function Sidebar({
       <nav className="flex-1 space-y-6 overflow-y-auto px-3">
         {groups.map((group) => (
           <div key={group.label}>
-            <p className="px-3 pb-2 text-[10px] font-bold uppercase tracking-[0.14em] text-muted-foreground/60">
+            <p className="px-3 pb-2 text-[11px] font-bold uppercase tracking-[0.14em] text-ink-3">
               {group.label}
             </p>
             <ul className="space-y-0.5">
@@ -192,7 +192,7 @@ export function Sidebar({
                       {item.countBadge === "reviews" && <ReviewCountBadge />}
                       {item.badge &&
                         (item.badge === "Live" ? (
-                          <span className="relative z-10 flex items-center gap-1.5 text-[10px] font-bold text-success">
+                          <span className="relative z-10 flex items-center gap-1.5 text-[11px] font-bold text-success">
                             <span className="relative flex h-2 w-2">
                               <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-success opacity-60" />
                               <span className="relative inline-flex h-2 w-2 rounded-full bg-success" />

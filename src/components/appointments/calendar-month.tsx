@@ -142,7 +142,7 @@ export function CalendarMonth({
                     today
                       ? "bg-primary text-primary-foreground"
                       : outside
-                        ? "text-muted-foreground/50"
+                        ? "text-ink-3"
                         : "text-muted-foreground",
                   )}
                 >
@@ -256,7 +256,7 @@ function MonthChip({
       {conflicted && <TriangleAlert className="h-2.5 w-2.5 shrink-0 text-danger" />}
       {start && <span className="shrink-0 tabular opacity-80">{shortTime(start)}</span>}
       <span className={cn("truncate", isDead(a) && "line-through")}>{a.leadName}</span>
-      {isReview(a) && <span className="ml-auto shrink-0 text-[9px] font-bold uppercase">●</span>}
+      {isReview(a) && <span className="ml-auto shrink-0 text-[11px] font-bold uppercase">●</span>}
     </div>
   );
 }

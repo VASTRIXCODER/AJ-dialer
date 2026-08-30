@@ -262,7 +262,7 @@ export function MenuItem({
         "flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-sm font-medium transition-colors",
         "focus-visible:outline-none focus:bg-muted/70",
         disabled
-          ? "cursor-not-allowed text-muted-foreground/50"
+          ? "cursor-not-allowed text-ink-3"
           : danger
             ? "text-danger hover:bg-danger/10"
             : "text-foreground hover:bg-muted/70",

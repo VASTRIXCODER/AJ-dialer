@@ -37,7 +37,7 @@ function DefinitionHint({ id }: { id: MetricId }) {
       <span
         tabIndex={0}
         aria-label={`What "${def.label}" means`}
-        className="inline-flex cursor-help text-muted-foreground/60 transition-colors hover:text-muted-foreground focus-visible:text-muted-foreground"
+        className="inline-flex cursor-help text-ink-3 transition-colors hover:text-muted-foreground focus-visible:text-muted-foreground"
       >
         <Info className="h-3 w-3" />
       </span>

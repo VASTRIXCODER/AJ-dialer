@@ -58,7 +58,7 @@ export function FilterChip({
         {Icon && <Icon className="h-3.5 w-3.5 shrink-0" />}
         <span>{label}</span>
         {value && (
-          <span className={cn("font-normal", active ? "text-primary/80" : "text-muted-foreground/80")}>
+          <span className={cn("font-normal", active ? "text-primary/80" : "text-ink-3")}>
             {value}
           </span>
         )}

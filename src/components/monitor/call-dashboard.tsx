@@ -623,7 +623,7 @@ export function CallDashboard({
               <MessageSquare className="h-3.5 w-3.5" />
               Transcript
               {live && (
-                <span className="ml-1 inline-flex items-center gap-1 rounded-full bg-success/12 px-1.5 py-0.5 text-[10px] font-bold text-success">
+                <span className="ml-1 inline-flex items-center gap-1 rounded-full bg-success/12 px-1.5 py-0.5 text-[11px] font-bold text-success">
                   <Radio className="h-3 w-3" />
                   LIVE
                 </span>
@@ -729,7 +729,7 @@ export function CallDashboard({
                     >
                       <p
                         className={cn(
-                          "mb-0.5 text-[10px] font-bold uppercase tracking-wide",
+                          "mb-0.5 text-[11px] font-bold uppercase tracking-wide",
                           isAgent ? "text-muted-foreground" : "text-white/70",
                         )}
                       >

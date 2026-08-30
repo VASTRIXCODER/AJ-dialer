@@ -195,7 +195,7 @@ export function TranscriptPanel({
           <MessageSquare className="h-3.5 w-3.5" />
           Transcript
           {parsed.length > 0 && (
-            <span className="font-medium normal-case tracking-normal text-muted-foreground/70">
+            <span className="font-medium normal-case tracking-normal text-ink-3">
               · {parsed.length} turn{parsed.length === 1 ? "" : "s"}
             </span>
           )}
@@ -249,7 +249,7 @@ export function TranscriptPanel({
               >
                 <p
                   className={cn(
-                    "mb-0.5 flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wide",
+                    "mb-0.5 flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wide",
                     agent ? "text-muted-foreground" : "text-white/70",
                   )}
                 >

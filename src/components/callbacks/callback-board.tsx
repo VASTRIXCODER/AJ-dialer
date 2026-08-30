@@ -83,7 +83,7 @@ function DueLabel({ row, now }: { row: CallbackBoardRow; now: number }) {
   if (!d) {
     // Honest: a callback with no agreed time is not "due now", it just never
     // got one.
-    return <span className="text-xs font-medium text-muted-foreground/70">No time set</span>;
+    return <span className="text-xs font-medium text-ink-3">No time set</span>;
   }
   const tz = row.timezone ? timezoneLabel(row.timezone, d) : "";
   return (
@@ -92,7 +92,7 @@ function DueLabel({ row, now }: { row: CallbackBoardRow; now: number }) {
       title={`${formatDayLabel(d)} at ${formatTime(d)}${tz ? ` (${tz})` : ""}`}
     >
       {relativeTime(d.toISOString(), new Date(now))}
-      {tz ? <span className="text-muted-foreground/70"> · {tz}</span> : null}
+      {tz ? <span className="text-ink-3"> · {tz}</span> : null}
     </span>
   );
 }
@@ -219,7 +219,7 @@ function RowCard({
               "flex h-7 w-7 shrink-0 items-center justify-center rounded-lg transition-colors",
               row.priority > 0
                 ? "text-warning hover:bg-warning/10"
-                : "text-muted-foreground/50 hover:bg-muted hover:text-foreground",
+                : "text-ink-3 hover:bg-muted hover:text-foreground",
               !canManage && "cursor-default hover:bg-transparent",
             )}
           >

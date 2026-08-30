@@ -118,7 +118,7 @@ export function FloorDetailPanel({
               </span>
             )}
             {card.mode && (
-              <Badge tone={card.mode === "ai" ? "primary" : "accent"} className="px-1.5 py-0 text-[10px]">
+              <Badge tone={card.mode === "ai" ? "primary" : "accent"} className="px-1.5 py-0 text-[11px]">
                 {card.mode === "ai" ? (
                   <span className="inline-flex items-center gap-1"><Bot className="h-3 w-3" /> AI</span>
                 ) : (
@@ -127,7 +127,7 @@ export function FloorDetailPanel({
               </Badge>
             )}
             {card.campaignName && (
-              <Badge tone="outline" className="px-1.5 py-0 text-[10px]">
+              <Badge tone="outline" className="px-1.5 py-0 text-[11px]">
                 <Flag className="h-3 w-3" /> {card.campaignName}
               </Badge>
             )}

@@ -61,7 +61,7 @@ export function CallerIdPicker({
               "flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium transition-colors",
               on
                 ? "border-primary/40 bg-primary-soft text-primary"
-                : "border-border/60 bg-muted/30 text-muted-foreground/50 line-through",
+                : "border-border/60 bg-muted/30 text-ink-3 line-through",
               disabled || isLastOn
                 ? "cursor-not-allowed opacity-70"
                 : "hover:bg-muted/70",
@@ -74,7 +74,7 @@ export function CallerIdPicker({
         );
       })}
       {enabledCount > 1 && (
-        <span className="text-[11px] text-muted-foreground/70">
+        <span className="text-[11px] text-ink-3">
           · every {rotateEvery} call{rotateEvery === 1 ? "" : "s"}
         </span>
       )}

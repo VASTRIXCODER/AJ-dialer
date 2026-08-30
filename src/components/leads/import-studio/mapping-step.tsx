@@ -264,7 +264,7 @@ export function MappingStep({
                     </p>
                   ))
                 ) : (
-                  <p className="text-xs italic text-muted-foreground/60">No values</p>
+                  <p className="text-xs italic text-ink-3">No values</p>
                 )}
               </div>
               <select

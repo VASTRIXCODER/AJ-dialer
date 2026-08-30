@@ -56,7 +56,7 @@ export function RecordingsSection({
                 type="button"
                 title="Opens in call archive"
                 aria-disabled="true"
-                className="cursor-default rounded-lg px-2 py-1 text-xs font-semibold text-muted-foreground/70"
+                className="cursor-default rounded-lg px-2 py-1 text-xs font-semibold text-ink-3"
               >
                 Open call
               </button>

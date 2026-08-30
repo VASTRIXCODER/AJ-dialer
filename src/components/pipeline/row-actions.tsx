@@ -152,14 +152,14 @@ export function RowActions({
               Change disposition…
             </button>
             {!leadId && (
-              <p className="px-2.5 pb-1 text-[10px] text-muted-foreground">No lead linked to re-file.</p>
+              <p className="px-2.5 pb-1 text-[11px] text-muted-foreground">No lead linked to re-file.</p>
             )}
           </div>
         </Portal>
       )}
 
       {err && !open && !redispo && (
-        <span className="ml-1 text-[10px] font-medium text-danger">{err}</span>
+        <span className="ml-1 text-[11px] font-medium text-danger">{err}</span>
       )}
 
       {redispo && (

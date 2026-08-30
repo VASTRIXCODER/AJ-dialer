@@ -111,7 +111,7 @@ export function SalesDashboard() {
                   <div key={r.name} className="flex items-center gap-2.5">
                     <span
                       className={cn(
-                        "flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[10px] font-bold",
+                        "flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[11px] font-bold",
                         i === 0
                           ? "bg-warning/20 text-warning"
                           : "bg-muted/70 text-muted-foreground",
@@ -120,7 +120,7 @@ export function SalesDashboard() {
                       {i + 1}
                     </span>
                     <span
-                      className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[10px] font-bold text-white"
+                      className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[11px] font-bold text-white"
                       style={{ backgroundColor: `hsl(${r.color})` }}
                     >
                       {r.initials}
@@ -140,7 +140,7 @@ export function SalesDashboard() {
                 {campaigns.map((c, i) => (
                   <div key={c.name}>
                     <div className="mb-1 flex items-center justify-between text-[11px]">
-                      <span className="font-medium text-foreground/90">{c.name}</span>
+                      <span className="font-medium text-muted-foreground">{c.name}</span>
                       <span className="font-bold tabular text-muted-foreground">{c.pct}%</span>
                     </div>
                     <div className="h-1.5 overflow-hidden rounded-full bg-muted/70">
@@ -175,7 +175,7 @@ export function SalesDashboard() {
                   animate={{ opacity: 1, y: 0 }}
                   exit={reduce ? undefined : { opacity: 0, y: -8 }}
                   transition={{ duration: 0.4 }}
-                  className="absolute inset-0 truncate text-xs font-medium text-foreground/85"
+                  className="absolute inset-0 truncate text-xs font-medium text-muted-foreground"
                 >
                   {feed[tick]}
                 </motion.p>

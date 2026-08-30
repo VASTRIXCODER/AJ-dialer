@@ -371,7 +371,7 @@ export function FilterBuilder({
         return (
           <React.Fragment key={gi}>
             {gi > 0 && (
-              <div className="text-center text-[10px] font-bold uppercase tracking-widest text-muted-foreground/70">
+              <div className="text-center text-[11px] font-bold uppercase tracking-widest text-ink-3">
                 {spec.op}
               </div>
             )}

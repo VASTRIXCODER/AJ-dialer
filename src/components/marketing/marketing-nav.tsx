@@ -103,7 +103,7 @@ export function MarketingNav() {
                 key={l.href}
                 href={l.href}
                 onClick={() => setOpen(false)}
-                className="border-b border-border/40 py-3.5 text-base font-medium text-foreground/90"
+                className="border-b border-border/40 py-3.5 text-base font-medium text-muted-foreground"
               >
                 {l.label}
               </a>

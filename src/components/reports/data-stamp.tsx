@@ -41,16 +41,16 @@ export function DataStamp({
     <p className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-xs text-muted-foreground">
       <Clock3 className="h-3.5 w-3.5" aria-hidden />
       <span>
-        Data as of <span className="font-medium text-foreground/80 tabular">{asOf}</span>
+        Data as of <span className="font-medium text-muted-foreground tabular">{asOf}</span>
       </span>
       <span aria-hidden>·</span>
       <span>
-        org timezone <span className="font-medium text-foreground/80">{timezone}</span>
+        org timezone <span className="font-medium text-muted-foreground">{timezone}</span>
       </span>
       {rangeLabel && (
         <>
           <span aria-hidden>·</span>
-          <span className="font-medium text-foreground/80">{rangeLabel}</span>
+          <span className="font-medium text-muted-foreground">{rangeLabel}</span>
         </>
       )}
     </p>

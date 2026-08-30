@@ -214,9 +214,9 @@ export function CommandPalette() {
                 onChange={(e) => setQuery(e.target.value)}
                 onKeyDown={onInputKey}
                 placeholder={`Search or ask AI — “${vocab.leadNounPlural} worth calling first”…`}
-                className="h-14 w-full bg-transparent text-[15px] outline-none placeholder:text-muted-foreground/70"
+                className="h-14 w-full bg-transparent text-[15px] outline-none placeholder:text-ink-3"
               />
-              <kbd className="hidden shrink-0 rounded-md border border-border/70 bg-muted/60 px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground sm:inline-flex">
+              <kbd className="hidden shrink-0 rounded-md border border-border/70 bg-muted/60 px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground sm:inline-flex">
                 ESC
               </kbd>
             </div>
@@ -238,7 +238,7 @@ export function CommandPalette() {
               {/* Commands */}
               {filteredCommands.length > 0 && (
                 <div className="mb-1">
-                  <p className="px-3 pb-1 pt-2 text-[10px] font-bold uppercase tracking-[0.12em] text-muted-foreground/60">
+                  <p className="px-3 pb-1 pt-2 text-[11px] font-bold uppercase tracking-[0.12em] text-ink-3">
                     Go to
                   </p>
                   {filteredCommands.map((c, i) => {
@@ -266,7 +266,7 @@ export function CommandPalette() {
               {/* Lead matches */}
               {matches.length > 0 && (
                 <div>
-                  <p className="px-3 pb-1 pt-2 text-[10px] font-bold uppercase tracking-[0.12em] text-muted-foreground/60">
+                  <p className="px-3 pb-1 pt-2 text-[11px] font-bold uppercase tracking-[0.12em] text-ink-3">
                     {vocab.LeadNounPlural}
                   </p>
                   {matches.map((m, i) => {

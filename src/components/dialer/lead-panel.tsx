@@ -78,12 +78,16 @@ export function LeadPanel({
   canReverseSearch = false,
   reverseSearchConfigured = false,
   onLeadPatched,
+  pinned = false,
 }: {
   lead: Lead | null;
   upNext: Lead[];
   queue?: Lead[];
   index?: number;
   total?: number;
+  /** The rep picked this lead out of the browser, so the next call goes to
+   *  THEM — not to whoever the queue would otherwise serve up. Say so. */
+  pinned?: boolean;
   onPrev?: () => void;
   onNext?: () => void;
   onSelect?: (leadId: string) => void;
@@ -132,6 +136,14 @@ export function LeadPanel({
             <Users className="h-3.5 w-3.5" />
             Lead {Math.min(index + 1, total)} of {total}
           </button>
+          {pinned && (
+            <span
+              className="shrink-0 rounded-full bg-primary-soft px-2 py-1 text-[11px] font-bold uppercase tracking-wide text-primary"
+              title="You picked this lead — Start calls them, or tells you why it can't."
+            >
+              Your pick
+            </span>
+          )}
           <button
             type="button"
             onClick={onNext}
@@ -924,7 +936,7 @@ function LeadDetail({
               const value = leadFieldValue(lead, def);
               return (
                 <div key={def.key} className="rounded-xl bg-muted px-3 py-2">
-                  <p className="truncate text-[10px] font-bold uppercase tracking-wide text-muted-foreground">
+                  <p className="truncate text-[11px] font-bold uppercase tracking-wide text-muted-foreground">
                     {tileLabel(def.label)}
                   </p>
                   <p className="text-base font-bold tabular">
@@ -1062,7 +1074,7 @@ function CallHistory({ leadId }: { leadId: string }) {
                 {/* What this call left behind, so the rep knows there's something
                     worth opening before they open it. */}
                 {hasDetail && (
-                  <span className="flex items-center gap-1 text-muted-foreground/70">
+                  <span className="flex items-center gap-1 text-ink-3">
                     {c.hasRecording && <Headphones className="h-3 w-3" />}
                     {c.hasTranscript && <FileText className="h-3 w-3" />}
                     {c.hasNotes && <NotebookPen className="h-3 w-3" />}
@@ -1071,7 +1083,7 @@ function CallHistory({ leadId }: { leadId: string }) {
                 {cfg && (
                   <Badge
                     tone={cfg.tone === "success" ? "success" : cfg.tone === "danger" ? "danger" : cfg.tone === "warning" ? "warning" : "neutral"}
-                    className="ml-auto text-[10px] px-1.5 py-0.5"
+                    className="ml-auto text-[11px] px-1.5 py-0.5"
                   >
                     {cfg.label}
                   </Badge>
@@ -1165,7 +1177,7 @@ function LeadBrowser({
           value={q}
           onChange={(e) => setQ(e.target.value)}
           placeholder="Search leads by name, city, phone…"
-          className="h-12 w-full bg-transparent text-sm outline-none placeholder:text-muted-foreground/70"
+          className="h-12 w-full bg-transparent text-sm outline-none placeholder:text-ink-3"
         />
         <button
           type="button"
@@ -1211,7 +1223,7 @@ function LeadBrowser({
                 </div>
                 {extra > 0 && (
                   <span
-                    className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-[10px] font-bold text-muted-foreground"
+                    className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-[11px] font-bold text-muted-foreground"
                     title={`${group.length} numbers on file for this household`}
                   >
                     +{extra} number{extra === 1 ? "" : "s"}

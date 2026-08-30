@@ -276,13 +276,13 @@ export function SettingsView({
                   key={p}
                   className={cn(
                     "flex items-center gap-2 rounded-lg px-2 py-1.5 text-sm",
-                    granted ? "text-foreground" : "text-muted-foreground/60",
+                    granted ? "text-foreground" : "text-ink-3",
                   )}
                 >
                   <span
                     className={cn(
                       "flex h-5 w-5 shrink-0 items-center justify-center rounded-md",
-                      granted ? "bg-success/15 text-success" : "bg-muted text-muted-foreground/60",
+                      granted ? "bg-success/15 text-success" : "bg-muted text-ink-3",
                     )}
                   >
                     {granted ? <Check className="h-3.5 w-3.5" /> : <Minus className="h-3 w-3" />}

@@ -270,7 +270,7 @@ function Stat({ label, value, accent }: { label: string; value: number; accent?:
   return (
     <div className="rounded-xl bg-muted/60 p-2.5 text-center">
       <p className={`text-lg font-bold tabular ${accent ? "text-primary" : ""}`}>{value}</p>
-      <p className="text-[10px] text-muted-foreground">{label}</p>
+      <p className="text-[11px] text-muted-foreground">{label}</p>
     </div>
   );
 }

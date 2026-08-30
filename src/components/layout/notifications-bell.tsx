@@ -87,7 +87,7 @@ export function NotificationsBell() {
       >
         <Bell className="h-[18px] w-[18px]" />
         {unread > 0 && (
-          <span className="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-danger px-1 text-[10px] font-bold text-danger-foreground ring-2 ring-background">
+          <span className="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-danger px-1 text-[11px] font-bold text-danger-foreground ring-2 ring-background">
             {unread > 9 ? "9+" : unread}
           </span>
         )}
@@ -109,7 +109,7 @@ export function NotificationsBell() {
             <div className="max-h-[60vh] overflow-y-auto">
               {items.length === 0 ? (
                 <div className="px-4 py-10 text-center">
-                  <Bell className="mx-auto mb-2 h-7 w-7 text-muted-foreground/40" />
+                  <Bell className="mx-auto mb-2 h-7 w-7 text-ink-3" />
                   <p className="text-sm text-muted-foreground">You're all caught up.</p>
                 </div>
               ) : (
@@ -146,7 +146,7 @@ export function NotificationsBell() {
                         >
                           {n.body}
                         </p>
-                        <p className="mt-0.5 text-[11px] text-muted-foreground/70">
+                        <p className="mt-0.5 text-[11px] text-ink-3">
                           {n.at ? relativeTime(n.at) : ""}
                         </p>
                       </div>

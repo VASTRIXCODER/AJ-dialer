@@ -502,7 +502,7 @@ function FloorList({
         <span className="inline-flex items-center gap-1.5">
           <StatusPill state={c.state} />
           {c.stale && (
-            <span className="rounded-full bg-warning/15 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-warning">
+            <span className="rounded-full bg-warning/15 px-1.5 py-0.5 text-[11px] font-bold uppercase tracking-wide text-warning">
               Stale
             </span>
           )}

@@ -148,7 +148,7 @@ export function WrapupPanel({
               <NotebookPen className="h-3.5 w-3.5" />
               Notes
             </span>
-            <span className="font-medium normal-case tracking-normal text-muted-foreground/70">
+            <span className="font-medium normal-case tracking-normal text-ink-3">
               Saved with the disposition
             </span>
           </label>

@@ -137,7 +137,7 @@ function LaneRow({
             </p>
             {!compact && loc && (
               <p
-                className="mt-0.5 flex items-center gap-1 text-[11px] text-muted-foreground/80"
+                className="mt-0.5 flex items-center gap-1 text-[11px] text-ink-3"
                 title="Inferred from the phone number's area code — numbers are portable, so this is about the NUMBER, not necessarily where they live."
               >
                 <MapPin className="h-3 w-3 shrink-0" />
@@ -220,7 +220,7 @@ export function ParallelLanes({
           <p className="mb-2.5 text-[11px] text-muted-foreground tabular">
             <b className="font-bold text-foreground">{state.callsThisSession}</b> dials ·{" "}
             <b className="font-bold text-foreground">{state.connectsThisSession}</b> connects{" "}
-            <span className="text-muted-foreground/70">
+            <span className="text-ink-3">
               this session, counted on this device
             </span>
           </p>

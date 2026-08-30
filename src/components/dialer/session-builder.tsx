@@ -414,7 +414,7 @@ export function SessionBuilder({
                           {s.count.toLocaleString()}
                         </p>
                         {optIn && on && (
-                          <p className="mt-1 text-[10px] leading-tight text-warning">
+                          <p className="mt-1 text-[11px] leading-tight text-warning">
                             {segHint(s.hint)}
                           </p>
                         )}

@@ -151,7 +151,7 @@ export function FloorCard({
             </p>
             <p className="mt-0.5 flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
               {card.mode && (
-                <Badge tone={isAi ? "primary" : "accent"} className="px-1.5 py-0 text-[10px]">
+                <Badge tone={isAi ? "primary" : "accent"} className="px-1.5 py-0 text-[11px]">
                   {isAi ? (
                     <span className="inline-flex items-center gap-1">
                       <Bot className="h-3 w-3" /> AI
@@ -164,7 +164,7 @@ export function FloorCard({
                 </Badge>
               )}
               {card.campaignName && (
-                <Badge tone="outline" className="max-w-36 px-1.5 py-0 text-[10px]">
+                <Badge tone="outline" className="max-w-36 px-1.5 py-0 text-[11px]">
                   <Flag className="h-3 w-3 shrink-0" />
                   <span className="truncate">{card.campaignName}</span>
                 </Badge>
@@ -215,7 +215,7 @@ export function FloorCard({
         {card.lastEventAt != null && (
           <span className="inline-flex items-center gap-1.5">
             {card.stale && (
-              <span className="rounded-full bg-warning/15 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-warning">
+              <span className="rounded-full bg-warning/15 px-1.5 py-0.5 text-[11px] font-bold uppercase tracking-wide text-warning">
                 Stale
               </span>
             )}

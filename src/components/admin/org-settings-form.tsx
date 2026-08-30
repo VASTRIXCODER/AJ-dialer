@@ -1453,7 +1453,7 @@ export function OrgSettingsForm({
                   )}
                 >
                   {f.label}
-                  <span className={cn("font-normal", on ? "text-primary/70" : "text-muted-foreground/70")}>
+                  <span className={cn("font-normal", on ? "text-primary/70" : "text-ink-3")}>
                     · {f.type}
                   </span>
                 </button>

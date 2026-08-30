@@ -215,7 +215,7 @@ export default async function ReportsPage({
           // All-time has no "previous period" — a disabled control with the
           // reason beats a toggle that silently does nothing.
           <span
-            className="cursor-not-allowed px-2 py-1 text-xs text-muted-foreground/60"
+            className="cursor-not-allowed px-2 py-1 text-xs text-ink-3"
             title="Pick a date range first — all time has no previous period."
           >
             needs a date range

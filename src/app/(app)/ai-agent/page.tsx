@@ -98,7 +98,7 @@ export default async function AiAgentPage() {
         <PageHeader title="AI Command Center" description={intelligenceLayerDesc} />
         <Card className="flex flex-col items-center gap-6 px-8 py-16 text-center">
           <span className="flex h-20 w-20 items-center justify-center rounded-3xl border-2 border-dashed border-border bg-muted/40">
-            <Lock className="h-9 w-9 text-muted-foreground/60" />
+            <Lock className="h-9 w-9 text-ink-3" />
           </span>
           <div className="max-w-md">
             <p className="text-xl font-bold tracking-tight">
@@ -223,7 +223,7 @@ export default async function AiAgentPage() {
                 </span>
                 <span
                   className={cn(
-                    "flex items-center gap-1 text-[10px] font-bold uppercase tracking-wide",
+                    "flex items-center gap-1 text-[11px] font-bold uppercase tracking-wide",
                     aiLive ? "text-success" : "text-muted-foreground",
                   )}
                 >

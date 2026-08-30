@@ -228,7 +228,7 @@ export function CallArchive({
       <div className="space-y-3 rounded-2xl border border-border bg-card p-4">
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
           <div className="relative flex-1">
-            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground/70" />
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-3" />
             <Input
               type="search"
               value={filters.q}
@@ -461,7 +461,7 @@ export function CallArchive({
                   className={cn(
                     "flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border transition-colors",
                     !c.hasRecording
-                      ? "cursor-not-allowed border-dashed border-border/60 text-muted-foreground/40"
+                      ? "cursor-not-allowed border-dashed border-border/60 text-ink-3"
                       : playing
                         ? "border-primary/60 bg-primary text-white shadow-glow"
                         : "border-border text-muted-foreground hover:bg-muted hover:text-foreground",
@@ -487,7 +487,7 @@ export function CallArchive({
                     {c.hasTranscript && (
                       <span
                         title="Has a transcript"
-                        className="inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wide text-muted-foreground"
+                        className="inline-flex items-center gap-1 text-[11px] font-bold uppercase tracking-wide text-muted-foreground"
                       >
                         <FileText className="h-3 w-3" />
                         Transcript

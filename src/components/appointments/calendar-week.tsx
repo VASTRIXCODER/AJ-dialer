@@ -386,12 +386,12 @@ function WeekChip({
         </span>
       </div>
       {!tight && (
-        <p className="truncate text-[10px] leading-tight opacity-80">
+        <p className="truncate text-[11px] leading-tight opacity-80">
           {formatRange(start, durationMin)}
         </p>
       )}
       {!tight && isReview(a) && (
-        <p className="truncate text-[10px] font-bold uppercase leading-tight tracking-wide">
+        <p className="truncate text-[11px] font-bold uppercase leading-tight tracking-wide">
           Needs review
         </p>
       )}

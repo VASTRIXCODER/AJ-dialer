@@ -214,7 +214,7 @@ export function ShellHeader({
             ) : (
               <span
                 title="Manual dialing is a premium feature — locked on this plan."
-                className="flex cursor-not-allowed items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-semibold text-muted-foreground/60"
+                className="flex cursor-not-allowed items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-semibold text-ink-3"
               >
                 <Lock className="h-3.5 w-3.5" />
                 Manual
@@ -238,7 +238,7 @@ export function ShellHeader({
               !aiOffForWorkspace && (
                 <span
                   title={aiLockText}
-                  className="flex cursor-not-allowed items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-semibold text-muted-foreground/60"
+                  className="flex cursor-not-allowed items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-semibold text-ink-3"
                 >
                   <Lock className="h-3.5 w-3.5" />
                   AI
@@ -286,7 +286,7 @@ export function ShellHeader({
             <b className="font-bold text-foreground tabular">{state.connectsThisSession}</b> connects
           </span>
         )}
-        <span className="text-[11px] text-muted-foreground/70">this session</span>
+        <span className="text-[11px] text-ink-3">this session</span>
         {state.dialsToday > 0 && (
           <span title="All your dials today, across sessions and reloads.">
             <b className="font-bold text-foreground tabular">{state.dialsToday}</b> today

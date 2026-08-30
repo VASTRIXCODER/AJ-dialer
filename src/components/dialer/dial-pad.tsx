@@ -83,7 +83,7 @@ export function DialPad({
               {k.d}
             </span>
             {!compact && k.s && (
-              <span className="text-[9px] font-bold tracking-widest text-muted-foreground">
+              <span className="text-[11px] font-bold tracking-widest text-muted-foreground">
                 {k.s}
               </span>
             )}
