@@ -10,7 +10,7 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { AiSourceBadge } from "@/components/ai/source-badge";
-import { SpotlightCard } from "@/components/motion";
+import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import type { ExecutiveReport } from "@/lib/ai/types";
 import { cn } from "@/lib/utils";
@@ -73,7 +73,7 @@ export function AiExecReport() {
   }, [load]);
 
   return (
-    <SpotlightCard tilt={false} className="overflow-hidden p-6">
+    <Card className="overflow-hidden p-6">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-accent-soft text-accent">
@@ -165,6 +165,6 @@ export function AiExecReport() {
           </div>
         </motion.div>
       )}
-    </SpotlightCard>
+    </Card>
   );
 }

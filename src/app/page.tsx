@@ -448,7 +448,7 @@ export default function LandingPage() {
       {/* ── Final CTA ────────────────────────────────────────────────────── */}
       <section className="mx-auto max-w-7xl px-4 pb-20 sm:px-6">
         <Reveal>
-          <div className="relative overflow-hidden rounded-3xl bg-brand px-6 py-16 text-center text-white shadow-glow sm:px-12">
+          <div className="relative overflow-hidden rounded-3xl bg-brand px-6 py-16 text-center text-white sm:px-12">
             <div className="pointer-events-none absolute inset-0 bg-dots opacity-20" />
             <div className="relative mx-auto max-w-2xl">
               <TrendingUp className="mx-auto h-10 w-10" />
@@ -489,7 +489,7 @@ export default function LandingPage() {
           <div className="grid gap-10 sm:grid-cols-2 lg:grid-cols-4">
             <div>
               <div className="flex items-center gap-2.5">
-                <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-brand text-white shadow-glow">
+                <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-brand text-white">
                   <PhoneCall className="h-4 w-4" />
                 </span>
                 <span className="text-[15px] font-bold tracking-tight">AIATWORK</span>

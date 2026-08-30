@@ -136,7 +136,7 @@ export function ChannelCompare({ channelStats }: { channelStats: ChannelRow[] })
               <span
                 className={cn(
                   "flex h-8 w-8 items-center justify-center rounded-lg",
-                  isAI ? "bg-brand text-white shadow-glow" : "bg-accent-soft text-accent",
+                  isAI ? "bg-brand text-white" : "bg-accent-soft text-accent",
                 )}
               >
                 <Icon className="h-4 w-4" />

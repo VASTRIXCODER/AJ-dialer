@@ -115,7 +115,7 @@ export function SuperConsole() {
       {/* Header */}
       <header className="relative border-b border-border/60 surface-glass">
         <div className="mx-auto flex max-w-7xl flex-wrap items-center gap-3 px-4 py-4 sm:px-6">
-          <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-brand text-white shadow-glow">
+          <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-brand text-white">
             <ShieldAlert className="h-6 w-6" />
           </span>
           <div className="flex-1">

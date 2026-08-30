@@ -15,9 +15,9 @@ import {
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
-import { SpotlightCard } from "@/components/motion";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
 import { useConfirm } from "@/components/ui/confirm-dialog";
 import { Input, Label } from "@/components/ui/input";
 import type { CampaignStats } from "@/lib/campaign-stats";
@@ -179,7 +179,7 @@ export function CampaignsView({
             const st = c.stats;
             const pending = pendingId === c.id;
             return (
-              <SpotlightCard
+              <Card
                 key={c.id}
                 className={`flex flex-col overflow-hidden ${c.archivedAt ? "opacity-60" : ""}`}
               >
@@ -257,7 +257,7 @@ export function CampaignsView({
                     </button>
                   </div>
                 </div>
-              </SpotlightCard>
+              </Card>
             );
           })}
         </div>

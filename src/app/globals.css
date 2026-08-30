@@ -85,6 +85,14 @@
 
   --radius: 0.95rem;
   --shadow-color: 222 60% 22%;
+
+  /* Four elevation planes. Level 0 is the absence of a shadow and has no
+     token — rows, inline panels and toolbars separate by tonal step alone. */
+  --elev-1: 0 1px 2px rgba(16, 24, 40, 0.06);
+  --elev-2:
+    0 4px 12px -2px rgba(16, 24, 40, 0.1), 0 1px 3px rgba(16, 24, 40, 0.06);
+  --elev-3:
+    0 18px 48px -12px rgba(16, 24, 40, 0.16), 0 2px 8px rgba(16, 24, 40, 0.08);
 }
 
 .dark {
@@ -132,6 +140,10 @@
   --chart-6: 216 6.8% 57.1%; /* #8A9099  other / no answer */
 
   --shadow-color: 224 70% 2%;
+
+  --elev-1: 0 1px 2px rgba(0, 0, 0, 0.5);
+  --elev-2: 0 4px 12px -2px rgba(0, 0, 0, 0.55), 0 1px 3px rgba(0, 0, 0, 0.4);
+  --elev-3: 0 18px 48px -12px rgba(0, 0, 0, 0.7), 0 2px 8px rgba(0, 0, 0, 0.5);
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
@@ -258,23 +270,107 @@
   --color-signal-stop-bg: hsl(var(--signal-stop-bg));
   --color-signal-stop-line: hsl(var(--signal-stop-line));
 
-  --radius-sm: calc(var(--radius) - 5px);
-  --radius-md: calc(var(--radius) - 3px);
-  --radius-lg: var(--radius);
-  --radius-xl: calc(var(--radius) + 4px);
-  --radius-2xl: calc(var(--radius) + 10px);
+  /* ── Radius · four values plus a pill ───────────────────────────────────
+     Literal pixels. They used to be derived with calc() from a 0.95rem base,
+     which produced 10.2 / 12.2 / 15.2 / 19.2 / 25.2px — nothing landed on a
+     whole pixel and nothing was reusable. 2xl and 3xl clamp to the top of the
+     scale rather than inventing values above it; W2 assigns the right step per
+     primitive (chips and inputs 4, buttons and selects 6, cards and panels 10,
+     modals and drawers 14). */
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 10px;
+  --radius-xl: 14px;
+  --radius-2xl: 14px;
+  --radius-3xl: 14px;
 
   --font-sans: var(--font-inter), -apple-system, BlinkMacSystemFont, "Segoe UI",
     sans-serif;
   --font-mono: var(--font-mono), "JetBrains Mono", "SF Mono", monospace;
 
-  /* One elevation model — ambient, blue-tinted, layered */
-  --shadow-glow: 0 0 0 1px hsl(var(--glow) / 0.25),
-    0 10px 40px -10px hsl(var(--glow) / 0.55);
-  --shadow-soft: 0 1px 2px hsl(var(--shadow-color) / 0.28),
-    0 10px 30px -16px hsl(var(--shadow-color) / 0.45);
-  --shadow-lift: 0 2px 6px hsl(var(--shadow-color) / 0.32),
-    0 24px 60px -20px hsl(var(--shadow-color) / 0.6);
+  /* ── Space · 4px base ───────────────────────────────────────────────────
+     Cell padding is 16px at every density. Density changes row height and
+     vertical padding — never font size, never horizontal padding. */
+  --spacing-1: 2px;
+  --spacing-2: 4px;
+  --spacing-3: 8px;
+  --spacing-4: 12px;
+  --spacing-5: 16px;
+  --spacing-6: 24px;
+  --spacing-7: 32px;
+  --spacing-8: 40px;
+  --spacing-9: 48px;
+  --spacing-10: 64px;
+
+  /* ── Type · the scale, addressable by intent ────────────────────────────
+     `text-sm` says how big; `text-label-14` says what it is. Every step below
+     is at or above the 11px floor, and the two numeric steps carry tabular
+     figures so a column of digits does not jitter as it updates. W2 migrates
+     components onto these as each primitive is rebuilt. */
+  --text-display-32: 32px;
+  --text-display-32--line-height: 36px;
+  --text-display-32--letter-spacing: -0.028em;
+  --text-display-32--font-weight: 700;
+
+  --text-display-24: 24px;
+  --text-display-24--line-height: 30px;
+  --text-display-24--letter-spacing: -0.022em;
+  --text-display-24--font-weight: 700;
+
+  --text-heading-18: 18px;
+  --text-heading-18--line-height: 24px;
+  --text-heading-18--letter-spacing: -0.014em;
+  --text-heading-18--font-weight: 600;
+
+  --text-heading-15: 15px;
+  --text-heading-15--line-height: 20px;
+  --text-heading-15--letter-spacing: -0.008em;
+  --text-heading-15--font-weight: 600;
+
+  /* The workhorse: table cells, buttons, anything on one line. */
+  --text-label-14: 14px;
+  --text-label-14--line-height: 18px;
+  --text-label-14--font-weight: 500;
+
+  /* Same size, different job: notes and briefings, which wrap. */
+  --text-copy-14: 14px;
+  --text-copy-14--line-height: 22px;
+  --text-copy-14--font-weight: 400;
+
+  --text-label-13: 13px;
+  --text-label-13--line-height: 17px;
+  --text-label-13--font-weight: 500;
+
+  --text-label-12: 12px;
+  --text-label-12--line-height: 16px;
+  --text-label-12--letter-spacing: 0.01em;
+  --text-label-12--font-weight: 500;
+
+  /* Column headers and section labels. The absolute floor for all text. */
+  --text-caps-11: 11px;
+  --text-caps-11--line-height: 14px;
+  --text-caps-11--letter-spacing: 0.12em;
+  --text-caps-11--font-weight: 500;
+
+  --text-mono-13: 13px;
+  --text-mono-13--line-height: 18px;
+  --text-mono-13--font-weight: 500;
+
+  --text-metric-40: 40px;
+  --text-metric-40--line-height: 40px;
+  --text-metric-40--letter-spacing: -0.03em;
+  --text-metric-40--font-weight: 700;
+
+  /* ── Elevation · four planes, and only four ─────────────────────────────
+     Level 0 is no shadow at all — table rows, inline panels and toolbars
+     separate by tonal step alone. Separation comes from tone first, shadow
+     second, never both on the same element. */
+  --shadow-1: var(--elev-1);
+  --shadow-2: var(--elev-2);
+  --shadow-3: var(--elev-3);
+  /* Existing names, remapped: cards sit at level 1, modals and drawers at 3. */
+  --shadow-soft: var(--elev-1);
+  --shadow-lift: var(--elev-3);
 
   --animate-pulse-ring: pulse-ring 1.8s cubic-bezier(0.4, 0, 0.6, 1) infinite;
   --animate-shimmer: shimmer 2.2s linear infinite;
@@ -284,7 +380,6 @@
   --animate-aurora: aurora 24s ease-in-out infinite;
   --animate-glow-pulse: glow-pulse 4s ease-in-out infinite;
   --animate-breathe: breathe 8s ease-in-out infinite;
-  --animate-sheen: sheen 1.1s cubic-bezier(0.16, 1, 0.3, 1);
   --animate-mesh: mesh-drift 34s ease-in-out infinite;
   --animate-border-flow: border-flow 6s linear infinite;
   --animate-rise: rise 22s linear infinite;
@@ -376,21 +471,6 @@
   }
   50% {
     transform: translateY(-2px) scale(1.004);
-  }
-}
-
-/* Specular light sweeping across a glass surface */
-@keyframes sheen {
-  0% {
-    transform: translateX(-130%) skewX(-18deg);
-    opacity: 0;
-  }
-  18% {
-    opacity: 1;
-  }
-  100% {
-    transform: translateX(240%) skewX(-18deg);
-    opacity: 0;
   }
 }
 
@@ -523,7 +603,7 @@
     background-color: hsl(var(--surface));
     box-shadow:
       inset 0 1px 0 0 hsl(0 0% 100% / 0.06),
-      var(--shadow-soft);
+      var(--elev-1);
   }
 
   /* The default content plane — Card, and everything built on it. */
@@ -531,7 +611,7 @@
     background-color: hsl(var(--card));
     box-shadow:
       inset 0 1px 0 0 hsl(0 0% 100% / 0.07),
-      var(--shadow-soft);
+      var(--elev-1);
   }
 
   /* Hairline edge highlight without a hard border */
@@ -551,56 +631,16 @@
   }
   .hover-lift:hover {
     transform: translateY(-3px);
-    box-shadow: var(--shadow-lift);
+    box-shadow: var(--elev-3);
   }
 
-  /* Pointer-following spotlight — illuminates a surface before it's clicked.
-     Drive --mx/--my (in %) from JS; falls back to a top-center glow on hover. */
-  .spotlight::after {
-    content: "";
-    position: absolute;
-    inset: 0;
-    border-radius: inherit;
-    background: radial-gradient(
-      20rem 20rem at var(--mx, 50%) var(--my, 0%),
-      hsl(var(--glow) / 0.16),
-      transparent 60%
-    );
-    opacity: 0;
-    transition: opacity 0.45s var(--ease-out-quint);
-    pointer-events: none;
-    z-index: 1;
-  }
-  .spotlight:hover::after {
-    opacity: 1;
-  }
-
-  /* Specular sheen that sweeps across glass on hover */
-  .sheen {
-    position: relative;
-    overflow: hidden;
-  }
-  .sheen::before {
-    content: "";
-    position: absolute;
-    top: 0;
-    left: 0;
-    z-index: 1;
-    height: 100%;
-    width: 55%;
-    background: linear-gradient(
-      100deg,
-      transparent,
-      hsl(0 0% 100% / 0.16),
-      transparent
-    );
-    transform: translateX(-130%) skewX(-18deg);
-    opacity: 0;
-    pointer-events: none;
-  }
-  .sheen:hover::before {
-    animation: sheen 1.1s var(--ease-out-quint);
-  }
+  /* `.spotlight` and `.sheen` are gone.
+     The first painted a brand-coloured radial glow that followed the pointer
+     across a card; the second swept a translating white gradient across every
+     button label on hover. Both are depth and translate-motion on surfaces a
+     rep works, which the design system rules out. Buttons now change
+     brightness only, and a card is identified by its tonal step.
+     `.spotlight` had no remaining callers once SpotlightCard was deleted. */
 
   /* Animated gradient border ring (masked so the fill stays clean) */
   .gradient-border {
@@ -758,15 +798,27 @@
     background-size: 24px 24px;
   }
 
+  /* The four elevation planes. Level 0 has no class — it is the absence of a
+     shadow, and it is the default for rows, inline panels and toolbars. */
+  .shadow-1 {
+    box-shadow: var(--elev-1);
+  }
+  .shadow-2 {
+    box-shadow: var(--elev-2);
+  }
+  .shadow-3 {
+    box-shadow: var(--elev-3);
+  }
+  /* Existing names, kept so 58 call sites keep working. */
   .shadow-soft {
-    box-shadow: var(--shadow-soft);
+    box-shadow: var(--elev-1);
   }
   .shadow-lift {
-    box-shadow: var(--shadow-lift);
+    box-shadow: var(--elev-3);
   }
-  .shadow-glow {
-    box-shadow: var(--shadow-glow);
-  }
+  /* .shadow-glow is gone. It painted a brand-coloured halo under small icon
+     tiles and buttons — depth behind a small object on a working surface,
+     which the design system rules out. `bg-brand` already identifies them. */
 
   .animate-fade-up {
     animation: var(--animate-fade-up);

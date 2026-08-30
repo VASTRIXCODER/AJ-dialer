@@ -117,6 +117,37 @@ describe("no raw colour outside the token system", () => {
   });
 });
 
+describe("shape and elevation come from the scale", () => {
+  const CSS = readFileSync(resolve(ROOT, "src/app/globals.css"), "utf8");
+
+  it("radius is four literal values plus a pill, with no calc()", () => {
+    // They used to be derived with calc() from a 0.95rem base, so nothing
+    // landed on a whole pixel and no two components could agree on a corner.
+    const scale = [...CSS.matchAll(/--radius-(sm|md|lg|xl|2xl|3xl):\s*([^;]+);/g)];
+    expect(scale.length).toBeGreaterThanOrEqual(4);
+    const allowed = new Set(["4px", "6px", "10px", "14px"]);
+    for (const [, name, value] of scale) {
+      expect(value, `--radius-${name} must be a literal from the scale`).not.toMatch(/calc\(/);
+      expect(allowed.has(value.trim()), `--radius-${name} = ${value.trim()}`).toBe(true);
+    }
+  });
+
+  it("there are exactly three elevation tokens — level 0 is no shadow", () => {
+    for (const theme of [":root", ".dark"]) {
+      const block = CSS.match(new RegExp(`${theme.replace(".", "\\.")}\\s*\\{([^}]*)\\}`, "g"));
+      expect(block, `${theme} block must exist`).toBeTruthy();
+    }
+    const levels = [...CSS.matchAll(/--elev-(\d):/g)].map((m) => m[1]);
+    expect(new Set(levels)).toEqual(new Set(["1", "2", "3"]));
+  });
+
+  it("the glow shadow no longer exists", () => {
+    // It painted a brand-coloured halo under small icon tiles and buttons.
+    expect(CSS).not.toMatch(/--shadow-glow\s*:/);
+    expect(CSS).not.toMatch(/\.shadow-glow\s*\{/);
+  });
+});
+
 describe("cinema stays on the Stage", () => {
   // "Depth, glass, volumetric light and orchestrated motion go on the shell,
   // the sign-in, the org picker, the idle and empty states, and the moment a
@@ -136,12 +167,30 @@ describe("cinema stays on the Stage", () => {
 
   it("no decorative glow or drifting mesh on Instrument surfaces", () => {
     const offenders: string[] = [];
-    for (const { path, text } of FILES) {
+    for (const { path, code } of FILES) {
       if (STAGE_ALLOWED.some((p) => path.startsWith(p))) continue;
-      for (const m of text.matchAll(/\b(glow-orb|bg-aurora|bg-mesh|animate-aurora|animate-float)\b/g)) {
+      for (const m of code.matchAll(/\b(glow-orb|bg-aurora|bg-mesh|animate-aurora|animate-float)\b/g)) {
         offenders.push(`${path}: ${m[1]}`);
       }
     }
     expect(offenders, offenders.join("\n")).toEqual([]);
+  });
+
+  it("nothing paints a brand halo any more", () => {
+    const offenders: string[] = [];
+    for (const { path, code } of FILES) {
+      for (const m of code.matchAll(/\bshadow-glow\b|(?:drop-)?shadow-\[[^\]]*--glow[^\]]*\]/g)) {
+        offenders.push(`${path}: ${m[0]}`);
+      }
+    }
+    expect(offenders, offenders.join("\n")).toEqual([]);
+  });
+
+  it("no blur sits behind the text of a control", () => {
+    // The outline button was `bg-surface/50 backdrop-blur-md`, which put the
+    // page behind the button underneath its own label.
+    const btn = FILES.find((f) => f.path === "src/components/ui/button.tsx");
+    expect(btn).toBeDefined();
+    expect(btn!.code).not.toMatch(/backdrop-blur/);
   });
 });

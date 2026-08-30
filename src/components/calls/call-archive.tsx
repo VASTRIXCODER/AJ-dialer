@@ -463,7 +463,7 @@ export function CallArchive({
                     !c.hasRecording
                       ? "cursor-not-allowed border-dashed border-border/60 text-ink-3"
                       : playing
-                        ? "border-primary/60 bg-primary text-white shadow-glow"
+                        ? "border-primary/60 bg-primary text-white"
                         : "border-border text-muted-foreground hover:bg-muted hover:text-foreground",
                   )}
                 >

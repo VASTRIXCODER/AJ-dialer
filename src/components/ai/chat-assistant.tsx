@@ -272,7 +272,7 @@ export function ChatAssistant() {
           >
             <PanelLeft className="h-4 w-4" />
           </button>
-          <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-brand text-white shadow-glow">
+          <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-brand text-white">
             <Sparkles className="h-4 w-4" />
           </span>
           <div className="min-w-0">
@@ -286,7 +286,7 @@ export function ChatAssistant() {
         <div ref={scrollRef} className="flex-1 space-y-4 overflow-y-auto p-4">
           {!active || active.messages.length === 0 ? (
             <div className="flex h-full flex-col items-center justify-center gap-5 text-center">
-              <span className="flex h-14 w-14 items-center justify-center rounded-2xl bg-brand text-white shadow-glow">
+              <span className="flex h-14 w-14 items-center justify-center rounded-2xl bg-brand text-white">
                 <Bot className="h-7 w-7" />
               </span>
               <div>

@@ -1,5 +1,6 @@
 "use client";
 
+import { motion } from "framer-motion";
 import {
   Bot,
   CalendarCheck,
@@ -17,7 +18,6 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { SpotlightCard } from "@/components/motion";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -236,7 +236,7 @@ export function AiLiveMonitor({
   if (!configured) {
     return (
       <Card className="flex flex-col items-start gap-3 p-4 sm:flex-row sm:items-center">
-        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-brand text-white shadow-glow">
+        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-brand text-white">
           <Bot className="h-5 w-5" />
         </span>
         <div className="flex-1">
@@ -343,13 +343,14 @@ export function AiLiveMonitor({
                     : "Placing the call…";
 
               return (
-                <SpotlightCard
+                <motion.div
                   key={c.conversationId}
                   initial={{ opacity: 0, y: 14 }}
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ delay: i * 0.05, duration: 0.4 }}
                   onClick={() => setOpenId(c.conversationId)}
                   className={cn(
+                    "relative rounded-2xl border border-border/60 surface-glass text-card-foreground",
                     "cursor-pointer overflow-hidden p-5 ring-1 transition-colors",
                     c.state === "in_progress" && "ring-success/30",
                     c.state === "ringing" && "ring-warning/40",
@@ -362,7 +363,7 @@ export function AiLiveMonitor({
                       <span
                         className={cn(
                           "relative flex h-10 w-10 items-center justify-center rounded-xl text-white",
-                          ended ? "bg-muted-foreground/40" : "bg-brand shadow-glow",
+                          ended ? "bg-muted-foreground/40" : "bg-brand",
                         )}
                       >
                         <Bot className="h-5 w-5" />
@@ -463,7 +464,7 @@ export function AiLiveMonitor({
                       </Button>
                     )}
                   </div>
-                </SpotlightCard>
+                </motion.div>
               );
             })}
           </div>

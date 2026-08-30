@@ -59,7 +59,7 @@ export function KnownInfoDialog({
     <Modal onClose={onClose} label={`AI call · ${formatPhone(phone)}`}>
       <div className="flex items-start justify-between gap-3 border-b border-border/60 p-5">
             <div className="flex items-center gap-3">
-              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-brand text-white shadow-glow">
+              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-brand text-white">
                 <Bot className="h-5 w-5" />
               </span>
               <div>

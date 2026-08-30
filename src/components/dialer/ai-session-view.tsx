@@ -219,7 +219,7 @@ export function AiSessionView({
     >
       {/* Header — who is dialing, toward what */}
       <div className="text-center">
-        <div className="mx-auto mb-3 flex h-16 w-16 items-center justify-center rounded-2xl bg-brand shadow-glow">
+        <div className="mx-auto mb-3 flex h-16 w-16 items-center justify-center rounded-2xl bg-brand">
           <Bot className="h-8 w-8 text-white" />
         </div>
         <h2 className="text-lg font-bold">

@@ -1,6 +1,6 @@
 import { ArrowDownRight, ArrowUpRight, Info, type LucideIcon } from "lucide-react";
 import { CountUp } from "@/components/motion";
-import { SpotlightCard } from "@/components/motion/spotlight-card";
+import { Card } from "@/components/ui/card";
 import { Tooltip } from "@/components/ui/tooltip";
 import { METRICS, type MetricId } from "@/lib/metrics/definitions";
 import { cn } from "@/lib/utils";
@@ -97,7 +97,7 @@ export function MetricCard({
   const parsed = parseMetric(value);
 
   return (
-    <SpotlightCard className={cn("overflow-hidden p-5", className)}>
+    <Card className={cn("overflow-hidden p-5", className)}>
       {/* Ambient accent light that wakes on hover */}
       <div
         className={cn(
@@ -156,6 +156,6 @@ export function MetricCard({
           <Icon className="h-5 w-5" />
         </div>
       </div>
-    </SpotlightCard>
+    </Card>
   );
 }

@@ -15,7 +15,6 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { ChatAssistant } from "@/components/ai/chat-assistant";
-import { SpotlightCard } from "@/components/motion";
 import { PageContainer, PageHeader } from "@/components/shared/page-header";
 import { SectionCard } from "@/components/shared/section-card";
 import { Badge } from "@/components/ui/badge";
@@ -216,7 +215,7 @@ export default async function AiAgentPage() {
         </div>
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
           {services.map((s) => (
-            <SpotlightCard key={s.name} className="p-4">
+            <Card key={s.name} className="p-4">
               <div className="flex items-start justify-between">
                 <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary-soft text-primary ring-1 ring-inset ring-white/5 transition-transform duration-300 group-hover:scale-110">
                   <s.icon className="h-5 w-5" />
@@ -233,7 +232,7 @@ export default async function AiAgentPage() {
               </div>
               <p className="mt-3 text-sm font-semibold">{s.name}</p>
               <p className="mt-1 text-xs leading-relaxed text-muted-foreground">{s.desc}</p>
-            </SpotlightCard>
+            </Card>
           ))}
         </div>
       </div>

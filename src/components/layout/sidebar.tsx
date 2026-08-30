@@ -172,22 +172,21 @@ export function Sidebar({
                           {/* Sliding active pill — glides between routes */}
                           <motion.span
                             layoutId={`nav-active-${uid}`}
-                            className="absolute inset-0 z-0 rounded-xl bg-primary-soft shadow-[0_0_24px_-6px_hsl(var(--glow)/0.5)]"
+                            className="absolute inset-0 z-0 rounded-xl bg-primary-soft"
                             transition={{ type: "spring", stiffness: 420, damping: 34 }}
                           />
                           <motion.span
                             layoutId={`nav-bar-${uid}`}
-                            className="absolute left-0 top-1/2 z-10 h-5 w-1 -translate-y-1/2 rounded-r-full bg-primary shadow-[0_0_10px_0_hsl(var(--glow)/0.8)]"
+                            className="absolute left-0 top-1/2 z-10 h-5 w-1 -translate-y-1/2 rounded-r-full bg-primary"
                             transition={{ type: "spring", stiffness: 420, damping: 34 }}
                           />
                         </>
                       )}
-                      <Icon
-                        className={cn(
-                          "relative z-10 h-[18px] w-[18px] shrink-0 transition-transform duration-200 group-hover:scale-110 group-active:scale-95",
-                          active && "drop-shadow-[0_0_6px_hsl(var(--glow)/0.7)]",
-                        )}
-                      />
+                      {/* No glow on the active icon, and no hover scale. The
+                          nav is chrome a rep's eye passes over hundreds of
+                          times a shift; the active state is already carried by
+                          the pill, the bar and the accent colour. */}
+                      <Icon className="relative z-10 h-[18px] w-[18px] shrink-0" />
                       <span className="relative z-10 flex-1">{navLabel(item, vocabulary)}</span>
                       {item.countBadge === "reviews" && <ReviewCountBadge />}
                       {item.badge &&

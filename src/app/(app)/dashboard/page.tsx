@@ -282,7 +282,7 @@ export default async function DashboardPage() {
             <ul className="space-y-3">
               {liveCalls.slice(0, 5).map((call) => (
                 <li key={call.id} className="flex items-center gap-3">
-                  <span className="relative flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-brand text-white shadow-glow">
+                  <span className="relative flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-brand text-white">
                     <Bot className="h-4 w-4" />
                     {call.state === "in_progress" && (
                       <span className="absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full border-2 border-card bg-success" />

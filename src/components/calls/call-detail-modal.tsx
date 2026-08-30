@@ -169,7 +169,7 @@ export function CallDetailModal({
           <span
             className={
               isAI
-                ? "flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-brand text-white shadow-glow"
+                ? "flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-brand text-white"
                 : "flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-accent-soft text-accent"
             }
           >

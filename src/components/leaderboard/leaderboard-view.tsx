@@ -328,7 +328,7 @@ export function LeaderboardView({
                     "flex w-full items-start justify-center rounded-t-xl pt-2 text-lg font-black",
                     heights[i],
                     isFirst
-                      ? "bg-brand text-white shadow-[0_-8px_30px_-10px_hsl(var(--glow)/0.7)]"
+                      ? "bg-brand text-white"
                       : "bg-muted text-muted-foreground",
                   )}
                 >

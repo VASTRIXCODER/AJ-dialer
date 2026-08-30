@@ -103,7 +103,7 @@ function ControlButton({
           active
             ? danger
               ? "border-danger bg-danger text-danger-foreground shadow-[0_0_20px_-4px_hsl(var(--danger)/0.6)]"
-              : "border-primary/60 bg-primary-soft text-primary shadow-[0_0_20px_-4px_hsl(var(--glow)/0.6)]"
+              : "border-primary/60 bg-primary-soft text-primary"
             : cn(
                 "border-border/70 bg-surface/60 text-foreground backdrop-blur",
                 !disabled && "hover:bg-muted",
@@ -413,7 +413,7 @@ export function CallCockpit({
               )}
 
               <div className="text-center">
-                <div className="mx-auto mb-4 flex h-20 w-20 animate-float items-center justify-center rounded-3xl bg-brand shadow-glow">
+                <div className="mx-auto mb-4 flex h-20 w-20 animate-float items-center justify-center rounded-3xl bg-brand">
                   {ai ? (
                     <Bot className="h-9 w-9 text-white" />
                   ) : (
@@ -473,7 +473,7 @@ export function CallCockpit({
                             className={cn(
                               "rounded-xl border py-2.5 text-sm font-bold transition-all active:scale-95",
                               state.parallelCount === n
-                                ? "border-primary/60 bg-primary-soft text-primary shadow-[0_0_20px_-6px_hsl(var(--glow)/0.7)]"
+                                ? "border-primary/60 bg-primary-soft text-primary"
                                 : "border-border/70 bg-surface/50 text-muted-foreground backdrop-blur hover:bg-muted",
                             )}
                           >

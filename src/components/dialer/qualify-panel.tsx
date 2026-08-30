@@ -36,7 +36,7 @@ function Toggle({
       className={cn(
         "flex items-center gap-2 rounded-xl border px-3 py-2.5 text-sm font-medium transition-colors duration-200",
         active
-          ? "border-primary/50 bg-primary-soft text-primary shadow-[0_0_18px_-6px_hsl(var(--glow)/0.6)]"
+          ? "border-primary/50 bg-primary-soft text-primary"
           : "border-border bg-surface text-muted-foreground hover:bg-muted",
       )}
     >

@@ -13,16 +13,18 @@ type Size = "sm" | "md" | "lg" | "icon";
 
 const variants: Record<Variant, string> = {
   primary:
-    "sheen bg-brand text-white shadow-soft ring-1 ring-inset ring-white/10 hover:shadow-glow hover:brightness-[1.06] active:brightness-95",
-  secondary: "sheen bg-foreground text-background hover:opacity-90 shadow-soft",
+    "bg-brand text-white shadow-soft ring-1 ring-inset ring-white/10 hover:brightness-[1.06] active:brightness-95",
+  secondary: "bg-foreground text-background hover:opacity-90 shadow-soft",
+  // Opaque, no blur. A button carries text, and a translucent blurred fill
+  // puts whatever is behind the button underneath its label.
   outline:
-    "border border-border/70 bg-surface/50 backdrop-blur-md text-foreground hover:border-border hover:bg-surface-muted/80",
+    "border border-border/70 bg-surface text-foreground hover:border-border hover:bg-surface-muted",
   ghost: "text-foreground hover:bg-muted/70",
   subtle: "bg-muted text-foreground hover:bg-secondary",
   danger:
-    "sheen bg-danger text-danger-foreground shadow-soft hover:brightness-105 active:brightness-95",
+    "bg-danger text-danger-foreground shadow-soft hover:brightness-105 active:brightness-95",
   success:
-    "sheen bg-success text-success-foreground shadow-soft hover:brightness-105 active:brightness-95",
+    "bg-success text-success-foreground shadow-soft hover:brightness-105 active:brightness-95",
 };
 
 const sizes: Record<Size, string> = {

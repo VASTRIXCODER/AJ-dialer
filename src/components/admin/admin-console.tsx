@@ -1080,7 +1080,7 @@ function DataTab({
             href="/leads/import"
             className="flex w-full flex-col items-center justify-center rounded-2xl border-2 border-dashed border-border bg-muted/30 p-8 text-center transition-colors hover:border-primary/40 hover:bg-primary-soft/30"
           >
-            <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-brand text-white shadow-glow">
+            <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-brand text-white">
               <UploadCloud className="h-6 w-6" />
             </span>
             <span className="mt-3 font-semibold">Open the Import Studio</span>
