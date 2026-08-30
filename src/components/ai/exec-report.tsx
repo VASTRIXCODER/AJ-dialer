@@ -120,7 +120,10 @@ export function AiExecReport() {
           className="mt-5 space-y-5"
         >
           <div>
-            <p className="text-lg font-bold tracking-tight text-gradient-brand">
+            {/* Plain ink, not a gradient. This is the report's headline —
+                something a manager reads and acts on, inside the app. A
+                three-stop gradient across a sentence is depth behind text. */}
+            <p className="text-lg font-bold tracking-tight text-foreground">
               {report.headline}
             </p>
             <p className="mt-2 text-sm leading-relaxed text-muted-foreground">

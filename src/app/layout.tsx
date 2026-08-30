@@ -18,20 +18,35 @@ const jetbrainsMono = JetBrains_Mono({
   display: "swap",
 });
 
+const DESCRIPTION =
+  "A powerful multichannel sales dialer, CRM, and team performance platform for any outbound sales team — power dialing, call intelligence, lead management, live monitoring, and leaderboards for only $30 per seat.";
+
 export const metadata: Metadata = {
   title: {
     default: "AIATWORK · Sales Dialer, CRM & Team Performance Platform",
     template: "%s · AIATWORK",
   },
-  description:
-    "A powerful multichannel sales dialer, CRM, and team performance platform for any outbound sales team — power dialing, call intelligence, lead management, live monitoring, and leaderboards for only $30 per seat.",
+  description: DESCRIPTION,
   applicationName: "AIATWORK Sales Platform",
+  // icon.svg, apple-icon.png and opengraph-image.jpg sit beside this file and
+  // are picked up by convention — the product shipped with none of them, so
+  // every tab was a blank page glyph and every shared link an empty card.
+  openGraph: {
+    type: "website",
+    siteName: "AIATWORK",
+    title: "AIATWORK · Sales Dialer, CRM & Team Performance Platform",
+    description: DESCRIPTION,
+  },
+  twitter: { card: "summary_large_image" },
 };
 
 export const viewport: Viewport = {
+  // These paint the browser and OS chrome around the app, so they have to be
+  // the actual app ground — --surface-void in each theme. They were #F3F6FB
+  // and #070A12, from a palette that no longer exists.
   themeColor: [
-    { media: "(prefers-color-scheme: light)", color: "#F3F6FB" },
-    { media: "(prefers-color-scheme: dark)", color: "#070A12" },
+    { media: "(prefers-color-scheme: light)", color: "#F6F7F9" },
+    { media: "(prefers-color-scheme: dark)", color: "#0A0B0D" },
   ],
 };
 

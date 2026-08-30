@@ -21,7 +21,7 @@ import { Button } from "@/components/ui/button";
 import { Input, Label, Select, Textarea } from "@/components/ui/input";
 import { Modal } from "@/components/ui/modal";
 import type { OrgBlueprint, OrgFeatures } from "@/lib/org/settings";
-import { DIALER_TEMPLATES, templateLabel } from "@/lib/org/templates";
+import { DIALER_TEMPLATES, templateLabel, templatePlate } from "@/lib/org/templates";
 import { ROLE_LABEL, type OrgRole } from "@/lib/permissions";
 
 type Membership = {
@@ -151,8 +151,17 @@ export function HubView({
                 type="button"
                 onClick={() => enter(m.id)}
                 disabled={entering === m.id}
-                className="surface-glass group flex flex-col rounded-2xl border border-border/60 p-5 text-left shadow-soft transition-all duration-300 hover:-translate-y-0.5 hover:border-border hover:shadow-lift"
+                className="surface-glass group flex flex-col overflow-hidden rounded-2xl border border-border/60 text-left shadow-soft transition-colors duration-200 hover:border-border"
               >
+                {/* The workspace's vertical, as a Stage plate. The org picker is
+                    a place a rep arrives and chooses, not one they work in, so
+                    it is allowed to be cinematic — see templatePlate. */}
+                <span
+                  aria-hidden
+                  className="block h-20 w-full bg-surface-2 bg-cover bg-center"
+                  style={{ backgroundImage: `url(${templatePlate(m.dialerTemplate)})` }}
+                />
+                <span className="flex flex-1 flex-col p-5">
                 <div className="flex items-center gap-3">
                   <span
                     className="flex h-11 w-11 items-center justify-center overflow-hidden rounded-xl text-white shadow-soft"
@@ -204,6 +213,7 @@ export function HubView({
                       <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-0.5" />
                     </>
                   )}
+                </span>
                 </span>
               </button>
             ))}

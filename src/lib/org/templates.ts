@@ -402,6 +402,22 @@ export function templateProfile(value: string | undefined | null): TemplateProfi
 }
 
 /**
+ * The Stage plate that represents a vertical — dark rim-lit architecture in the
+ * accent colour, one per template.
+ *
+ * Stage surfaces only: the org picker, and choosing a vertical when a workspace
+ * is created. It must never appear inside the app shell, where imagery behind a
+ * working screen is exactly what the design system rules out.
+ *
+ * An unknown template falls back to the neutral plate rather than a broken
+ * image, which matters because `dialerTemplate` is free text on the org row.
+ */
+export function templatePlate(value: string | undefined | null): string {
+  const known = TEMPLATE_PROFILES.some((t) => t.value === value);
+  return `/verticals/${known ? value : "general"}.webp`;
+}
+
+/**
  * The stored settings that only make sense for SOLAR, resolved per vertical.
  *
  * `isSolarVertical` already hides solar wording at render time, but the stored

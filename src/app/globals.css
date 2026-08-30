@@ -717,13 +717,13 @@
   /* Was .bg-solar. The gradient has never actually been solar-colored — the name
      was a leftover from the product's first vertical, and it turned up in the
      className of every card, avatar and wordmark in the app. */
+  /* Flat, not a gradient. This was indigo -> blue -> cyan across 135 degrees,
+     and it backed the primary button — so every primary label in the product
+     sat on a moving three-stop gradient, which is depth behind text on a small
+     object. One accent, one fill. 42 call sites inherit this without changing. */
   .bg-brand {
-    background-image: linear-gradient(
-      135deg,
-      hsl(234 90% 60%),
-      hsl(212 100% 58%) 52%,
-      hsl(190 95% 56%)
-    );
+    background-image: none;
+    background-color: hsl(var(--accent));
   }
 
   .text-gradient-brand {
@@ -738,26 +738,57 @@
     color: transparent;
   }
 
-  /* ── Background system — environmental depth on every screen ────────────── */
-  /* Cinematic aurora field: layered radial light sources over the base. */
+  /* ── The ambient field ──────────────────────────────────────────────────
+     Three rendered plates of volumetric light, composited over the app
+     ground. `screen` on dark and `multiply` on light means the flat area of
+     each plate contributes nothing, so the images need no alpha channel and
+     stay tiny — six plates, 17 KB in total.
+
+     Only mounted on Stage routes. See AmbientBackground for the frame budget,
+     the 30fps cap and the reduced-motion path. */
+  .ambient-field {
+    background-color: hsl(var(--surface-void));
+  }
+  .ambient-plate {
+    position: absolute;
+    /* Overscanned so the drift never exposes an edge. */
+    inset: -12%;
+    background-size: cover;
+    background-position: center;
+    background-repeat: no-repeat;
+    mix-blend-mode: multiply;
+    will-change: transform;
+  }
+  .dark .ambient-plate {
+    mix-blend-mode: screen;
+  }
+  .ambient-plate-1 {
+    background-image: url("/ambient/light-1.webp");
+  }
+  .ambient-plate-2 {
+    background-image: url("/ambient/light-2.webp");
+  }
+  .ambient-plate-3 {
+    background-image: url("/ambient/light-3.webp");
+  }
+  .dark .ambient-plate-1 {
+    background-image: url("/ambient/dark-1.webp");
+  }
+  .dark .ambient-plate-2 {
+    background-image: url("/ambient/dark-2.webp");
+  }
+  .dark .ambient-plate-3 {
+    background-image: url("/ambient/dark-3.webp");
+  }
+
+  /* Kept for the marketing page, which is Stage and may use a flat wash. */
   .bg-aurora {
     background-color: hsl(var(--background));
-    background-image:
-      radial-gradient(
-        42rem 42rem at 12% -8%,
-        hsl(214 95% 50% / 0.18),
-        transparent 60%
-      ),
-      radial-gradient(
-        38rem 38rem at 98% 4%,
-        hsl(190 95% 52% / 0.14),
-        transparent 58%
-      ),
-      radial-gradient(
-        50rem 50rem at 78% 102%,
-        hsl(255 85% 58% / 0.16),
-        transparent 60%
-      );
+    background-image: radial-gradient(
+      42rem 42rem at 12% -8%,
+      hsl(var(--accent) / 0.1),
+      transparent 60%
+    );
   }
 
   /* Soft fractal noise — barely-perceptible film grain to kill banding */

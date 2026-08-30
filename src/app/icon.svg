@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <!--
+    The favicon and app icon, derived from the LogoMark in
+    src/components/brand/logo.tsx so the tab, the home-screen icon and the mark
+    in the sidebar are the same mark rather than three cousins.
+
+    The fill is a literal hex rather than a token because this file is served
+    to the browser chrome and the OS, which have no access to the stylesheet.
+    It is the accent token's light-theme value, #1B60DC, which holds its shape
+    against both a light and a dark browser tab strip.
+  -->
+  <rect width="64" height="64" rx="14" fill="#1B60DC"/>
+  <g transform="translate(12 12) scale(1.6667)" fill="none">
+    <circle cx="12" cy="13.5" r="2.4" fill="#FFFFFF"/>
+    <g stroke="#FFFFFF" stroke-width="1.9" stroke-linecap="round">
+      <path d="M8.1 9.6a5.5 5.5 0 0 1 7.8 0" opacity="0.95"/>
+      <path d="M5.5 6.9a9.2 9.2 0 0 1 13 0" opacity="0.55"/>
+    </g>
+  </g>
+</svg>

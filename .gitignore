@@ -52,3 +52,4 @@ promptx.txt
 
 # Scratch: pasted provider error pages, saved while debugging.
 /error.txt
+.playwright-mcp/
