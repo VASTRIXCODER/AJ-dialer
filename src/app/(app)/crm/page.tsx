@@ -91,7 +91,15 @@ export default async function CrmPage({
     listSmartLists(scope),
     scope.supervisor && viewer.org?.id ? listMembers(viewer.org.id) : Promise.resolve([]),
     canApproveMessages
-      ? listPendingApprovals(scope.orgId)
+      ? listPendingApprovals(scope.orgId, {
+          // A rep sees only what they wrote. Without this the Approvals tab
+          // disclosed the whole org's pending messages — names, numbers and
+          // bodies — for records the pipeline board on the same page fences
+          // them out of.
+          authorId: viewer.permissions.includes("messaging.approve")
+            ? null
+            : (viewer.user?.id ?? null),
+        })
       : Promise.resolve({ rows: [], total: 0 }),
   ]);
 

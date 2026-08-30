@@ -169,7 +169,12 @@ export function Approvals({
   return (
     <SectionCard
       title={`Waiting for approval · ${total}`}
-      description="Nothing here has been sent. Read the message, then approve or reject it."
+      // States its scope, like every other number in the product. A rep's
+      // queue is their own drafts; a manager's is the whole workspace, and the
+      // two are different populations that must not read the same.
+      description={`${
+        canApproveAutomation ? "Whole workspace" : "Messages you wrote"
+      } · nothing here has been sent. Read the message, then approve or reject it.`}
     >
       {!messagingReady && (
         // Real proposals, but nothing can leave. Approving one would park it in

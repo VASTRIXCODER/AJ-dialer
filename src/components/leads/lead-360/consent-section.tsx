@@ -4,6 +4,7 @@ import { Loader2, ShieldCheck } from "lucide-react";
 import { useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { useConfirm } from "@/components/ui/confirm-dialog";
 import { Label, Textarea } from "@/components/ui/input";
 import { SelectMenu } from "@/components/ui/select-menu";
 import { useToast } from "@/components/ui/toast";
@@ -58,6 +59,7 @@ export function ConsentSection({
   onRecorded?: () => void;
 }) {
   const { toast } = useToast();
+  const confirm = useConfirm();
   const [open, setOpen] = useState(false);
   const [scope, setScope] = useState<ConsentScope>("transactional");
   const [evidence, setEvidence] = useState("");
@@ -67,6 +69,16 @@ export function ConsentSection({
   const sourceLabel = isConsentSource(consent.source)
     ? CONSENT_SOURCE_LABEL[consent.source]
     : consent.source;
+
+  async function confirmRevoke() {
+    const ok = await confirm({
+      title: "Record that they asked to stop?",
+      body: "This goes on the permanent record and stops every message to this number. Only they can lift it, by texting START.",
+      confirmLabel: "Record the opt-out",
+      tone: "danger",
+    });
+    if (ok) await submit("revoked");
+  }
 
   async function submit(action: "granted" | "revoked") {
     if (action === "granted" && evidence.trim().length < MIN_EVIDENCE) {
@@ -121,7 +133,7 @@ export function ConsentSection({
       <p className="mt-1 text-sm text-muted-foreground">{summary.detail}</p>
 
       {!open ? (
-        <div className="mt-2.5 flex flex-wrap gap-2">
+        <div className="mt-2.5">
           <Button
             size="sm"
             variant="secondary"
@@ -133,14 +145,23 @@ export function ConsentSection({
             {consent.status === "granted" ? "Update" : "Record consent"}
           </Button>
           {canRecord && consent.status !== "revoked" && (
-            <Button
-              size="sm"
-              variant="ghost"
-              disabled={busy}
-              onClick={() => void submit("revoked")}
-            >
-              They asked to stop
-            </Button>
+            // Deliberately NOT beside the button above, and deliberately
+            // confirmed. This writes an append-only ledger row that only the
+            // customer can reverse, and a one-click destructive control
+            // adjacent to a constructive one is a mis-click the record keeps
+            // for five years.
+            <p className="mt-2 border-t border-border/70 pt-2 text-xs text-muted-foreground">
+              If they asked not to be messaged,{" "}
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => void confirmRevoke()}
+                className="font-semibold text-danger underline underline-offset-2 hover:opacity-80 disabled:opacity-50"
+              >
+                record their opt-out
+              </button>
+              . This cannot be undone from here.
+            </p>
           )}
         </div>
       ) : (

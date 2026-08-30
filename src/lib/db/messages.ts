@@ -576,27 +576,41 @@ export interface ApprovalRow extends MessageRow {
   authorName: string;
 }
 
-/** The approvals inbox: what is waiting for a human, oldest first. */
+/**
+ * The approvals inbox: what is waiting for a human, oldest first.
+ *
+ * `authorId` fences the list to one person's own drafts. It is passed for
+ * anyone who cannot approve what the automation proposed — otherwise the
+ * Approvals tab handed a rep the whole org's pending messages, complete with
+ * lead name, phone number and full body, for records the pipeline board
+ * directly beside it deliberately fences them out of. Two panels on one page
+ * disagreeing about who may see whom is not a defensible scope.
+ */
 export async function listPendingApprovals(
   orgId: string | null,
-  limit = 50,
+  opts: { authorId?: string | null; limit?: number } = {},
 ): Promise<{ rows: ApprovalRow[]; total: number }> {
   if (!isAdminConfigured() || !orgId) return { rows: [], total: 0 };
+  const limit = opts.limit ?? 50;
   try {
     const admin = createAdminClient();
+    let listQ = admin
+      .from("messages")
+      .select("*")
+      .eq("org_id", orgId)
+      .eq("status", "needs_approval");
+    let countQ = admin
+      .from("messages")
+      .select("id", { count: "exact", head: true })
+      .eq("org_id", orgId)
+      .eq("status", "needs_approval");
+    if (opts.authorId) {
+      listQ = listQ.eq("created_by", opts.authorId);
+      countQ = countQ.eq("created_by", opts.authorId);
+    }
     const [listRes, countRes] = await Promise.all([
-      admin
-        .from("messages")
-        .select("*")
-        .eq("org_id", orgId)
-        .eq("status", "needs_approval")
-        .order("created_at", { ascending: true })
-        .limit(limit),
-      admin
-        .from("messages")
-        .select("id", { count: "exact", head: true })
-        .eq("org_id", orgId)
-        .eq("status", "needs_approval"),
+      listQ.order("created_at", { ascending: true }).limit(limit),
+      countQ,
     ]);
     const rows = ((listRes.data ?? []) as Row[]).map(mapMessage);
     const leadIds = [...new Set(rows.map((r) => r.leadId).filter(Boolean))] as string[];
