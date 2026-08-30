@@ -372,9 +372,30 @@
   --shadow-soft: var(--elev-1);
   --shadow-lift: var(--elev-3);
 
+  /* ── The four curves ─────────────────────────────────────────────────────
+     Everything in the product that moves is one of these, and no more:
+
+       enter    180ms  the Stage, appearing
+       exit     120ms  the Stage, leaving
+       state     90ms  colour and opacity only — the ONLY one an Instrument
+                       surface may use. WCAG 2.3.3 explicitly excludes colour
+                       and opacity changes from its definition of motion.
+       connect  240ms  the single crossing between the two: a human picks up
+
+     An Instrument surface does not translate, scale, rotate or stagger. It is
+     the surface a rep reads numbers off for eight hours. */
+  --ease-enter: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-exit: cubic-bezier(0.4, 0, 1, 1);
+  --dur-enter: 180ms;
+  --dur-exit: 120ms;
+  --dur-state: 90ms;
+  --dur-connect: 240ms;
+
   --animate-pulse-ring: pulse-ring 1.8s cubic-bezier(0.4, 0, 0.6, 1) infinite;
   --animate-shimmer: shimmer 2.2s linear infinite;
   --animate-fade-up: fade-up 0.55s cubic-bezier(0.16, 1, 0.3, 1) both;
+  /* Opacity alone — what an Instrument surface uses to appear. */
+  --animate-fade-in: fade-in var(--dur-enter) var(--ease-enter) both;
   --animate-float: float 7s ease-in-out infinite;
   --animate-marquee: marquee 32s linear infinite;
   --animate-aurora: aurora 24s ease-in-out infinite;
@@ -407,6 +428,15 @@
   }
   100% {
     background-position: 200% 0;
+  }
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
   }
 }
 
@@ -523,6 +553,13 @@
     scroll-behavior: smooth;
     font-feature-settings: "cv11", "ss01";
     font-variation-settings: normal;
+    /* The shell has a sticky 60px top bar and, during a call, a fixed bar at
+       the bottom. Without this, tabbing down a long table — or following a
+       deep link to a row — parks the focused row underneath one of them, and
+       the rep has to scroll to see what they just selected.
+       `--callbar-h` is published by GlobalCallBar only while it is up, so the
+       bottom reservation is 16px when no call is running. */
+    scroll-padding-block: 76px calc(16px + var(--callbar-h, 0px));
   }
 
   body {
@@ -853,6 +890,9 @@
 
   .animate-fade-up {
     animation: var(--animate-fade-up);
+  }
+  .animate-fade-in {
+    animation: var(--animate-fade-in);
   }
   .animate-float {
     animation: var(--animate-float);

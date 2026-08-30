@@ -144,7 +144,12 @@ export function AppShell({
           voiceConfigured={voiceConfigured}
           aiConfigured={aiConfigured}
         />
-        <main className="flex-1">{children}</main>
+        {/* The call bar is `position: fixed`, so it covers whatever is at the
+            bottom of the page. Reserve its height — and only while it is
+            actually up, which is what `--callbar-h` means. Without this, the
+            last row of every table and the bottom buttons of every form were
+            unclickable for the whole duration of a call. */}
+        <main className="flex-1 pb-[var(--callbar-h,0px)]">{children}</main>
       </div>
 
       {/* Follows the rep to every page so an in-progress call never drops. */}

@@ -145,6 +145,13 @@ export function DialerClient({
   // so this is purely a visibility tab — polling independently of the dial
   // engine, the same pattern DialerFloor uses.
   const [tab, setTab] = useState<"queue" | "booked">("queue");
+  // Disabling the Booked tab during a call isn't enough on its own: auto-dial
+  // can start a round while the rep is already sitting on it, and the tab
+  // replaces the whole call surface. Anything on the wire pulls them back to
+  // the controls.
+  useEffect(() => {
+    if (state.status !== "idle") setTab("queue");
+  }, [state.status]);
   const [bookedLeads, setBookedLeads] = useState<BookedLead[]>([]);
   const [bookedLoading, setBookedLoading] = useState(true);
   const bookedAlive = useRef(true);
@@ -654,11 +661,23 @@ export function DialerClient({
             <PhoneCall className="h-4 w-4" />
             Dial queue
           </button>
+          {/* Not while anything is on the wire. This tab replaces the WHOLE
+              three-column grid, CallCockpit included — a rep who tapped it
+              mid-call lost the timer, mute, hold, keypad, End call and the
+              disposition grid in one click, with the call still up and no way
+              to touch it. `Load leads` and `Filters` above already gate the
+              same way. */}
           <button
             type="button"
             onClick={() => setTab("booked")}
+            disabled={state.status !== "idle"}
+            title={
+              state.status !== "idle"
+                ? "Finish the call first — this tab replaces the call controls."
+                : undefined
+            }
             className={cn(
-              "flex items-center gap-1.5 border-b-2 px-3 py-2 text-sm font-medium transition-colors",
+              "flex items-center gap-1.5 border-b-2 px-3 py-2 text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50",
               tab === "booked"
                 ? "border-primary text-foreground"
                 : "border-transparent text-muted-foreground hover:text-foreground",

@@ -3,10 +3,12 @@
 import { motion } from "framer-motion";
 import { ArrowLeftRight, Building2, LogOut, ShieldCheck } from "lucide-react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
-import { useId } from "react";
+import { usePathname, useRouter } from "next/navigation";
+import { useId, type ReactNode } from "react";
+import { useDialerContextOptional } from "@/components/dialer/dialer-context";
 import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
+import { useConfirm } from "@/components/ui/confirm-dialog";
 import { Wordmark } from "@/components/brand/logo";
 import type { OrgFeatures } from "@/lib/org/settings";
 import { DEFAULT_VOCABULARY, type OrgVocabulary } from "@/lib/org/vocabulary";
@@ -16,6 +18,64 @@ import { activeNavHref, navGroups, navLabel } from "./nav";
 import { ReviewCountBadge } from "./review-count-badge";
 
 type Account = { name: string; email: string; initials: string };
+
+/**
+ * A link OUT of the authenticated app shell.
+ *
+ * `/hub` and `/console` live in their own route groups, which do not mount
+ * DialerProvider — so following one unmounts `useDialer`, and its cleanup calls
+ * `device.destroy()`. The homeowner is cut off mid-sentence, the un-filed
+ * disposition goes with it, and nothing warns the rep or offers a way back.
+ *
+ * These two links are rendered during a call, so they ask first. Everything
+ * else in the sidebar stays inside the shell and keeps the call alive.
+ */
+function ExitLink({
+  href,
+  className,
+  onNavigate,
+  children,
+}: {
+  href: string;
+  className?: string;
+  onNavigate?: () => void;
+  children: ReactNode;
+}) {
+  const router = useRouter();
+  const confirm = useConfirm();
+  // Optional: the sidebar is only ever mounted inside the provider today, but
+  // a missing provider must not throw a whole navigation away.
+  const ctx = useDialerContextOptional();
+  const busy = Boolean(ctx && ctx.dialer.state.status !== "idle");
+
+  return (
+    <Link
+      href={href}
+      className={className}
+      onClick={(e) => {
+        if (!busy) {
+          onNavigate?.();
+          return;
+        }
+        e.preventDefault();
+        void (async () => {
+          const ok = await confirm({
+            title: "You're still on a call",
+            body: "This page is outside the calling workspace, so leaving hangs up and loses any outcome you haven't filed yet.",
+            confirmLabel: "Leave and hang up",
+            cancelLabel: "Stay on the call",
+            tone: "danger",
+          });
+          if (!ok) return;
+          onNavigate?.();
+          router.push(href);
+        })();
+      }}
+    >
+      {children}
+    </Link>
+  );
+}
 
 export function Sidebar({
   account,
@@ -122,14 +182,14 @@ export function Sidebar({
                 </Badge>
               )}
             </div>
-            <Link
+            <ExitLink
               href="/hub"
-              onClick={onNavigate}
+              onNavigate={onNavigate}
               className="mt-2 flex items-center justify-center gap-1.5 rounded-lg border border-border/60 py-1.5 text-[11px] font-semibold text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
             >
               <ArrowLeftRight className="h-3.5 w-3.5" />
               Switch organization
-            </Link>
+            </ExitLink>
           </div>
         </div>
       )}
@@ -214,14 +274,14 @@ export function Sidebar({
 
       <div className="space-y-2 px-3 pb-5">
         {superadmin && (
-          <Link
+          <ExitLink
             href="/console"
-            onClick={onNavigate}
+            onNavigate={onNavigate}
             className="flex items-center justify-center gap-2 rounded-xl border border-border/60 px-3 py-2 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
           >
             <ShieldCheck className="h-3.5 w-3.5" />
             Control Center
-          </Link>
+          </ExitLink>
         )}
         <Link
           href="/settings"

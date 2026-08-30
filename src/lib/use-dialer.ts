@@ -538,6 +538,29 @@ export function useDialer(
   useEffect(() => {
     statusRef.current = state.status;
   }, [state.status]);
+
+  // ── Don't let the tab close out from under a live call ─────────────────────
+  // Cmd-W or a stray refresh tore the Device down with no prompt: the homeowner
+  // was cut off mid-sentence, and the disposition the rep was about to file —
+  // which lives only in React state until it is submitted — went with it. The
+  // browser's own leave-confirmation is the only thing that can interrupt an
+  // unload, and it will only show it if a handler cancels the event.
+  //
+  // Registered only while something is actually in progress, so an idle tab
+  // never prompts.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (state.status === "idle") return;
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      // Legacy browsers need returnValue set; the string itself is ignored by
+      // every current engine, which shows its own wording.
+      e.returnValue = "";
+      return "";
+    };
+    window.addEventListener("beforeunload", onBeforeUnload);
+    return () => window.removeEventListener("beforeunload", onBeforeUnload);
+  }, [state.status]);
   /** A mute toggle pressed before device.connect() resolved — applied by
    *  attachCallHandlers the moment the rep leg exists (pre-answer mute). */
   const pendingMuteRef = useRef<boolean | null>(null);

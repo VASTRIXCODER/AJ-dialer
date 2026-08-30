@@ -77,8 +77,12 @@ export function ToastProvider({ children }: { children: ReactNode }) {
         <div
           aria-live="polite"
           aria-label="Notifications"
-          className="pointer-events-none fixed inset-x-0 bottom-4 flex flex-col items-center gap-2 px-4 sm:items-end sm:pr-6"
-          style={{ zIndex: Z.toast }}
+          // Below `sm` the stack is centred, which is exactly where the call
+          // bar sits — a toast used to land on top of End call and Mute during
+          // a live call. `--callbar-h` is published by GlobalCallBar only while
+          // it is up, so this is a plain 1rem the rest of the time.
+          className="pointer-events-none fixed inset-x-0 flex flex-col items-center gap-2 px-4 sm:items-end sm:pr-6"
+          style={{ zIndex: Z.toast, bottom: "calc(1rem + var(--callbar-h, 0px))" }}
         >
           <AnimatePresence>
             {items.map((t) => {
