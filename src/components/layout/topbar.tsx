@@ -1,14 +1,29 @@
 "use client";
 
-import { motion } from "framer-motion";
 import Link from "next/link";
 import { Menu, PhoneCall, Search, Sparkles } from "lucide-react";
-import { Magnetic } from "@/components/motion";
 import { NotificationsBell } from "@/components/layout/notifications-bell";
 import { buttonVariants } from "@/components/ui/button";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { cn } from "@/lib/utils";
 import { Z } from "@/lib/z-layers";
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The header is chrome. It reports state (AI, Twilio, notifications), opens the
+// palette, and gets out of the way — the page owns the primary action.
+//
+// Three things it was getting wrong:
+//   · The sticky element was a transparent wrapper with 12–16px of padding, so
+//     page rows scrolled visibly through the band above the floating header.
+//     The opaque fill is on the sticky element now.
+//   · The command palette's only trigger was `hidden … sm:flex`, and the other
+//     way in is ⌘K, which a phone cannot produce. The palette was mounted on
+//     every page and unreachable on every phone.
+//   · "Start Dialing" was a brand-filled primary pill that also translated
+//     toward the cursor. It stays — a one-click way to the dialer from any
+//     screen is real utility — but as a quiet outline control, so it stops
+//     competing with the actual primary action of whatever page is beneath it.
+// ─────────────────────────────────────────────────────────────────────────────
 
 export function Topbar({
   onMenuClick,
@@ -19,14 +34,14 @@ export function Topbar({
   voiceConfigured: boolean;
   aiConfigured: boolean;
 }) {
+  const openPalette = () => window.dispatchEvent(new Event("open-command-palette"));
+
   return (
-    <div className="sticky top-0 px-3 pt-3 sm:px-5 sm:pt-4" style={{ zIndex: Z.topbar }}>
-      <motion.header
-        initial={{ opacity: 0, y: -14 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
-        className="glass flex h-[60px] items-center gap-3 rounded-2xl border border-border/60 px-3 py-2.5 sm:px-4"
-      >
+    <div
+      className="sticky top-0 bg-background px-3 pt-3 sm:px-5 sm:pt-4"
+      style={{ zIndex: Z.topbar }}
+    >
+      <header className="glass flex h-[60px] items-center gap-3 rounded-2xl border border-border/60 px-3 py-2.5 sm:px-4">
         <button
           type="button"
           onClick={onMenuClick}
@@ -39,13 +54,11 @@ export function Topbar({
         {/* Universal search / command palette */}
         <button
           type="button"
-          onClick={() =>
-            window.dispatchEvent(new Event("open-command-palette"))
-          }
+          onClick={openPalette}
           className="group relative hidden max-w-md flex-1 items-center sm:flex"
         >
           <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground transition-colors group-hover:text-primary" />
-          <span className="h-10 w-full rounded-xl border border-border/70 bg-background/40 pl-10 pr-16 text-left text-sm leading-10 text-ink-3 transition-all group-hover:border-primary/40 group-hover:bg-background/60">
+          <span className="h-10 w-full rounded-xl border border-border/70 bg-surface-2 pl-10 pr-16 text-left text-sm leading-10 text-ink-3 transition-colors duration-[var(--dur-state)] group-hover:border-primary/40 group-hover:bg-muted">
             Search or ask AI…
           </span>
           <kbd className="pointer-events-none absolute right-2.5 top-1/2 hidden -translate-y-1/2 items-center gap-0.5 rounded-md border border-border/70 bg-muted/60 px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground md:inline-flex">
@@ -54,6 +67,16 @@ export function Topbar({
         </button>
 
         <div className="flex flex-1 items-center justify-end gap-2 sm:flex-none">
+          {/* The palette's only door on a phone. ⌘K is not producible there. */}
+          <button
+            type="button"
+            onClick={openPalette}
+            aria-label="Search or ask AI"
+            className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-border/70 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground sm:hidden"
+          >
+            <Search className="h-4 w-4" />
+          </button>
+
           <span
             className={cn(
               "hidden items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-semibold lg:inline-flex",
@@ -97,20 +120,19 @@ export function Topbar({
 
           <ThemeToggle />
 
-          <Magnetic className="hidden sm:inline-flex">
-            <Link
-              href="/dialer"
-              className={buttonVariants({
-                size: "sm",
-                className: "gap-2",
-              })}
-            >
-              <PhoneCall className="h-4 w-4" />
-              Start Dialing
-            </Link>
-          </Magnetic>
+          <Link
+            href="/dialer"
+            className={buttonVariants({
+              variant: "outline",
+              size: "sm",
+              className: "hidden gap-2 sm:inline-flex",
+            })}
+          >
+            <PhoneCall className="h-4 w-4" />
+            Start Dialing
+          </Link>
         </div>
-      </motion.header>
+      </header>
     </div>
   );
 }

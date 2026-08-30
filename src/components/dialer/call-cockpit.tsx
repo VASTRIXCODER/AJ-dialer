@@ -198,6 +198,10 @@ export function CallCockpit({
   onStopAICampaign,
   onEndAISession,
   onReconnect,
+  keypadOpen,
+  onToggleKeypad,
+  manualPadOpen,
+  onToggleManualPad,
   wrapupNotes,
   onNotesChange,
   dispositions,
@@ -207,6 +211,14 @@ export function CallCockpit({
   state: DialerState;
   focusLead: Lead | null;
   hasQueue: boolean;
+  /** The in-call DTMF pad. Lifted out of this component so the "#" shortcut,
+   *  which is registered on the page above, can open the same one the Keypad
+   *  button does. */
+  keypadOpen: boolean;
+  onToggleKeypad: () => void;
+  /** The idle "dial a specific number" pad — the other thing "#" reveals. */
+  manualPadOpen: boolean;
+  onToggleManualPad: () => void;
   /** The rep's in-call notes at wrap-up — evidence for the AI summary. */
   wrapupNotes?: string;
   /** Edit those notes from the wrap-up screen — same note the qualify panel shows. */
@@ -252,8 +264,6 @@ export function CallCockpit({
   onEndAISession: () => void;
   onReconnect: () => void;
 }) {
-  const [showKeypad, setShowKeypad] = useState(false);
-  const [manualOpen, setManualOpen] = useState(!hasQueue);
   const [pendingAiNumber, setPendingAiNumber] = useState<string | null>(null);
   const vocab = useVocabulary();
   // AI is usable only when configured AND permitted for this viewer; mode
@@ -567,15 +577,15 @@ export function CallCockpit({
                 {hasQueue && (
                   <button
                     type="button"
-                    onClick={() => setManualOpen((v) => !v)}
+                    onClick={onToggleManualPad}
                     className="mx-auto mb-3 flex items-center gap-1.5 text-sm font-medium text-muted-foreground hover:text-foreground"
                   >
                     <Hash className="h-4 w-4" />
-                    {manualOpen ? "Hide number pad" : "Dial a specific number"}
+                    {manualPadOpen ? "Hide number pad" : "Dial a specific number"}
                   </button>
                 )}
                 <AnimatePresence initial={false}>
-                  {manualOpen && (
+                  {manualPadOpen && (
                     <motion.div
                       initial={{ opacity: 0, height: 0 }}
                       animate={{ opacity: 1, height: "auto" }}
@@ -759,7 +769,7 @@ export function CallCockpit({
               />
 
               <AnimatePresence>
-                {showKeypad && (
+                {keypadOpen && (
                   <motion.div
                     initial={{ opacity: 0, height: 0 }}
                     animate={{ opacity: 1, height: "auto" }}
@@ -777,7 +787,7 @@ export function CallCockpit({
               <MuteStatus muted={state.muted} />
               <div className="flex items-center justify-center gap-5">
                 <ControlButton label={state.muted ? "Unmute" : "Mute"} icon={Mic} activeIcon={MicOff} active={state.muted} onClick={onToggleMute} title="Mute your microphone (m)" />
-                <ControlButton label="Keypad" icon={Grid3x3} active={showKeypad} onClick={() => setShowKeypad((v) => !v)} />
+                <ControlButton label="Keypad" icon={Grid3x3} active={keypadOpen} onClick={onToggleKeypad} title="Show the keypad (#)" />
                 <ControlButton label={state.onHold ? "Resume" : "Hold"} icon={Pause} activeIcon={Play} active={state.onHold} onClick={onToggleHold} />
               </div>
 

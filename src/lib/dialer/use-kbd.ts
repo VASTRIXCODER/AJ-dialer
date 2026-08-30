@@ -37,6 +37,11 @@ export interface DialerKbdHandlers {
   onFocusNotes?: () => void;
   /** 1..9 — disposition hotkeys in wrap-up, grid order. */
   onDigit?: (n: number) => void;
+  /** # — show / hide the keypad (the in-call DTMF pad, or the idle number pad
+   *  when no call is up). Both used to be reachable by pointer only, which is
+   *  a problem exactly when a rep needs one: mid-call, punching an extension
+   *  into an IVR menu that is counting down. */
+  onToggleKeypad?: () => void;
   /** ? — toggle the shortcut overlay. */
   onToggleOverlay?: () => void;
   /** Escape — close overlays. */
@@ -139,6 +144,10 @@ export function useDialerKbd(handlers: DialerKbdHandlers, active = true): void {
           // preventDefault so the "n" doesn't land inside the just-focused field.
           e.preventDefault();
           ref.current.onFocusNotes?.();
+          return;
+        case "#":
+          e.preventDefault();
+          ref.current.onToggleKeypad?.();
           return;
         case "Escape":
           ref.current.onEscape?.();

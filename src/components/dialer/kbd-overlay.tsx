@@ -33,8 +33,12 @@ export function KbdOverlay({
     { keys: ["m"], label: "Mute / unmute" },
     { keys: ["."], label: "Skip — cancel dialing, or skip wrap-up without a disposition" },
     { keys: ["n"], label: "Focus the notes field" },
+    { keys: ["#"], label: "Show / hide the keypad — DTMF on a call, dial-a-number off one" },
     { keys: ["?"], label: "Show this sheet" },
     { keys: ["Esc"], label: "Close this sheet, or any open dialog" },
+    // The one shortcut that works on every page in the product, and the only
+    // way into the command palette from a keyboard. It was documented nowhere.
+    { keys: ["⌘/Ctrl", "K"], label: "Search or ask AI, from anywhere" },
   ];
 
   return (

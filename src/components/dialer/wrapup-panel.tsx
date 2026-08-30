@@ -163,7 +163,7 @@ export function WrapupPanel({
         </div>
       )}
 
-      <OutcomeGrid onSelect={onOutcome} dispositions={dispositions} allowedKeys={allowedKeys} />
+      <OutcomeGrid onSelect={onOutcome} dispositions={dispositions} allowedKeys={allowedKeys} showKeys />
 
       <div className="flex gap-2">
         {/* Redial the SAME contact right now — DND setups often let a quick

@@ -520,6 +520,12 @@ export function DialerClient({
       ),
     [vocab, dispositions, focusCampaign?.dispositionKeys],
   );
+  // The two number pads. They live up here rather than inside CallCockpit so
+  // that "#" and the Keypad button open the SAME one — the shortcut is
+  // registered on the shell above the cockpit and cannot reach its state.
+  const [keypadOpen, setKeypadOpen] = useState(false);
+  const [manualPadOpen, setManualPadOpen] = useState(queueForDialer.length === 0);
+
   const kbdHandlers = useMemo(
     () => ({
       onStartCall: () => {
@@ -538,6 +544,12 @@ export function DialerClient({
         if (state.status !== "wrapup") return;
         const opt = outcomeOptions[n - 1];
         if (opt) onOutcome(opt.value, opt.key);
+      },
+      // On a call, "#" is the DTMF pad. Off one, it is the "dial a specific
+      // number" pad — the same key for "give me digits", either way.
+      onToggleKeypad: () => {
+        if (state.status === "live") setKeypadOpen((v) => !v);
+        else if (state.status === "idle") setManualPadOpen((v) => !v);
       },
     }),
     [dialer, state.status, outcomeOptions, onOutcome],
@@ -827,6 +839,10 @@ export function DialerClient({
 
         <Card className="overflow-hidden lg:col-span-5 lg:min-h-[640px]">
           <CallCockpit
+            keypadOpen={keypadOpen}
+            onToggleKeypad={() => setKeypadOpen((v) => !v)}
+            manualPadOpen={manualPadOpen}
+            onToggleManualPad={() => setManualPadOpen((v) => !v)}
             state={state}
             focusLead={focusLead}
             hasQueue={queueForDialer.length > 0}

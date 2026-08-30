@@ -50,6 +50,7 @@ export function OutcomeGrid({
   onSelect,
   dispositions,
   allowedKeys,
+  showKeys = false,
 }: {
   /** `outcome` is always canonical; `dispositionKey` is the pressed def's key
    *  (equal to `outcome` for system rows, `x_*` for admin-created rows). */
@@ -60,6 +61,12 @@ export function OutcomeGrid({
   /** Campaign `disposition_keys` subset — when non-empty, only those defs
    *  render (do-not-call always survives; it's legally load-bearing). */
   allowedKeys?: string[];
+  /** Draw the 1–9 hotkey on each button. TRUE ONLY where those keys are bound
+   *  — the dialer's wrap-up. The other four call sites (the pipeline row menu,
+   *  the appointments workspace and dialog, the monitor dashboard) render the
+   *  same grid with no digit handler mounted, and a key that does nothing is
+   *  worse than no key at all. */
+  showKeys?: boolean;
 }) {
   const options = filterOutcomeOptionsByKeys(
     resolveOutcomeOptions(useVocabulary(), dispositions),
@@ -67,7 +74,7 @@ export function OutcomeGrid({
   );
   return (
     <div className="grid grid-cols-2 gap-2.5">
-      {options.map((opt) => {
+      {options.map((opt, i) => {
         const Icon = icons[opt.value];
         return (
           <button
@@ -86,7 +93,7 @@ export function OutcomeGrid({
             <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-muted transition-colors duration-[var(--dur-state)] group-hover:bg-surface">
               <Icon className="h-4 w-4" />
             </span>
-            <span className="min-w-0">
+            <span className="min-w-0 flex-1">
               <span className="block text-sm font-semibold leading-tight">
                 {opt.label}
               </span>
@@ -94,6 +101,17 @@ export function OutcomeGrid({
                 {opt.description}
               </span>
             </span>
+            {/* The key that presses this button. It was documented only inside
+                the [?] sheet, so learning it meant interrupting wrap-up and
+                then counting buttons to match labels back to numbers. */}
+            {showKeys && i < 9 && (
+              <span
+                className="mt-0.5 shrink-0 rounded-md border border-border px-1.5 text-[11px] font-bold tabular text-muted-foreground"
+                aria-hidden
+              >
+                {i + 1}
+              </span>
+            )}
           </button>
         );
       })}

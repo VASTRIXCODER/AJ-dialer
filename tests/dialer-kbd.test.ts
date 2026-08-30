@@ -152,6 +152,61 @@ describe("the overlay counter", () => {
 const ROOT = resolve(__dirname, "..");
 const read = (p: string) => readFileSync(resolve(ROOT, p), "utf8");
 
+describe("a shortcut you cannot find is not a shortcut", () => {
+  const KBD = read("src/lib/dialer/use-kbd.ts");
+  const SHEET = read("src/components/dialer/kbd-overlay.tsx");
+
+  /** Every plain key the dialer actually binds, read off the switch itself. */
+  const bound = [...KBD.matchAll(/case "([^"]+)":/g)]
+    .map((m) => m[1])
+    .filter((k) => k !== "Escape");
+
+  it("binds the keys it claims to", () => {
+    expect(bound.sort()).toEqual(["#", ".", "?", "c", "m", "n"]);
+  });
+
+  it("the shortcuts sheet lists every key the dialer binds", () => {
+    // The sheet is the only place a rep can learn these. A key that exists in
+    // the switch and not in the sheet is a key nobody will ever press.
+    const missing = bound.filter((k) => !SHEET.includes(`["${k}"]`));
+    expect(missing, `not documented in the sheet: ${missing.join(", ")}`).toEqual([]);
+  });
+
+  it("…including the one global shortcut that isn't the dialer's", () => {
+    // Cmd/Ctrl+K opens the command palette from every page in the product and
+    // was written down nowhere.
+    expect(SHEET).toMatch(/⌘\/Ctrl/);
+  });
+
+  it("the disposition grid shows its hotkeys only where they are bound", () => {
+    // Four other surfaces render the same grid with no digit handler mounted.
+    // A number printed on a button that does not respond to it is worse than
+    // no number.
+    const grid = read("src/components/dialer/outcome-grid.tsx");
+    expect(grid).toMatch(/showKeys = false/);
+    expect(read("src/components/dialer/wrapup-panel.tsx")).toMatch(/showKeys/);
+    const others = [
+      "src/components/appointments/appointment-dialog.tsx",
+      "src/components/appointments/appointments-workspace.tsx",
+      "src/components/monitor/call-dashboard.tsx",
+      "src/components/pipeline/row-actions.tsx",
+    ];
+    for (const path of others) {
+      expect(read(path), `${path} advertises keys it does not bind`).not.toMatch(/showKeys/);
+    }
+  });
+
+  it("both keypads answer to the same key", () => {
+    // The pads live on the page rather than inside the cockpit precisely so
+    // that "#" and the Keypad button open the same one.
+    const page = read("src/components/dialer/dialer-client.tsx");
+    expect(page).toMatch(/onToggleKeypad:/);
+    expect(page).toMatch(/setKeypadOpen/);
+    expect(page).toMatch(/setManualPadOpen/);
+    expect(read("src/components/dialer/call-cockpit.tsx")).not.toMatch(/useState\(!hasQueue\)/);
+  });
+});
+
 describe("the guard is actually wired up", () => {
   it("the one Overlay primitive registers with the counter", () => {
     // If this ever stops being true, every pure test above still passes and
