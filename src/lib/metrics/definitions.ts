@@ -155,7 +155,7 @@ export const METRICS: Record<MetricId, MetricDef> = {
     id: "human_connects",
     label: "Human connects",
     description:
-      "Attempts that reached a verified human-connected state (coalesce(human_connected, outcome ∈ CONNECTED_OUTCOMES) during the legacy transition).",
+      "Attempts whose disposition means a conversation happened — appointment, callback, qualified, not interested, or do-not-call. Voicemail never counts, even when the carrier reported an answer. NOTE: call_records.human_connected exists but nothing writes it (0 of 34,079 rows as of 2026-08-30), so this is inferred from the outcome the rep filed, not from a verified answer signal.",
     unit: "count",
     denominator: null,
     excludes: ["Voicemail (always separate)", "Busy", "Declined", "No-answer", "Failures"],
@@ -164,7 +164,7 @@ export const METRICS: Record<MetricId, MetricDef> = {
     id: "connect_rate",
     label: "Connect rate",
     description:
-      "Human connects ÷ eligible completed attempts. Same everywhere — dashboard, reports, leaderboard, and monitor use this one definition.",
+      "Human connects ÷ eligible completed attempts. Same everywhere — dashboard, reports, leaderboard and monitor use this one definition.",
     unit: "percent",
     denominator:
       "Completed outbound attempts in the period, excluding system failures (failure_kind set with no outcome) and pre-dial suppressions.",
@@ -183,7 +183,7 @@ export const METRICS: Record<MetricId, MetricDef> = {
     id: "avg_talk_time",
     label: "Avg talk time",
     description:
-      "Total human-connected talk seconds ÷ human-connected calls. Uses talk_sec (connected→ended) when present; falls back to duration_sec for legacy rows.",
+      "Total talk seconds on connected calls ÷ connected calls. Measured from duration_sec, which a manual call starts counting at pickup rather than at dial — so ring time is already out. NOTE: call_records.talk_sec exists but nothing writes it (0 of 34,079 rows as of 2026-08-30); an AI conversation's duration comes from the provider and may include more than talk.",
     unit: "seconds",
     denominator: "Human-connected calls only.",
     excludes: ["Ringing", "Queue time", "Voicemail time", "Wrap-up"],
@@ -192,7 +192,7 @@ export const METRICS: Record<MetricId, MetricDef> = {
     id: "weekly_performance",
     label: "Performance this week",
     description:
-      "Daily attempt/connect/appointment series for the org-tz calendar week starting on the configured week start. The exact date range is displayed.",
+      "Daily attempt/connect/appointment series for the last seven org-local days, ending today — a rolling window, NOT the calendar week that starts on the workspace's configured week start. The leaderboard uses that calendar week; this trend deliberately does not, so the newest day is always the last bar.",
     unit: "count",
     denominator: null,
     excludes: [],
@@ -201,7 +201,7 @@ export const METRICS: Record<MetricId, MetricDef> = {
     id: "outcome_mix",
     label: "Outcome mix",
     description:
-      "Counts per canonical terminal outcome; mutually exclusive; reconciles to attempts-with-outcome for the same filters. Rows without an outcome are shown as their own bucket, never silently dropped.",
+      "Counts per canonical terminal outcome; mutually exclusive; the percentages divide by attempts that HAVE an outcome, so the buckets sum to 100%. Attempts with no outcome filed yet are reported separately rather than folded into a bucket — they used to sit in the denominator and in none of the buckets, which understated every disposition.",
     unit: "count",
     denominator: null,
     excludes: [],
@@ -210,7 +210,7 @@ export const METRICS: Record<MetricId, MetricDef> = {
     id: "hourly_productivity",
     label: "Hourly productivity",
     description:
-      "Attempts, human connects, appointments, and talk time grouped by local call-start hour. DST-safe by construction: buckets are local-hour labels; a 23/25-hour day has fewer/more populated buckets, never double-counts.",
+      "Attempts and connects grouped by local call-start hour, covering 8am–6pm as a floor and widening to include any hour that actually has calls — evening and early-morning work is no longer dropped off the ends. DST-safe by construction: buckets are local-hour labels, so a 23- or 25-hour day has fewer or more populated buckets and never double-counts.",
     unit: "count",
     denominator: null,
     excludes: [],
@@ -274,7 +274,7 @@ export const METRICS: Record<MetricId, MetricDef> = {
     id: "talk_time_total",
     label: "Talk time",
     description:
-      "Summed talk seconds for the period — a TOTAL, not the per-call mean that Avg talk time reports under a similar name. Uses talk_sec (connected→ended); legacy rows without it count as zero rather than being dropped.",
+      "Summed talk seconds for the period — a TOTAL, not the per-call mean that Avg talk time reports under a similar name. NOTE: call_records.talk_sec exists but nothing writes it (0 of 34,079 rows as of 2026-08-30), so this sums duration_sec, which a manual call starts counting at pickup.",
     unit: "seconds",
     denominator: null,
     excludes: ["Ringing", "Queue time", "Voicemail time", "Wrap-up"],

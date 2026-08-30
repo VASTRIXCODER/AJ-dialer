@@ -225,3 +225,101 @@ describe("the glossary itself", () => {
     expect(describeScope("platform")).toBe("whole platform");
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// A definition is a promise. Six of the original nine were describing something
+// the code does not do — and these are the tooltips a rep opens precisely
+// because they want to know what a number means:
+//
+//   avg_talk_time         "Uses talk_sec when present"      talk_sec: 0 of 34,079 rows
+//   human_connects        "verified human-connected state"  human_connected: 0 of 34,079
+//   connect_rate          "excluding system failures"       failure_kind was never SELECTed
+//   weekly_performance    "org-tz calendar week"            code did a rolling 7 days
+//   outcome_mix           "never silently dropped"          20.4% of rows were
+//   hourly_productivity   "grouped by local hour"           code iterated 8am–6pm only,
+//                                                            hiding 31.5% of the book
+//
+// Three were fixed in the code, three in the words. This is the rule that keeps
+// them together.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("a definition cannot describe something the code does not do", () => {
+  const SRC = execSync(
+    'git ls-files --cached --others --exclude-standard "src/**/*.ts" "src/**/*.tsx"',
+    { cwd: ROOT, encoding: "utf8" },
+  )
+    .split("\n")
+    .filter(Boolean);
+  const ALL_SOURCE = SRC.map((p) => read(p)).join("\n");
+
+  /**
+   * Database columns a description may name.
+   *
+   * The test is about WRITES, not selects — `talk_sec` is in the SELECT list
+   * and has never been written by anything, which is exactly how a tooltip
+   * came to describe a column that is empty in all 34,079 rows.
+   */
+  const COLUMNS = ["talk_sec", "human_connected", "failure_kind", "duration_sec"];
+
+  it("a description names a column only if something writes it, or admits it does not", () => {
+    // A tooltip that cites a column nothing populates is the most convincing
+    // kind of wrong: it reads like precision.
+    const offenders: string[] = [];
+    for (const def of Object.values(METRICS)) {
+      for (const col of COLUMNS) {
+        if (!def.description.includes(col)) continue;
+        // Naming it in order to say it is NOT written is honest, and is the
+        // only way a reader learns why the number is inferred.
+        if (def.description.includes("nothing writes it")) continue;
+        const written = new RegExp(`\b${col}:`).test(ALL_SOURCE);
+        if (!written) {
+          offenders.push(`${def.id} names ${col}, which no code writes`);
+        }
+      }
+    }
+    expect(
+      offenders,
+      "Either write the column, or say in the description that nothing does:\n" +
+        offenders.join("\n"),
+    ).toEqual([]);
+  });
+
+  it("connect_rate's denominator exclusion is one the code can actually make", () => {
+    // The definition promised to exclude system failures and the column was
+    // never in the SELECT, so the shipped rate could not have matched its own
+    // tooltip whatever the data said.
+    const metrics = read("src/lib/db/metrics.ts");
+    expect(METRICS.connect_rate.denominator).toMatch(/failure_kind/);
+    expect(metrics, "failure_kind is not selected").toMatch(/failure_kind/);
+    expect(metrics, "the denominator does not exclude them").toMatch(/eligibleAttempts/);
+    expect(metrics).toMatch(/connectRate: pct\(connections, eligibleAttempts\)/);
+  });
+
+  it("outcome_mix divides by attempts that have an outcome", () => {
+    // It divided by ALL attempts while skipping the ones with no outcome, so
+    // the buckets could never sum to 100% and every disposition was understated
+    // in proportion to how much work was still unfiled.
+    const analytics = read("src/lib/call-analytics.ts");
+    expect(analytics).toMatch(/rate: pct\(counts\[key\] \?\? 0, filed\)/);
+    expect(analytics, "the unfiled rows are not reported anywhere").toMatch(
+      /export function withoutOutcome/,
+    );
+    expect(METRICS.outcome_mix.description).toMatch(/reported separately/);
+  });
+
+  it("hourly_productivity does not hide the ends of the day", () => {
+    const metrics = read("src/lib/db/metrics.ts");
+    expect(metrics, "the hour loop is still a fixed business window").not.toMatch(
+      /for \(let h = 8; h <= 18; h\+\+\)/,
+    );
+    expect(metrics).toMatch(/const firstHour = Math\.min\(8/);
+    expect(metrics).toMatch(/const lastHour = Math\.max\(18/);
+  });
+
+  it("weekly_performance says which seven days it means", () => {
+    // The dashboard renders buildSeries(7) — a rolling window ending today, not
+    // the configured calendar week the leaderboard uses.
+    expect(METRICS.weekly_performance.description).toMatch(/rolling|last seven/i);
+    expect(METRICS.weekly_performance.description).toMatch(/NOT the calendar week/);
+  });
+});

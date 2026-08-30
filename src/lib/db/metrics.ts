@@ -418,7 +418,12 @@ export async function getReportingData(
         let q = reader
           .from("call_records")
           .select(
-            "id,owner_id,outcome,duration_sec,human_connected,talk_sec,channel,started_at,lead_name,phone,conversation_id,recording_url,summary",
+            // `failure_kind` is here because the published connect_rate
+            // definition promises to exclude system failures from its
+            // denominator, and the column was never selected — so the shipped
+            // rate was structurally incapable of matching its own tooltip, on
+            // four tiles that carry it.
+            "id,owner_id,outcome,duration_sec,human_connected,talk_sec,failure_kind,channel,started_at,lead_name,phone,conversation_id,recording_url,summary",
           )
           .eq(scopeCol, scopeVal);
         if (ownScoped) q = q.eq("org_id", orgId as string);
@@ -564,6 +569,19 @@ export async function getReportingData(
     // ── Counts (period-scoped) ──────────────────────────────────────────────
     const totalCalls = periodCalls.length;
     const connections = periodCalls.filter(isConnected).length;
+    /**
+     * The connect-rate denominator the glossary has always described:
+     * completed attempts, minus system failures — a row the provider never
+     * got onto the network is not an attempt somebody declined to answer.
+     *
+     * `failure_kind` set with NO outcome is the shape of one: something broke
+     * before a disposition could exist. A failure that a rep later
+     * dispositioned anyway stays in, because they judged it a real attempt.
+     */
+    const systemFailures = periodCalls.filter(
+      (c) => c.failure_kind != null && String(c.failure_kind) !== "" && !outcomeOf(c),
+    ).length;
+    const eligibleAttempts = Math.max(0, totalCalls - systemFailures);
     const byOutcome = {} as Record<CallOutcome, number>;
     for (const c of periodCalls) {
       const o = outcomeOf(c);
@@ -608,7 +626,7 @@ export async function getReportingData(
       connections,
       conversations: connections,
       avgCallLenSec: avg(talkSecs),
-      connectRate: pct(connections, totalCalls),
+      connectRate: pct(connections, eligibleAttempts),
       appointmentRate: pct(apptOutcome, totalCalls),
       callbackRate: pct(callbackOutcome, totalCalls),
       noAnswerRate: pct(noAnswerOutcome, totalCalls),
@@ -656,9 +674,23 @@ export async function getReportingData(
     const kpiSeries = buildSeries(7);
     const trend30 = buildSeries(30);
 
-    // ── Hourly (today, business window, org-local hour) ─────────────────────────
+    // ── Hourly (org-local hour) ────────────────────────────────────────────────
+    // The loop was a fixed `h = 8; h <= 18`, so every call placed before 8am or
+    // after 6pm simply did not appear — measured against production on
+    // 2026-08-30, 10,728 of 34,079 records, 31.5%, i.e. about a third of the
+    // calling day. A rep working evenings saw an empty chart.
+    //
+    // The business window is still the FLOOR, so a normal day looks exactly as
+    // it did; it just widens to include any hour that actually has calls.
+    const hoursWithCalls = todays
+      .map((c) =>
+        c.started_at ? zonedDayHour(new Date(String(c.started_at)), timezone).hour : null,
+      )
+      .filter((h): h is number => h !== null);
+    const firstHour = Math.min(8, ...hoursWithCalls);
+    const lastHour = Math.max(18, ...hoursWithCalls);
     const hourlyCalls: { hour: string; calls: number; connects: number }[] = [];
-    for (let h = 8; h <= 18; h++) {
+    for (let h = firstHour; h <= lastHour; h++) {
       const inHour = todays.filter(
         (c) =>
           c.started_at && zonedDayHour(new Date(String(c.started_at)), timezone).hour === h,
