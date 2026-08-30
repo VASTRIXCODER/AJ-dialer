@@ -54,5 +54,9 @@ promptx.txt
 /error.txt
 .playwright-mcp/
 
-# Local scratch: resolves Tailwind utilities against the project scale.
+# Local scratch: probes that resolve Tailwind utilities against the project's
+# own @theme scale (px-4 is 12px here, not 16px — see src/lib/ui-density.ts).
+# Useful, but they are investigations rather than product code.
 twc-probe.mjs
+probe-tw.mjs
+probe-out.css
