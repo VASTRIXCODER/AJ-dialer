@@ -50,12 +50,19 @@ export interface PlaybookSummary {
 }
 
 export interface CommandCenterData {
+  /**
+   * Every count here is `number | null`, and the null is load-bearing: it
+   * means the read FAILED, not that the answer is zero. supabase-js resolves
+   * rather than throws on a failed query, so a `?? 0` here would print an
+   * authoritative zero at the top of a supervisor's screen and tell them
+   * there is nothing to chase. The tiles render an em dash for null.
+   */
   today: {
-    dials: number;
-    conversations: number;
-    appointments: number;
+    dials: number | null;
+    conversations: number | null;
+    appointments: number | null;
     leadsWorked: number;
-    newLeads: number;
+    newLeads: number | null;
     /** Median minutes from received → first attempt, for opportunities first
      *  attempted today. Null = no valid denominator ("not enough data"). */
     speedToLeadMin: number | null;
@@ -68,11 +75,12 @@ export interface CommandCenterData {
   speedSampled: boolean;
   /** True when the running-instance scan hit its bound (counts are a floor). */
   instancesCapped: boolean;
+  /** Same rule as `today`: null is "could not ask", not "none waiting". */
   queues: {
-    overdueCallbacks: number;
-    unscheduledCallbacks: number;
-    untouchedNew: number;
-    hotSignals: number;
+    overdueCallbacks: number | null;
+    unscheduledCallbacks: number | null;
+    untouchedNew: number | null;
+    hotSignals: number | null;
   };
   leaks: { count: number; sample: LeakRow[] };
   reps: RepToday[];
@@ -236,14 +244,22 @@ async function readCommandCenter(input: {
   // ── Today strip ────────────────────────────────────────────────────────────
   const isConversation = (r: Row) =>
     r.human_connected === true || (CONNECTED_OUTCOMES as Set<string>).has(s(r.outcome));
+  // `count ?? 0` is the wrong default on every one of these. supabase-js does
+  // not throw on a failed read — it RESOLVES `{ data: null, count: null,
+  // error }` — so the nullish coalesce silently turns "we could not ask" into
+  // "the answer is none", and the Command Center then states it as fact at the
+  // top of the screen. Ask the error, and let the tile say it does not know.
+  const askedCount = (res: { count: number | null; error: unknown }) =>
+    res.error ? null : (res.count ?? 0);
+
   const today = {
-    dials: dialsRes.count ?? 0,
-    conversations: convosRes.count ?? 0,
-    appointments: apptCountRes.count ?? 0,
+    dials: askedCount(dialsRes),
+    conversations: askedCount(convosRes),
+    appointments: askedCount(apptCountRes),
     // Distinct-count isn't expressible in PostgREST — this one rides the
     // bounded scan and is labeled when the scan capped.
     leadsWorked: new Set(calls.map((r) => s(r.lead_id)).filter(Boolean)).size,
-    newLeads: newLeadsRes.count ?? 0,
+    newLeads: askedCount(newLeadsRes),
     speedToLeadMin: null as number | null,
   };
   const sttRows = ((sttRes.data ?? []) as Row[])
@@ -264,11 +280,13 @@ async function readCommandCenter(input: {
   const speedSampled = sttRows.length >= 1000;
 
   // ── Attention queues ───────────────────────────────────────────────────────
+  // Same rule as the Today strip. A queue that reads 0 because the query
+  // failed tells a supervisor there is nothing to chase.
   const queues = {
-    overdueCallbacks: overdueCbRes.count ?? 0,
-    unscheduledCallbacks: unschedCbRes.count ?? 0,
-    untouchedNew: untouchedRes.count ?? 0,
-    hotSignals: hotSigRes.count ?? 0,
+    overdueCallbacks: askedCount(overdueCbRes),
+    unscheduledCallbacks: askedCount(unschedCbRes),
+    untouchedNew: askedCount(untouchedRes),
+    hotSignals: askedCount(hotSigRes),
   };
 
   // ── Pipeline leaks (sample + true count) ───────────────────────────────────

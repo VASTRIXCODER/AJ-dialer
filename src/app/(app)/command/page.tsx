@@ -1,5 +1,6 @@
 import {
   AlarmClock,
+  AlertTriangle,
   CalendarCheck,
   Compass,
   Droplets,
@@ -23,7 +24,7 @@ import { getCommandCenter } from "@/lib/db/command-center";
 import { orgTimezone } from "@/lib/metrics/definitions";
 import { getViewer } from "@/lib/org/membership";
 import { orgVocabulary } from "@/lib/org/vocabulary";
-import { relativeTime } from "@/lib/utils";
+import { cn, relativeTime } from "@/lib/utils";
 import { STAGE_LABELS } from "@/lib/opportunities/why-now";
 
 export const metadata = { title: "Command Center" };
@@ -77,11 +78,50 @@ export default async function CommandCenterPage() {
   const ApptPlural =
     vocab.appointmentNounPlural.charAt(0).toUpperCase() +
     vocab.appointmentNounPlural.slice(1);
-  const attentionTotal =
-    queues.overdueCallbacks +
-    queues.unscheduledCallbacks +
-    queues.untouchedNew +
-    queues.hotSignals;
+  // Each queue is `number | null`, and null means the read failed rather than
+  // "none waiting". The doors below used to be gated on `count > 0`, which is
+  // false for null — so a failed query removed the door silently and a broken
+  // board looked like a clear one. Unknown queues now announce themselves.
+  const attentionDoors = [
+    {
+      key: "overdue",
+      count: queues.overdueCallbacks,
+      href: "/callbacks",
+      icon: AlarmClock,
+      label: "overdue callbacks",
+      tone: "danger" as const,
+    },
+    {
+      key: "unscheduled",
+      count: queues.unscheduledCallbacks,
+      href: "/callbacks",
+      icon: PhoneIncoming,
+      label: "callbacks with no time set",
+      tone: "neutral" as const,
+    },
+    {
+      key: "untouched",
+      count: queues.untouchedNew,
+      href: "/leads",
+      icon: Users,
+      label: `untouched new ${vocab.leadNounPlural}`,
+      tone: "warning" as const,
+    },
+    {
+      key: "hot",
+      count: queues.hotSignals,
+      href: "/dashboard",
+      icon: Flame,
+      label: "hot signals open",
+      tone: "danger" as const,
+    },
+  ];
+  const openDoors = attentionDoors.filter((d) => d.count !== null && d.count > 0);
+  const unknownDoors = attentionDoors.filter((d) => d.count === null);
+
+  /** A count the tile can render, or null so it shows an em dash. */
+  const n = (v: number | null) => (v === null ? null : String(v));
+  const UNREAD = "Couldn't read this count — it is not necessarily zero.";
 
   return (
     <PageContainer>
@@ -96,16 +136,24 @@ export default async function CommandCenterPage() {
           Today · whole org · org time
         </p>
         <div className="grid grid-cols-2 gap-4 lg:grid-cols-3 xl:grid-cols-6">
-          <MetricCard label="Dials" value={String(today.dials)} icon={Phone} accent="accent" />
+          <MetricCard
+            label="Dials"
+            value={n(today.dials)}
+            unavailable={UNREAD}
+            icon={Phone}
+            accent="accent"
+          />
           <MetricCard
             label="Conversations"
-            value={String(today.conversations)}
+            value={n(today.conversations)}
+            unavailable={UNREAD}
             icon={PhoneCall}
             accent="success"
           />
           <MetricCard
             label={ApptPlural}
-            value={String(today.appointments)}
+            value={n(today.appointments)}
+            unavailable={UNREAD}
             icon={CalendarCheck}
             accent="warning"
           />
@@ -118,7 +166,8 @@ export default async function CommandCenterPage() {
           />
           <MetricCard
             label={`New ${vocab.leadNounPlural}`}
-            value={String(today.newLeads)}
+            value={n(today.newLeads)}
+            unavailable={UNREAD}
             icon={Sparkles}
             accent="accent"
           />
@@ -138,75 +187,68 @@ export default async function CommandCenterPage() {
         </div>
       </div>
 
-      {/* Attention queues — each count is a door, not a decoration. */}
-      {attentionTotal > 0 && (
+      {/* Attention queues — each count is a door, not a decoration. A queue
+          that could not be READ announces itself instead of disappearing:
+          these used to be gated on `count > 0`, which is false for null, so a
+          failed query silently removed the door and a broken board looked
+          like a clear one. */}
+      {(openDoors.length > 0 || unknownDoors.length > 0) && (
         <SectionCard
           title="Needs attention now"
           description="Open queues across the whole org · live"
         >
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-            {queues.overdueCallbacks > 0 && (
-              <Link
-                href="/callbacks"
-                className="flex items-center gap-3 rounded-xl border border-danger/30 bg-danger/5 p-3 transition-colors hover:bg-danger/10"
-              >
-                <AlarmClock className="h-5 w-5 shrink-0 text-danger" />
-                <span>
-                  <span className="block text-lg font-bold tabular text-danger">
-                    {queues.overdueCallbacks}
+            {openDoors.map((d) => {
+              const Icon = d.icon;
+              return (
+                <Link
+                  key={d.key}
+                  href={d.href}
+                  className={cn(
+                    "flex items-center gap-3 rounded-xl border p-3 transition-colors",
+                    d.tone === "danger" && "border-danger/30 bg-danger/5 hover:bg-danger/10",
+                    d.tone === "warning" && "border-warning/30 bg-warning/5 hover:bg-warning/10",
+                    d.tone === "neutral" && "border-border/70 bg-muted/30 hover:bg-muted/60",
+                  )}
+                >
+                  <Icon
+                    className={cn(
+                      "h-5 w-5 shrink-0",
+                      d.tone === "danger" && "text-danger",
+                      d.tone === "warning" && "text-warning",
+                      d.tone === "neutral" && "text-muted-foreground",
+                    )}
+                  />
+                  <span>
+                    <span
+                      className={cn(
+                        "block text-lg font-bold tabular",
+                        d.tone === "danger" && "text-danger",
+                        d.tone === "warning" && "text-warning",
+                      )}
+                    >
+                      {d.count}
+                    </span>
+                    <span className="block text-xs text-muted-foreground">{d.label}</span>
                   </span>
+                </Link>
+              );
+            })}
+            {unknownDoors.map((d) => (
+              <div
+                key={d.key}
+                className="flex items-center gap-3 rounded-xl border border-signal-ring/30 bg-signal-ring-bg p-3"
+                title="This count could not be read. It is not necessarily zero."
+              >
+                <AlertTriangle className="h-5 w-5 shrink-0 text-signal-ring" />
+                <span>
+                  <span className="block text-lg font-bold tabular text-ink-3">—</span>
                   <span className="block text-xs text-muted-foreground">
-                    overdue callbacks
+                    couldn&apos;t read {d.label}
                   </span>
                 </span>
-              </Link>
-            )}
-            {queues.unscheduledCallbacks > 0 && (
-              <Link
-                href="/callbacks"
-                className="flex items-center gap-3 rounded-xl border border-border/70 bg-muted/30 p-3 transition-colors hover:bg-muted/60"
-              >
-                <PhoneIncoming className="h-5 w-5 shrink-0 text-muted-foreground" />
-                <span>
-                  <span className="block text-lg font-bold tabular">
-                    {queues.unscheduledCallbacks}
-                  </span>
-                  <span className="block text-xs text-muted-foreground">
-                    callbacks with no time set
-                  </span>
-                </span>
-              </Link>
-            )}
-            {queues.untouchedNew > 0 && (
-              <Link
-                href="/leads"
-                className="flex items-center gap-3 rounded-xl border border-warning/30 bg-warning/5 p-3 transition-colors hover:bg-warning/10"
-              >
-                <Users className="h-5 w-5 shrink-0 text-warning" />
-                <span>
-                  <span className="block text-lg font-bold tabular text-warning">
-                    {queues.untouchedNew}
-                  </span>
-                  <span className="block text-xs text-muted-foreground">
-                    untouched new {vocab.leadNounPlural}
-                  </span>
-                </span>
-              </Link>
-            )}
-            {queues.hotSignals > 0 && (
-              <Link
-                href="/dashboard"
-                className="flex items-center gap-3 rounded-xl border border-danger/30 bg-danger/5 p-3 transition-colors hover:bg-danger/10"
-              >
-                <Flame className="h-5 w-5 shrink-0 text-danger" />
-                <span>
-                  <span className="block text-lg font-bold tabular text-danger">
-                    {queues.hotSignals}
-                  </span>
-                  <span className="block text-xs text-muted-foreground">hot signals open</span>
-                </span>
-              </Link>
-            )}
+              </div>
+            ))}
           </div>
         </SectionCard>
       )}
