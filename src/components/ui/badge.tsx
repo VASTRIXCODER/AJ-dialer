@@ -50,10 +50,13 @@ export function Badge({
       )}
       {...props}
     >
+      {/* `h-3` is 8px on this project's spacing scale, not 12 — and the whole
+          point of a state glyph on a Badge is to carry the state for anyone who
+          cannot read the tone as colour. At 8px it could not. */}
       {Icon ? (
-        <Icon className="h-3 w-3 shrink-0" />
+        <Icon className="h-[13px] w-[13px] shrink-0" />
       ) : (
-        dot && <span className="h-1.5 w-1.5 rounded-full bg-current opacity-80" />
+        dot && <span className="h-[7px] w-[7px] rounded-full bg-current opacity-80" />
       )}
       {children}
     </span>

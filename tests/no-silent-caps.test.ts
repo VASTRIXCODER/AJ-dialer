@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
+import { CONNECTED_OUTCOMES } from "@/lib/metrics/definitions";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // A `.limit()` above PostgREST's response ceiling is not a limit. It is a lie
@@ -142,15 +143,39 @@ describe("the totals that used to be page lengths are counted in SQL", () => {
     });
   }
 
-  it("the classification rules stayed in TypeScript", () => {
-    // These functions GROUP. If one of them starts deciding what "connected" or
-    // "dialable" means, there are two definitions in the product and they will
-    // drift — which is the whole reason the callers sum an `n` column instead.
-    const region = schema.slice(schema.indexOf("app_pack_progress"));
-    for (const word of ["appointment_booked", "not_interested", "bills_fine"]) {
-      expect(region, `${word} is a classification, and it belongs in TypeScript`).not.toContain(
-        word,
-      );
+  it("the counting functions do not classify", () => {
+    // They GROUP. If one of them starts deciding what "connected" or "dialable"
+    // means there are two definitions in the product, and they will drift —
+    // which is the whole reason the callers sum an `n` column instead.
+    for (const [fn] of COUNTERS) {
+      const start = schema.indexOf(`function public.${fn}(`);
+      const body = schema.slice(start, schema.indexOf("$$;", start));
+      for (const word of ["appointment_booked", "not_interested", "bills_fine"]) {
+        expect(body, `${fn} classifies — that belongs in TypeScript`).not.toContain(word);
+      }
     }
+  });
+
+  it("the one view that MUST restate 'connected' restates it exactly", () => {
+    // touches_v is a view an analyst reads directly, so it has to carry a
+    // `connected` column, and SQL cannot import isConnectedRecord. That makes
+    // it the single legitimate second copy of the definition — and it was
+    // wrong for its whole life: `coalesce(human_connected, false)` over a
+    // column nothing writes, so the column read false for all 34,079 rows.
+    //
+    // The duplication stays; the drift does not.
+    const view = schema.slice(schema.indexOf("create or replace view public.touches_v"));
+    const list = view.slice(view.indexOf("array["), view.indexOf("])", view.indexOf("array[")));
+    const inSql = [...list.matchAll(/'([a-z_]+)'/g)].map((m) => m[1]).sort();
+    expect(inSql, "touches_v and CONNECTED_OUTCOMES disagree").toEqual(
+      [...CONNECTED_OUTCOMES].sort(),
+    );
+    // …and the two rules that are not a list.
+    expect(view, "voicemail must never count as a connect").toMatch(
+      /when outcome = 'voicemail'::text then false/,
+    );
+    expect(view, "the verified flag must win over the outcome inference").toMatch(
+      /when human_connected is not null then human_connected/,
+    );
   });
 });

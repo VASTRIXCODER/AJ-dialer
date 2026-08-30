@@ -718,7 +718,7 @@ export function DialerClient({
           Both doors lead to the SessionBuilder — two identically-labeled
           buttons doing different things is how the builder stayed invisible
           (quick load lives inside it, one click away). */}
-      <div className="flex flex-wrap items-center gap-2.5">
+      <div className="relative flex flex-wrap items-center gap-2.5">
         <Button
           size="sm"
           variant="outline"
@@ -812,13 +812,31 @@ export function DialerClient({
         {/* A live region: this is the only feedback a rep gets for "Load
             leads", and it announced nothing to a screen reader. `polite` so it
             waits for a gap rather than cutting across a call. */}
-        <span className="basis-full text-xs text-muted-foreground" role="status" aria-live="polite">
+        {/* Absolutely positioned so a message does not push the grid — and the
+            grid already starts 422px down. `basis-full` meant every "Loaded 41
+            leads" reflowed the whole working surface by a line. */}
+        <span
+          className="pointer-events-none absolute left-0 top-full pt-1 text-xs text-muted-foreground"
+          role="status"
+          aria-live="polite"
+        >
           {loadMsg}
         </span>
       </div>
 
+      {/* Three independently-scrolling panes, not three columns of one long
+          page.
+          
+          The grid starts ~422px down (topbar 72 + PageHeader 99 + gaps +
+          ShellHeader 58 + tab strip 31 + floor strip 42 + toolbar 48), and the
+          right column runs ~680px with no script and ~1000px with a
+          teleprompter. At 1440×900 that leaves 478px of visible height, so the
+          call controls — the thing a rep reaches for while somebody is talking
+          — sat below the fold whenever the qualify panel was long. Each pane
+          gets its own scrollbar and a height budget tied to the viewport, so
+          the tallest neighbour can no longer push the others down. */}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-12">
-        <Card className="overflow-hidden lg:col-span-3">
+        <Card className="overflow-hidden lg:col-span-3 lg:sticky lg:top-4 lg:max-h-[calc(100vh-7rem)] lg:overflow-y-auto">
           <LeadPanel
             lead={focusLead}
             upNext={upNext}
@@ -841,7 +859,9 @@ export function DialerClient({
           />
         </Card>
 
-        <Card className="overflow-hidden lg:col-span-5 lg:min-h-[640px]">
+        {/* min-h is gone: it forced 640px of column whatever was in it, which
+            is most of the viewport before anything renders. */}
+        <Card className="overflow-hidden lg:col-span-5 lg:sticky lg:top-4 lg:max-h-[calc(100vh-7rem)] lg:overflow-y-auto">
           <CallCockpit
             keypadOpen={keypadOpen}
             onToggleKeypad={() => setKeypadOpen((v) => !v)}
@@ -886,7 +906,10 @@ export function DialerClient({
 
         {/* data-dialer-teleprompter: the live cockpit's "Script" reach button
             scrolls this card into view (it can sit below the fold mid-call). */}
-        <Card className="overflow-hidden lg:col-span-4" data-dialer-teleprompter="">
+        <Card
+          className="overflow-hidden lg:col-span-4 lg:sticky lg:top-4 lg:max-h-[calc(100vh-7rem)] lg:overflow-y-auto"
+          data-dialer-teleprompter=""
+        >
           <div className="border-b border-border px-5 py-3">
             <h3 className="font-semibold">
               {/* Two things vary here. An org can switch every qualify field off

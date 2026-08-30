@@ -325,14 +325,6 @@ export const METRICS: Record<MetricId, MetricDef> = {
 };
 
 /**
- * The one "did a human really answer?" predicate. `human_connected` is the
- * verified flag written by the answer pipeline; legacy rows predate it, so when
- * it's absent we coalesce to the outcome-based definition (CONNECTED_OUTCOMES).
- * Voicemail is NEVER a connect — it wins even over a stray humanConnected=true,
- * because AMD race conditions have set the flag on machine pickups and a
- * voicemail must never inflate the connect rate.
- */
-/**
  * Is this appointment cancelled?
  *
  * Both spellings, because `appointments.status` is a bare `text` column with no
@@ -350,6 +342,14 @@ export function isCancelledAppointment(status: string | null | undefined): boole
   return status === "cancelled" || status === "canceled";
 }
 
+/**
+ * The one "did a human really answer?" predicate. `human_connected` is the
+ * verified flag written by the answer pipeline; legacy rows predate it, so when
+ * it's absent we coalesce to the outcome-based definition (CONNECTED_OUTCOMES).
+ * Voicemail is NEVER a connect — it wins even over a stray humanConnected=true,
+ * because AMD race conditions have set the flag on machine pickups and a
+ * voicemail must never inflate the connect rate.
+ */
 export function isConnectedRecord(r: {
   humanConnected?: boolean | null;
   outcome?: string | null;

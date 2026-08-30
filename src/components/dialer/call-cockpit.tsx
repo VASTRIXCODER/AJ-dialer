@@ -386,7 +386,15 @@ export function CallCockpit({
         </div>
       </div>
 
-      <div className="flex flex-1 flex-col items-center justify-center p-6">
+      {/* Top-aligned, not centred.
+      
+          `justify-center` centred the call controls inside whatever height the
+          TALLEST neighbour forced — so the Start/End button's position was a
+          function of how long the qualify panel happened to be, and it moved
+          between leads. That is why this file ships a scroll-to-controls
+          button at all. With each pane scrolling independently the controls now
+          sit where they were drawn. */}
+      <div className="flex flex-1 flex-col items-center p-6">
         {/* Not `mode="wait"`. It held the incoming block until the outgoing
             one finished, so on pickup the rep's screen was still mid-transition
             while a stranger was saying hello. */}
