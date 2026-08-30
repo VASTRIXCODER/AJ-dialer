@@ -114,7 +114,9 @@ export function MetricCard({
     // neighbour not is not a reason for them to be different heights.
     <Card className={cn("flex min-h-[132px] flex-col overflow-hidden p-5", className)}>
       <div className="relative flex flex-1 items-start justify-between">
-        <div className="flex h-full flex-col gap-2">
+        {/* min-w-0 so the caption's truncate actually engages: a flex child
+            defaults to min-width:auto and refuses to shrink below its text. */}
+        <div className="flex h-full min-w-0 flex-1 flex-col gap-2">
           <p className="flex items-center gap-1 text-caps-11 uppercase text-muted-foreground">
             {label}
             {definitionKey && <DefinitionHint id={definitionKey} />}
@@ -153,9 +155,14 @@ export function MetricCard({
               </span>
             )}
             {caption && (
+              // ONE line, truncated, with the full text on hover. A caption
+              // that wraps makes its tile taller than the tiles beside it, and
+              // a KPI row with one card standing proud reads as a rendering
+              // fault rather than a design.
               <span
+                title={caption}
                 className={cn(
-                  "text-label-12",
+                  "min-w-0 truncate text-label-12",
                   value === null ? "text-signal-ring" : "text-muted-foreground",
                 )}
               >
