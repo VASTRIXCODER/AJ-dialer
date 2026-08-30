@@ -14,7 +14,11 @@ export const Input = React.forwardRef<
   HTMLInputElement,
   React.InputHTMLAttributes<HTMLInputElement>
 >(({ className, ...props }, ref) => (
-  <input ref={ref} className={cn(base, className)} {...props} />
+  // h-[44px] matches Button md exactly. They sit next to each other in every
+  // filter row and every form, and they were 42 and 44 — close enough to read
+  // as a mistake rather than a choice, which is what it was. On the input only:
+  // `base` is shared with Textarea, which sets its own min-height.
+  <input ref={ref} className={cn(base, "h-[44px] py-0", className)} {...props} />
 ));
 Input.displayName = "Input";
 

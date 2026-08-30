@@ -247,7 +247,7 @@ export function AuthForm({ mode }: { mode: "login" | "signup" }) {
               checked={agreed}
               onChange={(e) => setAgreed(e.target.checked)}
               required
-              className="mt-0.5 h-4 w-4 shrink-0 rounded border-input accent-primary"
+              className="mt-0.5 h-[22px] w-[22px] shrink-0 rounded border-input accent-primary"
             />
             <span>
               I have read and agree to the AIATWORK{" "}

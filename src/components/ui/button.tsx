@@ -27,11 +27,29 @@ const variants: Record<Variant, string> = {
     "bg-success text-success-foreground shadow-soft hover:brightness-105 active:brightness-95",
 };
 
+/**
+ * Heights are LITERAL, not scale steps, and that is deliberate.
+ *
+ * globals.css redefines Tailwind's spacing scale (`--spacing-9: 48px`,
+ * `--spacing-10: 64px`) but stops at 10, so steps past it fall back to
+ * Tailwind's 0.25rem base. This ladder was written in scale steps and came out
+ * INVERTED: sm `h-9` = 48px, md `h-11` = 44px, lg `h-12` = 48px, icon `h-10` =
+ * 64px. A small button was taller than a medium one, large equalled small, and
+ * an icon button was the biggest control in the product.
+ *
+ * Nobody could see that from reading the file, which is the argument for pixels
+ * here. tests/control-ladders.test.ts resolves these against the compiled
+ * tokens and fails if the ladder stops ascending.
+ *
+ * The floor is 40px: these are tap targets, and the two 12px checkboxes this
+ * codebase shipped are a reminder of where the drift goes if nothing holds it.
+ */
 const sizes: Record<Size, string> = {
-  sm: "h-9 px-3.5 text-sm gap-1.5 rounded-lg",
-  md: "h-11 px-5 text-sm gap-2 rounded-xl",
-  lg: "h-12 px-7 text-base gap-2 rounded-xl",
-  icon: "h-10 w-10 rounded-xl",
+  sm: "h-[40px] px-3.5 text-sm gap-1.5 rounded-lg",
+  md: "h-[44px] px-5 text-sm gap-2 rounded-xl",
+  lg: "h-[48px] px-7 text-base gap-2 rounded-xl",
+  // Square, and the same height as md — an icon button sits beside one.
+  icon: "h-[44px] w-[44px] rounded-xl",
 };
 
 export function buttonVariants({

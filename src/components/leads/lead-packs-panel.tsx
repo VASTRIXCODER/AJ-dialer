@@ -133,7 +133,7 @@ export function LeadPacksPanel({ members }: { members: { id: string; name: strin
                   type="checkbox"
                   checked={onlyUnassigned}
                   onChange={(e) => setOnlyUnassigned(e.target.checked)}
-                  className="h-3.5 w-3.5 rounded border-input accent-primary"
+                  className="h-[22px] w-[22px] rounded border-input accent-primary"
                 />
                 Only unassigned ({unassignedCount})
               </label>

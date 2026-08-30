@@ -1,7 +1,7 @@
 "use client";
 
 import { ArrowDown, ArrowUp, ArrowUpDown } from "lucide-react";
-import type { ReactNode } from "react";
+import type { KeyboardEvent, ReactNode } from "react";
 import { cn } from "@/lib/utils";
 import { useDensity } from "@/components/layout/density";
 import { cellPadding, rowMinHeight, type Density } from "@/lib/ui-density";
@@ -122,13 +122,32 @@ export function DataTable<T>({
               <tr
                 key={rowKey(row)}
                 onClick={onRowClick ? () => onRowClick(row) : undefined}
+                // A clickable row with no keyboard path is a control only a
+                // mouse can reach. `row` is the correct role for a focusable
+                // table row, and Enter/Space are what a button would answer to.
+                {...(onRowClick
+                  ? {
+                      role: "row" as const,
+                      tabIndex: 0,
+                      onKeyDown: (e: KeyboardEvent<HTMLTableRowElement>) => {
+                        // Never swallow a key aimed at something INSIDE the row
+                        // — a link, a button, a checkbox all answer to these.
+                        if (e.target !== e.currentTarget) return;
+                        if (e.key === "Enter" || e.key === " ") {
+                          e.preventDefault();
+                          onRowClick(row);
+                        }
+                      },
+                    }
+                  : {})}
                 className={cn(
                   // A minimum, never a fixed height: a genuinely tall cell (a
                   // wrapped address) may still grow, it just cannot be the only
                   // 90px row in a column of 40px ones.
                   rowMinHeight(active),
                   "align-middle transition-colors",
-                  onRowClick && "cursor-pointer hover:bg-muted/50",
+                  onRowClick &&
+                    "cursor-pointer hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
                 )}
               >
                 {columns.map((col) => (

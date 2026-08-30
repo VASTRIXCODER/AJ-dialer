@@ -772,7 +772,7 @@ function CheckRow({
         type="checkbox"
         checked={checked}
         onChange={onToggle}
-        className="mt-0.5 h-4 w-4 shrink-0 rounded border-input accent-primary"
+        className="mt-0.5 h-[22px] w-[22px] shrink-0 rounded border-input accent-primary"
       />
       <span className="min-w-0">
         <span className="block text-sm font-medium">{label}</span>
@@ -799,7 +799,7 @@ function RadioRow({
         type="radio"
         checked={checked}
         onChange={onSelect}
-        className="mt-0.5 h-4 w-4 shrink-0 rounded border-input accent-primary"
+        className="mt-0.5 h-[22px] w-[22px] shrink-0 rounded border-input accent-primary"
       />
       <span className="min-w-0">
         <span className="block text-sm font-medium">{label}</span>

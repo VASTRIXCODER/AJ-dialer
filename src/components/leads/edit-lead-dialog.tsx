@@ -389,7 +389,7 @@ export function EditLeadDialog({
                 type="checkbox"
                 checked={f.multipleSystems}
                 onChange={(e) => set("multipleSystems", e.target.checked)}
-                className="h-4 w-4 rounded border-border"
+                className="h-[22px] w-[22px] rounded border-border"
               />
               Multiple solar systems on the property
             </label>
@@ -432,7 +432,7 @@ export function EditLeadDialog({
                         type="checkbox"
                         checked={custom[def.key] === true}
                         onChange={(e) => setCustomField(def.key, e.target.checked)}
-                        className="h-4 w-4 rounded border-border"
+                        className="h-[22px] w-[22px] rounded border-border"
                       />
                       {def.label}
                     </label>

@@ -1253,14 +1253,17 @@ export function OrgSettingsForm({
                 !d.enabled && "opacity-60",
               )}
             >
-              {/* Reorder — the wrap-up grid renders in exactly this order */}
-              <div className="flex flex-col">
+              {/* Reorder — the wrap-up grid renders in exactly this order.
+                  These were h-4 w-6, which on this project's spacing scale is
+                  12 × 24px: two stacked 12px-tall targets, and the pair sat in
+                  a row of 44px controls. */}
+              <div className="flex flex-col gap-0.5">
                 <button
                   type="button"
                   aria-label={`Move ${d.label} up`}
                   disabled={i === 0}
                   onClick={() => moveDisposition(i, -1)}
-                  className="flex h-4 w-6 items-center justify-center rounded text-muted-foreground transition-colors hover:text-foreground disabled:opacity-30"
+                  className="flex h-[22px] w-[26px] items-center justify-center rounded text-muted-foreground transition-colors hover:text-foreground disabled:opacity-30"
                 >
                   <ArrowUp className="h-3 w-3" />
                 </button>
@@ -1269,7 +1272,7 @@ export function OrgSettingsForm({
                   aria-label={`Move ${d.label} down`}
                   disabled={i === dispositions.length - 1}
                   onClick={() => moveDisposition(i, 1)}
-                  className="flex h-4 w-6 items-center justify-center rounded text-muted-foreground transition-colors hover:text-foreground disabled:opacity-30"
+                  className="flex h-[22px] w-[26px] items-center justify-center rounded text-muted-foreground transition-colors hover:text-foreground disabled:opacity-30"
                 >
                   <ArrowDown className="h-3 w-3" />
                 </button>

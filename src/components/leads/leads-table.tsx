@@ -1438,7 +1438,7 @@ export function LeadsTable({
                       checked={allSelected}
                       onChange={toggleAll}
                       aria-label="Select all"
-                      className="h-4 w-4 cursor-pointer rounded border-border"
+                      className="h-[22px] w-[22px] cursor-pointer rounded border-border"
                     />
                   </th>
                 )}
@@ -1510,7 +1510,20 @@ export function LeadsTable({
                         return;
                       lead360.open(l.id);
                     }}
+                    // The row was mouse-only: nothing focusable, and the cells
+                    // carry no other route to Lead 360. Enter/Space open it,
+                    // and only when the row ITSELF has focus — a key aimed at
+                    // the checkbox or the Call button inside it passes through.
+                    tabIndex={0}
+                    onKeyDown={(e) => {
+                      if (e.target !== e.currentTarget) return;
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        lead360.open(l.id);
+                      }
+                    }}
                     className={cn(
+                      "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
                       // A minimum, not a fixed height — a wrapped address may
                       // still make its row taller; it just cannot be the only
                       // 90px row in a column of 40px ones.
@@ -1526,7 +1539,7 @@ export function LeadsTable({
                           checked={isSel}
                           onChange={() => toggleOne(l.id)}
                           aria-label={`Select ${name}`}
-                          className="h-4 w-4 cursor-pointer rounded border-border"
+                          className="h-[22px] w-[22px] cursor-pointer rounded border-border"
                         />
                       </td>
                     )}
@@ -1807,7 +1820,7 @@ export function LeadsTable({
                 type="checkbox"
                 checked={saveShared}
                 onChange={(e) => setSaveShared(e.target.checked)}
-                className="h-4 w-4 rounded border-border"
+                className="h-[22px] w-[22px] rounded border-border"
               />
               Share with the whole workspace
             </label>

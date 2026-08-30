@@ -49,6 +49,9 @@ export function RecentCalls({ calls }: { calls: RecentCall[] }) {
                 <tr
                   key={rec.id}
                   onClick={open}
+                  // aria-hidden would be wrong (the cells carry the content);
+                  // the row is simply not focusable, and the View button in the
+                  // last cell is the keyboard route.
                   className="cursor-pointer transition-colors hover:bg-muted/40"
                 >
                   <td className="px-5 py-3">
@@ -97,7 +100,21 @@ export function RecentCalls({ calls }: { calls: RecentCall[] }) {
                           Play
                         </a>
                       )}
-                      <span className="text-xs font-medium text-primary">View →</span>
+                      {/* A real button. The row's onClick is a mouse
+                          convenience; this was the only route to the call
+                          detail modal and it was a <span>, so the table had no
+                          keyboard path at all. onClick stops propagating so
+                          the row handler does not also fire. */}
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          open();
+                        }}
+                        className="rounded-lg px-2 py-1 text-xs font-medium text-primary transition-colors hover:bg-primary-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      >
+                        View →
+                      </button>
                     </div>
                   </td>
                 </tr>

@@ -460,7 +460,7 @@ export function ImportStudio({
                       type="checkbox"
                       checked={hasHeader}
                       onChange={(e) => setHasHeader(e.target.checked)}
-                      className="h-4 w-4 rounded border-input accent-primary"
+                      className="h-[22px] w-[22px] rounded border-input accent-primary"
                     />
                     First row is column names
                     <span className="text-xs font-normal text-muted-foreground">

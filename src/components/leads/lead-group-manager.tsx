@@ -383,7 +383,7 @@ export function LeadGroupManager({
               type="checkbox"
               checked={newManual}
               onChange={(e) => setNewManual(e.target.checked)}
-              className="h-3.5 w-3.5 rounded border-border"
+              className="h-[22px] w-[22px] rounded border-border"
             />
             Human-filed only — the AI never sorts leads into it
           </label>

@@ -550,7 +550,7 @@ export function SessionBuilder({
                       type="checkbox"
                       checked={strictOrder}
                       onChange={(e) => setStrictOrder(e.target.checked)}
-                      className="h-5 w-5 accent-[hsl(var(--primary))]"
+                      className="h-[22px] w-[22px] accent-[hsl(var(--primary))]"
                     />
                   </label>
                   <label className="flex cursor-pointer items-center justify-between gap-3 rounded-xl border border-border/70 bg-surface/50 px-4 py-3">
@@ -567,7 +567,7 @@ export function SessionBuilder({
                       type="checkbox"
                       checked={refill}
                       onChange={(e) => setRefill(e.target.checked)}
-                      className="h-5 w-5 accent-[hsl(var(--primary))]"
+                      className="h-[22px] w-[22px] accent-[hsl(var(--primary))]"
                     />
                   </label>
                 </div>
