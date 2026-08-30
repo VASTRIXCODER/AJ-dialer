@@ -1,6 +1,7 @@
 import "server-only";
 
 import { cache } from "react";
+import { isSupervisorRole } from "../permissions";
 import { isSupabaseConfigured } from "../supabase/config";
 import { createClient } from "../supabase/server";
 
@@ -41,11 +42,91 @@ export const getScope = cache(async (): Promise<Scope | null> => {
   // suspended account otherwise hits. A disabled profile gets no scope at all.
   if (prof?.disabled) return null;
   const orgId = prof?.org_id ? String(prof.org_id) : null;
-  const supervisor = Boolean(
-    orgId && ["owner", "admin", "manager"].includes(String(prof?.role ?? "rep")),
-  );
+  const supervisor = await resolveSupervisor(supabase, user.id, orgId, prof?.role);
   return { userId: user.id, orgId, supervisor };
 });
+
+/**
+ * Is this person a supervisor IN THE ORG THEY ARE CURRENTLY IN?
+ *
+ * `profiles.role` is a denormalized copy of `organization_members.role`, and it
+ * drifts three ways:
+ *
+ *   · it carried a column default of 'manager' while `handle_new_user` inserts
+ *     only (id, full_name), so a row nobody ever set read as a supervisor
+ *   · `switchOrg` moves `profiles.org_id` and never touches `profiles.role`, so
+ *     the role from the PREVIOUS workspace follows the user into the next one
+ *   · the roster edits `organization_members.role`; nothing writes the copy back
+ *
+ * Measured in production: profile 329a50a9-3c3c-438a-8f37-0b5c1a8b31e4 is `rep`
+ * in the members table and `admin` on the profile, so this returned true and
+ * every scoped read handed that person their whole organization's book —
+ * 37,987 leads, every call record, every metric.
+ *
+ * The membership row for the ACTIVE org is the authority. It is what
+ * `getViewer()` and every permission check already use; only these data-scope
+ * reads had their own opinion.
+ *
+ * ON A FAILED READ this answers FALSE, deliberately. Both wrong answers are
+ * bad, but they are not equally bad: "not a supervisor" shrinks a manager's
+ * view to their own uploads, which is visible, recoverable and complained
+ * about within a minute; "supervisor" hands a rep the whole book, which is
+ * silent. Falling back to `profiles.role` here would just reinstate the bug.
+ */
+export async function resolveSupervisor(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  userId: string,
+  orgId: string | null,
+  profileRole: unknown,
+): Promise<boolean> {
+  // Supervision is a property of a membership in an org. No org, no org to
+  // supervise — and the profile role must NOT be consulted here, because it may
+  // be left over from a workspace this person has since left.
+  if (!orgId) return false;
+  const { data, error } = await supabase
+    .from("organization_members")
+    .select("role")
+    .eq("user_id", userId)
+    .eq("org_id", orgId)
+    .eq("status", "active")
+    .maybeSingle();
+  if (error) {
+    console.error("[scope] membership read failed; treating as non-supervisor:", error.message);
+    return false;
+  }
+  if (data) return isSupervisorRole(data.role);
+  // No membership row: the resilience bridge getActiveMembership documents — a
+  // profile placed in an org by the superadmin console, or by the backfill that
+  // predates the members table. Only here is the profile copy the best we have.
+  return isSupervisorRole(profileRole);
+}
+
+/**
+ * The scope a data module needs: which org, and how much of it.
+ *
+ * One function, because fifteen call sites each did their own `profiles` select
+ * and then made this decision from the stale copy. `columns` widens the select
+ * for the two callers that also need `disabled` or a display name.
+ */
+export async function readProfileScope(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  userId: string,
+  columns = "org_id, role",
+): Promise<{ org_id: string | null; role: unknown; disabled: boolean; supervisor: boolean }> {
+  const { data } = await supabase
+    .from("profiles")
+    .select(columns)
+    .eq("id", userId)
+    .maybeSingle();
+  const row = (data ?? {}) as Record<string, unknown>;
+  const orgId = row.org_id ? String(row.org_id) : null;
+  return {
+    org_id: orgId,
+    role: row.role,
+    disabled: Boolean(row.disabled),
+    supervisor: await resolveSupervisor(supabase, userId, orgId, row.role),
+  };
+}
 
 /** May this actor read/modify a row owned by `rowOwnerId` in org `rowOrgId`? */
 export function canActOn(

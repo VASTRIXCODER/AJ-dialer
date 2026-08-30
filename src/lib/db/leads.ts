@@ -17,7 +17,7 @@ import type { Lead, LeadGroup, LeadStatus } from "../types";
 import { normalizePhone } from "../utils";
 import { getDncDigits, scrubDnc } from "./dnc";
 import { logLeadEvent } from "./lead-events";
-import { canActOn, getScope } from "./scope";
+import { canActOn, getScope, readProfileScope } from "./scope";
 
 // Account-scoped lead access. When Supabase is configured and the user is signed
 // in, reads come from their `leads` table (RLS-enforced); otherwise it falls
@@ -118,9 +118,6 @@ export function rowToLead(r: Row): Lead {
 }
 
 /** Is this profile role a supervisor (sees the whole org, not just own leads)? */
-function isSupervisorRole(role: unknown): boolean {
-  return ["owner", "admin", "manager"].includes(String(role ?? "rep"));
-}
 
 /**
  * ORDERING: upload order (created_at, then id) — the order rows came out of the
@@ -145,14 +142,10 @@ export async function getLeads(): Promise<Lead[]> {
       data: { user },
     } = await supabase.auth.getUser();
     if (!user) return [];
-    const { data: prof } = await supabase
-      .from("profiles")
-      .select("org_id, role")
-      .eq("id", user.id)
-      .maybeSingle();
+    const prof = await readProfileScope(supabase, user.id);
     const orgId = prof?.org_id ? String(prof.org_id) : null;
     const supervisor =
-      Boolean(orgId) && isSupervisorRole(prof?.role) && isAdminConfigured();
+      prof.supervisor && isAdminConfigured();
 
     // Leads are SEPARATED BY UPLOADER. A rep sees only the leads they uploaded
     // WITHIN THEIR CURRENT ORG (never a past org's rows just because they still
@@ -287,13 +280,9 @@ export async function searchLeadCandidates(query: string, limit = 80): Promise<L
       data: { user },
     } = await supabase.auth.getUser();
     if (!user) return [];
-    const { data: prof } = await supabase
-      .from("profiles")
-      .select("org_id, role")
-      .eq("id", user.id)
-      .maybeSingle();
+    const prof = await readProfileScope(supabase, user.id);
     const orgId = prof?.org_id ? String(prof.org_id) : null;
-    const supervisor = Boolean(orgId) && isSupervisorRole(prof?.role);
+    const supervisor = prof.supervisor;
 
     // Fresh builder per query (PostgREST builders aren't reusable). Both
     // branches mirror getLeads: multiple PostgREST filters AND together, so the
@@ -414,16 +403,10 @@ export async function deleteLeads(
     // teammate's uploads out of the shared pool. Reps now get the session client
     // (whose RLS delete policy is already owner-or-supervisor) AND an explicit
     // owner_id filter below, so neither layer is load-bearing on its own.
-    const { data: prof } = await supabase
-      .from("profiles")
-      .select("org_id, role")
-      .eq("id", user.id)
-      .maybeSingle();
+    const prof = await readProfileScope(supabase, user.id);
     const orgId = prof?.org_id ? String(prof.org_id) : null;
     const supervisor =
-      Boolean(orgId && UUID.test(orgId)) &&
-      isSupervisorRole(prof?.role) &&
-      isAdminConfigured();
+      Boolean(orgId && UUID.test(orgId)) && prof.supervisor && isAdminConfigured();
     const client = supervisor ? createAdminClient() : supabase;
 
     const CHUNK = 100; // keep each request URL small (≈4KB) — never hits the limit
@@ -486,13 +469,9 @@ export async function reassignLeads(
     if (!UUID.test(toUserId))
       return { updated: 0, error: "Pick a teammate to reassign to." };
 
-    const { data: prof } = await supabase
-      .from("profiles")
-      .select("org_id, role")
-      .eq("id", user.id)
-      .maybeSingle();
+    const prof = await readProfileScope(supabase, user.id);
     const orgId = prof?.org_id ? String(prof.org_id) : null;
-    if (!orgId || !isSupervisorRole(prof?.role) || !isAdminConfigured())
+    if (!orgId || !prof.supervisor || !isAdminConfigured())
       return { updated: 0, error: "Only supervisors can reassign leads." };
 
     const admin = createAdminClient();
@@ -555,13 +534,9 @@ export async function assignLeadsToRep(
     if (toUserId !== null && !UUID.test(toUserId))
       return { updated: 0, error: "Pick a teammate to assign to." };
 
-    const { data: prof } = await supabase
-      .from("profiles")
-      .select("org_id, role")
-      .eq("id", user.id)
-      .maybeSingle();
+    const prof = await readProfileScope(supabase, user.id);
     const orgId = prof?.org_id ? String(prof.org_id) : null;
-    if (!orgId || !isSupervisorRole(prof?.role) || !isAdminConfigured())
+    if (!orgId || !prof.supervisor || !isAdminConfigured())
       return { updated: 0, error: "Only supervisors can assign leads." };
 
     const admin = createAdminClient();
@@ -628,13 +603,9 @@ export async function distributeLeads(
     const targets = [...new Set(toUserIds.filter((id) => UUID.test(id)))];
     if (!targets.length) return { updated: 0, perUser: {}, error: "Pick at least one teammate." };
 
-    const { data: prof } = await supabase
-      .from("profiles")
-      .select("org_id, role")
-      .eq("id", user.id)
-      .maybeSingle();
+    const prof = await readProfileScope(supabase, user.id);
     const orgId = prof?.org_id ? String(prof.org_id) : null;
-    if (!orgId || !isSupervisorRole(prof?.role) || !isAdminConfigured())
+    if (!orgId || !prof.supervisor || !isAdminConfigured())
       return { updated: 0, perUser: {}, error: "Only supervisors can distribute leads." };
 
     const admin = createAdminClient();
@@ -1039,17 +1010,13 @@ export async function getDialQueue(opts?: { assignmentId?: string }): Promise<Le
     } = await supabase.auth.getUser();
     if (!user) return [];
 
-    const { data: prof } = await supabase
-      .from("profiles")
-      .select("org_id, role, disabled")
-      .eq("id", user.id)
-      .maybeSingle();
+    const prof = await readProfileScope(supabase, user.id, "org_id, role, disabled");
     // Suspended accounts get nothing — the supervisor branch below reads via
     // the service-role client, which would bypass the RLS suspension backstop.
     if (prof?.disabled) return [];
     const orgId = prof?.org_id ? String(prof.org_id) : null;
     const supervisor =
-      Boolean(orgId) && isSupervisorRole(prof?.role) && isAdminConfigured();
+      prof.supervisor && isAdminConfigured();
 
     // ?assignment= scopes the queue to ONE pack — after proving the pack is
     // really this caller's to dial: it must live in their org, and a rep may
@@ -1187,14 +1154,10 @@ export async function getBookedLeads(): Promise<BookedLead[]> {
     } = await supabase.auth.getUser();
     if (!user) return [];
 
-    const { data: prof } = await supabase
-      .from("profiles")
-      .select("org_id, role")
-      .eq("id", user.id)
-      .maybeSingle();
+    const prof = await readProfileScope(supabase, user.id);
     const orgId = prof?.org_id ? String(prof.org_id) : null;
     const supervisor =
-      Boolean(orgId) && isSupervisorRole(prof?.role) && isAdminConfigured();
+      prof.supervisor && isAdminConfigured();
 
     if (supervisor) {
       const admin = createAdminClient();
@@ -1295,14 +1258,10 @@ export async function getMyLeadsCount(): Promise<number> {
       data: { user },
     } = await supabase.auth.getUser();
     if (!user) return 0;
-    const { data: prof } = await supabase
-      .from("profiles")
-      .select("org_id, role")
-      .eq("id", user.id)
-      .maybeSingle();
+    const prof = await readProfileScope(supabase, user.id);
     const orgId = prof?.org_id ? String(prof.org_id) : null;
     const supervisor =
-      Boolean(orgId) && isSupervisorRole(prof?.role) && isAdminConfigured();
+      prof.supervisor && isAdminConfigured();
     if (supervisor) {
       const { count } = await createAdminClient()
         .from("leads")
@@ -1582,13 +1541,9 @@ export async function getLeadsPage(params: LeadsPageParams): Promise<LeadsPageRe
       return filterLeadsPage(await getLeads(), params, user.id);
     }
 
-    const { data: prof } = await supabase
-      .from("profiles")
-      .select("org_id, role")
-      .eq("id", user.id)
-      .maybeSingle();
+    const prof = await readProfileScope(supabase, user.id);
     const orgId = prof?.org_id ? String(prof.org_id) : null;
-    const supervisor = Boolean(orgId) && isSupervisorRole(prof?.role);
+    const supervisor = prof.supervisor;
 
     const pageSize = Math.min(Math.max(params.pageSize ?? LEADS_PAGE_SIZE, 1), 200);
     const page = Math.max(params.page, 1);
@@ -1711,14 +1666,10 @@ export async function listPlaces(): Promise<PlaceOptions> {
       data: { user },
     } = await supabase.auth.getUser();
     if (!user) return empty;
-    const { data: prof } = await supabase
-      .from("profiles")
-      .select("org_id, role")
-      .eq("id", user.id)
-      .maybeSingle();
+    const prof = await readProfileScope(supabase, user.id);
     const orgId = prof?.org_id ? String(prof.org_id) : null;
     const supervisor =
-      Boolean(orgId) && isSupervisorRole(prof?.role) && isAdminConfigured();
+      prof.supervisor && isAdminConfigured();
 
     // Insertion-ordered Maps: first write wins the position, so deduping keeps
     // each place at its FIRST appearance in upload order.
@@ -1821,14 +1772,10 @@ export async function getDialQueueCount(): Promise<number> {
       data: { user },
     } = await supabase.auth.getUser();
     if (!user) return 0;
-    const { data: prof } = await supabase
-      .from("profiles")
-      .select("org_id, role")
-      .eq("id", user.id)
-      .maybeSingle();
+    const prof = await readProfileScope(supabase, user.id);
     const orgId = prof?.org_id ? String(prof.org_id) : null;
     const supervisor =
-      Boolean(orgId) && isSupervisorRole(prof?.role) && isAdminConfigured();
+      prof.supervisor && isAdminConfigured();
     if (supervisor) {
       const { count } = await createAdminClient()
         .from("leads")

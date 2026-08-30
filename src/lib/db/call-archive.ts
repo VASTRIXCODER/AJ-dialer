@@ -5,6 +5,7 @@ import { createAdminClient, isAdminConfigured } from "../supabase/admin";
 import { isSupabaseConfigured } from "../supabase/config";
 import { createClient } from "../supabase/server";
 import type { CallOutcome } from "../types";
+import { readProfileScope } from "./scope";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The call archive — every recording and transcript the workspace has, findable.
@@ -142,17 +143,11 @@ export async function searchCallArchive(query: ArchiveQuery): Promise<ArchivePag
     } = await supabase.auth.getUser();
     if (!user) return EMPTY;
 
-    const { data: prof } = await supabase
-      .from("profiles")
-      .select("org_id,role")
-      .eq("id", user.id)
-      .maybeSingle();
-    const orgId = prof?.org_id ? String(prof.org_id) : null;
-    const supervisor = Boolean(
-      orgId &&
-        ["owner", "admin", "manager"].includes(String(prof?.role ?? "rep")) &&
-        isAdminConfigured(),
-    );
+    // Supervisor comes from the membership row for the ACTIVE org, never from
+    // profiles.role — that column is a stale copy. See resolveSupervisor.
+    const prof = await readProfileScope(supabase, user.id);
+    const orgId = prof.org_id;
+    const supervisor = Boolean(orgId && prof.supervisor && isAdminConfigured());
     const reader = supervisor ? createAdminClient() : supabase;
     const scope: "org" | "own" = supervisor ? "org" : "own";
 
@@ -347,17 +342,11 @@ export async function getArchivedCall(
     } = await supabase.auth.getUser();
     if (!user) return null;
 
-    const { data: prof } = await supabase
-      .from("profiles")
-      .select("org_id,role")
-      .eq("id", user.id)
-      .maybeSingle();
-    const orgId = prof?.org_id ? String(prof.org_id) : null;
-    const supervisor = Boolean(
-      orgId &&
-        ["owner", "admin", "manager"].includes(String(prof?.role ?? "rep")) &&
-        isAdminConfigured(),
-    );
+    // Supervisor comes from the membership row for the ACTIVE org, never from
+    // profiles.role — that column is a stale copy. See resolveSupervisor.
+    const prof = await readProfileScope(supabase, user.id);
+    const orgId = prof.org_id;
+    const supervisor = Boolean(orgId && prof.supervisor && isAdminConfigured());
     const reader = supervisor ? createAdminClient() : supabase;
 
     // The scope filter is the authorization: a rep asking for another rep's call

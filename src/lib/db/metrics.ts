@@ -42,6 +42,7 @@ import type {
   KpiPoint,
   MetricSummary,
 } from "../types";
+import { readProfileScope } from "./scope";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // DB-computed reporting. Every dashboard / report / leaderboard number is
@@ -160,17 +161,11 @@ export async function getCallHistory(opts: {
     } = await supabase.auth.getUser();
     if (!user) return { calls: [], hasMore: false, scope: "own" };
 
-    const { data: prof } = await supabase
-      .from("profiles")
-      .select("org_id,role")
-      .eq("id", user.id)
-      .maybeSingle();
-    const orgId = prof?.org_id ? String(prof.org_id) : null;
-    const supervisor = Boolean(
-      orgId &&
-        ["owner", "admin", "manager"].includes(String(prof?.role ?? "rep")) &&
-        isAdminConfigured(),
-    );
+    // Supervisor comes from the membership row for the ACTIVE org, never from
+    // profiles.role — that column is a stale copy. See resolveSupervisor.
+    const prof = await readProfileScope(supabase, user.id);
+    const orgId = prof.org_id;
+    const supervisor = Boolean(orgId && prof.supervisor && isAdminConfigured());
     const reader = supervisor ? createAdminClient() : supabase;
     const scopeCol = supervisor ? "org_id" : "owner_id";
     const scopeVal = (supervisor ? orgId : user.id) as string;
@@ -375,17 +370,9 @@ export async function getReportingData(
     // Scope: supervisors (manager/admin/owner) see the whole org; reps see their
     // own. Org-wide reads use the service-role client (RLS would otherwise hide
     // other reps' rows), scoped to the org in app code.
-    const { data: prof } = await supabase
-      .from("profiles")
-      .select("full_name,avatar_color,org_id,role")
-      .eq("id", user.id)
-      .maybeSingle();
-    const orgId = prof?.org_id ? String(prof.org_id) : null;
-    const supervisor = Boolean(
-      orgId &&
-        ["owner", "admin", "manager"].includes(String(prof?.role ?? "rep")) &&
-        isAdminConfigured(),
-    );
+    const prof = await readProfileScope(supabase, user.id, "full_name,avatar_color,org_id,role");
+    const orgId = prof.org_id;
+    const supervisor = Boolean(orgId && prof.supervisor && isAdminConfigured());
     const reader = supervisor ? createAdminClient() : supabase;
     const scopeCol = supervisor ? "org_id" : "owner_id";
     const scopeVal = (supervisor ? orgId : user.id) as string;

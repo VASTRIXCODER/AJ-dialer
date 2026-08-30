@@ -26,6 +26,7 @@ import { isSupabaseConfigured } from "@/lib/supabase/config";
 import { isVoiceConfigured } from "@/lib/twilio";
 import { MAX_PARALLEL_HUMAN } from "@/lib/use-dialer";
 import { initials } from "@/lib/utils";
+import { isSupervisorRole } from "@/lib/permissions";
 
 export default async function AppGroupLayout({
   children,
@@ -87,7 +88,7 @@ export default async function AppGroupLayout({
   // Supervisors dial the whole org pool; reps dial only their own uploads
   // (mirrors getDialQueue's server-side scoping).
   const dialScope: "org" | "own" =
-    viewer.role && ["owner", "admin", "manager"].includes(viewer.role) ? "org" : "own";
+    isSupervisorRole(viewer.role) ? "org" : "own";
   // The effective caller-ID pool (org settings, or the platform-locked env pool
   // when TWILIO_CALLER_IDS is set) — lets the dialer's caller-ID picker offer
   // exactly the numbers nextCallerId*() will actually validate an override against.

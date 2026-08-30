@@ -4,6 +4,7 @@ import { createAdminClient, isAdminConfigured } from "../supabase/admin";
 import { isSupabaseConfigured } from "../supabase/config";
 import { createClient } from "../supabase/server";
 import { logLeadEventBulk } from "./lead-events";
+import { readProfileScope } from "./scope";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Bulk archive / unarchive — the reversible sibling of deleteLeads.
@@ -24,10 +25,6 @@ import { logLeadEventBulk } from "./lead-events";
 type Row = Record<string, unknown>;
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-function isSupervisorRole(role: unknown): boolean {
-  return ["owner", "admin", "manager"].includes(String(role ?? "rep"));
-}
 
 /**
  * Set (or clear, when `archived` is false) archived_at on a batch of leads.
@@ -50,16 +47,10 @@ export async function setLeadsArchived(
     const ids = [...new Set(leadIds.filter((id) => UUID.test(id)))];
     if (!ids.length) return { updated: 0, error: "No valid leads selected." };
 
-    const { data: prof } = await supabase
-      .from("profiles")
-      .select("org_id, role")
-      .eq("id", user.id)
-      .maybeSingle();
-    const orgId = prof?.org_id ? String(prof.org_id) : null;
+    const prof = await readProfileScope(supabase, user.id);
+    const orgId = prof.org_id;
     const supervisor =
-      Boolean(orgId && UUID.test(orgId)) &&
-      isSupervisorRole((prof as Row | null)?.role) &&
-      isAdminConfigured();
+      Boolean(orgId && UUID.test(orgId)) && prof.supervisor && isAdminConfigured();
     if (!supervisor)
       return { updated: 0, error: "Only managers and above can archive leads." };
 

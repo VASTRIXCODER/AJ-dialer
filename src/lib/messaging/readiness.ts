@@ -4,6 +4,7 @@ import { getPublicBaseUrl, getRestClient } from "../twilio";
 import { createAdminClient, isAdminConfigured } from "../supabase/admin";
 import type { OrgFull } from "../org/membership";
 import { isMessagingConfigured, isMessagingSimulated } from "./config";
+import { isSupervisorRole } from "../permissions";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Is this workspace actually able to send a message — and to hear a reply?
@@ -395,7 +396,7 @@ async function countApprovers(orgId: string | null): Promise<number> {
     return ((data ?? []) as Record<string, unknown>[]).filter((m) => {
       const overrides = (m.permissions ?? {}) as Record<string, boolean>;
       if ("messaging.approve" in overrides) return overrides["messaging.approve"];
-      return ["owner", "admin", "manager"].includes(String(m.role ?? ""));
+      return isSupervisorRole(m.role);
     }).length;
   } catch {
     return 0;

@@ -21,6 +21,23 @@ export const ROLE_RANK: Record<OrgRole, number> = {
   rep: 0,
 };
 
+/**
+ * Roles that see and act on the WHOLE organization rather than only their own
+ * rows.
+ *
+ * Defined here, once. It was spelled out inline at fifteen call sites, and
+ * every one of them decides whether somebody reads their own uploads or their
+ * organization's entire book.
+ *
+ * This answers "is this ROLE a supervisor". It does NOT answer "is this PERSON
+ * a supervisor" — that needs the role from the membership row for the org they
+ * are currently in, which is what resolveSupervisor (src/lib/db/scope.ts)
+ * fetches. Passing `profiles.role` to this function is the bug it was
+ * extracted from: that column is a stale copy.
+ */
+export const isSupervisorRole = (role: unknown): boolean =>
+  role === "owner" || role === "admin" || role === "manager";
+
 export const ROLE_LABEL: Record<OrgRole, string> = {
   owner: "Owner",
   admin: "Admin",
