@@ -43,3 +43,41 @@ export function EmptyState({
     </Card>
   );
 }
+
+/**
+ * The small, inline "nothing here yet" box — the tier below EmptyState.
+ *
+ * EmptyState above is a whole Card at px-6 py-16 with an animated orb: right
+ * for a page that has nothing on it, far too much for the inside of a panel.
+ * So eleven places hand-rolled the same dashed box instead, and drifted into
+ * four different heights (py-3, py-5, py-6, py-8) and two alignments — most
+ * visibly in the call detail modal, where two of them sit in one dialog.
+ *
+ * `size` exists because the tier genuinely has two uses: `tight` for a slot
+ * inside a list or a modal section, `roomy` for a panel that is otherwise
+ * empty. Everything else is fixed, so two of these can never disagree again.
+ */
+export function InlineEmpty({
+  children,
+  size = "roomy",
+  align = "center",
+  className,
+}: {
+  children: React.ReactNode;
+  size?: "tight" | "roomy";
+  align?: "center" | "left";
+  className?: string;
+}) {
+  return (
+    <div
+      className={cn(
+        "rounded-xl border border-dashed border-border/70 px-4 text-sm text-muted-foreground",
+        size === "tight" ? "py-5" : "py-8",
+        align === "center" ? "text-center" : "flex items-center gap-2",
+        className,
+      )}
+    >
+      {children}
+    </div>
+  );
+}

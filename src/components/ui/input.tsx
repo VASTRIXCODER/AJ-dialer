@@ -8,7 +8,15 @@ export const Input = React.forwardRef<
   HTMLInputElement,
   React.InputHTMLAttributes<HTMLInputElement>
 >(({ className, ...props }, ref) => (
-  <input ref={ref} className={cn(base, className)} {...props} />
+  // h-11 matches Button `md` exactly (44px). Sized by padding alone, this
+  // computed to 42px — a height no Button size has, so an Input and a Button
+  // in the same row never lined up. Eleven call sites already patch it by
+  // hand (8x h-9, 3x h-8), which is how the app ended up shipping three
+  // different heights for one control; those patches still win, because
+  // tailwind-merge keeps the last conflicting class.
+  //
+  // On the <input> only — `base` is shared with Textarea, which sizes itself.
+  <input ref={ref} className={cn(base, "h-11", className)} {...props} />
 ));
 Input.displayName = "Input";
 

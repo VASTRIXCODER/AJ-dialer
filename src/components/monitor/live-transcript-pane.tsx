@@ -10,6 +10,7 @@ import type { TranscriptSegmentPayload } from "@/lib/realtime/events";
 import { useOrgChannel } from "@/lib/realtime/use-org-channel";
 import { useVisiblePoll } from "@/lib/use-visible-poll";
 import { cn } from "@/lib/utils";
+import { InlineEmpty } from "@/components/shared/empty-state";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // LiveTranscriptPane — the floor's shared live transcript view.
@@ -161,11 +162,11 @@ export function LiveTranscriptPane({
           className="max-h-full space-y-2.5 overflow-y-auto pr-1"
         >
           {segments.length === 0 ? (
-            <div className="rounded-xl border border-dashed border-border/70 px-4 py-8 text-center text-sm text-muted-foreground">
+            <InlineEmpty>
               {live
                 ? "Waiting for the conversation to begin…"
                 : "No transcript available for this call."}
-            </div>
+            </InlineEmpty>
           ) : (
             segments.map((s) => {
               const agent = s.role === "agent";

@@ -116,6 +116,18 @@ describe("METRICS glossary", () => {
       "outcome_mix",
       "hourly_productivity",
       "campaign_pipeline",
+      // King's Command Center (docs/phase_two.md §17).
+      "leads_worked",
+      "contacts_made",
+      "appointments_confirmed",
+      "appointments_at_risk",
+      "no_shows",
+      "no_show_recovered",
+      "sales_closed",
+      "installs_completed",
+      "hot_opportunities",
+      "speed_to_lead",
+      "followup_completion",
     ];
     expect(Object.keys(METRICS).sort()).toEqual([...ids].sort());
     for (const id of ids) {

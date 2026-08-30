@@ -318,7 +318,12 @@ export default async function DashboardPage() {
             <ul className="space-y-3">
               {upcoming.map((apt) => (
                 <li key={apt.id} className="flex items-center gap-3">
-                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-accent-soft text-accent">
+                  {/* h-9, matching the Live-now tile in the card beside it.
+                      These two lists are structurally identical and sit
+                      side-by-side at lg, so a 40px tile here against a 36px
+                      tile there put the two cards' rows 4px out of step down
+                      the whole column. */}
+                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-accent-soft text-accent">
                     <CalendarCheck className="h-4 w-4" />
                   </div>
                   <div className="min-w-0 flex-1">

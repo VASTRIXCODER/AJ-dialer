@@ -27,6 +27,7 @@ import { Button } from "@/components/ui/button";
 import { Drawer } from "@/components/ui/drawer";
 import { StatusPill } from "@/components/ui/status-pill";
 import { cn, formatDuration, formatPhone } from "@/lib/utils";
+import { InlineEmpty } from "@/components/shared/empty-state";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // FloorDetailPanel — the drawer a floor card opens: full call context, the
@@ -250,14 +251,14 @@ export function FloorDetailPanel({
             className="min-h-64 flex-1"
           />
         ) : card.kind === "call" ? (
-          <div className="rounded-xl border border-dashed border-border/70 px-4 py-6 text-center text-sm text-muted-foreground">
+          <InlineEmpty size="tight">
             Manual calls aren&apos;t transcribed live. Listen in for audio; the
             recording and transcript land in Reports after the call.
-          </div>
+          </InlineEmpty>
         ) : (
-          <div className="rounded-xl border border-dashed border-border/70 px-4 py-6 text-center text-sm text-muted-foreground">
+          <InlineEmpty size="tight">
             No live call right now — this seat is {String(card.state).replace("_", " ")}.
-          </div>
+          </InlineEmpty>
         )}
       </div>
 

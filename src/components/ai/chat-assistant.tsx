@@ -381,9 +381,24 @@ export function ChatAssistant() {
             }}
             rows={1}
             placeholder="Ask the AI command center…"
-            className="max-h-32 min-h-[44px] w-full resize-none rounded-xl border border-border/70 bg-background/50 px-3.5 py-2.5 text-sm outline-none focus-visible:border-primary/50 focus-visible:ring-2 focus-visible:ring-primary/15"
+            // Was a hand-rolled copy of the Input primitive that had drifted
+            // three ways: `border-border/70` instead of `border-input` (a
+            // different token, at 70% opacity, so this one field's border was
+            // visibly fainter than every other), `ring-2` where every other
+            // field uses `ring-4` (half the focus ring), and its own
+            // background. Matched to the primitive; only the composer-specific
+            // sizing is local now.
+            className="max-h-32 min-h-[44px] w-full resize-none rounded-xl border border-input bg-background/40 px-3.5 py-2.5 text-sm text-foreground outline-none transition-all duration-200 placeholder:text-muted-foreground/70 focus-visible:border-primary/50 focus-visible:bg-background/70 focus-visible:ring-4 focus-visible:ring-primary/15"
           />
-          <Button type="submit" size="icon" disabled={!input.trim() || sending} aria-label="Send">
+          {/* h-11 to match the 44px composer beside it. `size="icon"` is 40px,
+              which left the send button 4px short of the field it sits on. */}
+          <Button
+            type="submit"
+            size="icon"
+            disabled={!input.trim() || sending}
+            aria-label="Send"
+            className="h-11 w-11"
+          >
             {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
           </Button>
         </form>

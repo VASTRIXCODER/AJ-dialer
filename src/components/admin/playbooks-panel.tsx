@@ -7,6 +7,7 @@ import { SectionCard } from "@/components/shared/section-card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { cn, relativeTime } from "@/lib/utils";
+import { InlineEmpty } from "@/components/shared/empty-state";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Playbooks (P2.2 Studio-lite) — install the seed templates, publish/pause/
@@ -175,9 +176,9 @@ export function PlaybooksPanel() {
         {!loaded ? (
           <div className="skeleton h-14 rounded-xl" />
         ) : playbooks.filter((p) => p.status !== "retired").length === 0 ? (
-          <p className="rounded-xl border border-dashed border-border/70 px-4 py-6 text-center text-sm text-muted-foreground">
+          <InlineEmpty size="tight">
             No playbooks yet — install a template below to start.
-          </p>
+          </InlineEmpty>
         ) : (
           playbooks
             .filter((p) => p.status !== "retired")

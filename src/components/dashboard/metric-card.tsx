@@ -66,10 +66,19 @@ export function MetricCard({
   icon: Icon,
   accent = "primary",
   definitionKey,
+  unavailable,
   className,
 }: {
   label: string;
-  value: string;
+  /**
+   * The formatted number, or NULL when it could not be computed.
+   *
+   * Null is not zero. supabase-js resolves rather than throws, so `count ?? 0`
+   * turns "we could not ask" into "there are none" — and a confident 0 on a
+   * leadership dashboard is the kind of wrong that gets acted on. A null value
+   * renders an em dash and REQUIRES `unavailable` to say why.
+   */
+  value: string | null;
   sub?: string;
   /** srLabel is the screen-reader sentence behind the ▲/▼ ("up 12 vs …"). */
   delta?: { value: string; positive: boolean; srLabel?: string };
@@ -77,6 +86,14 @@ export function MetricCard({
   accent?: Accent;
   /** Glossary id — renders an ⓘ tooltip with the metric's one true definition. */
   definitionKey?: MetricId;
+  /**
+   * Why this number is missing. Shown in place of `sub` when `value` is null.
+   *
+   * An em dash on its own is a small mystery; the reader cannot tell a broken
+   * query from a feature nobody has switched on. Every card that CAN be
+   * unavailable must say which.
+   */
+  unavailable?: string;
   className?: string;
 }) {
   const accents: Record<Accent, string> = {
@@ -94,7 +111,8 @@ export function MetricCard({
     danger: "bg-danger/25",
   };
 
-  const parsed = parseMetric(value);
+  const missing = value === null;
+  const parsed = missing ? null : parseMetric(value);
 
   return (
     <SpotlightCard className={cn("overflow-hidden p-5", className)}>
@@ -112,7 +130,12 @@ export function MetricCard({
             {label}
             {definitionKey && <DefinitionHint id={definitionKey} />}
           </p>
-          <p className="text-4xl font-bold tracking-tight tabular">
+          <p
+            className={cn(
+              "text-4xl font-bold tracking-tight tabular",
+              missing && "text-muted-foreground/50",
+            )}
+          >
             {parsed ? (
               <CountUp
                 value={parsed.num}
@@ -121,7 +144,9 @@ export function MetricCard({
                 suffix={parsed.suffix}
               />
             ) : (
-              value
+              <span aria-label={missing ? `${label}: not available` : undefined}>
+                {missing ? "—" : value}
+              </span>
             )}
           </p>
           <div className="flex items-center gap-2">
@@ -144,7 +169,13 @@ export function MetricCard({
                 {delta.srLabel && <span className="sr-only">{delta.srLabel}</span>}
               </span>
             )}
-            {sub && <span className="text-xs text-muted-foreground">{sub}</span>}
+            {/* The reason wins over the sub-label: when a number is missing,
+                why it is missing is the only useful thing left to say. */}
+            {missing && unavailable ? (
+              <span className="text-xs text-muted-foreground">{unavailable}</span>
+            ) : (
+              sub && <span className="text-xs text-muted-foreground">{sub}</span>
+            )}
           </div>
         </div>
         <div

@@ -398,13 +398,15 @@ export function AppointmentDialog({
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <div>
                   <Label htmlFor="appt-when">When</Label>
-                  <input
+                  {/* The primitive, not a copy of it. This carried a verbatim
+                      duplicate of Input's base class string, which meant it
+                      silently missed every later change to the real one. */}
+                  <Input
                     id="appt-when"
                     type="datetime-local"
                     value={when}
                     disabled={readOnly}
                     onChange={(e) => setWhen(e.target.value)}
-                    className="w-full rounded-xl border border-input bg-background/40 px-3.5 py-2.5 text-sm transition-all duration-200 focus-visible:border-primary/50 focus-visible:bg-background/70 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-primary/15 disabled:opacity-60"
                   />
                   {!when && appt?.scheduledLabel && (
                     <p className="mt-1 text-xs text-muted-foreground">

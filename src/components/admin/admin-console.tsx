@@ -58,6 +58,7 @@ import {
   rolePermissions,
 } from "@/lib/permissions";
 import { cn, formatPhone, initials, relativeTime } from "@/lib/utils";
+import { InlineEmpty } from "@/components/shared/empty-state";
 
 type Tab =
   | "members"
@@ -941,9 +942,9 @@ function CompaniesTab({ companies }: { companies: OrgCompany[] }) {
       </div>
       <div className="mt-3 space-y-2">
         {companies.length === 0 ? (
-          <p className="rounded-xl border border-dashed border-border/70 px-4 py-8 text-center text-sm text-muted-foreground">
+          <InlineEmpty>
             No companies yet. Add one to organize members into teams.
-          </p>
+          </InlineEmpty>
         ) : (
           companies.map((c) => (
             <div
@@ -994,9 +995,9 @@ function ActivityTab({ entries }: { entries: AuditEntry[] }) {
       description="Recent sensitive actions — role changes, approvals, removals & ownership transfers."
     >
       {entries.length === 0 ? (
-        <p className="rounded-xl border border-dashed border-border/70 px-4 py-8 text-center text-sm text-muted-foreground">
+        <InlineEmpty>
           No recorded activity yet.
-        </p>
+        </InlineEmpty>
       ) : (
         <div className="space-y-1.5">
           {entries.map((e) => {
@@ -1086,10 +1087,10 @@ function DataTab({
             </span>
           </Link>
         ) : (
-          <p className="flex items-center gap-2 rounded-xl border border-dashed border-border/70 px-4 py-6 text-sm text-muted-foreground">
+          <InlineEmpty size="tight" align="left">
             <Plug className="h-4 w-4" />
             You don’t have permission to import leads.
-          </p>
+          </InlineEmpty>
         )}
         <div className="mt-4 grid grid-cols-2 gap-3 text-center sm:grid-cols-4">
           {[

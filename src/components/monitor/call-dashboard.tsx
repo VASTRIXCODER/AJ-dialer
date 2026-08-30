@@ -34,6 +34,7 @@ import { createPcmPlayer, type PcmPlayer } from "@/lib/pcm-player";
 import { liveStateConfig, resolveOutcomeConfig } from "@/lib/status";
 import { type AILiveState, type CallOutcome, isTerminalLiveState } from "@/lib/types";
 import { cn, formatDuration, formatPhone } from "@/lib/utils";
+import { InlineEmpty } from "@/components/shared/empty-state";
 
 type AICallState = AILiveState;
 type Sentiment = "positive" | "neutral" | "negative";
@@ -742,13 +743,13 @@ export function CallDashboard({
               })}
             </div>
           ) : (
-            <div className="rounded-xl border border-dashed border-border/70 px-4 py-8 text-center text-sm text-muted-foreground">
+            <InlineEmpty>
               {live
                 ? "Waiting for the conversation to begin…"
                 : detail?.state === "failed"
                   ? "No conversation — the call didn't connect. Auto-categorized below."
                   : "No transcript available for this call."}
-            </div>
+            </InlineEmpty>
           )}
         </div>
 

@@ -3,6 +3,7 @@
 import { Check, Copy, Download, MessageSquare } from "lucide-react";
 import { useState } from "react";
 import { cn, formatDuration } from "@/lib/utils";
+import { InlineEmpty } from "@/components/shared/empty-state";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // A stored transcript, rendered and — crucially — takeable.
@@ -227,9 +228,9 @@ export function TranscriptPanel({
       </div>
 
       {parsed.length === 0 ? (
-        <div className="rounded-xl border border-dashed border-border/70 px-4 py-6 text-center text-sm text-muted-foreground">
+        <InlineEmpty size="tight">
           No transcript for this call.
-        </div>
+        </InlineEmpty>
       ) : (
         <div className="space-y-2.5">
           {parsed.map((t, i) => {

@@ -164,12 +164,12 @@ export function BookAppointmentDialog({
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <div>
             <Label htmlFor="book-when">When</Label>
-            <input
+            {/* The primitive, not a copy of its class string. */}
+            <Input
               id="book-when"
               type="datetime-local"
               value={when}
               onChange={(e) => setWhen(e.target.value)}
-              className="w-full rounded-xl border border-input bg-background/40 px-3.5 py-2.5 text-sm transition-all duration-200 focus-visible:border-primary/50 focus-visible:bg-background/70 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-primary/15"
             />
           </div>
           <div>

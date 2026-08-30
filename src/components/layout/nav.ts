@@ -17,6 +17,7 @@ import {
   Sparkles,
   Sunrise,
   Trophy,
+  Workflow,
   Users,
 } from "lucide-react";
 import { DEMO_DATA } from "@/lib/demo";
@@ -160,6 +161,18 @@ export const navGroups: NavGroup[] = [
         feature: "reports",
       },
       { label: "Reports", href: "/reports", icon: BarChart3, feature: "reports" },
+      {
+        // phase_two.md §17: "King must not dig through ten screens." Today's
+        // production, what the follow-up automation is actually doing, where
+        // the pipeline leaks, and the floor — one page. It sits ABOVE Command
+        // Center deliberately: this is the view a manager opens first, and
+        // Command Center remains the narrower live-floor cockpit.
+        label: "Pipeline",
+        href: "/pipeline",
+        icon: Workflow,
+        feature: "reports",
+        permission: "reports.view",
+      },
       {
         // P2.10: the supervisor cockpit — today strip, pipeline leaks, rep
         // performance. Same permission as Reports; it IS reporting, live.

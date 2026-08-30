@@ -33,6 +33,7 @@ import {
   leadDisplayName,
 } from "@/lib/utils";
 import { TranscriptPanel } from "./transcript";
+import { InlineEmpty } from "@/components/shared/empty-state";
 
 type FullCall = ArchiveCallDetail;
 
@@ -300,9 +301,9 @@ export function CallDetailModal({
           </div>
         ) : (
           !loading && (
-            <div className="rounded-xl border border-dashed border-border/70 px-4 py-5 text-center text-sm text-muted-foreground">
+            <InlineEmpty size="tight">
               No summary was generated for this call.
-            </div>
+            </InlineEmpty>
           )
         )}
 
@@ -349,14 +350,14 @@ export function CallDetailModal({
             filename={`transcript-${slug(name)}-${fileStamp}`}
           />
         ) : (
-          <div className="rounded-xl border border-dashed border-border/70 px-4 py-5 text-center text-sm text-muted-foreground">
+          <InlineEmpty size="tight">
             {isAI
               ? "No transcript — this call didn't reach a conversation."
               : // Say the true reason rather than leaving an empty panel that
                 // reads as a bug: Twilio records manual calls, it doesn't
                 // transcribe them.
                 "Manual calls are recorded, not transcribed. Play the recording below."}
-          </div>
+          </InlineEmpty>
         )}
 
         {call?.hasRecording && call.recordingUrl ? (
