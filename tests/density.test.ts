@@ -104,15 +104,67 @@ describe("density changes the vertical rhythm and nothing else", () => {
     ).toEqual([]);
   });
 
-  it("the shared helpers obey their own rule", () => {
-    expect(cellPadding("compact")).toBe("px-4 py-1.5");
-    expect(cellPadding("comfortable")).toBe("px-4 py-3");
-    const hx = (s: string) => s.match(/px-[\d.]+/)?.[0];
-    expect(hx(cellPadding("compact"))).toBe(hx(cellPadding("comfortable")));
-    // A minimum, never a fixed height: a tall cell must still be able to grow.
+  // ── The scale these class names actually resolve on ──────────────────────
+  //
+  // W1 replaced Tailwind's spacing scale with the product's own, so a step name
+  // does NOT mean what it means in stock Tailwind: `px-4` is 12px here, not
+  // 16px. That is not a detail — it means the "cell padding is 16px at every
+  // density" rule was never met, because every table was on `px-4`.
+  //
+  // Fractional steps are worse: they are not on the custom scale at all, so
+  // Tailwind falls back to its 0.25rem base and `py-1.5` (6px) comes out LARGER
+  // than `py-2` (4px). This block resolves the helpers against the declared
+  // tokens so nobody has to remember any of it.
+  const CSS = read("src/app/globals.css");
+  const SCALE = new Map<string, number>(
+    [...CSS.matchAll(/--spacing-(\d+):\s*(\d+)px;/g)].map((m) => [m[1], Number(m[2])]),
+  );
+
+  /** Pixels for one utility, or null when it is off the scale entirely. */
+  function px(cls: string): number | null {
+    const step = cls.match(/-(\d+(?:\.\d+)?)$/)?.[1];
+    if (!step) return null;
+    return SCALE.get(step) ?? null;
+  }
+
+  it("the token file really does redefine the scale", () => {
+    // If this ever stops being true the numbers below are wrong, loudly.
+    expect(SCALE.get("4"), "--spacing-4").toBe(12);
+    expect(SCALE.get("5"), "--spacing-5").toBe(16);
+    expect(SCALE.get("3"), "--spacing-3").toBe(8);
+    expect(SCALE.get("2"), "--spacing-2").toBe(4);
+  });
+
+  it("cell padding is 16px horizontally at BOTH densities", () => {
+    // The rule, quoted at the top of this file, in pixels rather than in class
+    // names — which is the only form of it that can actually be checked.
+    for (const d of ["compact", "comfortable"] as const) {
+      const horizontal = cellPadding(d).split(" ").find((c) => c.startsWith("px-"))!;
+      expect(px(horizontal), `${d}: ${horizontal}`).toBe(16);
+    }
+  });
+
+  it("compact is genuinely tighter vertically, and on the real scale", () => {
+    const vertical = (d: "compact" | "comfortable") =>
+      cellPadding(d).split(" ").find((c) => c.startsWith("py-"))!;
+    const compact = px(vertical("compact"));
+    const comfortable = px(vertical("comfortable"));
+    // Off-scale (fractional) steps resolve to null — and a null here is how
+    // `py-1.5` sneaks in at 6px while looking smaller than `py-2`'s 4px.
+    expect(compact, `${vertical("compact")} is not on the scale`).not.toBeNull();
+    expect(comfortable, `${vertical("comfortable")} is not on the scale`).not.toBeNull();
+    expect(compact!).toBeLessThan(comfortable!);
+  });
+
+  it("rows have a minimum, never a fixed height", () => {
     for (const d of ["compact", "comfortable"] as const) {
       expect(rowMinHeight(d)).toMatch(/^min-h-/);
+      expect(px(rowMinHeight(d)), `${d} row minimum is off the scale`).not.toBeNull();
     }
+    expect(px(rowMinHeight("compact"))!).toBeLessThan(px(rowMinHeight("comfortable"))!);
+    // A row minimum that exceeds a comfortable row is not a minimum, it is a
+    // fixed height wearing a different name.
+    expect(px(rowMinHeight("comfortable"))!).toBeLessThanOrEqual(48);
   });
 });
 

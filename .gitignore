@@ -53,3 +53,6 @@ promptx.txt
 # Scratch: pasted provider error pages, saved while debugging.
 /error.txt
 .playwright-mcp/
+
+# Local scratch: resolves Tailwind utilities against the project scale.
+twc-probe.mjs
