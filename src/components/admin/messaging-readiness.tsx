@@ -43,6 +43,7 @@ interface NumberReadiness {
   smsCapable: boolean;
   smsUrl: string;
   pointsHere: boolean;
+  otherEnvironment?: boolean;
   notOnAccount?: boolean;
 }
 interface Payload {
@@ -193,8 +194,14 @@ export function MessagingReadiness({ canFix }: { canFix: boolean }) {
                       {n.smsCapable ? "SMS capable" : "Voice only"}
                     </Badge>
                     {n.smsCapable && (
-                      <Badge tone={n.pointsHere ? "success" : "danger"}>
-                        {n.pointsHere ? "Replies reach us" : "Replies go elsewhere"}
+                      <Badge
+                        tone={n.pointsHere ? "success" : n.otherEnvironment ? "warning" : "danger"}
+                      >
+                        {n.pointsHere
+                          ? "Replies reach us"
+                          : n.otherEnvironment
+                            ? "Replies reach another environment"
+                            : "Replies go elsewhere"}
                       </Badge>
                     )}
                   </>

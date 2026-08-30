@@ -32,8 +32,15 @@ export interface NumberReadiness {
   smsCapable: boolean;
   /** Where its inbound messages currently go. Empty means nowhere. */
   smsUrl: string;
-  /** True when that URL is this deployment's inbound route. */
+  /** True when that URL reaches this application's inbound route. */
   pointsHere: boolean;
+  /**
+   * Set when the URL is the right ROUTE but on a host this deployment does not
+   * answer on — most likely a different environment of the same app. Worth
+   * saying out loud rather than filing under "points somewhere else", because
+   * the fix is completely different.
+   */
+  otherEnvironment?: boolean;
   /** Set when the number is in the org's caller-ID pool but not on the account. */
   notOnAccount?: boolean;
 }
@@ -60,6 +67,55 @@ export interface MessagingReadiness {
 }
 
 const INBOUND_PATH = "/api/twilio/sms";
+
+/**
+ * Every host this deployment actually answers on.
+ *
+ * There is more than one, and that is the point. Callbacks are PINNED to the
+ * Vercel origin on purpose (see getPublicBaseUrl — machine-to-machine callbacks
+ * gain nothing from the CDN and can be eaten by a WAF), but the same app also
+ * serves the Cloudflare-fronted custom domain, and a webhook pointed at either
+ * works: verifyTwilioSignature reconstructs the URL from several candidate
+ * origins and accepts if ANY validates.
+ *
+ * So comparing against one canonical origin would call a perfectly good
+ * custom-domain webhook "pointing somewhere else" and offer to repoint it —
+ * a false alarm in the one panel whose entire value is being trusted about
+ * this. Match on host + path instead.
+ */
+export function knownHosts(): Set<string> {
+  const hosts = new Set<string>();
+  for (const candidate of [
+    getPublicBaseUrl(),
+    process.env.NEXT_PUBLIC_APP_URL ?? "",
+    process.env.TWILIO_CALLBACK_BASE_URL ?? "",
+  ]) {
+    if (!candidate) continue;
+    try {
+      hosts.add(new URL(candidate).host.toLowerCase());
+    } catch {
+      /* a malformed env value is not a host */
+    }
+  }
+  return hosts;
+}
+
+export type WebhookVerdict = "here" | "other_environment" | "elsewhere" | "unset";
+
+/** Exported so the classification itself is testable — it is the whole fix. */
+export function classifyWebhook(smsUrl: string, hosts: Set<string>): WebhookVerdict {
+  if (!smsUrl.trim()) return "unset";
+  let url: URL;
+  try {
+    url = new URL(smsUrl);
+  } catch {
+    return "elsewhere";
+  }
+  // Trailing slashes and query strings are Twilio-console noise, not meaning.
+  const path = url.pathname.replace(/\/+$/, "");
+  if (path !== INBOUND_PATH) return "elsewhere";
+  return hosts.has(url.host.toLowerCase()) ? "here" : "other_environment";
+}
 
 export async function getMessagingReadiness(
   org: OrgFull | null,
@@ -192,6 +248,7 @@ export async function getMessagingReadiness(
 
   // ── 8. The numbers themselves. The check that found the real problem. ─────
   const expected = getPublicBaseUrl();
+  const hosts = knownHosts();
   const pool = new Set(
     [
       ...(org?.settings.dialing.callerIds ?? []),
@@ -228,12 +285,14 @@ export async function getMessagingReadiness(
           };
         }
         const smsUrl = String(n.smsUrl ?? "");
+        const verdict = classifyWebhook(smsUrl, hosts);
         return {
           phoneNumber: String(n.phoneNumber),
           friendlyName: String(n.friendlyName ?? ""),
           smsCapable: Boolean((n.capabilities as { sms?: boolean } | undefined)?.sms),
           smsUrl,
-          pointsHere: Boolean(expected) && smsUrl.startsWith(`${expected}${INBOUND_PATH}`),
+          pointsHere: verdict === "here",
+          otherEnvironment: verdict === "other_environment",
         };
       });
 
@@ -250,6 +309,11 @@ export async function getMessagingReadiness(
         action:
           capable.length > 0 ? undefined : "Use an SMS-capable number, or enable SMS on one.",
       });
+      // Split, because the two have completely different fixes: one is a
+      // webhook pointed at another product, the other is a webhook pointed at
+      // a different environment of THIS one.
+      const strays = capable.filter((n) => !n.pointsHere && !n.otherEnvironment);
+      const otherEnv = capable.filter((n) => n.otherEnvironment);
       checks.push({
         id: "webhooks",
         label: "Inbound message webhooks",
@@ -259,11 +323,18 @@ export async function getMessagingReadiness(
             ? "No SMS-capable numbers to check."
             : wired.length === capable.length
               ? "Every SMS-capable number sends its inbound messages here."
-              : `${capable.length - wired.length} of ${capable.length} send their inbound messages somewhere else. Replies — INCLUDING STOP — are being dropped.`,
+              : [
+                  strays.length > 0 &&
+                    `${strays.length} of ${capable.length} send their inbound messages somewhere else entirely. Replies — INCLUDING STOP — are being dropped.`,
+                  otherEnv.length > 0 &&
+                    `${otherEnv.length} point at this app's inbound route on a different host, so replies reach another environment rather than this one.`,
+                ]
+                  .filter(Boolean)
+                  .join(" "),
         action:
           wired.length === capable.length
             ? undefined
-            : `Point each number's Messaging webhook at ${expected ?? "this app"}${INBOUND_PATH}.`,
+            : `Point each number's Messaging webhook at ${expected ?? "this app"}${INBOUND_PATH} (POST).`,
       });
     } catch (e: unknown) {
       providerError = (e as { message?: string })?.message ?? "Twilio could not be reached.";
