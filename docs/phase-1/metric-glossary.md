@@ -1,6 +1,10 @@
 # Phase 1 — Metric Glossary
 
-The single source of definitions. Code twin: `src/lib/metrics/definitions.ts` (every entry below is rendered as the metric's tooltip). Any surface showing a number defined here must compute it through `src/lib/metrics/service.ts` — never independently.
+The single source of definitions. Code twin: `src/lib/metrics/definitions.ts` (every entry below is rendered as the metric's tooltip).
+
+> **This line used to say** that any surface showing a number defined here computes it through `src/lib/metrics/service.ts`. That was never true. `service.ts` had **zero importers** for its whole life, and so did the `app_metrics_hourly` RPC behind it — every shipped number comes from `src/lib/db/metrics.ts` (`getReportingData`) instead. The two implementations were never reconciled, so the sentence promised an agreement nobody had checked. `service.ts` is deleted rather than adopted: adopting it would have meant verifying its SQL against `getReportingData` first, and a third implementation written to unify the other two is the outcome to avoid.
+>
+> What IS enforced, and by what: the predicates in `definitions.ts` are the one definition of "connected" and "cancelled" (`tests/metric-registry.test.ts` proves the SQL filter and the JS predicate agree over every combination, and `/api/cron/reconcile-data` re-checks them nightly against real rows). Every tile carries a window and a scope, and `tests/zero-rule.test.ts` fails any tile that can render a number it could not compute.
 
 Conventions: all "today"/"this week" windows use the **organization's timezone** (`orgTimezone(org)`, fallback `America/Chicago`) and the org's configured week start (`settings.reporting.weekStart`, default Monday). Date ranges are half-open `[from, to)`.
 

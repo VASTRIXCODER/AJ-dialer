@@ -1211,44 +1211,10 @@ export async function getBookedLeads(): Promise<BookedLead[]> {
   }
 }
 
-/**
- * Leads eligible for UNATTENDED auto-dialing across a whole org: dialable status,
- * a valid phone, and NOT contacted within `cooldownHours`. Ordered oldest-
- * contacted first (nulls first) so the scheduler works evenly through the list.
- * Admin-scoped (no user session) — used only by the cron auto-dialer.
- */
-export async function getAutoDialLeadsForOrg(
-  orgId: string,
-  opts: { cooldownHours: number; limit: number },
-): Promise<Lead[]> {
-  if (!orgId || !isAdminConfigured()) return [];
-  try {
-    const admin = createAdminClient();
-    const cutoff = new Date(
-      Date.now() - Math.max(0, opts.cooldownHours) * 3_600_000,
-    ).toISOString();
-    const { data, error } = await admin
-      .from("leads")
-      .select("*")
-      .eq("org_id", orgId)
-      .in("status", DIALABLE)
-      // Never dialed, or last dialed before the cooldown cutoff.
-      .or(`last_contacted_at.is.null,last_contacted_at.lt.${cutoff}`)
-      .order("last_contacted_at", { ascending: true, nullsFirst: true })
-      // Over-fetch a buffer so DNC scrubbing can't starve the batch below `limit`.
-      .limit(Math.max(1, opts.limit) + 25);
-    if (error) return [];
-    const eligible = (data ?? [])
-      .map((r) => rowToLead(r as Row))
-      .filter((l) => l.phone.replace(/\D/g, "").length >= 10);
-    // Never auto-dial a suppressed number (added via a do_not_call disposition,
-    // an SMS STOP, or a DNC import) even if its lead row is still a dialable status.
-    const dnc = await getDncDigits(orgId);
-    return scrubDnc(eligible, dnc).slice(0, Math.max(1, opts.limit));
-  } catch {
-    return [];
-  }
-}
+// getAutoDialLeadsForOrg lived here: a SECOND auto-dial selection with its own
+// DNC and cooldown policy, under a comment claiming the cron ran through it.
+// It does not — it runs through claimDialLeads. Two policies, one of them
+// unreachable and therefore never corrected, is worse than one.
 
 /** Stamp a lead as just-contacted so the auto-dialer won't immediately re-pick it. */
 export async function touchLeadContacted(
@@ -1637,22 +1603,6 @@ export interface CountyOption {
   state: string;
 }
 
-/**
- * Distinct (county, state) pairs in the viewer's scope, for the Leads filter
- * dropdown. A plain DISTINCT read, not a count — the filtered table's own "N
- * leads" total already answers "how many", so this only needs to name which
- * counties exist, not how big each one is.
- *
- * Paged and narrow-selected (two text columns) rather than routed through
- * app_leads_page: that RPC returns one PAGE of full lead rows for the current
- * filter, not distinct values scope-wide, and a 50k-row book of two columns is
- * still cheap to page through and dedupe in JS — a Postgres DISTINCT would
- * need its own RPC for a feature this small. Same scope split as getLeads:
- * rep → own uploads + assigned; supervisor → org pool + own pre-org rows.
- */
-export async function listDistinctCounties(): Promise<CountyOption[]> {
-  return (await listPlaces()).counties;
-}
 
 export interface CityOption {
   city: string;

@@ -452,27 +452,26 @@ export async function getReportingData(
           const { count } = await q;
           return count ?? 0;
         };
-        const sampleQ = (() => {
-          let q = reader
-            .from("leads")
-            .select("utility_bill,solar_payment")
-            .eq(scopeCol, scopeVal);
-          if (ownScoped) q = q.eq("org_id", orgId as string);
-          return q.order("created_at", { ascending: false }).limit(5000);
-        })();
-        const [total, ev, pool, battery, sample] = await Promise.all([
+        // Averaged in SQL. This was a `.limit(5000)` row fetch with no
+        // `.range()`, so it was an average over the newest ~1,000 leads —
+        // rendered in the same panel, in the same typography, as the EV / pool
+        // / battery shares beside it, which are exact head counts. Nothing
+        // distinguished the sample from the census.
+        const [total, ev, pool, battery, averages] = await Promise.all([
           countWhere(),
           countWhere((q) => q.eq("has_ev", true)),
           countWhere((q) => q.eq("has_pool", true)),
           countWhere((q) => q.eq("has_battery", true)),
-          sampleQ,
+          reader.rpc("app_lead_field_averages", {
+            p_column: scopeCol,
+            p_value: scopeVal,
+            p_org: ownScoped ? orgId : null,
+          }),
         ]);
-        const rows = ((sample as { data?: Row[] }).data ?? []) as Row[];
-        const bills = rows.map((r) => Number(r.utility_bill ?? 0)).filter((n) => n > 0);
-        const solars = rows.map((r) => Number(r.solar_payment ?? 0)).filter((n) => n > 0);
+        const agg = ((averages.data ?? [])[0] ?? {}) as Row;
         return {
-          avgUtilityBill: avg(bills),
-          avgSolarPayment: avg(solars),
+          avgUtilityBill: Number(agg.avg_utility_bill ?? 0) || 0,
+          avgSolarPayment: Number(agg.avg_solar_payment ?? 0) || 0,
           evOwnership: pct(ev, total),
           poolOwnership: pct(pool, total),
           batteryOwnership: pct(battery, total),

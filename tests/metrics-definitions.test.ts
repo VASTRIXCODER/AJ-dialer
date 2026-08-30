@@ -126,10 +126,6 @@ describe("METRICS glossary", () => {
       "callbacks_due_now",
       "estimated_call_spend",
       "cost_per_appointment",
-      "weekly_performance",
-      "outcome_mix",
-      "hourly_productivity",
-      "campaign_pipeline",
     ];
     expect(Object.keys(METRICS).sort()).toEqual([...ids].sort());
     for (const id of ids) {

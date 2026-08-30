@@ -229,8 +229,11 @@ export default async function DashboardPage() {
       {/* Charts row */}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         <SectionCard
-          title="Performance this week"
-          description="Dials vs. live conversations"
+          // NOT "this week". buildSeries(7) is a ROLLING seven days ending
+          // today; the leaderboard's week is the workspace's configured
+          // calendar week, and the two disagree on six days out of seven.
+          title="Performance · last 7 days"
+          description="Dials vs. live conversations · rolling, ending today"
           className="lg:col-span-2"
           action={{ label: "Reports", href: "/reports" }}
         >

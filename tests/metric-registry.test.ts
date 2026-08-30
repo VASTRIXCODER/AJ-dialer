@@ -204,15 +204,9 @@ describe("the glossary itself", () => {
 
   it("a definition says what it leaves out", () => {
     // `excludes` is what stops a tooltip from being a restatement of the label.
-    // The four aggregate/series definitions genuinely exclude nothing.
-    const SERIES: MetricId[] = [
-      "weekly_performance",
-      "outcome_mix",
-      "hourly_productivity",
-      "campaign_pipeline",
-    ];
+    // The four series definitions that were exempt here are gone: nothing ever
+    // referenced them, so no reader had ever seen one.
     for (const def of Object.values(METRICS)) {
-      if (SERIES.includes(def.id)) continue;
       expect(def.excludes.length, `${def.id} excludes nothing`).toBeGreaterThan(0);
     }
   });
@@ -315,7 +309,6 @@ describe("a definition cannot describe something the code does not do", () => {
     expect(analytics, "the unfiled rows are not reported anywhere").toMatch(
       /export function withoutOutcome/,
     );
-    expect(METRICS.outcome_mix.description).toMatch(/reported separately/);
   });
 
   it("hourly_productivity does not hide the ends of the day", () => {
@@ -327,10 +320,15 @@ describe("a definition cannot describe something the code does not do", () => {
     expect(metrics).toMatch(/const lastHour = Math\.max\(18/);
   });
 
-  it("weekly_performance says which seven days it means", () => {
-    // The dashboard renders buildSeries(7) — a rolling window ending today, not
-    // the configured calendar week the leaderboard uses.
-    expect(METRICS.weekly_performance.description).toMatch(/rolling|last seven/i);
-    expect(METRICS.weekly_performance.description).toMatch(/NOT the calendar week/);
+  it("the dashboard trend does not call a rolling window 'this week'", () => {
+    // It renders buildSeries(7) — a rolling window ending today, not the
+    // configured calendar week the leaderboard uses. The glossary entry that
+    // explained the difference was never reachable from anywhere, so the card's
+    // own title is where the distinction has to be made.
+    const dash = read("src/app/(app)/dashboard/page.tsx");
+    expect(dash, "the card still claims a calendar week").not.toMatch(
+      /title="Performance this week"/,
+    );
+    expect(dash).toMatch(/last 7 days|rolling/i);
   });
 });

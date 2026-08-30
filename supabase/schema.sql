@@ -4776,4 +4776,67 @@ language sql stable security definer set search_path = public as $$
 $$;
 revoke all on function public.app_export_next_callback(uuid[]) from public, anon, authenticated;
 
+-- ── touches_v.connected was false for every row that has ever existed ───────
+--
+-- The column was `coalesce(human_connected, false)`, and NOTHING in the product
+-- writes human_connected — 0 non-null of 34,079 rows, measured. So this read
+-- false for the entire table, for the view's whole life. The three other SQL
+-- consumers of that column coalesce to the outcome-based definition; this one
+-- did not, and it is the view an analyst would reach for.
+--
+-- Mirrors isConnectedRecord (src/lib/metrics/definitions.ts) exactly, including
+-- the rule that voicemail is never a connect and wins even over a stray
+-- human_connected = true: AMD race conditions have set that flag on machine
+-- pickups, and a voicemail must never inflate a connect rate. After this,
+-- 2,242 of 34,083 rows read connected.
+create or replace view public.touches_v as
+ select id as touch_id,
+    org_id,
+    lead_id,
+    'outbound'::text as direction,
+    case when channel = 'ai'::text then 'ai_call'::text else 'manual_call'::text end as channel,
+    call_sid as provider_id,
+    conversation_id,
+    client_attempt_id as idempotency_key,
+    started_at as initiated_at,
+    case
+      when outcome = 'voicemail'::text then false
+      when human_connected is not null then human_connected
+      else outcome = any (array['appointment_booked','callback_scheduled','qualified','not_interested','do_not_call'])
+    end as connected,
+    duration_sec,
+    talk_sec,
+    outcome,
+    disposition,
+    case when channel = 'ai'::text then 'ai_agent'::text else 'rep'::text end as actor_kind,
+    owner_id as actor_id,
+    campaign_id
+   from public.call_records cr;
+
+-- ── Field averages, computed rather than sampled ────────────────────────────
+--
+-- The two dollar figures on Reports came from a `.limit(5000)` row fetch with
+-- no `.range()`, so they averaged the newest ~1,000 leads — rendered in the
+-- same panel, in the same typography, as EV / pool / battery shares that are
+-- exact head counts. Zeroes and nulls are excluded, matching what the JS did: a
+-- lead with no bill on file is missing data, not a $0 bill.
+create or replace function public.app_lead_field_averages(
+  p_column text, p_value uuid, p_org uuid
+) returns table (avg_utility_bill numeric, avg_solar_payment numeric)
+language plpgsql stable security definer set search_path = public as $$
+begin
+  if p_column not in ('org_id', 'owner_id') then
+    raise exception 'app_lead_field_averages: p_column must be org_id or owner_id';
+  end if;
+  return query execute format($q$
+    select avg(l.utility_bill) filter (where l.utility_bill > 0),
+           avg(l.solar_payment) filter (where l.solar_payment > 0)
+      from public.leads l
+     where l.%I = $1
+       and ($2 is null or l.org_id = $2)
+  $q$, p_column) using p_value, p_org;
+end;
+$$;
+revoke all on function public.app_lead_field_averages(text, uuid, uuid) from public, anon, authenticated;
+
 notify pgrst, 'reload schema';

@@ -864,30 +864,5 @@ export async function recordInboundMessage(input: {
   }
 }
 
-/**
- * Has this person replied since `since`?
- *
- * The `replied` stop rule reads this. Kept here rather than in the engine so
- * the engine imports nothing from the messaging layer — an architecture test
- * enforces that separation, because the engine must not be able to send.
- */
-export async function hasInboundSince(input: {
-  orgId: string;
-  leadId: string;
-  since: string;
-}): Promise<boolean> {
-  if (!isAdminConfigured() || !input.orgId) return false;
-  try {
-    const admin = createAdminClient();
-    const { count: c } = await admin
-      .from("messages")
-      .select("id", { count: "exact", head: true })
-      .eq("org_id", input.orgId)
-      .eq("lead_id", input.leadId)
-      .eq("direction", "inbound")
-      .gte("created_at", input.since);
-    return (c ?? 0) > 0;
-  } catch {
-    return false;
-  }
-}
+// hasInboundSince lived here. Its docstring asserted a role in the consent
+// model that it did not have, and nothing imported it.

@@ -39,11 +39,7 @@ export type MetricId =
   | "callbacks_overdue"
   | "callbacks_due_now"
   | "estimated_call_spend"
-  | "cost_per_appointment"
-  | "weekly_performance"
-  | "outcome_mix"
-  | "hourly_productivity"
-  | "campaign_pipeline";
+  | "cost_per_appointment";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // A number without a window and a scope is not a number, it is a rumour.
@@ -188,42 +184,22 @@ export const METRICS: Record<MetricId, MetricDef> = {
     denominator: "Human-connected calls only.",
     excludes: ["Ringing", "Queue time", "Voicemail time", "Wrap-up"],
   },
-  weekly_performance: {
-    id: "weekly_performance",
-    label: "Performance this week",
-    description:
-      "Daily attempt/connect/appointment series for the last seven org-local days, ending today — a rolling window, NOT the calendar week that starts on the workspace's configured week start. The leaderboard uses that calendar week; this trend deliberately does not, so the newest day is always the last bar.",
-    unit: "count",
-    denominator: null,
-    excludes: [],
-  },
-  outcome_mix: {
-    id: "outcome_mix",
-    label: "Outcome mix",
-    description:
-      "Counts per canonical terminal outcome; mutually exclusive; the percentages divide by attempts that HAVE an outcome, so the buckets sum to 100%. Attempts with no outcome filed yet are reported separately rather than folded into a bucket — they used to sit in the denominator and in none of the buckets, which understated every disposition.",
-    unit: "count",
-    denominator: null,
-    excludes: [],
-  },
-  hourly_productivity: {
-    id: "hourly_productivity",
-    label: "Hourly productivity",
-    description:
-      "Attempts and connects grouped by local call-start hour, covering 8am–6pm as a floor and widening to include any hour that actually has calls — evening and early-morning work is no longer dropped off the ends. DST-safe by construction: buckets are local-hour labels, so a 23- or 25-hour day has fewer or more populated buckets and never double-counts.",
-    unit: "count",
-    denominator: null,
-    excludes: [],
-  },
-  campaign_pipeline: {
-    id: "campaign_pipeline",
-    label: "Campaign pipeline",
-    description:
-      "Mutually exclusive current-state buckets per lead (eligible / assigned / attempted / connected / callback / appointment / converted / DNC / exhausted). A lead appears in exactly one bucket; event totals are shown separately from unique-lead counts.",
-    unit: "count",
-    denominator: null,
-    excludes: [],
-  },
+  // ── Four series definitions used to sit here ────────────────────────────
+  //
+  // weekly_performance, outcome_mix, hourly_productivity, campaign_pipeline.
+  // None of them was reachable: no `definitionKey=` site referenced any of the
+  // four, so nobody has ever read one. They are gone rather than surfaced,
+  // because the rule immediately below is the reason they were unreachable in
+  // the first place — three of the four describe a chart that appears on
+  // exactly one screen, so there is no second reading to reconcile with, and a
+  // glossary entry that implies a reconciliation that never happened is worse
+  // than no entry.
+  //
+  // What they actually documented was engineering intent, not a shared
+  // definition, so it moved to the code that computes each series. The one
+  // user-visible residue — a dashboard card titled "Performance this week"
+  // over a ROLLING seven-day window — is fixed at the card.
+
 
   // ── Added by W5 ────────────────────────────────────────────────────────────
   // An id earns its place here only if the number appears on two or more

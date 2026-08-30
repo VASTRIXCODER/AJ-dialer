@@ -953,64 +953,7 @@ export interface CallbacksResult {
 /** Open callbacks worth showing on the board — closed history stays in the DB. */
 const CALLBACKS_MAX = 500;
 
-export async function getCallbacks(): Promise<CallbacksResult> {
-  const empty: CallbacksResult = { rows: [], completedCount: 0, teamWide: false };
-  if (!isSupabaseConfigured()) return empty;
-  try {
-    const scope = await getScope();
-    if (!scope) return empty;
-    // Finalize any stuck calls first so callback-dispositioned ones show up.
-    await reconcileOwnerActiveCalls();
-    const orgWide = scope.supervisor && isAdminConfigured() && Boolean(scope.orgId);
-    const reader = orgWide ? createAdminClient() : await createClient();
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const scoped = (base: any) => {
-      let q = base.eq(orgWide ? "org_id" : "owner_id", orgWide ? scope.orgId : scope.userId);
-      // A rep's "own" scope must stay within their CURRENT org — never surface
-      // callbacks they happen to own from an org they've since left.
-      if (!orgWide && scope.orgId) q = q.eq("org_id", scope.orgId);
-      return q;
-    };
-    // Closed rows accumulate forever — only OPEN work belongs on the board.
-    // Statuses in play: rows insert as "due" (records.ts) and the page's ⋯ menu
-    // writes "completed" | "cancelled" | "due" (dispositions.ts). Soonest due
-    // first so a bounded read can never crowd today's queue out with history;
-    // the Completed KPI comes from its own count so truncation can't skew it.
-    const [listRes, doneRes] = await Promise.all([
-      scoped(reader.from("callbacks").select("*"))
-        .not("status", "in", '("completed","cancelled")')
-        .order("due_at", { ascending: true, nullsFirst: false })
-        .order("created_at", { ascending: false })
-        .limit(CALLBACKS_MAX),
-      scoped(reader.from("callbacks").select("id", { count: "exact", head: true })).eq(
-        "status",
-        "completed",
-      ),
-    ]);
-    if (listRes.error) console.error("[pipeline] getCallbacks query failed:", listRes.error.message);
-    if (doneRes.error)
-      console.error("[pipeline] getCallbacks completed count failed:", doneRes.error.message);
-    const names = orgWide ? await memberNames(scope.orgId as string) : null;
-    return {
-      rows: ((listRes.data ?? []) as Row[]).map((r) => ({
-        id: s(r.id),
-        leadId: r.lead_id ? s(r.lead_id) : null,
-        // "" when the row carries no name — the callbacks PAGE substitutes the
-        // org's own lead noun (vocabulary), not a hardcoded vertical's word.
-        leadName: s(r.lead_name),
-        phone: s(r.phone),
-        reason: s(r.reason),
-        status: s(r.status) || "due",
-        dueAt: r.due_at ? s(r.due_at) : null,
-        createdAt: s(r.created_at),
-        repName: names ? names.get(s(r.owner_id)) || "Rep" : undefined,
-        teamWide: orgWide,
-      })),
-      completedCount: askedCount(doneRes),
-      teamWide: orgWide,
-    };
-  } catch (e) {
-    console.error("[pipeline] getCallbacks failed:", e instanceof Error ? e.message : e);
-    return empty;
-  }
-}
+// getCallbacks lived here: a SECOND callbacks board, with its own divergent
+// lane rules, zero importers, and a comment at line ~576 still citing it as
+// the exemplar. The one the product actually renders is
+// getCallbackBoard in src/lib/db/callbacks.ts.
