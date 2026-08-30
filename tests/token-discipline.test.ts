@@ -194,3 +194,32 @@ describe("cinema stays on the Stage", () => {
     expect(btn!.code).not.toMatch(/backdrop-blur/);
   });
 });
+
+describe("one way to choose a value", () => {
+  // The native <select> is the last control the design system cannot reach.
+  // Its popup is drawn by the operating system, in the operating system's
+  // colours — so on Windows, in dark mode, every filter in the product opened
+  // a white list. It also cannot carry an icon, a second line, or a reason an
+  // option is unavailable. `SelectMenu` does all four, and this is the rule
+  // that stops the 25 native ones from growing back one convenient case at a
+  // time. `<selected.icon>` is a component, not the element — hence `[\s>]`.
+  it("no native <select> survives in the product", () => {
+    const offenders: string[] = [];
+    for (const { path, code } of FILES) {
+      if (code.match(/<select[\s>]/)) offenders.push(path);
+    }
+    expect(offenders, offenders.join("\n")).toEqual([]);
+  });
+
+  it("the styled-native Select primitive is gone, not merely unused", () => {
+    // Left exported, it gets imported again — which is how a sweep becomes a
+    // temporary state of the codebase rather than a rule.
+    const input = FILES.find((f) => f.path === "src/components/ui/input.tsx");
+    expect(input).toBeDefined();
+    expect(input!.code).not.toMatch(/export const Select\b/);
+    const importers = FILES.filter(({ code }) =>
+      /import\s*{[^}]*\bSelect\b[^}]*}\s*from\s*["'][^"']*ui\/input["']/.test(code),
+    ).map((f) => f.path);
+    expect(importers, importers.join("\n")).toEqual([]);
+  });
+});

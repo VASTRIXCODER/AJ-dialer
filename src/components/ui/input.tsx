@@ -30,13 +30,15 @@ export const Textarea = React.forwardRef<
 ));
 Textarea.displayName = "Textarea";
 
-export const Select = React.forwardRef<
-  HTMLSelectElement,
-  React.SelectHTMLAttributes<HTMLSelectElement>
->(({ className, ...props }, ref) => (
-  <select ref={ref} className={cn(base, "cursor-pointer", className)} {...props} />
-));
-Select.displayName = "Select";
+// `Select` — a styled native <select> — used to live here. It is gone rather
+// than deprecated: a component that still exports gets imported again, and the
+// whole point of the sweep was that the product has exactly ONE way to choose a
+// value. Use `SelectMenu` from ./select-menu. The native element could not be
+// tokenised (its popup is drawn by the OS, in the OS's colours, ignoring the
+// app's theme entirely), could not carry an icon or say why an option is
+// unavailable, and on Windows rendered a system list that looked nothing like
+// the rest of the product. tests/token-discipline.test.ts keeps it from coming
+// back.
 
 export function Label({
   className,

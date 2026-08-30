@@ -16,6 +16,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { cn, relativeTime } from "@/lib/utils";
+import { SelectMenu } from "@/components/ui/select-menu";
 
 interface Pack {
   id: string;
@@ -186,20 +187,20 @@ export function LeadPacksPanel({ members }: { members: { id: string; name: strin
                       </div>
 
                       <div className="flex items-center gap-2">
-                        <select
-                          value={p.assignedTo ?? ""}
+                        <SelectMenu
+                          label={`Assign ${p.label || `pack ${p.seq}`} to`}
+                          placeholder="Assign to…"
+                          size="sm"
+                          triggerClassName="h-9"
+                          value={p.assignedTo ?? null}
                           disabled={busy === p.id}
-                          onChange={(e) => assign(p.id, e.target.value || null)}
-                          aria-label={`Assign ${p.label || `pack ${p.seq}`} to`}
-                          className="h-9 rounded-lg border border-border bg-background/60 px-2.5 text-sm font-medium focus-visible:border-primary/50 focus-visible:outline-none disabled:opacity-50"
-                        >
-                          <option value="">Assign to…</option>
-                          {members.map((m) => (
-                            <option key={m.id} value={m.id}>
-                              {m.name || "Teammate"}
-                            </option>
-                          ))}
-                        </select>
+                          disabledReason="Saving…"
+                          onChange={(v) => assign(p.id, v || null)}
+                          options={members.map((m) => ({
+                            value: m.id,
+                            label: m.name || "Teammate",
+                          }))}
+                        />
                         {p.assignedTo && (
                           <Button
                             variant="outline"

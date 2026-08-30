@@ -37,6 +37,7 @@ import {
 import type { CallbackBoardRow } from "@/lib/db/callbacks";
 import { dialDeepLink } from "@/lib/dialer/deep-link";
 import { cn, formatPhone, initials, relativeTime } from "@/lib/utils";
+import { SelectMenu } from "@/components/ui/select-menu";
 import {
   ScheduleCallbackDialog,
   type ScheduledCallback,
@@ -255,26 +256,33 @@ function RowCard({
       )}
 
       {canManage && members.length > 0 && (
-        <label className="mt-2 flex items-center gap-2 text-[11px] font-medium text-muted-foreground">
+        <span className="mt-2 flex items-center gap-2 text-[11px] font-medium text-muted-foreground">
           <span className="shrink-0">Assigned to</span>
-          <select
+          <SelectMenu
+            label="Assigned to"
+            size="sm"
+            className="min-w-0 flex-1"
+            triggerClassName="h-7 w-full"
             value={row.assignedTo ?? row.ownerId}
-            onChange={(e) => h.reassign(row, e.target.value)}
             disabled={rowBusy}
-            className="h-7 min-w-0 flex-1 rounded-lg border border-border bg-background px-2 text-xs text-foreground disabled:opacity-50"
-          >
-            {!members.some((m) => m.id === (row.assignedTo ?? row.ownerId)) && (
-              <option value={row.assignedTo ?? row.ownerId}>
-                {assigneeName || "Unassigned"}
-              </option>
-            )}
-            {members.map((m) => (
-              <option key={m.id} value={m.id}>
-                {m.name}
-              </option>
-            ))}
-          </select>
-        </label>
+            disabledReason="Saving…"
+            onChange={(v) => h.reassign(row, v)}
+            options={[
+              // The current assignee may not be in `members` — a rep who left,
+              // or one this viewer cannot see. Dropping them would silently
+              // reassign the callback on the next save.
+              ...(!members.some((m) => m.id === (row.assignedTo ?? row.ownerId))
+                ? [
+                    {
+                      value: row.assignedTo ?? row.ownerId,
+                      label: assigneeName || "Unassigned",
+                    },
+                  ]
+                : []),
+              ...members.map((m) => ({ value: m.id, label: m.name })),
+            ]}
+          />
+        </span>
       )}
 
       <div className="mt-2.5 flex items-center gap-1.5">

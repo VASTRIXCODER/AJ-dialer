@@ -24,6 +24,7 @@ import {
 import type { Lead, LeadStatus } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { groupLabel } from "./load-leads-dialog";
+import { SelectMenu } from "@/components/ui/select-menu";
 
 interface Segment {
   key: string;
@@ -288,18 +289,17 @@ export function SessionBuilder({
                       <h3 className="mb-2 text-xs font-bold uppercase tracking-wide text-muted-foreground">
                         Campaign
                       </h3>
-                      <select
-                        value={campaignId}
-                        onChange={(e) => setCampaignId(e.target.value)}
-                        className="h-10 w-full rounded-xl border border-border bg-background px-3 text-sm outline-none focus-visible:border-primary/50"
-                      >
-                        <option value="">All campaigns</option>
-                        {campaigns.map((c) => (
-                          <option key={c.id} value={c.id}>
-                            {c.name}
-                          </option>
-                        ))}
-                      </select>
+                      <SelectMenu
+                        label="Campaign"
+                        className="w-full"
+                        triggerClassName="h-10 w-full"
+                        value={campaignId || "all"}
+                        onChange={(v) => setCampaignId(v === "all" ? "" : v)}
+                        options={[
+                          { value: "all", label: "All campaigns" },
+                          ...campaigns.map((c) => ({ value: c.id, label: c.name })),
+                        ]}
+                      />
                     </div>
                   )}
                   {groups.length > 0 && (

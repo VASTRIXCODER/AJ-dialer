@@ -40,6 +40,7 @@ import { Button, buttonVariants } from "@/components/ui/button";
 import { useConfirm } from "@/components/ui/confirm-dialog";
 import { Drawer } from "@/components/ui/drawer";
 import { Input, Label } from "@/components/ui/input";
+import { SelectMenu } from "@/components/ui/select-menu";
 import { Modal } from "@/components/ui/modal";
 import { useToast } from "@/components/ui/toast";
 import type { Lead, LeadStatus } from "@/lib/types";
@@ -1069,123 +1070,91 @@ export function LeadsTable({
             </button>
           )}
           {(uploaders.length > 1 || filters.uploaderId) && (
-            <select
-              value={filters.uploaderId ?? "all"}
-              onChange={(e) =>
-                applyFilters({
-                  uploaderId: e.target.value === "all" ? undefined : e.target.value,
-                })
-              }
-              aria-label="Filter by uploader"
+            <SelectMenu
+              label="Filter by uploader"
+              size="sm"
+              triggerClassName="h-9"
               disabled={Boolean(filters.mine)}
-              className="h-9 rounded-lg border border-border bg-background/60 px-2.5 text-sm font-medium focus-visible:border-primary/50 focus-visible:outline-none"
-            >
-              <option value="all">All uploaders</option>
-              {uploaders.map((u) => (
-                <option key={u.id} value={u.id}>
-                  {u.name}
-                </option>
-              ))}
-            </select>
+              disabledReason="Showing only your own leads — clear that filter first."
+              value={filters.uploaderId ?? "all"}
+              onChange={(v) => applyFilters({ uploaderId: v === "all" ? undefined : v })}
+              options={[
+                { value: "all", label: "All uploaders" },
+                ...uploaders.map((u) => ({ value: u.id, label: u.name })),
+              ]}
+            />
           )}
           {campaigns.length > 0 && (
-            <select
+            <SelectMenu
+              label="Filter by campaign"
+              size="sm"
+              triggerClassName="h-9"
               value={filters.campaignId === "__none__" ? "none" : (filters.campaignId ?? "all")}
-              onChange={(e) =>
+              onChange={(v) =>
                 applyFilters({
-                  campaignId:
-                    e.target.value === "all"
-                      ? undefined
-                      : e.target.value === "none"
-                        ? "__none__"
-                        : e.target.value,
+                  campaignId: v === "all" ? undefined : v === "none" ? "__none__" : v,
                 })
               }
-              className="h-9 rounded-lg border border-border bg-background/60 px-2.5 text-sm font-medium focus-visible:border-primary/50 focus-visible:outline-none"
-            >
-              <option value="all">All campaigns</option>
-              <option value="none">Unassigned</option>
-              {campaigns.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
-                </option>
-              ))}
-            </select>
+              options={[
+                { value: "all", label: "All campaigns" },
+                { value: "none", label: "Unassigned" },
+                ...campaigns.map((c) => ({ value: c.id, label: c.name })),
+              ]}
+            />
           )}
           {(orgGroups.length > 0 || leads.some((l) => l.leadGroup) || filters.group) && (
-            <select
+            <SelectMenu
+              label="Filter by group"
+              size="sm"
+              triggerClassName="h-9"
               value={filters.group === "__misc__" ? "unsorted" : (filters.group ?? "all")}
-              onChange={(e) =>
+              onChange={(v) =>
                 applyFilters({
-                  group:
-                    e.target.value === "all"
-                      ? undefined
-                      : e.target.value === "unsorted"
-                        ? "__misc__"
-                        : e.target.value,
+                  group: v === "all" ? undefined : v === "unsorted" ? "__misc__" : v,
                 })
               }
-              aria-label="Filter by group"
-              className="h-9 rounded-lg border border-border bg-background/60 px-2.5 text-sm font-medium focus-visible:border-primary/50 focus-visible:outline-none"
-            >
-              <option value="all">All groups</option>
-              <option value="unsorted">Miscellaneous</option>
-              {groupOptions.map((g) => (
-                <option key={g.key} value={g.key}>
-                  {g.label}
-                </option>
-              ))}
-            </select>
+              options={[
+                { value: "all", label: "All groups" },
+                { value: "unsorted", label: "Miscellaneous" },
+                ...groupOptions.map((g) => ({ value: g.key, label: g.label })),
+              ]}
+            />
           )}
           {(countyOptions.length > 0 || filters.county) && (
-            <select
+            <SelectMenu
+              label="Filter by county"
+              size="sm"
+              triggerClassName="h-9"
               value={filters.county === "__none__" ? "unsorted" : (filters.county ?? "all")}
-              onChange={(e) =>
+              onChange={(v) =>
                 applyFilters({
-                  county:
-                    e.target.value === "all"
-                      ? undefined
-                      : e.target.value === "unsorted"
-                        ? "__none__"
-                        : e.target.value,
+                  county: v === "all" ? undefined : v === "unsorted" ? "__none__" : v,
                 })
               }
-              aria-label="Filter by county"
-              className="h-9 rounded-lg border border-border bg-background/60 px-2.5 text-sm font-medium focus-visible:border-primary/50 focus-visible:outline-none"
-            >
-              <option value="all">All counties</option>
-              <option value="unsorted">No county on file</option>
-              {countyOptions.map((c) => (
-                <option key={c.key} value={c.key}>
-                  {c.label}
-                </option>
-              ))}
-            </select>
+              options={[
+                { value: "all", label: "All counties" },
+                { value: "unsorted", label: "No county on file" },
+                ...countyOptions.map((c) => ({ value: c.key, label: c.label })),
+              ]}
+            />
           )}
           {(cityOptions.length > 0 || filters.city) && (
-            <select
+            <SelectMenu
+              label="Filter by city"
+              size="sm"
+              triggerClassName="h-9"
               value={filters.city === "__none__" ? "unsorted" : (filters.city ?? "all")}
-              onChange={(e) =>
+              onChange={(v) =>
                 applyFilters({
-                  city:
-                    e.target.value === "all"
-                      ? undefined
-                      : e.target.value === "unsorted"
-                        ? "__none__"
-                        : e.target.value,
+                  city: v === "all" ? undefined : v === "unsorted" ? "__none__" : v,
                 })
               }
-              aria-label="Filter by city"
-              className="h-9 rounded-lg border border-border bg-background/60 px-2.5 text-sm font-medium focus-visible:border-primary/50 focus-visible:outline-none"
-            >
-              <option value="all">All cities</option>
-              <option value="unsorted">No city on file</option>
-              {cityOptions.map((c) => (
-                <option key={c.key} value={c.key}>
-                  {c.label}
-                </option>
-              ))}
-            </select>
+              options={[
+                { value: "all", label: "All cities" },
+                { value: "unsorted", label: "No city on file" },
+                ...cityOptions.map((c) => ({ value: c.key, label: c.label })),
+              ]}
+            />
           )}
           {FILTERS.map((f) => {
             const active = (filters.status ?? "all") === f.value;
@@ -1291,19 +1260,18 @@ export function LeadsTable({
           {campaigns.length > 0 && (
             <>
               <span className="text-sm text-muted-foreground">Assign to</span>
-              <select
-                value={assignTo}
-                onChange={(e) => setAssignTo(e.target.value)}
-                className="h-8 rounded-lg border border-border bg-background px-2 text-sm focus-visible:border-primary/50 focus-visible:outline-none"
-              >
-                <option value="">Choose…</option>
-                {campaigns.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.name}
-                  </option>
-                ))}
-                <option value="none">— Remove from campaign —</option>
-              </select>
+              <SelectMenu
+                label="Assign to campaign"
+                placeholder="Choose…"
+                size="sm"
+                triggerClassName="h-8"
+                value={assignTo || null}
+                onChange={(v) => setAssignTo(v)}
+                options={[
+                  ...campaigns.map((c) => ({ value: c.id, label: c.name })),
+                  { value: "none", label: "Remove from campaign" },
+                ]}
+              />
               <Button size="sm" className="gap-1.5" disabled={!assignTo || busy} onClick={assign}>
                 {busy && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
                 Apply
@@ -1313,19 +1281,18 @@ export function LeadsTable({
           {canManage && members.length > 0 && (
             <>
               <span className="text-sm text-muted-foreground">Reassign to</span>
-              <select
-                value={reassignTo}
-                onChange={(e) => setReassignTo(e.target.value)}
-                aria-label="Reassign selected leads to"
-                className="h-8 rounded-lg border border-border bg-background px-2 text-sm focus-visible:border-primary/50 focus-visible:outline-none"
-              >
-                <option value="">Choose teammate…</option>
-                {members.map((m) => (
-                  <option key={m.id} value={m.id}>
-                    {m.id === meId ? "Me" : m.name || "Member"}
-                  </option>
-                ))}
-              </select>
+              <SelectMenu
+                label="Reassign selected leads to"
+                placeholder="Choose teammate…"
+                size="sm"
+                triggerClassName="h-8"
+                value={reassignTo || null}
+                onChange={(v) => setReassignTo(v)}
+                options={members.map((m) => ({
+                  value: m.id,
+                  label: m.id === meId ? "Me" : m.name || "Member",
+                }))}
+              />
               <Button
                 size="sm"
                 variant="outline"
@@ -1358,19 +1325,18 @@ export function LeadsTable({
                   ownership). This is how a rep dials "only my leads" when a
                   manager imported the list under their own account. */}
               <span className="text-sm text-muted-foreground">Assign to rep</span>
-              <select
-                value={assignRepTo}
-                onChange={(e) => setAssignRepTo(e.target.value)}
-                aria-label="Assign selected leads to a rep (keeps the uploader)"
-                className="h-8 rounded-lg border border-border bg-background px-2 text-sm focus-visible:border-primary/50 focus-visible:outline-none"
-              >
-                <option value="">Choose teammate…</option>
-                {members.map((m) => (
-                  <option key={m.id} value={m.id}>
-                    {m.id === meId ? "Me" : m.name || "Member"}
-                  </option>
-                ))}
-              </select>
+              <SelectMenu
+                label="Assign selected leads to a rep (keeps the uploader)"
+                placeholder="Choose teammate…"
+                size="sm"
+                triggerClassName="h-8"
+                value={assignRepTo || null}
+                onChange={(v) => setAssignRepTo(v)}
+                options={members.map((m) => ({
+                  value: m.id,
+                  label: m.id === meId ? "Me" : m.name || "Member",
+                }))}
+              />
               <Button
                 size="sm"
                 variant="outline"

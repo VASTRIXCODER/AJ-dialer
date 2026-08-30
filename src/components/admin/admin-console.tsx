@@ -45,6 +45,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useConfirm } from "@/components/ui/confirm-dialog";
 import { Input } from "@/components/ui/input";
+import { SelectMenu } from "@/components/ui/select-menu";
 import { SecretValue } from "@/components/ui/secret-value";
 import { MAX_CALLER_IDS_PER_REP } from "@/lib/dialer/rotation";
 import type { Member, OrgCompany, OrgFull } from "@/lib/org/membership";
@@ -430,26 +431,26 @@ function MembersTab({
                   </div>
                   {canApprove ? (
                     <div className="flex flex-wrap items-center gap-2">
-                      <label className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+                      {/* A <label> cannot wrap a button and associate with
+                          it, so the text is the control's own name. */}
+                      <span className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
                         Role
-                        <select
+                        <SelectMenu
+                          label="Role"
+                          size="sm"
+                          triggerClassName="h-8"
                           value={chosen}
                           disabled={busy === m.id}
-                          onChange={(e) =>
-                            setApproveRole((s) => ({
-                              ...s,
-                              [m.id]: e.target.value as OrgRole,
-                            }))
+                          disabledReason="Saving…"
+                          onChange={(v) =>
+                            setApproveRole((s) => ({ ...s, [m.id]: v as OrgRole }))
                           }
-                          className="h-8 rounded-lg border border-border bg-background px-2 text-xs font-semibold capitalize outline-none focus-visible:border-primary/50"
-                        >
-                          {approveChoices.map((r) => (
-                            <option key={r} value={r}>
-                              {ROLE_LABEL[r]}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
+                          options={approveChoices.map((r) => ({
+                            value: r as string,
+                            label: ROLE_LABEL[r],
+                          }))}
+                        />
+                      </span>
                       <Button
                         size="sm"
                         variant="success"
@@ -638,18 +639,16 @@ function MemberRow({
           </Badge>
         )}
         {canRole && manageable ? (
-          <select
+          <SelectMenu
+            label="Member role"
+            size="sm"
+            triggerClassName="h-8"
             value={m.role}
             disabled={busy}
-            onChange={(e) => onRole(e.target.value as OrgRole)}
-            className="h-8 rounded-lg border border-border bg-background px-2 text-xs font-semibold capitalize outline-none focus-visible:border-primary/50"
-          >
-            {roleChoices.map((r) => (
-              <option key={r} value={r}>
-                {ROLE_LABEL[r]}
-              </option>
-            ))}
-          </select>
+            disabledReason="Saving…"
+            onChange={(v) => onRole(v as OrgRole)}
+            options={roleChoices.map((r) => ({ value: r as string, label: ROLE_LABEL[r] }))}
+          />
         ) : null}
         {showAiToggle && (
           <button

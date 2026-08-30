@@ -19,6 +19,7 @@ import type { ParsedLead } from "@/lib/leads/csv";
 import type { LeadFieldDef } from "@/lib/leads/field-schema";
 import { formatPhone } from "@/lib/utils";
 import { CampaignCertificationDialog } from "./campaign-certification-dialog";
+import { SelectMenu } from "@/components/ui/select-menu";
 
 type PreviewLead = ParsedLead & { tempId: string };
 
@@ -300,18 +301,20 @@ export function SortPreviewReview({
                           {[l.city, l.state, l.zip].filter(Boolean).join(", ") || "No location"}
                         </p>
                       </div>
-                      <select
+                      <SelectMenu
+                        label="Move to group"
+                        size="sm"
+                        className="shrink-0"
+                        triggerClassName="h-7"
                         value={key}
-                        onChange={(e) => moveLead(l.tempId, e.target.value)}
                         disabled={busy}
-                        className="h-7 shrink-0 rounded-md border border-border bg-background px-1.5 text-[11px]"
-                      >
-                        {bucketKeys.map((k) => (
-                          <option key={k} value={k}>
-                            {labelOf.get(k) ?? k}
-                          </option>
-                        ))}
-                      </select>
+                        disabledReason="Saving…"
+                        onChange={(v) => moveLead(l.tempId, v)}
+                        options={bucketKeys.map((k) => ({
+                          value: k,
+                          label: labelOf.get(k) ?? k,
+                        }))}
+                      />
                     </li>
                   ))}
                   {list.length > 25 && (

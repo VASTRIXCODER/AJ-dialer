@@ -16,6 +16,7 @@ import {
   type ColumnTarget,
   type InspectedColumn,
 } from "./plan";
+import { SelectMenu } from "@/components/ui/select-menu";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Mapping step: one card per column — its header, real sample values, and a
@@ -267,29 +268,32 @@ export function MappingStep({
                   <p className="text-xs italic text-ink-3">No values</p>
                 )}
               </div>
-              <select
-                value={valueOf(target)}
-                onChange={(e) => onSelect(col.index, e.target.value)}
-                aria-label={`Target for column ${col.header}`}
-                className={cn(
-                  "mt-2 h-9 w-full rounded-xl border bg-background/60 px-2.5 text-sm text-foreground focus-visible:border-primary/50 focus-visible:outline-none",
-                  target.kind === "ignore" ? "border-border text-muted-foreground" : "border-primary/40",
+              {/* SelectMenu has no optgroup; the group name rides along as
+                  each option's hint, on its own line under the label. */}
+              <SelectMenu
+                label={`Target for column ${col.header}`}
+                size="sm"
+                className="mt-2 w-full"
+                triggerClassName={cn(
+                  "h-9 w-full",
+                  target.kind === "ignore"
+                    ? "border-border text-muted-foreground"
+                    : "border-primary/40",
                 )}
-              >
-                <option value="ignore">Ignore this column</option>
-                <optgroup label="Lead fields">
-                  {options.map((o) => (
-                    <option key={o.field} value={`core:${o.field}`}>
-                      {o.label}
-                    </option>
-                  ))}
-                </optgroup>
-                <optgroup label="Special">
-                  <option value="custom">New custom field…</option>
-                  <option value="dnc">Do-Not-Call flag</option>
-                  <option value="dialPref">Dialing preference</option>
-                </optgroup>
-              </select>
+                value={valueOf(target)}
+                onChange={(v) => onSelect(col.index, v)}
+                options={[
+                  { value: "ignore", label: "Ignore this column" },
+                  ...options.map((o) => ({
+                    value: `core:${o.field}`,
+                    label: o.label,
+                    hint: "Lead field",
+                  })),
+                  { value: "custom", label: "New custom field…", hint: "Special" },
+                  { value: "dnc", label: "Do-Not-Call flag", hint: "Special" },
+                  { value: "dialPref", label: "Dialing preference", hint: "Special" },
+                ]}
+              />
               {target.kind === "custom" && (
                 <div className="mt-2 flex gap-2">
                   <Input
@@ -300,23 +304,16 @@ export function MappingStep({
                     placeholder="Field name"
                     className="h-8 flex-1 text-xs"
                   />
-                  <select
+                  <SelectMenu
+                    label="Custom field type"
+                    size="sm"
+                    triggerClassName="h-8"
                     value={target.type}
-                    onChange={(e) =>
-                      setTarget(col.index, {
-                        ...target,
-                        type: e.target.value as LeadFieldType,
-                      })
+                    onChange={(v) =>
+                      setTarget(col.index, { ...target, type: v as LeadFieldType })
                     }
-                    aria-label="Custom field type"
-                    className="h-8 rounded-lg border border-border bg-background/60 px-1.5 text-xs focus-visible:outline-none"
-                  >
-                    {CUSTOM_TYPES.map((t) => (
-                      <option key={t.value} value={t.value}>
-                        {t.label}
-                      </option>
-                    ))}
-                  </select>
+                    options={CUSTOM_TYPES.map((t) => ({ value: t.value, label: t.label }))}
+                  />
                 </div>
               )}
               {target.kind === "dnc" && (

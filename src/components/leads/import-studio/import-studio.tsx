@@ -41,6 +41,7 @@ import {
   type InspectedColumn,
 } from "./plan";
 import { RecentJobs } from "./recent-jobs";
+import { SelectMenu } from "@/components/ui/select-menu";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The Import Studio — the guided, observable, rollbackable replacement for the
@@ -466,21 +467,23 @@ export function ImportStudio({
                       (preset by a guess — please check: broker lists often have none)
                     </span>
                   </label>
-                  <label className="flex items-center gap-2 text-sm font-medium">
+                  <span className="flex items-center gap-2 text-sm font-medium">
                     Delimiter
-                    <select
+                    <SelectMenu
+                      label="Delimiter"
+                      size="sm"
+                      triggerClassName="h-9"
                       value={delimiter}
-                      onChange={(e) => setDelimiter(e.target.value as DelimiterChoice)}
-                      className="h-9 rounded-xl border border-border bg-background/60 px-2.5 text-sm text-foreground focus-visible:border-primary/50 focus-visible:outline-none"
-                    >
-                      <option value="auto">Auto-detect</option>
-                      <option value=",">Comma</option>
-                      {/* JSX attribute strings don't process escapes — the
-                          expression form is what makes this a real tab. */}
-                      <option value={"\t"}>Tab</option>
-                      <option value=";">Semicolon</option>
-                    </select>
-                  </label>
+                      onChange={(v) => setDelimiter(v as DelimiterChoice)}
+                      options={[
+                        { value: "auto", label: "Auto-detect" },
+                        { value: ",", label: "Comma" },
+                        // A real tab, not the two characters backslash-t.
+                        { value: "\t", label: "Tab" },
+                        { value: ";", label: "Semicolon" },
+                      ]}
+                    />
+                  </span>
                 </div>
 
                 {/* First ~100 records, exactly as they'll be read */}

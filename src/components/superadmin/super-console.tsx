@@ -27,6 +27,7 @@ import { Card } from "@/components/ui/card";
 import { templateLabel } from "@/lib/org/templates";
 import { cn, initials, relativeTime } from "@/lib/utils";
 import { type Org, OrganizationsTab } from "./super-orgs";
+import { SelectMenu } from "@/components/ui/select-menu";
 
 type Settings = { maintenance: boolean; message: string };
 type Account = {
@@ -364,32 +365,34 @@ function AccountsTab({
                     {a.lastSignInAt ? ` · seen ${relativeTime(a.lastSignInAt)}` : ""}
                   </p>
                 </div>
-                <select
-                  className={sel}
-                  value={a.orgId ?? ""}
+                <SelectMenu
+                  label="Organization"
+                  size="sm"
+                  triggerClassName="h-8"
+                  value={a.orgId ?? "none"}
                   disabled={busy === `as-${a.id}`}
-                  onChange={(e) => onAssign(a.id, e.target.value || null, null)}
-                >
-                  <option value="">Unassigned</option>
-                  {orgs.map((o) => (
-                    <option key={o.id} value={o.id}>
-                      {o.name}
-                    </option>
-                  ))}
-                </select>
-                <select
-                  className={sel}
-                  value={a.companyId ?? ""}
+                  disabledReason="Saving…"
+                  onChange={(v) => onAssign(a.id, v === "none" ? null : v, null)}
+                  options={[
+                    { value: "none", label: "Unassigned" },
+                    ...orgs.map((o) => ({ value: o.id, label: o.name })),
+                  ]}
+                />
+                <SelectMenu
+                  label="Company"
+                  size="sm"
+                  triggerClassName="h-8"
+                  value={a.companyId ?? "none"}
                   disabled={!a.orgId || busy === `as-${a.id}`}
-                  onChange={(e) => onAssign(a.id, a.orgId, e.target.value || null)}
-                >
-                  <option value="">No company</option>
-                  {orgCompanies.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.name}
-                    </option>
-                  ))}
-                </select>
+                  disabledReason={
+                    a.orgId ? "Saving…" : "Assign an organization first."
+                  }
+                  onChange={(v) => onAssign(a.id, a.orgId, v === "none" ? null : v)}
+                  options={[
+                    { value: "none", label: "No company" },
+                    ...orgCompanies.map((c) => ({ value: c.id, label: c.name })),
+                  ]}
+                />
                 <Badge tone={a.disabled ? "warning" : "success"}>
                   {a.disabled ? "Suspended" : "Active"}
                 </Badge>

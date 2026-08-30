@@ -363,18 +363,19 @@ function OrgDrawer({ orgId, onChanged }: { orgId: string; onChanged: () => void 
             <div key={m.id} className="flex flex-wrap items-center gap-2 rounded-lg border border-border p-2">
               <Avatar initials={initials(m.name || m.email)} tone="danger" size="xs" />
               <span className="min-w-0 flex-1 truncate text-sm">{m.name || m.email}</span>
-              <select
+              <SelectMenu
+                label="Member role"
+                size="sm"
+                triggerClassName="h-8"
                 value={m.role}
                 disabled={busy === m.id}
-                onChange={(e) => memberAction("memberRole", m.id, e.target.value)}
-                className="h-8 rounded-lg border border-border bg-background px-2 text-xs font-semibold capitalize outline-none"
-              >
-                {(["owner", "admin", "manager", "rep"] as const).map((r) => (
-                  <option key={r} value={r}>
-                    {ROLE_LABEL[r]}
-                  </option>
-                ))}
-              </select>
+                disabledReason="Saving…"
+                onChange={(v) => memberAction("memberRole", m.id, v)}
+                options={(["owner", "admin", "manager", "rep"] as const).map((r) => ({
+                  value: r as string,
+                  label: ROLE_LABEL[r],
+                }))}
+              />
               <button
                 type="button"
                 aria-label="Remove member"
