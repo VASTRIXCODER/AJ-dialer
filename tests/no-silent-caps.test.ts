@@ -67,17 +67,25 @@ function constsIn(code: string): Map<string, number> {
 }
 
 describe("no cap is bigger than the ceiling that overrides it", () => {
-  it("every .limit() is either under the ceiling or paged", () => {
+  /**
+   * Files whose `.limit()` above the ceiling is a deliberate whole-scan bound.
+   *
+   * This used to be inferred: any file containing a `.range()` anywhere got a
+   * blanket pass for every limit in it. That is one paging loop excusing an
+   * unrelated un-ranged query in the same module — the exact shape of the bug
+   * this file exists to catch. Measured when it was tightened: the exemption
+   * was covering nothing, so an explicit list costs nothing and closes it.
+   */
+  const WHOLE_SCAN_BOUNDS = new Set<string>([]);
+
+  it("every .limit() is either under the ceiling or an explicit scan bound", () => {
     const offenders: string[] = [];
     for (const file of sourceFiles()) {
       const code = stripComments(read(file));
-      if (!/\.limit\(/.test(code)) continue;
-      // A query that also `.range()`s is paging deliberately; the limit there
-      // is an overall scan bound, not a page size.
-      const paged = /\.range\(/.test(code);
+      if (!/\.limit\(/.test(code) || WHOLE_SCAN_BOUNDS.has(file)) continue;
       for (const n of limitsIn(code, constsIn(code))) {
-        if (n > CEILING && !paged) {
-          offenders.push(`${file}: .limit(${n.toLocaleString()}) with no .range()`);
+        if (n > CEILING) {
+          offenders.push(`${file}: .limit(${n.toLocaleString()})`);
         }
       }
     }
