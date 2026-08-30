@@ -5,6 +5,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import type { RecentCall } from "@/lib/db/metrics";
 import { RecentCalls } from "./recent-calls";
+import { TableSkeleton } from "@/components/shared/skeletons";
 
 const PAGE = 50;
 
@@ -61,8 +62,10 @@ export function CallHistory() {
       {calls.length > 0 ? (
         <RecentCalls calls={calls} />
       ) : (
-        <div className="flex items-center justify-center p-8 text-muted-foreground">
-          <Loader2 className="h-5 w-5 animate-spin" />
+        /* The grid keeps its shape while it loads instead of collapsing to a
+           dot and jumping back. */
+        <div className="p-4">
+          <TableSkeleton rows={6} />
         </div>
       )}
       <div className="flex items-center justify-center gap-3 border-t border-border/60 p-4">

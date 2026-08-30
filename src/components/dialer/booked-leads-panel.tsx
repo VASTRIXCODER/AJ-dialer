@@ -1,6 +1,6 @@
 "use client";
 
-import { CalendarCheck2, Loader2, PhoneCall } from "lucide-react";
+import { CalendarCheck2, PhoneCall } from "lucide-react";
 import Link from "next/link";
 import { LeadOpenLink } from "@/components/leads/lead-360/lead-open-link";
 import { whenLabel } from "@/lib/appointments/time";
@@ -9,6 +9,7 @@ import { formatAddress, formatPhone, initials } from "@/lib/utils";
 import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { buttonVariants } from "@/components/ui/button";
+import { TableSkeleton } from "@/components/shared/skeletons";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The dialer's "Booked" tab: everyone who already has an appointment on the
@@ -21,9 +22,8 @@ import { buttonVariants } from "@/components/ui/button";
 export function BookedLeadsPanel({ leads, loading }: { leads: BookedLead[]; loading: boolean }) {
   if (loading && leads.length === 0) {
     return (
-      <div className="flex flex-col items-center justify-center gap-2 py-16 text-muted-foreground">
-        <Loader2 className="h-5 w-5 animate-spin" />
-        <p className="text-sm">Loading booked leads…</p>
+      <div className="p-4">
+        <TableSkeleton rows={5} />
       </div>
     );
   }

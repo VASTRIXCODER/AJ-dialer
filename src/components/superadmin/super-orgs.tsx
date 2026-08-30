@@ -30,6 +30,7 @@ import type { OrgBilling, OrgBlueprint, OrgFeatures } from "@/lib/org/settings";
 import { DIALER_TEMPLATES, templateLabel } from "@/lib/org/templates";
 import { ROLE_LABEL } from "@/lib/permissions";
 import { cn, initials } from "@/lib/utils";
+import { CardSkeleton } from "@/components/shared/skeletons";
 
 export type Org = {
   id: string;
@@ -295,9 +296,8 @@ function OrgDrawer({ orgId, onChanged }: { orgId: string; onChanged: () => void 
 
   if (loading)
     return (
-      <div className="flex items-center justify-center gap-2 border-t border-border/60 bg-muted/20 py-8 text-sm text-muted-foreground">
-        <Loader2 className="h-4 w-4 animate-spin" />
-        Loading organization…
+      <div className="border-t border-border/60 p-5">
+        <CardSkeleton />
       </div>
     );
 

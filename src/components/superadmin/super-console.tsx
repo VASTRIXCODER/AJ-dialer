@@ -28,6 +28,7 @@ import { templateLabel } from "@/lib/org/templates";
 import { cn, initials, relativeTime } from "@/lib/utils";
 import { type Org, OrganizationsTab } from "./super-orgs";
 import { SelectMenu } from "@/components/ui/select-menu";
+import { CardSkeleton, MetricRowSkeleton, TableSkeleton } from "@/components/shared/skeletons";
 
 type Settings = { maintenance: boolean; message: string };
 type Account = {
@@ -173,10 +174,16 @@ export function SuperConsole() {
           <p className="rounded-lg bg-danger/10 px-3 py-2 text-sm font-medium text-danger">{err}</p>
         )}
         {loading ? (
-          <div className="flex items-center justify-center gap-2 py-20 text-sm text-muted-foreground">
-            <Loader2 className="h-4 w-4 animate-spin" />
-            Loading console…
-          </div>
+          /* The whole page used to collapse to a centred dot for the length of
+             the first fetch, then snap back to a full console — the layout
+             jumped every time anyone opened /console. A spinner is for an
+             action in place; a page shows the shape of what is coming. */
+          <>
+            <MetricRowSkeleton count={4} />
+            <CardSkeleton>
+              <TableSkeleton rows={6} />
+            </CardSkeleton>
+          </>
         ) : tab === "overview" ? (
           <Overview
             orgs={orgs}
