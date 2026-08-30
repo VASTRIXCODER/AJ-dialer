@@ -18,7 +18,8 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { LogoMark } from "@/components/brand/logo";
 import { Button } from "@/components/ui/button";
-import { Input, Label, Select, Textarea } from "@/components/ui/input";
+import { Input, Label, Textarea } from "@/components/ui/input";
+import { SelectMenu } from "@/components/ui/select-menu";
 import { Modal } from "@/components/ui/modal";
 import type { OrgBlueprint, OrgFeatures } from "@/lib/org/settings";
 import { DIALER_TEMPLATES, templateLabel, templatePlate } from "@/lib/org/templates";
@@ -595,16 +596,14 @@ function BlueprintPreview({
         </div>
         <div>
           <Label>Specialization</Label>
-          <Select
+          <SelectMenu
+            label="Specialization"
+            className="w-full"
+            triggerClassName="w-full"
             value={bp.template}
-            onChange={(e) => onChange({ ...bp, template: e.target.value })}
-          >
-            {DIALER_TEMPLATES.map((t) => (
-              <option key={t.value} value={t.value}>
-                {t.label}
-              </option>
-            ))}
-          </Select>
+            onChange={(v) => onChange({ ...bp, template: v })}
+            options={DIALER_TEMPLATES.map((t) => ({ value: t.value, label: t.label }))}
+          />
         </div>
         <div>
           <Label>Brand colors</Label>

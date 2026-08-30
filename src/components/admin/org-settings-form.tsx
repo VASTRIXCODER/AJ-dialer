@@ -22,7 +22,8 @@ import { useState } from "react";
 import { SectionCard } from "@/components/shared/section-card";
 import { Button } from "@/components/ui/button";
 import { useConfirm } from "@/components/ui/confirm-dialog";
-import { Input, Label, Select, Textarea } from "@/components/ui/input";
+import { Input, Label, Textarea } from "@/components/ui/input";
+import { SelectMenu } from "@/components/ui/select-menu";
 import { SecretValue } from "@/components/ui/secret-value";
 import { Tooltip } from "@/components/ui/tooltip";
 import { EMILY_SYSTEM_PROMPT } from "@/lib/ai/agent-prompt";
@@ -376,18 +377,20 @@ export function OrgSettingsForm({
             />
           </Field>
           <Field label="Specialization">
-            <Select
+            <SelectMenu
+              label="Specialization"
+              className="w-full"
+              triggerClassName="w-full"
               value={identity.dialerTemplate}
-              onChange={(e) =>
-                setIdentity({ ...identity, dialerTemplate: e.target.value })
-              }
-            >
-              {DIALER_TEMPLATES.map((t) => (
-                <option key={t.value} value={t.value}>
-                  {t.label} — {t.blurb}
-                </option>
-              ))}
-            </Select>
+              onChange={(v) => setIdentity({ ...identity, dialerTemplate: v })}
+              options={DIALER_TEMPLATES.map((t) => ({
+                value: t.value,
+                label: t.label,
+                // The blurb was crammed onto the same line as the name with an
+                // em dash; as a hint it gets its own line under the label.
+                hint: t.blurb,
+              }))}
+            />
           </Field>
           <Field label="Website">
             <Input
@@ -446,16 +449,17 @@ export function OrgSettingsForm({
             onChange={(v) => setAccess({ ...access, allowJoin: v })}
           />
           <Field label="Default role for new members">
-            <Select
+            <SelectMenu
+              label="Default role for new members"
+              className="w-full"
+              triggerClassName="w-full"
               value={access.defaultRole}
-              onChange={(e) => setAccess({ ...access, defaultRole: e.target.value })}
-            >
-              {(["rep", "manager", "admin"] as const).map((r) => (
-                <option key={r} value={r}>
-                  {ROLE_LABEL[r]}
-                </option>
-              ))}
-            </Select>
+              onChange={(v) => setAccess({ ...access, defaultRole: v })}
+              options={(["rep", "manager", "admin"] as const).map((r) => ({
+                value: r as string,
+                label: ROLE_LABEL[r],
+              }))}
+            />
           </Field>
         </div>
         <div className="mt-4 flex justify-end">
@@ -521,19 +525,20 @@ export function OrgSettingsForm({
       >
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <Field label="Default dialer mode">
-            <Select
+            <SelectMenu
+              label="Default dialer mode"
+              className="w-full"
+              triggerClassName="w-full"
               value={dialing.defaultMode}
-              onChange={(e) =>
-                setDialing({
-                  ...dialing,
-                  defaultMode: e.target.value as typeof dialing.defaultMode,
-                })
+              onChange={(v) =>
+                setDialing({ ...dialing, defaultMode: v as typeof dialing.defaultMode })
               }
-            >
-              <option value="ai">AI (when available)</option>
-              <option value="manual">Manual</option>
-              <option value="parallel">Parallel (multi-line)</option>
-            </Select>
+              options={[
+                { value: "ai", label: "AI (when available)" },
+                { value: "manual", label: "Manual" },
+                { value: "parallel", label: "Parallel (multi-line)" },
+              ]}
+            />
             <p className="mt-1 text-xs text-muted-foreground">
               Which mode the dialer opens in. Reps can still switch modes they have
               access to; AI falls back to manual for anyone who can’t use it.
@@ -1257,41 +1262,38 @@ export function OrgSettingsForm({
                 className="w-40 min-w-[9rem] flex-1"
                 onChange={(e) => updateDisposition(i, { label: e.target.value })}
               />
-              <Select
+              <SelectMenu
+                label="Tone"
+                size="sm"
                 className="w-28"
-                aria-label="Tone"
+                triggerClassName="h-9 w-full"
                 value={d.tone}
-                onChange={(e) =>
-                  updateDisposition(i, { tone: e.target.value as DispositionTone })
-                }
-              >
-                <option value="success">Positive</option>
-                <option value="warning">Neutral</option>
-                <option value="danger">Negative</option>
-                <option value="neutral">Info</option>
-              </Select>
+                onChange={(v) => updateDisposition(i, { tone: v as DispositionTone })}
+                options={[
+                  { value: "success", label: "Positive" },
+                  { value: "warning", label: "Neutral" },
+                  { value: "danger", label: "Negative" },
+                  { value: "neutral", label: "Info" },
+                ]}
+              />
               {d.system ? (
                 // System rows: the behavior IS what the key means — read-only.
                 <span className="inline-flex h-9 items-center rounded-lg bg-muted px-3 text-xs font-medium text-muted-foreground">
                   {BEHAVIOR_DESCRIPTIONS[d.behavior]}
                 </span>
               ) : (
-                <Select
+                <SelectMenu
+                  label="What pressing it does"
+                  size="sm"
                   className="w-52"
-                  aria-label="What pressing it does"
+                  triggerClassName="h-9 w-full"
                   value={d.behavior}
-                  onChange={(e) =>
-                    updateDisposition(i, {
-                      behavior: e.target.value as DispositionBehavior,
-                    })
-                  }
-                >
-                  {DISPOSITION_BEHAVIORS.map((b) => (
-                    <option key={b} value={b}>
-                      {BEHAVIOR_DESCRIPTIONS[b]}
-                    </option>
-                  ))}
-                </Select>
+                  onChange={(v) => updateDisposition(i, { behavior: v as DispositionBehavior })}
+                  options={DISPOSITION_BEHAVIORS.map((b) => ({
+                    value: b as string,
+                    label: BEHAVIOR_DESCRIPTIONS[b],
+                  }))}
+                />
               )}
               {d.key === "do_not_call" ? (
                 <Tooltip content="Legally load-bearing — can't be turned off.">
@@ -1332,36 +1334,34 @@ export function OrgSettingsForm({
               />
             </Field>
             <Field label="What pressing it does">
-              <Select
+              <SelectMenu
+                label="What pressing it does"
+                size="sm"
                 className="w-52"
+                triggerClassName="h-9 w-full"
                 value={newDispo.behavior}
-                onChange={(e) =>
-                  setNewDispo({
-                    ...newDispo,
-                    behavior: e.target.value as DispositionBehavior,
-                  })
-                }
-              >
-                {DISPOSITION_BEHAVIORS.map((b) => (
-                  <option key={b} value={b}>
-                    {BEHAVIOR_DESCRIPTIONS[b]}
-                  </option>
-                ))}
-              </Select>
+                onChange={(v) => setNewDispo({ ...newDispo, behavior: v as DispositionBehavior })}
+                options={DISPOSITION_BEHAVIORS.map((b) => ({
+                  value: b as string,
+                  label: BEHAVIOR_DESCRIPTIONS[b],
+                }))}
+              />
             </Field>
             <Field label="Tone">
-              <Select
+              <SelectMenu
+                label="Tone"
+                size="sm"
                 className="w-28"
+                triggerClassName="h-9 w-full"
                 value={newDispo.tone}
-                onChange={(e) =>
-                  setNewDispo({ ...newDispo, tone: e.target.value as DispositionTone })
-                }
-              >
-                <option value="success">Positive</option>
-                <option value="warning">Neutral</option>
-                <option value="danger">Negative</option>
-                <option value="neutral">Info</option>
-              </Select>
+                onChange={(v) => setNewDispo({ ...newDispo, tone: v as DispositionTone })}
+                options={[
+                  { value: "success", label: "Positive" },
+                  { value: "warning", label: "Neutral" },
+                  { value: "danger", label: "Negative" },
+                  { value: "neutral", label: "Info" },
+                ]}
+              />
             </Field>
             <Button
               size="sm"
@@ -1730,15 +1730,17 @@ export function OrgSettingsForm({
               }
             />
             <Field label="Week starts on">
-              <Select
+              <SelectMenu
+                label="Week starts on"
+                className="w-full"
+                triggerClassName="w-full"
                 value={String(lb.weekStart)}
-                onChange={(e) =>
-                  setLb({ ...lb, weekStart: e.target.value === "0" ? 0 : 1 })
-                }
-              >
-                <option value="1">Monday</option>
-                <option value="0">Sunday</option>
-              </Select>
+                onChange={(v) => setLb({ ...lb, weekStart: v === "0" ? 0 : 1 })}
+                options={[
+                  { value: "1", label: "Monday" },
+                  { value: "0", label: "Sunday" },
+                ]}
+              />
             </Field>
           </div>
         </div>

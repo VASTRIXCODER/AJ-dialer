@@ -13,7 +13,8 @@ import { useEffect, useMemo, useState } from "react";
 import { useVocabulary } from "@/components/layout/vocabulary";
 import { Button } from "@/components/ui/button";
 import { useConfirm } from "@/components/ui/confirm-dialog";
-import { Input, Label, Select } from "@/components/ui/input";
+import { Input, Label } from "@/components/ui/input";
+import { SelectMenu } from "@/components/ui/select-menu";
 import { Modal } from "@/components/ui/modal";
 import { useToast } from "@/components/ui/toast";
 import {
@@ -468,43 +469,51 @@ export function ExportDialog({
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
               <div>
                 <Label>Delimiter</Label>
-                <Select
+                <SelectMenu
+                  label="Delimiter"
+                  className="w-full"
+                  triggerClassName="w-full"
                   value={format.delimiter === "\t" ? "tab" : format.delimiter}
-                  onChange={(e) =>
+                  onChange={(v) =>
                     setFormat((f) => ({
                       ...f,
-                      delimiter: e.target.value === "tab" ? "\t" : (e.target.value as "," | ";"),
+                      delimiter: v === "tab" ? "\t" : (v as "," | ";"),
                     }))
                   }
-                >
-                  <option value=",">Comma (,)</option>
-                  <option value=";">Semicolon (;)</option>
-                  <option value="tab">Tab</option>
-                </Select>
+                  options={[
+                    { value: ",", label: "Comma (,)" },
+                    { value: ";", label: "Semicolon (;)" },
+                    { value: "tab", label: "Tab" },
+                  ]}
+                />
               </div>
               <div>
                 <Label>Dates</Label>
-                <Select
+                <SelectMenu
+                  label="Dates"
+                  className="w-full"
+                  triggerClassName="w-full"
                   value={format.dateFormat}
-                  onChange={(e) =>
-                    setFormat((f) => ({ ...f, dateFormat: e.target.value as "iso" | "us" }))
-                  }
-                >
-                  <option value="iso">ISO (2026-08-28)</option>
-                  <option value="us">US (08/28/2026)</option>
-                </Select>
+                  onChange={(v) => setFormat((f) => ({ ...f, dateFormat: v as "iso" | "us" }))}
+                  options={[
+                    { value: "iso", label: "ISO (2026-08-28)" },
+                    { value: "us", label: "US (08/28/2026)" },
+                  ]}
+                />
               </div>
               <div>
                 <Label>Empty cells</Label>
-                <Select
+                <SelectMenu
+                  label="Empty cells"
+                  className="w-full"
+                  triggerClassName="w-full"
                   value={format.nullAs === "—" ? "dash" : "blank"}
-                  onChange={(e) =>
-                    setFormat((f) => ({ ...f, nullAs: e.target.value === "dash" ? "—" : "" }))
-                  }
-                >
-                  <option value="blank">Blank</option>
-                  <option value="dash">— (em dash)</option>
-                </Select>
+                  onChange={(v) => setFormat((f) => ({ ...f, nullAs: v === "dash" ? "—" : "" }))}
+                  options={[
+                    { value: "blank", label: "Blank" },
+                    { value: "dash", label: "— (em dash)" },
+                  ]}
+                />
               </div>
               <div>
                 <Label>Timezone</Label>

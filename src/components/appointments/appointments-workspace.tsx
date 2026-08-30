@@ -1,6 +1,7 @@
 "use client";
 
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
+import { SelectMenu } from "@/components/ui/select-menu";
 import {
   AlertTriangle,
   CalendarCheck,
@@ -28,7 +29,7 @@ import { MetricCard } from "@/components/dashboard/metric-card";
 import { OutcomeGrid } from "@/components/dialer/outcome-grid";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { Select } from "@/components/ui/input";
+
 import { Modal } from "@/components/ui/modal";
 import { Portal } from "@/components/ui/portal";
 import { bucketOf, matchesFilters, organizeAppointments } from "@/lib/appointments-organize";
@@ -657,33 +658,33 @@ function Toolbar({
         </div>
 
         {access.canTeam && reps.length > 0 && (
-          <Select
+          <SelectMenu
+            label="Rep"
+            size="sm"
+            triggerClassName="h-9"
             value={rep}
-            onChange={(e) => setRep(e.target.value)}
-            className="h-auto w-auto py-2 text-sm"
-            aria-label="Rep"
-          >
-            <option value="all">All reps</option>
-            {reps.map((r) => (
-              <option key={r} value={r}>
-                {r}
-              </option>
-            ))}
-          </Select>
+            onChange={(v) => setRep(v)}
+            options={[
+              { value: "all", label: "All reps" },
+              ...reps.map((r) => ({ value: r, label: r })),
+            ]}
+          />
         )}
 
         {!isCalendar && (
-          <Select
+          <SelectMenu
+            label="Sort"
+            size="sm"
+            triggerClassName="h-9"
             value={sort}
-            onChange={(e) => setSort(e.target.value as SortKey)}
-            className="h-auto w-auto py-2 text-sm"
-            aria-label="Sort"
-          >
-            <option value="smart">Smart order</option>
-            <option value="soonest">Soonest first</option>
-            <option value="newest">Newest added</option>
-            <option value="name">Name (A–Z)</option>
-          </Select>
+            onChange={(v) => setSort(v as SortKey)}
+            options={[
+              { value: "smart", label: "Smart order" },
+              { value: "soonest", label: "Soonest first" },
+              { value: "newest", label: "Newest added" },
+              { value: "name", label: "Name (A–Z)" },
+            ]}
+          />
         )}
 
         <div className="ml-auto flex items-center gap-2">

@@ -21,7 +21,8 @@ import { useVocabulary } from "@/components/layout/vocabulary";
 import { LeadOpenLink } from "@/components/leads/lead-360/lead-open-link";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Input, Label, Select, Textarea } from "@/components/ui/input";
+import { Input, Label, Textarea } from "@/components/ui/input";
+import { SelectMenu } from "@/components/ui/select-menu";
 import { Modal } from "@/components/ui/modal";
 import { conflictsAt, type ConflictCandidate } from "@/lib/appointments/conflicts";
 import {
@@ -415,19 +416,20 @@ export function AppointmentDialog({
                 </div>
 
                 <div>
-                  <Label htmlFor="appt-duration">Duration</Label>
-                  <Select
-                    id="appt-duration"
+                  <Label>Duration</Label>
+                  <SelectMenu
+                    label="Duration"
+                    className="w-full"
+                    triggerClassName="w-full"
                     value={String(durationMin)}
                     disabled={readOnly}
-                    onChange={(e) => setDurationMin(Number(e.target.value))}
-                  >
-                    {DURATIONS.map((d) => (
-                      <option key={d} value={d}>
-                        {d < 60 ? `${d} min` : d === 60 ? "1 hour" : `${d / 60} hours`}
-                      </option>
-                    ))}
-                  </Select>
+                    disabledReason="This appointment is read-only."
+                    onChange={(v) => setDurationMin(Number(v))}
+                    options={DURATIONS.map((d) => ({
+                      value: String(d),
+                      label: d < 60 ? `${d} min` : d === 60 ? "1 hour" : `${d / 60} hours`,
+                    }))}
+                  />
                 </div>
               </div>
 
@@ -454,19 +456,17 @@ export function AppointmentDialog({
 
               {access.canTeam && reps.length > 0 && (
                 <div>
-                  <Label htmlFor="appt-rep">Assigned to</Label>
-                  <Select
-                    id="appt-rep"
-                    value={assignedTo}
+                  <Label>Assigned to</Label>
+                  <SelectMenu
+                    label="Assigned to"
+                    className="w-full"
+                    triggerClassName="w-full"
+                    value={assignedTo || null}
                     disabled={readOnly}
-                    onChange={(e) => setAssignedTo(e.target.value)}
-                  >
-                    {reps.map((r) => (
-                      <option key={r.id} value={r.id}>
-                        {r.name}
-                      </option>
-                    ))}
-                  </Select>
+                    disabledReason="This appointment is read-only."
+                    onChange={(v) => setAssignedTo(v)}
+                    options={reps.map((r) => ({ value: r.id, label: r.name }))}
+                  />
                 </div>
               )}
 
@@ -483,19 +483,17 @@ export function AppointmentDialog({
 
               {!creating && !review && (
                 <div>
-                  <Label htmlFor="appt-status">Status</Label>
-                  <Select
-                    id="appt-status"
+                  <Label>Status</Label>
+                  <SelectMenu
+                    label="Status"
+                    className="w-full"
+                    triggerClassName="w-full"
                     value={status}
                     disabled={readOnly}
-                    onChange={(e) => setStatus(e.target.value)}
-                  >
-                    {STATUS_OPTIONS.map((o) => (
-                      <option key={o.value} value={o.value}>
-                        {o.label}
-                      </option>
-                    ))}
-                  </Select>
+                    disabledReason="This appointment is read-only."
+                    onChange={(v) => setStatus(v)}
+                    options={STATUS_OPTIONS.map((o) => ({ value: o.value, label: o.label }))}
+                  />
                 </div>
               )}
 

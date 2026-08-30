@@ -4,7 +4,8 @@ import { BatteryCharging, Car, Loader2, Waves, X } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { Input, Label, Select, Textarea } from "@/components/ui/input";
+import { Input, Label, Textarea } from "@/components/ui/input";
+import { SelectMenu } from "@/components/ui/select-menu";
 import { Modal } from "@/components/ui/modal";
 import {
   parseFieldValue,
@@ -345,16 +346,17 @@ export function EditLeadDialog({
               </>
             ) : (
               <>
-                <Select
+                <SelectMenu
+                  label="Status"
+                  className="w-full"
+                  triggerClassName="w-full"
                   value={f.status}
-                  onChange={(e) => set("status", e.target.value as LeadStatus)}
-                >
-                  {EDITABLE_STATUSES.map((value) => (
-                    <option key={value} value={value}>
-                      {leadStatusConfig[value].label}
-                    </option>
-                  ))}
-                </Select>
+                  onChange={(v) => set("status", v as LeadStatus)}
+                  options={EDITABLE_STATUSES.map((value) => ({
+                    value: value as string,
+                    label: leadStatusConfig[value].label,
+                  }))}
+                />
                 <p className="mt-1.5 text-xs text-muted-foreground">
                   To book an appointment or callback, use "Change disposition" from the dialer
                   or pipeline tabs — it needs a scheduled time too.

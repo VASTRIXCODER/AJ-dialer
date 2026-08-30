@@ -17,13 +17,14 @@ import {
   X,
 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
+import { SelectMenu } from "@/components/ui/select-menu";
 import { useVocabulary } from "@/components/layout/vocabulary";
 import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useConfirm } from "@/components/ui/confirm-dialog";
 import { Drawer } from "@/components/ui/drawer";
-import { Select } from "@/components/ui/input";
+
 import { Timeline, type TimelineDisplayItem } from "@/components/ui/timeline";
 import { useToast } from "@/components/ui/toast";
 import type { AssignmentEvent, AssignmentRecord } from "@/lib/db/assignments";
@@ -358,21 +359,18 @@ export function AssignmentDetailDrawer({
               </div>
 
               <div className="flex items-center gap-2">
-                <Select
-                  value={reassignTo}
-                  onChange={(e) => setReassignTo(e.target.value)}
-                  aria-label="Reassign to"
-                  className="h-9 flex-1 py-0"
-                >
-                  <option value="">Reassign to…</option>
-                  {members
+                <SelectMenu
+                  label="Reassign to"
+                  placeholder="Reassign to…"
+                  size="sm"
+                  className="flex-1"
+                  triggerClassName="h-9 w-full"
+                  value={reassignTo || null}
+                  onChange={(v) => setReassignTo(v)}
+                  options={members
                     .filter((m) => m.id !== a.assignedTo)
-                    .map((m) => (
-                      <option key={m.id} value={m.id}>
-                        {m.name || "Teammate"}
-                      </option>
-                    ))}
-                </Select>
+                    .map((m) => ({ value: m.id, label: m.name || "Teammate" }))}
+                />
                 <Button
                   variant="outline"
                   size="sm"

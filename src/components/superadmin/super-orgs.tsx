@@ -23,7 +23,8 @@ import { Badge } from "@/components/ui/badge";
 import { SecretValue } from "@/components/ui/secret-value";
 import { Button } from "@/components/ui/button";
 import { useConfirm } from "@/components/ui/confirm-dialog";
-import { Input, Label, Select, Textarea } from "@/components/ui/input";
+import { Input, Label, Textarea } from "@/components/ui/input";
+import { SelectMenu } from "@/components/ui/select-menu";
 import { Modal } from "@/components/ui/modal";
 import type { OrgBilling, OrgBlueprint, OrgFeatures } from "@/lib/org/settings";
 import { DIALER_TEMPLATES, templateLabel } from "@/lib/org/templates";
@@ -450,22 +451,27 @@ function OrgEditor({ detail, onSaved }: { detail: OrgDetail; onSaved: () => void
           <Input value={f.industry} onChange={(e) => setF({ ...f, industry: e.target.value })} />
         </Cell>
         <Cell label="Specialization">
-          <Select value={f.dialerTemplate} onChange={(e) => setF({ ...f, dialerTemplate: e.target.value })}>
-            {DIALER_TEMPLATES.map((t) => (
-              <option key={t.value} value={t.value}>
-                {t.label}
-              </option>
-            ))}
-          </Select>
+          <SelectMenu
+            label="Specialization"
+            className="w-full"
+            triggerClassName="w-full"
+            value={f.dialerTemplate}
+            onChange={(v) => setF({ ...f, dialerTemplate: v })}
+            options={DIALER_TEMPLATES.map((t) => ({ value: t.value, label: t.label }))}
+          />
         </Cell>
         <Cell label="Default role">
-          <Select value={f.defaultRole} onChange={(e) => setF({ ...f, defaultRole: e.target.value })}>
-            {(["rep", "manager", "admin"] as const).map((r) => (
-              <option key={r} value={r}>
-                {ROLE_LABEL[r]}
-              </option>
-            ))}
-          </Select>
+          <SelectMenu
+            label="Default role"
+            className="w-full"
+            triggerClassName="w-full"
+            value={f.defaultRole}
+            onChange={(v) => setF({ ...f, defaultRole: v })}
+            options={(["rep", "manager", "admin"] as const).map((r) => ({
+              value: r as string,
+              label: ROLE_LABEL[r],
+            }))}
+          />
         </Cell>
         <Cell label="Brand / accent">
           <div className="flex gap-2">
@@ -608,14 +614,18 @@ function OrgBillingEditor({ detail, onSaved }: { detail: OrgDetail; onSaved: () 
             />
           </Cell>
           <Cell label="Billing period">
-            <Select
+            <SelectMenu
+              label="Billing period"
+              className="w-full"
+              triggerClassName="w-full"
               value={f.interval}
-              onChange={(e) => setF({ ...f, interval: e.target.value as OrgBilling["interval"] })}
-            >
-              <option value="month">Monthly</option>
-              <option value="year">Yearly</option>
-              <option value="once">One-time</option>
-            </Select>
+              onChange={(v) => setF({ ...f, interval: v as OrgBilling["interval"] })}
+              options={[
+                { value: "month", label: "Monthly" },
+                { value: "year", label: "Yearly" },
+                { value: "once", label: "One-time" },
+              ]}
+            />
           </Cell>
         </div>
 
