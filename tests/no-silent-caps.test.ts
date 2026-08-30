@@ -135,13 +135,46 @@ describe("the totals that used to be page lengths are counted in SQL", () => {
   for (const [fn, what] of COUNTERS) {
     it(`${fn} exists and backs ${what}`, () => {
       expect(schema).toMatch(new RegExp(`function public\\.${fn}\\(`));
-      // …and nothing has revoked its own grants, which is how a security-definer
-      // helper becomes reachable from the anon role.
-      expect(schema).toMatch(
-        new RegExp(`revoke all on function public\\.${fn}\\([^)]*\\) from public, anon, authenticated;`),
+      // Never reachable from `anon`. These are SECURITY DEFINER, so they run
+      // with the owner's rights and bypass RLS entirely — a grant to anon would
+      // be a public read of the whole table.
+      expect(schema, `${fn} is reachable from anon`).toMatch(
+        new RegExp(`revoke all on function public\\.${fn}\\([^)]*\\) from public, anon`),
       );
+      // Reachable from `authenticated` ONLY when it defends itself. Three of
+      // these are called with the SESSION client on the no-service-role path
+      // (getCampaigns and getReportingData fall back to own-scoped reads), so
+      // they need that grant — and the moment a definer function that takes an
+      // org id has it, it is a cross-tenant read with extra steps.
+      const grantsAuthenticated = new RegExp(
+        `grant execute on function public\\.${fn}\\([^)]*\\) to authenticated`,
+      ).test(schema);
+      if (grantsAuthenticated) {
+        const start = schema.indexOf(`function public.${fn}(`);
+        const body = schema.slice(start, schema.indexOf("$$;", start));
+        expect(body, `${fn} is callable by any signed-in user and never checks who`).toContain(
+          "perform public.app_guard_self_scope(p_column, p_value);",
+        );
+      }
     });
   }
+
+  it("the self-scope guard is the thing it claims to be", () => {
+    // service_role may ask anything; anybody else may only ask about
+    // themselves. Verified against the live database while writing it: another
+    // org's rows REFUSED, another user's rows REFUSED, their own ALLOWED.
+    const start = schema.indexOf("function public.app_guard_self_scope(");
+    expect(start, "the guard is missing").toBeGreaterThan(-1);
+    const body = schema.slice(start, schema.indexOf("$$;", start));
+    expect(body, "service_role must not be blocked by its own guard").toContain("service_role");
+    expect(body, "the guard never compares against the caller").toMatch(
+      /p_value is distinct from auth\.uid\(\)/,
+    );
+    expect(body, "the guard permits an org-scoped ask").toMatch(/p_column <> 'owner_id'/);
+    expect(schema, "the guard itself is reachable from anon").toMatch(
+      /revoke all on function public\.app_guard_self_scope\(text, uuid\) from public, anon;/,
+    );
+  });
 
   it("the counting functions do not classify", () => {
     // They GROUP. If one of them starts deciding what "connected" or "dialable"

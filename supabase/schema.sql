@@ -2234,6 +2234,31 @@ create policy "events org read" on public.call_events for select using (
 -- ═════════════════════════════════════════════════════════════════════════════
 alter table public.call_records add column if not exists attempt_id        uuid;
 alter table public.call_records add column if not exists client_attempt_id text;
+-- ── Two columns NOTHING WRITES, deliberately ────────────────────────────────
+--
+-- Measured 2026-08-30: 0 non-null of 34,079 rows for each, and grep across the
+-- application finds only reads. That is not an oversight to fix by stamping
+-- something plausible into them — it is what the data honestly supports today,
+-- and it is written down here so the next reader does not assume otherwise.
+--
+--   human_connected — "did a PERSON pick up". Distinguishing a person from an
+--     answering machine needs AMD, which is off: call_legs.answered_by is null
+--     on all 893 rows. Every consumer coalesces to the outcome-based definition
+--     instead (see isConnectedRecord, and touches_v below). Writing this column
+--     from anything weaker would be worse than leaving it null, because the
+--     column's whole value is that it OVERRIDES the inference — 359 of 430
+--     "answered" attempts here are dispositioned no_answer, which is what
+--     voicemail pickups counted as answers looks like.
+--
+--   talk_sec — conversation seconds, as opposed to call seconds. Nothing on
+--     either channel reports it. Consumers fall back to duration_sec, which
+--     counts ring and voicemail time; the glossary entry for talk_time_total
+--     says so in the tooltip a user actually reads, rather than presenting the
+--     proxy as the measurement.
+--
+-- To populate them, in order: enable AMD and persist Twilio's AnsweredBy to
+-- call_legs.answered_by; add a greeting-to-bridge timestamp; then backfill
+-- forward-only, never over the 34,079 existing rows, which cannot be recovered.
 alter table public.call_records add column if not exists human_connected   boolean;
 alter table public.call_records add column if not exists talk_sec          int;
 
@@ -4637,6 +4662,38 @@ language sql stable security definer set search_path = public as $$
 $$;
 revoke all on function public.app_pack_progress(uuid[]) from public, anon, authenticated;
 
+-- ── Who may ask a definer function about whom ───────────────────────────────
+--
+-- Three of the counting functions below are called with the SESSION client, not
+-- the service-role one: getCampaigns and getReportingData fall back to
+-- own-scoped reads when isAdminConfigured() is false. A security-definer
+-- function with execute revoked from `authenticated` simply fails there.
+--
+-- So the grant has to exist — and the moment it does, a definer function that
+-- takes an org id is a cross-tenant read with extra steps, because definer
+-- bypasses the RLS that would otherwise have stopped it. This enforces for
+-- itself what RLS would have: service_role may ask anything; anybody else may
+-- only ask about THEMSELVES.
+--
+-- Verified against the live database: an authenticated caller asking for
+-- another org's rows is REFUSED, for another user's rows REFUSED, for their own
+-- ALLOWED.
+create or replace function public.app_guard_self_scope(p_column text, p_value uuid)
+returns void language plpgsql stable security definer set search_path = public as $$
+begin
+  if current_setting('request.jwt.claims', true) is null
+     or coalesce(current_setting('request.jwt.claim.role', true),
+                 (current_setting('request.jwt.claims', true)::json ->> 'role')) = 'service_role' then
+    return;
+  end if;
+  if p_column <> 'owner_id' or p_value is distinct from auth.uid() then
+    raise exception 'not allowed: this role may only read its own rows';
+  end if;
+end;
+$$;
+revoke all on function public.app_guard_self_scope(text, uuid) from public, anon;
+grant execute on function public.app_guard_self_scope(text, uuid) to authenticated, service_role;
+
 -- p_column is whitelisted rather than interpolated: it reaches format() and
 -- there is no version of this where a caller-supplied identifier goes through
 -- unchecked.
@@ -4649,6 +4706,7 @@ begin
   if p_column not in ('org_id', 'owner_id') then
     raise exception 'app_campaign_lead_counts: p_column must be org_id or owner_id';
   end if;
+  perform public.app_guard_self_scope(p_column, p_value);
   return query execute format($q$
     select coalesce(l.campaign_id::text, '')  as campaign_id,
            coalesce(l.status, 'new')          as status,
@@ -4660,7 +4718,8 @@ begin
   $q$, p_column) using p_value;
 end;
 $$;
-revoke all on function public.app_campaign_lead_counts(text, uuid) from public, anon, authenticated;
+revoke all on function public.app_campaign_lead_counts(text, uuid) from public, anon;
+grant execute on function public.app_campaign_lead_counts(text, uuid) to authenticated, service_role;
 
 drop function if exists public.app_campaign_call_counts(text, uuid);
 create function public.app_campaign_call_counts(
@@ -4674,6 +4733,7 @@ begin
   if p_column not in ('org_id', 'owner_id') then
     raise exception 'app_campaign_call_counts: p_column must be org_id or owner_id';
   end if;
+  perform public.app_guard_self_scope(p_column, p_value);
   return query execute format($q$
     select coalesce(c.campaign_id::text, '') as campaign_id,
            c.outcome::text                   as outcome,
@@ -4686,7 +4746,8 @@ begin
   $q$, p_column) using p_value;
 end;
 $$;
-revoke all on function public.app_campaign_call_counts(text, uuid) from public, anon, authenticated;
+revoke all on function public.app_campaign_call_counts(text, uuid) from public, anon;
+grant execute on function public.app_campaign_call_counts(text, uuid) to authenticated, service_role;
 
 -- Per-rep call counts for a calendar day in the org's OWN zone.
 --
@@ -4828,6 +4889,7 @@ begin
   if p_column not in ('org_id', 'owner_id') then
     raise exception 'app_lead_field_averages: p_column must be org_id or owner_id';
   end if;
+  perform public.app_guard_self_scope(p_column, p_value);
   return query execute format($q$
     select avg(l.utility_bill) filter (where l.utility_bill > 0),
            avg(l.solar_payment) filter (where l.solar_payment > 0)
@@ -4837,6 +4899,7 @@ begin
   $q$, p_column) using p_value, p_org;
 end;
 $$;
-revoke all on function public.app_lead_field_averages(text, uuid, uuid) from public, anon, authenticated;
+revoke all on function public.app_lead_field_averages(text, uuid, uuid) from public, anon;
+grant execute on function public.app_lead_field_averages(text, uuid, uuid) to authenticated, service_role;
 
 notify pgrst, 'reload schema';
