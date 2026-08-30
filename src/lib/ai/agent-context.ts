@@ -165,13 +165,31 @@ async function resolveByPhoneScoped(
   digits: string,
 ): Promise<{ lead: Lead; orgLike: AgentOrgLike | null } | null> {
   if (digits.length < 10) return null;
+  const PHONE_WINDOW = 20;
   let candidates: Row[] = [];
-  const { data: hit } = await admin
+  // ORDERED. The distinct-org refusal below can only see the orgs inside this
+  // window, and an unordered one made a cross-tenant guard depend on whatever
+  // the planner returned.
+  const { data: hit, error: hitErr } = await admin
     .from("leads")
     .select("*")
     .ilike("phone", `%${digits}%`)
-    .limit(20);
+    .order("id", { ascending: true })
+    .limit(PHONE_WINDOW);
+  // This is the LAST-RESORT identity path for a live AI call, and its whole
+  // contract is failing closed on ambiguity. A read it could not perform is
+  // maximally ambiguous.
+  if (hitErr) return null;
   candidates = (hit ?? []) as Row[];
+  // A FULL window may have a differently-orged row just past it.
+  if (candidates.length >= PHONE_WINDOW) {
+    console.error(
+      "[agent-context] phone match window is full for",
+      digits,
+      "— refusing to resolve rather than guess which org this call belongs to.",
+    );
+    return null;
+  }
   if (candidates.length === 0) {
     const { data: recent } = await admin
       .from("leads")

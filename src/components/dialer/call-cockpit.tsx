@@ -4,6 +4,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import {
   AlertCircle,
   Bot,
+  CheckCircle2,
   Grid3x3,
   Hash,
   Loader2,
@@ -277,6 +278,9 @@ export function CallCockpit({
   const micBlocked = !ai && state.micBlocked;
   const canCall = state.mode === "live" && !micBlocked;
   const canStart = ai ? hasQueue : canCall && Boolean(focusLead);
+  // A finished auto-dial run. `status: "idle"` is also the state before a rep
+  // has dialed anything, so the cockpit needs this to tell the two apart.
+  const runEnded = state.runEnded;
   const name = focusLead ? `${focusLead.firstName} ${focusLead.lastName}` : "No lead";
   const aiLockText =
     aiLockReason === "role"
@@ -436,32 +440,59 @@ export function CallCockpit({
                     full-screen state. A 7-second float loop under a rep's eye
                     for the whole time they are between calls is decoration on
                     the working surface. */}
-                <div className="mx-auto mb-4 flex h-20 w-20 items-center justify-center rounded-3xl bg-brand">
-                  {ai ? (
+                {/* An auto-dial run that FINISHED is not the same state as one
+                    that has not started, and `status: "idle"` is both. Without
+                    this the rep landed on "Ready to dial", an enabled Start
+                    button, and — for the 2.5s before the lap handler turns
+                    auto-dial off — the line "Keeps dialing through your whole
+                    list on repeat", describing in the present tense the thing
+                    that had just stopped. In a builder session it never
+                    cleared at all. */}
+                <div
+                  className={cn(
+                    "mx-auto mb-4 flex h-20 w-20 items-center justify-center rounded-3xl",
+                    runEnded ? "bg-success/12 text-success" : "bg-brand",
+                  )}
+                >
+                  {runEnded ? (
+                    <CheckCircle2 className="h-9 w-9" />
+                  ) : ai ? (
                     <Bot className="h-9 w-9 text-white" />
                   ) : (
                     <Sparkles className="h-9 w-9 text-white" />
                   )}
                 </div>
                 <h2 className="text-xl font-bold">
-                  {hasQueue
-                    ? ai
-                      ? "Ready — AI will dial"
-                      : "Ready to dial"
-                    : "Your queue is empty"}
+                  {runEnded
+                    ? runEnded.reason === "session"
+                      ? "Session finished"
+                      : "Auto-dial finished"
+                    : hasQueue
+                      ? ai
+                        ? "Ready — AI will dial"
+                        : "Ready to dial"
+                      : "Your queue is empty"}
                 </h2>
                 <p className="mt-1 text-sm text-muted-foreground">
-                  {!hasQueue
-                    ? ai
-                      ? "Import leads to let the AI agent start calling your list."
-                      : "Connect your lead source to power-dial, or place a manual call below."
-                    : ai
-                      ? state.parallelCount > 1
-                        ? `The AI agent will call ${state.parallelCount} ${vocab.leadNounPlural} at once. Oversee them in the Live Monitor.`
-                        : "The AI agent dials, qualifies & books — you oversee from the Live Monitor."
-                      : state.parallelCount > 1
-                        ? `${state.parallelCount} lines will ring at once. First answer connects instantly.`
-                        : "Single-line power dialing through your queue."}
+                  {runEnded
+                    ? `${runEnded.dialed} dialed · ${runEnded.connected} connected${
+                        runEnded.reason === "session"
+                          ? ". Load a new session to keep going."
+                          : runEnded.reason === "empty"
+                            ? ". Nothing in your list is still dialable."
+                            : "."
+                      }`
+                    : !hasQueue
+                      ? ai
+                        ? "Import leads to let the AI agent start calling your list."
+                        : "Connect your lead source to power-dial, or place a manual call below."
+                      : ai
+                        ? state.parallelCount > 1
+                          ? `The AI agent will call ${state.parallelCount} ${vocab.leadNounPlural} at once. Oversee them in the Live Monitor.`
+                          : "The AI agent dials, qualifies & books — you oversee from the Live Monitor."
+                        : state.parallelCount > 1
+                          ? `${state.parallelCount} lines will ring at once. First answer connects instantly.`
+                          : "Single-line power dialing through your queue."}
                 </p>
                 {/* Mode locks still say WHY when a mode is gated — the switcher
                     itself lives in the header above. */}
@@ -527,7 +558,7 @@ export function CallCockpit({
                       />
                     </span>
                   </label>
-                  {state.autoDial && (
+                  {state.autoDial && !runEnded && (
                     <p className="-mt-2 text-center text-[11px] text-muted-foreground">
                       Keeps dialing through your whole list on repeat — refreshing it after
                       each pass so anyone just dispositioned isn&apos;t called again.

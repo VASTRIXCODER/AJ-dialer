@@ -1113,6 +1113,15 @@ function CallHistory({ leadId }: { leadId: string }) {
 }
 
 // ── Browse / pick any lead ──────────────────────────────────────────────────
+/**
+ * How many households the browser renders at once.
+ *
+ * Bounded because this is a client-side list over the whole loaded queue and
+ * 37,987 rows of DOM is not a list, it's a freeze. The cap is fine; being
+ * silent about it was not.
+ */
+const BROWSE_MAX = 200;
+
 function LeadBrowser({
   queue,
   currentId,
@@ -1201,7 +1210,7 @@ function LeadBrowser({
             No leads match “{q.trim()}”.
           </p>
         ) : (
-          households.slice(0, 200).map((group) => {
+          households.slice(0, BROWSE_MAX).map((group) => {
             // Prefer the entry the dialer is already on, so picking the
             // household keeps the rep on the number they're working.
             const l = group.find((g) => g.id === currentId) ?? group[0];
@@ -1244,6 +1253,15 @@ function LeadBrowser({
               </button>
             );
           })
+        )}
+        {/* The cap was silent, and this modal opens from a button labelled
+            "Lead 1 of 37,987" — so a rep scrolled to the bottom of what looked
+            like the whole book and found 200 people. */}
+        {households.length > BROWSE_MAX && (
+          <p className="px-3 py-3 text-center text-xs text-muted-foreground">
+            Showing the first {BROWSE_MAX} of {households.length.toLocaleString()} — type to
+            narrow.
+          </p>
         )}
       </div>
     </Modal>

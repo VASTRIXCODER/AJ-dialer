@@ -967,14 +967,27 @@ export async function getLeadByPhoneAdmin(
     const admin = createAdminClient();
     let q = admin.from("leads").select("*").ilike("phone", `%${digits}%`);
     if (orgId) q = q.eq("org_id", orgId);
-    const { data } = await q.limit(orgId ? 5 : 20);
-    const matches = (data ?? []).filter(
-      (r) => last10(String((r as Row).phone)) === digits,
-    );
+    // ORDERED. The distinct-org refusal below can only see the orgs inside
+    // this window, so an unordered window makes a cross-tenant guard depend on
+    // whatever the planner returned. Measured today: 1,965 ten-digit numbers
+    // exist in more than one org and none has more than 3 rows, so 20 always
+    // contains all of them and the guard fires correctly — this is hardening,
+    // not an incident. `id` is a random uuid, so it is an arbitrary order, but
+    // it is a STABLE one, which is what makes the saturation test below mean
+    // something.
+    const LIMIT = orgId ? 5 : 20;
+    const { data, error } = await q.order("id", { ascending: true }).limit(LIMIT);
+    if (error) return null;
+    const rows = (data ?? []) as Row[];
+    const matches = rows.filter((r) => last10(String(r.phone)) === digits);
     if (matches.length === 0) return null;
     if (!orgId) {
+      // A FULL window is ambiguous by construction: there may be a row just
+      // past it carrying a different org, and this function's whole contract
+      // is "never guess across a multi-org collision".
+      if (rows.length >= LIMIT) return null;
       const distinctOrgs = new Set(
-        matches.map((r) => String((r as Row).org_id ?? "")).filter(Boolean),
+        matches.map((r) => String(r.org_id ?? "")).filter(Boolean),
       );
       if (distinctOrgs.size > 1) return null; // ambiguous across orgs — don't guess
     }

@@ -143,6 +143,18 @@ export interface CallerIdInfo {
   localPresence?: boolean;
 }
 
+/** How an auto-dial run ended, and what it got through. */
+export interface RunEnd {
+  /**
+   * `lap` — the pass reached the end of the queue.
+   * `session` — a builder session finished and auto-refill was off.
+   * `empty` — the refetch came back with nothing still dialable.
+   */
+  reason: "lap" | "session" | "empty";
+  dialed: number;
+  connected: number;
+}
+
 export interface DialerState {
   status: DialerStatus;
   /** Explicit mode word derived from aiMode + parallelCount (see SessionMode). */
@@ -193,6 +205,22 @@ export interface DialerState {
    *  starting the next pass, so "repeat the list" never blindly re-calls
    *  someone just marked not-interested/DNC/booked. */
   queueLap: number;
+  /**
+   * A finished auto-dial run, and why it stopped.
+   *
+   * `status: "idle"` is the state a rep sits in BEFORE dialing, so an auto-dial
+   * run that finished landed on the cold-start cockpit: "Ready to dial", an
+   * enabled Start button, and the paragraph "Keeps dialing through your whole
+   * list on repeat" — describing, in the present tense, the thing that had just
+   * stopped. `autoDial` was still true for the 2,500ms the lap handler sleeps
+   * before turning it off, so the rep read that copy for two and a half seconds
+   * every time; in the builder branch it never cleared the queue at all, so a
+   * finished session kept showing "1 of N" and a live Start button forever.
+   *
+   * Set in the same patch as the lap bump; cleared the moment a new call starts
+   * or a new queue loads.
+   */
+  runEnded: RunEnd | null;
   error: string | null;
   callSid: string | null;
   /** Conference room for the active manual call — links its recording. */
@@ -421,6 +449,7 @@ export function useDialer(
     dialsToday: 0,
     queueIndex: 0,
     queueLap: 0,
+    runEnded: null,
     error: null,
     callSid: null,
     room: null,
@@ -2652,9 +2681,36 @@ export function useDialer(
    */
   const restartAutoDialLap = useCallback(() => {
     queueIndexRef.current = 0;
-    patch({ queueIndex: 0 });
+    // The run is no longer ended — the lap handler found more work.
+    patch({ queueIndex: 0, runEnded: null });
     startCall();
   }, [patch, startCall]);
+
+  /**
+   * Record that an auto-dial run has ENDED, and why.
+   *
+   * The engine sets this itself for a completed lap (see selectOutcome); the
+   * provider calls this for the two endings only it can see — a builder session
+   * whose refill is off, and a refetch that came back with nothing dialable.
+   */
+  const markRunEnded = useCallback(
+    (reason: RunEnd["reason"]) => {
+      setState((s) => ({
+        ...s,
+        runEnded: {
+          reason,
+          dialed: s.callsThisSession,
+          connected: s.connectsThisSession,
+        },
+      }));
+    },
+    [],
+  );
+
+  /** A new list, or a new run — whatever ended is no longer what's happening. */
+  const clearRunEnded = useCallback(() => {
+    setState((s) => (s.runEnded === null ? s : { ...s, runEnded: null }));
+  }, []);
 
   const dialNumber = useCallback(
     (raw: string, displayName?: string) => {
@@ -2752,7 +2808,22 @@ export function useDialer(
           // and calls restartAutoDialLap() once it confirms there's still
           // something dialable.
           queueLapRef.current += 1;
-          patch({ queueLap: queueLapRef.current });
+          // Terminal state in the SAME patch as the lap bump. The lap handler
+          // may or may not find more work — if it does, restartAutoDialLap()
+          // clears this; if it doesn't, the cockpit is already showing the
+          // right thing rather than cold-start copy for 2.5 seconds.
+          // Read through the updater rather than a ref: the session counters
+          // live in state, and this runs immediately after a patch that moved
+          // them.
+          setState((s) => ({
+            ...s,
+            queueLap: queueLapRef.current,
+            runEnded: {
+              reason: "lap",
+              dialed: s.callsThisSession,
+              connected: s.connectsThisSession,
+            },
+          }));
         } else {
           setTimeout(() => startCall(), 900);
         }
@@ -3113,6 +3184,8 @@ export function useDialer(
     toggleHold,
     sendDigit,
     setAutoDial,
+    markRunEnded,
+    clearRunEnded,
     setParallelCount,
     setAiMode,
     setSessionMode,

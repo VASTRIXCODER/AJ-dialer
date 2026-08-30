@@ -890,12 +890,32 @@ export async function completeAIConversation(input: {
       // conversation_id index closed that race. The other writer carried the
       // same payload; adopt its row instead of duplicating.
       if (insErr?.code === "23505") {
-        const { data: winner } = await admin
+        const { data: winner, error: winErr } = await admin
           .from("call_records")
           .select("id")
           .eq("conversation_id", input.conversationId)
           .maybeSingle();
-        recordId = (winner as { id?: string } | null)?.id ?? null;
+        // Losing recordId here means the media and transcript that follow are
+        // never attached, and the archive shows a call with no recording. The
+        // row definitely exists — 23505 is the proof — so a failed lookup is
+        // worth one retry rather than a silent null.
+        if (winErr || !winner) {
+          const { data: retry } = await admin
+            .from("call_records")
+            .select("id")
+            .eq("conversation_id", input.conversationId)
+            .maybeSingle();
+          recordId = (retry as { id?: string } | null)?.id ?? null;
+          if (!recordId) {
+            console.error(
+              "[records] 23505 on conversation_id",
+              input.conversationId,
+              "but the winning row could not be read — media will not be attached.",
+            );
+          }
+        } else {
+          recordId = (winner as { id?: string } | null)?.id ?? null;
+        }
       }
     } else if (upgrading) {
       // Correct the previously-filed (e.g. no-answer) record with the real result.

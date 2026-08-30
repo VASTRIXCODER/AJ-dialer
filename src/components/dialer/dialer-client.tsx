@@ -809,9 +809,12 @@ export function DialerClient({
           {config.dialScope === "org" && !myLeadsOnly ? "org" : "of your"} lead
           {queueForDialer.length === 1 ? "" : "s"} ready to dial
         </span>
-        {loadMsg && (
-          <span className="basis-full text-xs text-muted-foreground">{loadMsg}</span>
-        )}
+        {/* A live region: this is the only feedback a rep gets for "Load
+            leads", and it announced nothing to a screen reader. `polite` so it
+            waits for a gap rather than cutting across a call. */}
+        <span className="basis-full text-xs text-muted-foreground" role="status" aria-live="polite">
+          {loadMsg}
+        </span>
       </div>
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-12">

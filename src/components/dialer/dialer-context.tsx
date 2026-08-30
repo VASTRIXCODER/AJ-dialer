@@ -447,6 +447,9 @@ export function DialerProvider({
 
       const leads = json.leads;
       setQueue(leads);
+      // A new list is a new run — whatever ended before is no longer the state
+      // the cockpit should be describing.
+      dialer.clearRunEnded();
       // A plain load is the DEFAULT session: standard segments, strict order,
       // no refill — a stale builder meta must not govern a fresh queue.
       applySessionMeta({ ...DEFAULT_SESSION_META });
@@ -503,6 +506,17 @@ export function DialerProvider({
     setActivated(true);
   }
 
+  // loadMsg describes something that just HAPPENED to the queue. It was set in
+  // nine places and cleared in one, so "Auto-dial finished — every lead in your
+  // list has been dialed." stayed pinned under the toolbar through the next
+  // session and every live call in it. Dialing is the event that makes it
+  // stale: the moment the engine leaves idle, the message is about a past the
+  // rep has moved on from.
+  const dialerStatus = dialer.state.status;
+  useEffect(() => {
+    if (dialerStatus !== "idle") setLoadMsg(null);
+  }, [dialerStatus]);
+
   // Auto-dial "repeat the whole list": when a full pass completes (queueLap
   // increments), refetch the dial queue before the next pass so leads just
   // dispositioned drop out. Lives here (not the page) so it keeps running while
@@ -525,6 +539,12 @@ export function DialerProvider({
       const meta = sessionMetaRef.current;
       if (meta.summary != null && !meta.refill) {
         dialer.setAutoDial(false);
+        // The queue is deliberately LEFT in place — a finished session is still
+        // the thing the rep built, and clearing it would erase the record of
+        // what they just worked. The cockpit's terminal panel (state.runEnded)
+        // is what stops it reading as "Ready to dial · 1 of N" with a live
+        // Start button, which is what it used to do indefinitely.
+        dialer.markRunEnded("session");
         setLoadMsg(
           "Auto-dial finished — your session's list is done. Load a new session to keep going (or turn on Auto-refill in the builder).",
         );
@@ -545,6 +565,7 @@ export function DialerProvider({
         dialer.restartAutoDialLap();
       } else {
         dialer.setAutoDial(false);
+        dialer.markRunEnded("empty");
         setLoadMsg("Auto-dial finished — every lead in your list has been dialed.");
       }
     })();
