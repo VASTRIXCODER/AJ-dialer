@@ -5,6 +5,7 @@ import { isSupabaseConfigured } from "../supabase/config";
 import { createClient } from "../supabase/server";
 import { logLeadEvent } from "./lead-events";
 import { canActOn, getScope, type Scope } from "./scope";
+import { askedCount } from "./counts";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Callback Workspace v2 — the board read + the claim/complete lifecycle.
@@ -115,7 +116,8 @@ export interface CallbackBoard {
   /** Completed/cancelled in the last 14 days, newest first, capped at 100. */
   closed: CallbackBoardRow[];
   /** Full-book count of completed callbacks (the KPI — truncation can't skew it). */
-  completedCount: number;
+  /** null = the count could not be READ, not zero. See askedCount. */
+  completedCount: number | null;
   teamWide: boolean;
 }
 
@@ -277,7 +279,7 @@ export async function getCallbackBoard(scope: Scope | null): Promise<CallbackBoa
     return {
       open: openRows.map((r) => mapRow(r, names, campaigns)),
       closed: closedRows.map((r) => mapRow(r, names, campaigns)),
-      completedCount: doneRes.count ?? 0,
+      completedCount: askedCount(doneRes),
       teamWide: orgWide,
     };
   } catch (e) {

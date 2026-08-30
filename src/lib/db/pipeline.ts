@@ -31,6 +31,7 @@ import type { CallOutcome, CampaignStatus } from "../types";
 import { formatAddress } from "../utils";
 import { apptScope } from "./appointments";
 import { canActOn, getScope } from "./scope";
+import { askedCount } from "./counts";
 
 // Account-scoped reads/writes for the pipeline surfaces. Each returns empty (or
 // a graceful error) in demo mode instead of throwing. Appointments + callbacks
@@ -795,7 +796,8 @@ export interface BillsFineResult {
   /** Count of EVERY row the scope + search match — not just this page. */
   total: number;
   /** Full-book count of rows carrying both bill amounts (same scope + search). */
-  withBills: number;
+  /** null = the count could not be READ, not zero. See askedCount. */
+  withBills: number | null;
   /** Average combined monthly energy cost across `withBills` rows; null when none. */
   avgEnergyCost: number | null;
   /** Whether the viewer sees the whole org's book (drives the Team-wide badge). */
@@ -869,14 +871,14 @@ export async function getBillsFine(
     // If the count query failed, fall back to what this page proves exists so
     // the UI never claims an empty book while showing rows.
     const total = totalRes.count ?? from + rows.length;
-    const withBills = withBillsRes.count ?? 0;
+    const withBills = askedCount(withBillsRes);
 
     // Average combined energy cost over the whole (filtered) book. There's no
     // aggregate endpoint to lean on, so read just the two numeric columns in
     // bounded pages — exact up to BILLS_FINE_AVG_MAX with-bill rows, a large
     // deterministic sample beyond that.
     let avgEnergyCost: number | null = null;
-    if (withBills > 0) {
+    if (withBills === null || withBills > 0) {
       const billRows = await fetchPagedUpTo(
         () =>
           filtered(reader.from("leads").select("utility_bill,solar_payment"))
@@ -938,7 +940,8 @@ export interface CallbacksResult {
   /** Open callbacks only (completed/cancelled are excluded), soonest due first. */
   rows: CallbackRow[];
   /** Full-book count of completed callbacks — they never ride along as rows. */
-  completedCount: number;
+  /** null = the count could not be READ, not zero. */
+  completedCount: number | null;
   /** Whether the viewer sees the whole org's callbacks. */
   teamWide: boolean;
 }
@@ -999,7 +1002,7 @@ export async function getCallbacks(): Promise<CallbacksResult> {
         repName: names ? names.get(s(r.owner_id)) || "Rep" : undefined,
         teamWide: orgWide,
       })),
-      completedCount: doneRes.count ?? 0,
+      completedCount: askedCount(doneRes),
       teamWide: orgWide,
     };
   } catch (e) {

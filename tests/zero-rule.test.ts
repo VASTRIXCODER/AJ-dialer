@@ -10,101 +10,107 @@ import { describe, expect, it } from "vitest";
 // real answer — "nobody called today" — and a reader cannot tell it apart from
 // "the query failed".
 //
-// This is not a theoretical concern in this codebase. supabase-js does NOT
-// throw on a failed read; it resolves `{ data: null, count: null, error }`. So
-// the house idiom `res.count ?? 0` silently converts "we could not ask" into
-// "the answer is none", and a `try/catch` around it never fires. A previous
-// audit found this producing four separate user-visible bugs in code written
-// the same day, including a frequency cap that failed OPEN and a pipeline board
-// that looked healthy precisely because it was broken.
+// This is not theoretical here. supabase-js does NOT throw on a failed read; it
+// resolves `{ data: null, count: null, error }`. So the idiom `res.count ?? 0`
+// silently converts "we could not ask" into "the answer is none", and a
+// try/catch around it never fires. Found in the wild in this codebase:
 //
-// The fix at each site is the same shape: `res.error ? null : (res.count ?? 0)`,
-// then let the type be `number | null` all the way to the tile, which renders
-// an em dash.
+//   · a rep's day said "Nothing is waiting on you" because
+//     `null + null + null === 0` is true in JavaScript
+//   · a supervisor's attention queues DISAPPEARED, because each door was gated
+//     on `count > 0` and `null > 0` is false
+//   · an AI connect rate reported a confident 0%
+//   · a frequency cap failed OPEN
+//
+// The fix at each site is `askedCount(res)` from src/lib/db/counts.ts, then
+// `number | null` all the way to the tile, which renders an em dash.
 // ─────────────────────────────────────────────────────────────────────────────
 
 const ROOT = resolve(__dirname, "..");
+
+/** Comments are prose. A comment quoting the bad pattern is documentation. */
+const stripComments = (s: string) =>
+  s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(?<!:)\/\/.*$/gm, "");
+
 const DB_FILES = execSync('git ls-files --cached --others --exclude-standard "src/lib/db/*.ts"', {
   cwd: ROOT,
   encoding: "utf8",
 })
   .split("\n")
   .filter(Boolean)
-  .map((path) => ({ path, text: readFileSync(resolve(ROOT, path), "utf8") }));
+  .map((path) => ({
+    path,
+    code: stripComments(readFileSync(resolve(ROOT, path), "utf8")),
+  }));
 
 /**
- * Modules still defaulting a possibly-failed count to 0, with what each one
- * feeds. Every entry is a real "a failed read looks like a clean board" bug
- * waiting to be surfaced — this list should only ever shrink.
- *
- * NOT a permanent exemption. Migrated so far: crm.ts (Phase 2) and
- * command-center.ts, whose counts are now `number | null` end to end.
+ * A supabase query result, by this codebase's naming convention (`dialsRes`,
+ * `countRes`, `heldCountRes`). Deliberately narrow: `p.count ?? 0` in
+ * lead-timeline reads how many leads were in an assignment batch off a lead
+ * EVENT payload, which is an ordinary property with an ordinary default and
+ * not this bug at all.
  */
-const NOT_YET_MIGRATED: Record<string, string> = {
-  "src/lib/db/my-day.ts": "a rep's own day strip and callback counts",
-  "src/lib/db/callbacks.ts": "the completed-callback count on the board header",
-  "src/lib/db/crm.ts": "claimable/held on the shared queue (lane counts already migrated)",
-  "src/lib/db/pipeline.ts": "bills-fine totals and the completed-appointment count",
-  "src/lib/db/records.ts": "the call-archive rollup counters",
-  "src/lib/db/lead-timeline.ts": "a per-page row count, not a displayed metric",
-};
+const BAD = /\b\w*(?:Res|Result)\.count \?\? 0/;
 
 describe("the zero rule", () => {
-  it("no NEW module defaults a possibly-failed count to zero", () => {
+  it("no query result defaults a possibly-failed count to zero", () => {
     const offenders: string[] = [];
-    for (const { path, text } of DB_FILES) {
-      if (NOT_YET_MIGRATED[path]) continue;
-      for (const line of text.split(/\r?\n/)) {
-        // `error ? null : (count ?? 0)` is the correct shape and is allowed.
-        if (/\.count \?\? 0/.test(line) && !/\berror\b/.test(line)) {
-          offenders.push(`${path}: ${line.trim()}`);
-        }
+    for (const { path, code } of DB_FILES) {
+      for (const line of code.split(/\r?\n/)) {
+        // `error ? null : (count ?? 0)` is the correct shape, written out.
+        if (BAD.test(line) && !/\berror\b/.test(line)) offenders.push(`${path}: ${line.trim()}`);
       }
     }
     expect(
       offenders,
       "supabase-js resolves rather than throws on a failed read, so `count ?? 0` " +
-        "turns 'could not ask' into 'the answer is none'. Use " +
-        "`res.error ? null : (res.count ?? 0)` and let the null reach the tile:\n" +
+        "turns 'could not ask' into 'the answer is none'. Use askedCount() from " +
+        "src/lib/db/counts.ts and let the null reach the tile:\n" +
         offenders.join("\n"),
     ).toEqual([]);
   });
 
-  it("the migration list has no stale entries", () => {
-    // When a module is cleaned up, its entry must go — otherwise the list
-    // stops meaning anything and the rule quietly stops applying to it.
-    const stale = Object.keys(NOT_YET_MIGRATED).filter((path) => {
-      const f = DB_FILES.find((x) => x.path === path);
-      if (!f) return true;
-      return !f.text
-        .split(/\r?\n/)
-        .some((l) => /\.count \?\? 0/.test(l) && !/\berror\b/.test(l));
-    });
-    expect(
-      stale,
-      `These no longer default a failed count to 0 — remove them from NOT_YET_MIGRATED:\n${stale.join("\n")}`,
-    ).toEqual([]);
-  });
-
-  it("the already-migrated modules stay migrated", () => {
-    for (const path of ["src/lib/db/command-center.ts"]) {
+  it("the modules that feed a visible number use askedCount", () => {
+    // Named explicitly so deleting the call re-breaks the test rather than
+    // quietly passing because the file no longer matches a pattern.
+    const MIGRATED = [
+      "src/lib/db/command-center.ts",
+      "src/lib/db/my-day.ts",
+      "src/lib/db/callbacks.ts",
+      "src/lib/db/crm.ts",
+      "src/lib/db/pipeline.ts",
+      "src/lib/db/records.ts",
+    ];
+    for (const path of MIGRATED) {
       const f = DB_FILES.find((x) => x.path === path);
       expect(f, `${path} is missing`).toBeDefined();
-      const bare = f!.text
-        .split(/\r?\n/)
-        .filter((l) => /\.count \?\? 0/.test(l) && !/\berror\b/.test(l));
-      expect(bare, `${path} regressed:\n${bare.join("\n")}`).toEqual([]);
+      expect(f!.code, `${path} should read its counts through askedCount`).toMatch(
+        /askedCount\(/,
+      );
     }
   });
 
   it("a metric tile can express 'unavailable' at the type level", () => {
-    const card = readFileSync(
-      resolve(ROOT, "src/components/dashboard/metric-card.tsx"),
-      "utf8",
-    );
-    // If `value` were `string`, a caller with a null count would have no way
+    const card = readFileSync(resolve(ROOT, "src/components/dashboard/metric-card.tsx"), "utf8");
+    // If `value` were `string`, a caller holding a null count would have no way
     // to say so and would reach for String(x) or `?? 0`.
     expect(card).toMatch(/value:\s*string \| null/);
     expect(card).toMatch(/unavailable\?:\s*string/);
+  });
+
+  it("sumKnown keeps 'unknown' distinct from 'zero'", async () => {
+    const { sumKnown, askedCount } = await import("@/lib/db/counts");
+
+    // The exact shape that told a rep nothing was waiting on them.
+    expect(sumKnown([null, null, null])).toEqual({ total: 0, unknown: 3 });
+    expect(sumKnown([0, 0, 0])).toEqual({ total: 0, unknown: 0 });
+    expect(sumKnown([2, null, 3])).toEqual({ total: 5, unknown: 1 });
+
+    // And the primitive itself: an error is null, a genuine zero stays zero.
+    expect(askedCount({ count: null, error: new Error("boom") })).toBeNull();
+    expect(askedCount({ count: 0, error: null })).toBe(0);
+    expect(askedCount({ count: 7, error: null })).toBe(7);
+    // A null count with no error is a head:true query that matched nothing.
+    expect(askedCount({ count: null, error: null })).toBe(0);
   });
 });

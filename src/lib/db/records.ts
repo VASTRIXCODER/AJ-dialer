@@ -20,6 +20,7 @@ import { completeCallbackForLead } from "./callbacks";
 import { addToDnc } from "./dnc";
 import { logLeadEvent } from "./lead-events";
 import { markLeadAttempted } from "./reservations";
+import { askedCount } from "./counts";
 
 const UUID =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -1493,15 +1494,15 @@ export interface MonitorAICall {
 /** Today's AI-calling totals for the Live Monitor KPI strip. */
 export interface AITodayStats {
   /** Real calls placed today (excludes never-connected "not a real call" rows). */
-  calls: number;
+  calls: number | null;
   /** Homeowners who picked up today. */
-  connects: number;
+  connects: number | null;
   /** Appointments booked today. */
-  booked: number;
+  booked: number | null;
   /** Calls that finished today. */
-  completed: number;
+  completed: number | null;
   /** connects / calls, whole %. */
-  connectRate: number;
+  connectRate: number | null;
 }
 
 const EMPTY_AI_TODAY: AITodayStats = {
@@ -1561,14 +1562,24 @@ export async function getAITodayStats(): Promise<AITodayStats> {
       base().not("ended_at", "is", null),
     ]);
 
-    const calls = Math.max(0, (callsTotal.count ?? 0) - (notReal.count ?? 0));
-    const connectCount = connects.count ?? 0;
+    // Both halves must be readable for the difference to mean anything —
+    // subtracting an unknown from a known is not a smaller number, it is no
+    // number at all.
+    const totalC = askedCount(callsTotal);
+    const notRealC = askedCount(notReal);
+    const calls = totalC === null || notRealC === null ? null : Math.max(0, totalC - notRealC);
+    const connectCount = askedCount(connects);
     return {
       calls,
       connects: connectCount,
-      booked: booked.count ?? 0,
-      completed: completed.count ?? 0,
-      connectRate: calls > 0 ? Math.round((connectCount / calls) * 100) : 0,
+      booked: askedCount(booked),
+      completed: askedCount(completed),
+      // A rate needs BOTH halves. `null > 0` is false, so the old form
+      // reported a confident 0% connect rate whenever the read failed.
+      connectRate:
+        calls !== null && connectCount !== null && calls > 0
+          ? Math.round((connectCount / calls) * 100)
+          : null,
     };
   } catch {
     return EMPTY_AI_TODAY;

@@ -12,6 +12,7 @@ import { createAdminClient, isAdminConfigured } from "../supabase/admin";
 import { getMyAssignments } from "./assignments";
 import { getDncDigits, dncKey } from "./dnc";
 import type { Scope } from "./scope";
+import { askedCount } from "./counts";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // My Day (P2.6): one read that answers "what should I do right now" for the
@@ -81,16 +82,25 @@ export interface WhoNext {
 
 export interface MyDayData {
   callbacks: {
-    overdue: number;
-    dueToday: number;
-    unscheduled: number;
+    overdue: number | null;
+    dueToday: number | null;
+    unscheduled: number | null;
     items: MyDayCallback[];
   };
   workItems: { open: number; items: MyDayWorkItem[] };
   signals: MyDaySignal[];
   appointmentsToday: { count: number; items: MyDayAppointment[] };
-  /** Self scope, org-timezone "today". */
-  today: { dials: number; conversations: number; appointments: number; talkSec: number };
+  /**
+   * Self scope, org-timezone "today". Counts are `number | null`, and the null
+   * is load-bearing: it means the read FAILED, not that the answer is zero.
+   * See `askedCount` in ./counts.
+   */
+  today: {
+    dials: number | null;
+    conversations: number | null;
+    appointments: number | null;
+    talkSec: number;
+  };
   assignments: { id: string; label: string; worked: number; total: number }[];
   whoNext: WhoNext | null;
   /**
@@ -255,10 +265,10 @@ async function readMyDay(input: {
 
   const cbRows = (cbRes.data ?? []) as Row[];
   const callbacks = {
-    overdue: cbOverdueRes.count ?? 0,
-    dueToday: cbTodayRes.count ?? 0,
+    overdue: askedCount(cbOverdueRes),
+    dueToday: askedCount(cbTodayRes),
     // The spec's rule: an item with no time is UNSCHEDULED, never "due now".
-    unscheduled: cbUnschedRes.count ?? 0,
+    unscheduled: askedCount(cbUnschedRes),
     items: cbRows.slice(0, 5).map(
       (r): MyDayCallback => ({
         id: s(r.id),
@@ -350,9 +360,9 @@ async function readMyDay(input: {
   // physically implausible case of one rep placing 2,000+ calls in a day.
   const callRows = (callsRes.data ?? []) as Row[];
   const today = {
-    dials: dialsRes.count ?? 0,
-    conversations: convosRes.count ?? 0,
-    appointments: apptDoneRes.count ?? 0,
+    dials: askedCount(dialsRes),
+    conversations: askedCount(convosRes),
+    appointments: askedCount(apptDoneRes),
     talkSec: callRows.reduce((sum, r) => sum + n(r.talk_sec), 0),
   };
 

@@ -1,5 +1,6 @@
 import {
   AlarmClock,
+  AlertTriangle,
   CalendarCheck,
   CheckCircle2,
   ClipboardList,
@@ -19,6 +20,7 @@ import { buttonVariants } from "@/components/ui/button";
 import { SectionCard } from "@/components/shared/section-card";
 import { floatingRelativeTime } from "@/lib/appointments/time";
 import { dialDeepLink } from "@/lib/dialer/deep-link";
+import { sumKnown } from "@/lib/db/counts";
 import { getMyDay, type MyDayData } from "@/lib/db/my-day";
 import { getScope } from "@/lib/db/scope";
 import { orgTimezone } from "@/lib/metrics/definitions";
@@ -88,9 +90,19 @@ export default async function TodayPage() {
   const ApptPlural =
     vocab.appointmentNounPlural.charAt(0).toUpperCase() +
     vocab.appointmentNounPlural.slice(1);
+  // The callback counts are `number | null`, where null means the read failed.
+  // `null + null + null === 0` is TRUE in JavaScript, so summing them directly
+  // told a rep "nothing is waiting on you" precisely when the app had no idea
+  // what was waiting on them. Never claim silence we could not verify.
+  const cb = sumKnown([callbacks.overdue, callbacks.dueToday, callbacks.unscheduled]);
+  const has = (v: number | null) => v !== null && v > 0;
+  /** A count the tile can render, or null so it shows an em dash. */
+  const num = (v: number | null) => (v === null ? null : String(v));
+  const UNREAD = "Couldn't read this count — it is not necessarily zero.";
   const nothingWaiting =
     !whoNext &&
-    callbacks.overdue + callbacks.dueToday + callbacks.unscheduled === 0 &&
+    cb.total === 0 &&
+    cb.unknown === 0 &&
     workItems.open === 0 &&
     signals.length === 0 &&
     appointmentsToday.count === 0;
@@ -163,30 +175,42 @@ export default async function TodayPage() {
       )}
 
       {/* Start here — the queues with your name on them. Empty ones collapse. */}
-      {(callbacks.overdue > 0 ||
-        callbacks.dueToday > 0 ||
-        callbacks.unscheduled > 0 ||
+      {(has(callbacks.overdue) ||
+        has(callbacks.dueToday) ||
+        has(callbacks.unscheduled) ||
+        cb.unknown > 0 ||
         workItems.open > 0 ||
         signals.length > 0) && (
         <div className="grid gap-4 lg:grid-cols-2">
-          {(callbacks.overdue > 0 || callbacks.dueToday > 0 || callbacks.unscheduled > 0) && (
+          {(has(callbacks.overdue) ||
+            has(callbacks.dueToday) ||
+            has(callbacks.unscheduled) ||
+            cb.unknown > 0) && (
             <SectionCard
               title="Your callbacks"
               description="Promises with your name on them · today"
             >
               <div className="mb-3 flex flex-wrap gap-2">
-                {callbacks.overdue > 0 && (
+                {has(callbacks.overdue) && (
                   <Badge tone="danger" className="gap-1">
                     <AlarmClock className="h-3 w-3" /> {callbacks.overdue} overdue
                   </Badge>
                 )}
-                {callbacks.dueToday > 0 && (
+                {has(callbacks.dueToday) && (
                   <Badge tone="warning" className="gap-1">
                     <PhoneIncoming className="h-3 w-3" /> {callbacks.dueToday} due later today
                   </Badge>
                 )}
-                {callbacks.unscheduled > 0 && (
+                {has(callbacks.unscheduled) && (
                   <Badge tone="neutral">{callbacks.unscheduled} without a time</Badge>
+                )}
+                {cb.unknown > 0 && (
+                  // Say the count is missing rather than render nothing, which
+                  // would read as "none".
+                  <Badge tone="warning" className="gap-1">
+                    <AlertTriangle className="h-3 w-3" />
+                    {cb.unknown === 1 ? "1 count" : `${cb.unknown} counts`} couldn&apos;t be read
+                  </Badge>
                 )}
               </div>
               <ul className="space-y-2">
@@ -343,16 +367,24 @@ export default async function TodayPage() {
           Today so far · you · org time
         </p>
         <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-          <MetricCard label="Dials" value={String(today.dials)} icon={Phone} accent="accent" />
+          <MetricCard
+            label="Dials"
+            value={num(today.dials)}
+            unavailable={UNREAD}
+            icon={Phone}
+            accent="accent"
+          />
           <MetricCard
             label="Conversations"
-            value={String(today.conversations)}
+            value={num(today.conversations)}
+            unavailable={UNREAD}
             icon={PhoneCall}
             accent="success"
           />
           <MetricCard
             label={`${ApptPlural} booked`}
-            value={String(today.appointments)}
+            value={num(today.appointments)}
+            unavailable={UNREAD}
             icon={CalendarCheck}
             accent="warning"
           />

@@ -3,6 +3,7 @@ import "server-only";
 import { CONNECTED_OUTCOMES } from "../call-analytics";
 import { zonedDayStartMs, zonedFloatingNow } from "../dialer/schedule";
 import { createAdminClient, isAdminConfigured } from "../supabase/admin";
+import { askedCount } from "./counts";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Command Center (P2.10): the supervisor's org-wide cockpit. Every number is
@@ -249,9 +250,6 @@ async function readCommandCenter(input: {
   // error }` — so the nullish coalesce silently turns "we could not ask" into
   // "the answer is none", and the Command Center then states it as fact at the
   // top of the screen. Ask the error, and let the tile say it does not know.
-  const askedCount = (res: { count: number | null; error: unknown }) =>
-    res.error ? null : (res.count ?? 0);
-
   const today = {
     dials: askedCount(dialsRes),
     conversations: askedCount(convosRes),

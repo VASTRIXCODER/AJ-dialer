@@ -204,8 +204,19 @@ export function WorkQueue({
   return (
     <div className="space-y-4">
       <SectionCard
-        title={`Shared queue · ${queue.claimable.toLocaleString()} claimable`}
-        description={`Work nobody is holding right now · whole org · ${queue.held} held by you. A claim lasts 5 minutes, then returns to the pool.`}
+        title={
+          queue.claimable === null
+            ? "Shared queue"
+            : `Shared queue · ${queue.claimable.toLocaleString()} claimable`
+        }
+        description={
+          // A count that could not be read is not zero. Saying "0 claimable"
+          // here would tell a rep the pool is empty when the truth is that
+          // the app could not ask.
+          queue.claimable === null || queue.held === null
+            ? "Work nobody is holding right now · whole org. Some counts couldn't be read, so this list may be incomplete."
+            : `Work nobody is holding right now · whole org · ${queue.held} held by you. A claim lasts 5 minutes, then returns to the pool.`
+        }
       >
         <div className="mb-3 flex flex-wrap items-center gap-2">
           <Button
@@ -235,7 +246,7 @@ export function WorkQueue({
             onClick={() => void post("/api/crm/release", {}, "release")}
           >
             <Undo2 className="mr-1.5 h-4 w-4" />
-            Release {queue.held > 0 ? queue.held : ""}
+            Release {queue.held !== null && queue.held > 0 ? queue.held : ""}
           </Button>
         </div>
 
@@ -252,7 +263,7 @@ export function WorkQueue({
             />
           }
         />
-        {queue.claimable > claimableShown && (
+        {queue.claimable !== null && queue.claimable > claimableShown && (
           // Counts the CLAIMABLE rows on screen, not every row: the list also
           // carries what this rep is already holding, and folding those into
           // "showing N of M" would overstate how much of the free pool is
