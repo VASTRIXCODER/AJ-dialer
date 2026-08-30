@@ -60,6 +60,7 @@ import {
   type ViewKey,
 } from "./shared";
 import { useAppointmentDrag } from "./use-appointment-drag";
+import { Z } from "@/lib/z-layers";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The appointments workspace. Four views over one dataset:
@@ -838,7 +839,7 @@ function BulkBar({
         animate={{ y: 0, opacity: 1 }}
         exit={reduce ? { opacity: 0 } : { y: 80, opacity: 0 }}
         transition={{ type: "spring", stiffness: 380, damping: 32 }}
-        className="fixed inset-x-0 bottom-5 z-[80] flex justify-center px-4"
+        className="fixed inset-x-0 bottom-5 flex justify-center px-4"
       >
         <div className="glass flex items-center gap-2 rounded-2xl border border-border/60 p-2 pl-4 shadow-lift">
           <span className="text-sm font-semibold">{count} selected</span>
@@ -870,7 +871,7 @@ function BulkBar({
             label={`Route ${count} back`}
             maxWidth="max-w-md"
             panelClassName="p-5"
-            zIndex={101}
+            zIndex={Z.overlay + 1}
           >
             <div className="mb-4">
               <p className="text-base font-semibold">Route {count} back</p>

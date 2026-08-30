@@ -19,7 +19,7 @@ import { describe, expect, it } from "vitest";
 const ROOT = resolve(__dirname, "..");
 
 function sourceFiles(): string[] {
-  return execSync('git ls-files "src/**/*.tsx" "src/**/*.ts"', {
+  return execSync('git ls-files --cached --others --exclude-standard "src/**/*.tsx" "src/**/*.ts"', {
     cwd: ROOT,
     encoding: "utf8",
   })

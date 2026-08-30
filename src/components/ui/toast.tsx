@@ -13,6 +13,7 @@ import {
 } from "react";
 import { cn } from "@/lib/utils";
 import { Portal } from "./portal";
+import { Z } from "@/lib/z-layers";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // App-wide toasts. Mounted once in the root layout so every surface (app shell,
@@ -76,7 +77,8 @@ export function ToastProvider({ children }: { children: ReactNode }) {
         <div
           aria-live="polite"
           aria-label="Notifications"
-          className="pointer-events-none fixed inset-x-0 bottom-4 z-[140] flex flex-col items-center gap-2 px-4 sm:items-end sm:pr-6"
+          className="pointer-events-none fixed inset-x-0 bottom-4 flex flex-col items-center gap-2 px-4 sm:items-end sm:pr-6"
+          style={{ zIndex: Z.toast }}
         >
           <AnimatePresence>
             {items.map((t) => {

@@ -14,6 +14,7 @@ import {
 } from "react";
 import { cn } from "@/lib/utils";
 import { Portal } from "./portal";
+import { Z } from "@/lib/z-layers";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // SelectMenu — choosing ONE value from a known set.
@@ -259,14 +260,15 @@ function SelectPopup<T extends string>({
       aria-label={label}
       onKeyDown={onKeyDown}
       className={cn(
-        "fixed z-[130] max-h-80 min-w-44 max-w-80 overflow-y-auto rounded-xl border border-border/70 bg-card p-1 shadow-lift",
+        "fixed max-h-80 min-w-44 max-w-80 overflow-y-auto rounded-xl border border-border/70 bg-card p-1 shadow-lift",
         pos ? "opacity-100" : "opacity-0",
       )}
-      style={
-        pos
+      style={{
+        zIndex: Z.popover,
+        ...(pos
           ? { top: pos.top, left: pos.left, minWidth: Math.max(176, pos.minWidth) }
-          : { top: -9999, left: -9999 }
-      }
+          : { top: -9999, left: -9999 }),
+      }}
     >
       {options.map((o) => {
         const isSelected = o.value === value;

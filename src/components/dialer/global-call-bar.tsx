@@ -8,6 +8,7 @@ import { useVocabulary } from "@/components/layout/vocabulary";
 import { Avatar } from "@/components/ui/avatar";
 import { cn, formatDuration, initials, leadDisplayName } from "@/lib/utils";
 import { useDialerContext } from "./dialer-context";
+import { Z } from "@/lib/z-layers";
 
 /**
  * Floating call bar shown on EVERY app page (except the dialer itself) whenever
@@ -47,7 +48,8 @@ export function GlobalCallBar() {
       initial={{ opacity: 0, y: 24 }}
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, y: 24 }}
-      className="fixed inset-x-0 bottom-4 z-50 flex justify-center px-4"
+      className="fixed inset-x-0 bottom-4 flex justify-center px-4"
+      style={{ zIndex: Z.callBar }}
     >
       <div className="glass flex items-center gap-3 rounded-2xl border border-border/60 px-3 py-2 shadow-lift">
         <span className="relative flex h-9 w-9 shrink-0 items-center justify-center">

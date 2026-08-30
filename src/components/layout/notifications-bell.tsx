@@ -6,6 +6,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useVisiblePoll } from "@/lib/use-visible-poll";
 import { cn, relativeTime } from "@/lib/utils";
+import { Z } from "@/lib/z-layers";
 
 type Notif = {
   id: string;
@@ -100,7 +101,8 @@ export function NotificationsBell() {
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: -6, scale: 0.98 }}
             transition={{ type: "spring", stiffness: 360, damping: 28 }}
-            className="glass absolute right-0 top-12 z-50 w-80 overflow-hidden rounded-2xl border border-border/60 shadow-lift"
+            className="glass absolute right-0 top-12 w-80 overflow-hidden rounded-2xl border border-border/60 shadow-lift"
+            style={{ zIndex: Z.popover }}
           >
             <div className="flex items-center justify-between border-b border-border/60 px-4 py-3">
               <p className="text-sm font-semibold">Notifications</p>

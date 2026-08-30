@@ -11,6 +11,7 @@ import {
 } from "react";
 import { Button } from "./button";
 import { Modal } from "./modal";
+import { Z } from "@/lib/z-layers";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Promise-based confirmation dialog — the replacement for every window.confirm.
@@ -64,7 +65,7 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
         onClose={() => settle(false)}
         label={current?.title ?? "Confirm"}
         maxWidth="max-w-md"
-        zIndex={130}
+        zIndex={Z.confirm}
       >
         {current ? (
           <div className="p-6">

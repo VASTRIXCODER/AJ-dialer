@@ -16,6 +16,7 @@ import { navGroups, navLabel } from "@/components/layout/nav";
 import { useVocabulary } from "@/components/layout/vocabulary";
 import { useLead360 } from "@/components/leads/lead-360/lead-360-provider";
 import { cn } from "@/lib/utils";
+import { Z } from "@/lib/z-layers";
 
 type LeadMatch = {
   id: string;
@@ -181,7 +182,8 @@ export function CommandPalette() {
     <AnimatePresence>
       {open && (
         <motion.div
-          className="fixed inset-0 z-[100] flex items-start justify-center p-4 pt-[12vh]"
+          className="fixed inset-0 flex items-start justify-center p-4 pt-[12vh]"
+          style={{ zIndex: Z.overlay }}
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}

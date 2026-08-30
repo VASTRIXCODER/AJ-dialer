@@ -13,6 +13,7 @@ import {
 } from "react";
 import { cn } from "@/lib/utils";
 import { Portal } from "./portal";
+import { Z } from "@/lib/z-layers";
 
 type Side = "top" | "bottom" | "left" | "right";
 
@@ -154,7 +155,7 @@ export function Tooltip({
           <div
             id={id}
             role="tooltip"
-            style={{ position: "fixed", top: pos.top, left: pos.left, zIndex: 200 }}
+            style={{ position: "fixed", top: pos.top, left: pos.left, zIndex: Z.tooltip }}
             className={cn(
               "pointer-events-none max-w-xs rounded-lg border border-border/60 bg-card px-2.5 py-1.5 text-xs text-foreground shadow-lift",
               translate[side],

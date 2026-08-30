@@ -15,6 +15,7 @@ import { Topbar } from "./topbar";
 import type { Permission } from "@/lib/permissions";
 import { PermissionsProvider } from "./permissions";
 import { VocabularyProvider } from "./vocabulary";
+import { Z } from "@/lib/z-layers";
 
 type Account = { name: string; email: string; initials: string };
 
@@ -96,7 +97,7 @@ export function AppShell({
       <CommandPalette />
 
       {/* Desktop sidebar */}
-      <aside className="fixed inset-y-0 left-0 z-30 hidden w-[268px] lg:block">
+      <aside className="fixed inset-y-0 left-0 hidden w-[268px] lg:block" style={{ zIndex: Z.sidebar }}>
         <Sidebar account={account} {...sidebarProps} />
       </aside>
 
@@ -109,14 +110,14 @@ export function AppShell({
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
               onClick={() => setMobileOpen(false)}
-              className="fixed inset-0 z-40 bg-background/60 backdrop-blur-md lg:hidden"
+              className="fixed inset-0 bg-background/60 backdrop-blur-md lg:hidden" style={{ zIndex: Z.navScrim }}
             />
             <motion.aside
               initial={{ x: "-100%" }}
               animate={{ x: 0 }}
               exit={{ x: "-100%" }}
               transition={{ type: "spring", damping: 32, stiffness: 320 }}
-              className="fixed inset-y-0 left-0 z-50 w-[284px] lg:hidden"
+              className="fixed inset-y-0 left-0 w-[284px] lg:hidden" style={{ zIndex: Z.navPanel }}
             >
               <button
                 type="button"

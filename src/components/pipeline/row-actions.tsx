@@ -8,6 +8,7 @@ import { Modal } from "@/components/ui/modal";
 import { Portal } from "@/components/ui/portal";
 import type { CallOutcome } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import { Z } from "@/lib/z-layers";
 
 type StatusOption = { value: string; label: string };
 
@@ -123,11 +124,11 @@ export function RowActions({
       {open && pos && (
         <Portal>
           {/* Outside-click catcher */}
-          <div className="fixed inset-0 z-[90]" onClick={() => setPos(null)} />
+          <div className="fixed inset-0" style={{ zIndex: Z.rowMenu }} onClick={() => setPos(null)} />
           <div
             role="menu"
             style={{ position: "fixed", top: pos.top, left: pos.left, width: MENU_W }}
-            className="z-[91] rounded-xl border border-border bg-popover p-1 shadow-lift"
+            className="rounded-xl border border-border bg-popover p-1 shadow-lift"
           >
             <p className="px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
               Set status

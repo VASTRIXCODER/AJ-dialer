@@ -8,6 +8,7 @@ import { NotificationsBell } from "@/components/layout/notifications-bell";
 import { buttonVariants } from "@/components/ui/button";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { cn } from "@/lib/utils";
+import { Z } from "@/lib/z-layers";
 
 export function Topbar({
   onMenuClick,
@@ -19,7 +20,7 @@ export function Topbar({
   aiConfigured: boolean;
 }) {
   return (
-    <div className="sticky top-0 z-30 px-3 pt-3 sm:px-5 sm:pt-4">
+    <div className="sticky top-0 px-3 pt-3 sm:px-5 sm:pt-4" style={{ zIndex: Z.topbar }}>
       <motion.header
         initial={{ opacity: 0, y: -14 }}
         animate={{ opacity: 1, y: 0 }}
