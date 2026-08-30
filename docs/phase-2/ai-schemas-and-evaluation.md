@@ -4,8 +4,10 @@ The versioned AI schema registry and the evaluation program (docs/phase_two.md
 §20). Sections 1 marks what EXISTS (Phase 1 as-built, with file evidence);
 sections 2–4 are the Phase 2 plan — **nothing in them is built** unless marked
 otherwise. Follows docs/phase-2/opportunity-domain-and-state-machines.md:
-deterministic engine, advisory AI; nothing tenant-specific hardcoded (Brock =
-tenant org, King = manager role).
+deterministic engine, advisory AI; nothing tenant-specific hardcoded. Brock and
+King are REAL — a real tenant and a real person (King proposed Phase 2 and wrote
+docs/phase_two.md). What must not be hardcoded is their NAMES; the code models
+the tenant org and the senior sales operator generically.
 
 ## 1. What exists today (as-built inventory)
 

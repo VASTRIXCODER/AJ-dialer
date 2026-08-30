@@ -4,9 +4,10 @@ The canonical model for the AI Opportunity Pipeline (docs/phase_two.md §4–§5
 mapped onto the Phase 1 foundation it extends. This document is the authority:
 schema (PART 37), the pure TS twins, and every later workstream follow it.
 
-Terminology note: prompt names (Brock/King) are ROLES, not literals — Brock =
-the tenant org, King = its manager/owner operators. Nothing tenant-specific is
-hardcoded (CLAUDE.md rule; `docs/phase_two.md` §3).
+Terminology note: Brock and King are real — a real tenant org, and the real
+person who proposed Phase 2. Their NAMES are what must never be hardcoded: the
+model here is generic (tenant org, senior sales operator) so every workspace
+gets its own labels from configuration (CLAUDE.md rule; `docs/phase_two.md` §3).
 
 ## 1. Design stance
 

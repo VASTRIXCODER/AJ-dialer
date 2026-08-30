@@ -5,8 +5,20 @@ The readiness audit required by `docs/phase_two.md` §2/§24 (P2.0). Companion d
 contradicts it), `docs/phase-1/requirements-traceability.md` (honest Phase 1 status),
 `docs/phase-1/architecture-and-data-contracts.md` (the contracts Phase 2 extends).
 
-Terminology: Brock/King are ROLES (tenant org / manager-owner operators), never literals.
-No tenant-specific labels are hardcoded anywhere (CLAUDE.md; `docs/phase_two.md` §3).
+Terminology: Brock and King are REAL — a real tenant organization and a real
+person. King is the senior sales operator who proposed Phase 2 and authored
+`docs/phase_two.md`; when that document says "King", it means him.
+
+What follows from that is an ENGINEERING rule, not a claim about who they are:
+their names are never hardcoded. The code models "the tenant org" and "the
+senior sales operator" structurally, so the Brock deployment gets those labels
+from configuration and every other workspace gets its own (CLAUDE.md;
+`docs/phase_two.md` §3, which lists "Brock, King, DFW, solar" as literals to
+keep out of database logic — proper nouns, all four).
+
+An earlier revision of this line read "Brock/King are ROLES … never literals",
+which conflated the rule with the fact and is how at least one reader concluded
+King was not a person.
 
 ## 1. What Phase 1 actually delivered
 

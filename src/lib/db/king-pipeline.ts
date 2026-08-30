@@ -10,6 +10,16 @@ import { getCommandCenter, type CommandCenterData } from "./command-center";
 // ─────────────────────────────────────────────────────────────────────────────
 // King's pipeline — the one operating view (docs/phase_two.md §17).
 //
+// King is a person: the senior sales operator who proposed Phase 2 and wrote
+// that document. So §17 is not an abstract requirement — it is him describing
+// the screen he wants, and the five cards this file reports as unavailable are
+// things HE asked for and is not getting. That is worth him seeing plainly,
+// which is why they are surfaced rather than quietly omitted.
+//
+// His name appears in comments like this one and in the filename, never in the
+// UI. §3 lists "Brock, King, DFW, solar" among the literals to keep out of the
+// product — the tenant's own labels come from configuration.
+//
 // "King must not dig through ten screens. Build one role-aware operating view
 // with accurate, real-time or clearly timestamped data."
 //

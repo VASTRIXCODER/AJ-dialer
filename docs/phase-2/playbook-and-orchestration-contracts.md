@@ -6,7 +6,9 @@ design authority) and `docs/phase_two.md` §6/§18. **Status: contract spec — 
 build targets (`src/lib/orchestration/definition.ts` validator,
 `src/lib/orchestration/engine.ts`, `src/lib/orchestration/templates.ts`, schema
 PART 37) are P2.1 work and are NOT yet in the repo.** Nothing below is claimed
-as shipped. Brock/King are roles (tenant org / manager), never literals.
+as shipped. Brock and King are real — a real tenant org and the real person who
+proposed Phase 2; it is their NAMES that are never hardcoded, not their
+existence (CLAUDE.md; `docs/phase_two.md` §3).
 
 ## 1. Non-negotiables (inherited, restated)
 
