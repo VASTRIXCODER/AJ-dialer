@@ -293,6 +293,7 @@ export default async function LeadsPage({
           missingCountyCount={missingCountyCount}
         />
         <EmptyState
+          variant="page"
           icon={Users}
           title="No leads yet"
           description={

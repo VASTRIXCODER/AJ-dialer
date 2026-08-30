@@ -84,6 +84,7 @@ export default async function BillsFinePage({
           description={`${vocab.LeadNounPlural} who don't need you right now — worth revisiting when their situation changes.`}
         />
         <EmptyState
+          variant="page"
           icon={CheckCircle2}
           title={`Nothing set aside yet`}
           description={`When a rep or the AI agent marks a ${vocab.leadNoun} as “${vocab.noNeedLabel}”, they'll appear here for follow-up.`}

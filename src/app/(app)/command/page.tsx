@@ -45,6 +45,7 @@ export default async function CommandCenterPage() {
       <PageContainer>
         <PageHeader title="Command Center" description="The org-wide floor view." />
         <EmptyState
+          variant="page"
           icon={Compass}
           title="Reports access required"
           description="Ask an admin for the reports permission to see the floor view."
@@ -62,6 +63,7 @@ export default async function CommandCenterPage() {
       <PageContainer>
         <PageHeader title="Command Center" description="The org-wide floor view." />
         <EmptyState
+          variant="page"
           icon={Compass}
           title="No data yet"
           description="The command center lights up once the floor starts dialing."

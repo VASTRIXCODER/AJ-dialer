@@ -60,6 +60,7 @@ export default async function TodayPage() {
           description="Your working queue for today — callbacks, tasks, signals and appointments in one place."
         />
         <EmptyState
+          variant="page"
           icon={Sunrise}
           title="Nothing queued yet"
           description={`Load ${vocab.leadNounPlural} into the dialer to start building your day.`}
@@ -168,6 +169,7 @@ export default async function TodayPage() {
 
       {nothingWaiting && (
         <EmptyState
+          variant="page"
           icon={CheckCircle2}
           title="Nothing is waiting on you"
           description={`No callbacks due, no open tasks, no hot signals. Load ${vocab.leadNounPlural} into the dialer to keep the day moving.`}

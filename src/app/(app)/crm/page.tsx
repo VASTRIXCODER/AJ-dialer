@@ -52,6 +52,7 @@ export default async function CrmPage({
       <PageContainer>
         <PageHeader title="CRM" description="Pipeline, shared queue and audiences." />
         <EmptyState
+          variant="page"
           icon={Lock}
           title="You don't have access to the CRM"
           description="Your role doesn't include the CRM workspace. An owner or admin can grant it in Admin → Members."
@@ -66,6 +67,7 @@ export default async function CrmPage({
       <PageContainer>
         <PageHeader title="CRM" description="Pipeline, shared queue and audiences." />
         <EmptyState
+          variant="page"
           icon={KanbanSquare}
           title="No workspace yet"
           description={`Join or create an organization to start tracking ${vocab.leadNounPlural} through a pipeline.`}

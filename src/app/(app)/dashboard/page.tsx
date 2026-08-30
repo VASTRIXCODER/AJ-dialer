@@ -100,6 +100,7 @@ export default async function DashboardPage() {
           description="Your floor analytics will appear here once calling begins."
         />
         <EmptyState
+          variant="page"
           icon={LayoutDashboard}
           title="No activity yet"
           description="Import your leads and start dialing — calls, connect rates, appointments, and live monitoring will populate here in real time."

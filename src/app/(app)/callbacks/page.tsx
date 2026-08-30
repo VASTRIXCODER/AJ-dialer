@@ -62,6 +62,7 @@ export default async function CallbacksPage() {
           description="Every promised callback, tracked so nothing slips through the cracks."
         />
         <EmptyState
+          variant="page"
           icon={PhoneIncoming}
           title="No callbacks scheduled"
           description="Promised callbacks from your reps and the AI agent are tracked here automatically."

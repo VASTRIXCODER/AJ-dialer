@@ -267,6 +267,7 @@ export default async function ReportsPage({
         {rangeBar}
         {stampLine}
         <EmptyState
+          variant="page"
           icon={BarChart3}
           title={rangeKey === "all" ? "No report data yet" : "No calls in this range"}
           description={

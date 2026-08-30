@@ -35,6 +35,7 @@ export default async function AppointmentsPage() {
           description={`${vocab.appointmentNounPlural.charAt(0).toUpperCase()}${vocab.appointmentNounPlural.slice(1)} across your reps and the AI agent.`}
         />
         <EmptyState
+          variant="page"
           icon={Lock}
           title="You don't have access to the calendar"
           description="Your role doesn't include appointment access. An owner or admin can grant it in Admin → Members."
@@ -76,6 +77,7 @@ export default async function AppointmentsPage() {
           description={`${vocab.appointmentNounPlural.charAt(0).toUpperCase()}${vocab.appointmentNounPlural.slice(1)} scheduled across your reps and the AI agent.`}
         />
         <EmptyState
+          variant="page"
           icon={CalendarCheck}
           title="No appointments scheduled"
           description={`Booked ${vocab.appointmentNounPlural} from your reps and the AI agent appear here automatically — on a real calendar you can drag, reschedule and plan around. AI proposals land in a review lane for you to approve first.`}
