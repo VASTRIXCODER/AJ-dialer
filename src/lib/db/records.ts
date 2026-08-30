@@ -20,10 +20,6 @@ import { completeCallbackForLead } from "./callbacks";
 import { addToDnc } from "./dnc";
 import { logLeadEvent } from "./lead-events";
 import { markLeadAttempted } from "./reservations";
-import { askedCount } from "./counts";
-import { readProfileScope } from "./scope";
-import { storedLeadTimezone, timezoneForAreaCode } from "../dialer/lead-timezone";
-import { areaCodeOf } from "../dialer/rotation";
 
 const UUID =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -204,17 +200,7 @@ async function routeDisposition(
         .eq("id", leadId)
         .maybeSingle();
       cbCampaignId = l?.campaign_id ? String(l.campaign_id) : null;
-      // The raw column defaults to America/Los_Angeles and every lead row still
-      // carries it, so copying it straight across stamped a fabricated zone
-      // onto a callback — a column that has NO default, where it is
-      // indistinguishable from one somebody chose, and where the board then
-      // labels the due time with it. Three rows were written this way before
-      // this line changed; a backfill cannot tell them apart afterwards.
-      // storedLeadTimezone treats the default as absent; the area code is the
-      // same inference the dial path already trusts. Null stays null.
-      cbTimezone =
-        storedLeadTimezone(l?.timezone as string | null) ??
-        timezoneForAreaCode(areaCodeOf(input.phone));
+      cbTimezone = l?.timezone ? String(l.timezone) : null;
     }
     await client.from("callbacks").insert({
       owner_id: ownerId,
@@ -890,32 +876,12 @@ export async function completeAIConversation(input: {
       // conversation_id index closed that race. The other writer carried the
       // same payload; adopt its row instead of duplicating.
       if (insErr?.code === "23505") {
-        const { data: winner, error: winErr } = await admin
+        const { data: winner } = await admin
           .from("call_records")
           .select("id")
           .eq("conversation_id", input.conversationId)
           .maybeSingle();
-        // Losing recordId here means the media and transcript that follow are
-        // never attached, and the archive shows a call with no recording. The
-        // row definitely exists — 23505 is the proof — so a failed lookup is
-        // worth one retry rather than a silent null.
-        if (winErr || !winner) {
-          const { data: retry } = await admin
-            .from("call_records")
-            .select("id")
-            .eq("conversation_id", input.conversationId)
-            .maybeSingle();
-          recordId = (retry as { id?: string } | null)?.id ?? null;
-          if (!recordId) {
-            console.error(
-              "[records] 23505 on conversation_id",
-              input.conversationId,
-              "but the winning row could not be read — media will not be attached.",
-            );
-          }
-        } else {
-          recordId = (winner as { id?: string } | null)?.id ?? null;
-        }
+        recordId = (winner as { id?: string } | null)?.id ?? null;
       }
     } else if (upgrading) {
       // Correct the previously-filed (e.g. no-answer) record with the real result.
@@ -1527,15 +1493,15 @@ export interface MonitorAICall {
 /** Today's AI-calling totals for the Live Monitor KPI strip. */
 export interface AITodayStats {
   /** Real calls placed today (excludes never-connected "not a real call" rows). */
-  calls: number | null;
+  calls: number;
   /** Homeowners who picked up today. */
-  connects: number | null;
+  connects: number;
   /** Appointments booked today. */
-  booked: number | null;
+  booked: number;
   /** Calls that finished today. */
-  completed: number | null;
+  completed: number;
   /** connects / calls, whole %. */
-  connectRate: number | null;
+  connectRate: number;
 }
 
 const EMPTY_AI_TODAY: AITodayStats = {
@@ -1559,9 +1525,14 @@ export async function getAITodayStats(): Promise<AITodayStats> {
     } = await supabase.auth.getUser();
     if (!user) return EMPTY_AI_TODAY;
 
-    const prof = await readProfileScope(supabase, user.id);
-    const orgId = prof.org_id;
-    const supervisor = prof.supervisor;
+    const { data: prof } = await supabase
+      .from("profiles")
+      .select("org_id, role")
+      .eq("id", user.id)
+      .maybeSingle();
+    const orgId = prof?.org_id ? String(prof.org_id) : null;
+    const supervisor =
+      Boolean(orgId) && ["owner", "admin", "manager"].includes(String(prof?.role ?? "rep"));
 
     const { data: org } = orgId
       ? await supabase.from("organizations").select("timezone").eq("id", orgId).maybeSingle()
@@ -1590,24 +1561,14 @@ export async function getAITodayStats(): Promise<AITodayStats> {
       base().not("ended_at", "is", null),
     ]);
 
-    // Both halves must be readable for the difference to mean anything —
-    // subtracting an unknown from a known is not a smaller number, it is no
-    // number at all.
-    const totalC = askedCount(callsTotal);
-    const notRealC = askedCount(notReal);
-    const calls = totalC === null || notRealC === null ? null : Math.max(0, totalC - notRealC);
-    const connectCount = askedCount(connects);
+    const calls = Math.max(0, (callsTotal.count ?? 0) - (notReal.count ?? 0));
+    const connectCount = connects.count ?? 0;
     return {
       calls,
       connects: connectCount,
-      booked: askedCount(booked),
-      completed: askedCount(completed),
-      // A rate needs BOTH halves. `null > 0` is false, so the old form
-      // reported a confident 0% connect rate whenever the read failed.
-      connectRate:
-        calls !== null && connectCount !== null && calls > 0
-          ? Math.round((connectCount / calls) * 100)
-          : null,
+      booked: booked.count ?? 0,
+      completed: completed.count ?? 0,
+      connectRate: calls > 0 ? Math.round((connectCount / calls) * 100) : 0,
     };
   } catch {
     return EMPTY_AI_TODAY;
@@ -1638,9 +1599,14 @@ export async function getAIConversationsForMonitor(): Promise<{
     // org supervisor to read org-wide rows via the session client (see the
     // "ai_conversations read" policy in schema.sql), so no service role
     // is required here.
-    const prof = await readProfileScope(supabase, user.id);
-    const orgId = prof.org_id;
-    const supervisor = prof.supervisor;
+    const { data: prof } = await supabase
+      .from("profiles")
+      .select("org_id, role")
+      .eq("id", user.id)
+      .maybeSingle();
+    const orgId = prof?.org_id ? String(prof.org_id) : null;
+    const supervisor =
+      Boolean(orgId) && ["owner", "admin", "manager"].includes(String(prof?.role ?? "rep"));
 
     let base = supabase.from("ai_conversations").select("*");
     // A rep's "own" scope must stay within their CURRENT org — never surface

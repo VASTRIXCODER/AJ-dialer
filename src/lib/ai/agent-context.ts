@@ -17,7 +17,6 @@ import {
   type AgentOrgLike,
   resolveAgentConfig,
 } from "./agent-prompt";
-import { resolveLeadTimezone } from "../dialer/lead-timezone";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Resolve the live agent configuration + personalization variables for an
@@ -67,14 +66,7 @@ function rowToLead(r: Row): Lead {
     hasBattery: Boolean(r.has_battery),
     multipleSystems: Boolean(r.multiple_systems),
     createdAt: String(r.created_at ?? new Date().toISOString()),
-    // NOT the raw column. It defaults to America/Los_Angeles and every one of
-    // the 37,987 rows still carries that default, so passing it straight
-    // through told the voice agent it was Pacific time on every call — two
-    // hours off for a Central-time book, on a live call, in its greeting.
-    // resolveLeadTimezone falls back to the number's area code, which is the
-    // same inference the dial path's TCPA check already uses. Empty means
-    // "unknown", and currentDateVariables then uses the server zone.
-    timezone: resolveLeadTimezone(String(r.phone ?? ""), r.timezone as string | null, ""),
+    timezone: String(r.timezone ?? ""),
     // Typed CSV spillover — without this, custom fields would silently never
     // reach the voice agent's {{custom_*}} dynamic variables.
     customFields:
@@ -165,31 +157,13 @@ async function resolveByPhoneScoped(
   digits: string,
 ): Promise<{ lead: Lead; orgLike: AgentOrgLike | null } | null> {
   if (digits.length < 10) return null;
-  const PHONE_WINDOW = 20;
   let candidates: Row[] = [];
-  // ORDERED. The distinct-org refusal below can only see the orgs inside this
-  // window, and an unordered one made a cross-tenant guard depend on whatever
-  // the planner returned.
-  const { data: hit, error: hitErr } = await admin
+  const { data: hit } = await admin
     .from("leads")
     .select("*")
     .ilike("phone", `%${digits}%`)
-    .order("id", { ascending: true })
-    .limit(PHONE_WINDOW);
-  // This is the LAST-RESORT identity path for a live AI call, and its whole
-  // contract is failing closed on ambiguity. A read it could not perform is
-  // maximally ambiguous.
-  if (hitErr) return null;
+    .limit(20);
   candidates = (hit ?? []) as Row[];
-  // A FULL window may have a differently-orged row just past it.
-  if (candidates.length >= PHONE_WINDOW) {
-    console.error(
-      "[agent-context] phone match window is full for",
-      digits,
-      "— refusing to resolve rather than guess which org this call belongs to.",
-    );
-    return null;
-  }
   if (candidates.length === 0) {
     const { data: recent } = await admin
       .from("leads")

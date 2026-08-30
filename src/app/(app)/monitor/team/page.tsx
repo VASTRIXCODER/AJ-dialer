@@ -19,7 +19,6 @@ export default async function TeamStatusPage() {
           description="Live status for every active rep on your team."
         />
         <EmptyState
-          variant="page"
           icon={Activity}
           title="Team Status is for supervisors"
           description="Seeing everyone's live status is available to managers and admins. Ask an admin if you need access."

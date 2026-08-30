@@ -3,7 +3,6 @@
 import { motion, useReducedMotion } from "framer-motion";
 import { Crown } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { CELL } from "@/lib/ui-density";
 
 type Row = {
   name: string;
@@ -52,13 +51,13 @@ export function LeaderboardPreview() {
         <table className="w-full min-w-[560px] text-left">
           <thead>
             <tr className="border-b border-border/60 text-[11px] uppercase tracking-wide text-muted-foreground">
-              <th className={cn(CELL, "font-semibold")}>Rep</th>
+              <th className="px-5 py-3 font-semibold">Rep</th>
               {cols.map((c) => (
                 <th key={c.key} className="px-4 py-3 text-right font-semibold">
                   {c.label}
                 </th>
               ))}
-              <th className={cn(CELL, "text-right font-semibold")}>Rank</th>
+              <th className="px-5 py-3 text-right font-semibold">Rank</th>
             </tr>
           </thead>
           <tbody>
@@ -74,7 +73,7 @@ export function LeaderboardPreview() {
                   i === 0 && "bg-primary-soft/30",
                 )}
               >
-                <td className={cn(CELL)}>
+                <td className="px-5 py-3.5">
                   <div className="flex items-center gap-3">
                     <span
                       className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[11px] font-bold text-white"
@@ -85,14 +84,14 @@ export function LeaderboardPreview() {
                     <span className="text-sm font-semibold">{r.name}</span>
                   </div>
                 </td>
-                <td className={cn(CELL, "text-right text-sm font-medium tabular")}>{r.calls}</td>
-                <td className={cn(CELL, "text-right text-sm font-medium tabular")}>{r.convos}</td>
-                <td className={cn(CELL, "text-right text-sm font-medium tabular")}>{r.appts}</td>
-                <td className={cn(CELL, "text-right text-sm font-medium tabular")}>{r.sales}</td>
-                <td className={cn(CELL, "text-right text-sm font-bold tabular text-primary")}>
+                <td className="px-4 py-3.5 text-right text-sm font-medium tabular">{r.calls}</td>
+                <td className="px-4 py-3.5 text-right text-sm font-medium tabular">{r.convos}</td>
+                <td className="px-4 py-3.5 text-right text-sm font-medium tabular">{r.appts}</td>
+                <td className="px-4 py-3.5 text-right text-sm font-medium tabular">{r.sales}</td>
+                <td className="px-4 py-3.5 text-right text-sm font-bold tabular text-primary">
                   {r.conv}%
                 </td>
-                <td className={cn(CELL, "text-right")}>
+                <td className="px-5 py-3.5 text-right">
                   <span
                     className={cn(
                       "inline-flex h-6 min-w-6 items-center justify-center rounded-full px-2 text-xs font-bold",

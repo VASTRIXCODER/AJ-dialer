@@ -16,7 +16,7 @@ const links = [
 function Brand() {
   return (
     <Link href="/" className="flex items-center gap-2.5">
-      <span className="relative inline-flex h-9 w-9 items-center justify-center rounded-xl bg-brand">
+      <span className="relative inline-flex h-9 w-9 items-center justify-center rounded-xl bg-brand shadow-glow">
         <PhoneCall className="h-[52%] w-[52%] text-white" />
       </span>
       <div className="flex flex-col leading-none">
@@ -103,7 +103,7 @@ export function MarketingNav() {
                 key={l.href}
                 href={l.href}
                 onClick={() => setOpen(false)}
-                className="border-b border-border/40 py-3.5 text-base font-medium text-muted-foreground"
+                className="border-b border-border/40 py-3.5 text-base font-medium text-foreground/90"
               >
                 {l.label}
               </a>

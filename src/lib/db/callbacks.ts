@@ -5,7 +5,6 @@ import { isSupabaseConfigured } from "../supabase/config";
 import { createClient } from "../supabase/server";
 import { logLeadEvent } from "./lead-events";
 import { canActOn, getScope, type Scope } from "./scope";
-import { askedCount } from "./counts";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Callback Workspace v2 — the board read + the claim/complete lifecycle.
@@ -116,20 +115,8 @@ export interface CallbackBoard {
   /** Completed/cancelled in the last 14 days, newest first, capped at 100. */
   closed: CallbackBoardRow[];
   /** Full-book count of completed callbacks (the KPI — truncation can't skew it). */
-  /** null = the count could not be READ, not zero. See askedCount. */
-  completedCount: number | null;
+  completedCount: number;
   teamWide: boolean;
-  /**
-   * True when the open list hit OPEN_MAX, so the three lane counts derived from
-   * it are floors rather than totals.
-   *
-   * The board is ordered `due_at ASC, nullsFirst: false`, which means the first
-   * rows lost past the cap are the UNSCHEDULED ones — and /today counts those
-   * exactly and separately, so past the cap the two screens disagree by
-   * construction. A cap that nothing discloses is the thing this exists to
-   * stop.
-   */
-  openTruncated: boolean;
 }
 
 const EMPTY_BOARD: CallbackBoard = {
@@ -137,7 +124,6 @@ const EMPTY_BOARD: CallbackBoard = {
   closed: [],
   completedCount: 0,
   teamWide: false,
-  openTruncated: false,
 };
 
 /** Open callbacks worth showing on the board — closed history stays bounded. */
@@ -291,9 +277,8 @@ export async function getCallbackBoard(scope: Scope | null): Promise<CallbackBoa
     return {
       open: openRows.map((r) => mapRow(r, names, campaigns)),
       closed: closedRows.map((r) => mapRow(r, names, campaigns)),
-      completedCount: askedCount(doneRes),
+      completedCount: doneRes.count ?? 0,
       teamWide: orgWide,
-      openTruncated: openRows.length >= OPEN_MAX,
     };
   } catch (e) {
     console.error("[callbacks] getCallbackBoard failed:", e instanceof Error ? e.message : e);

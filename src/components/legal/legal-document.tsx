@@ -58,7 +58,7 @@ export function LegalDocument({
                 agreement.
               </p>
             </div>
-            <div className="prose prose-sm sm:prose-base mt-8 max-w-none space-y-5 leading-relaxed text-muted-foreground [&_h2]:mt-9 [&_h2]:text-lg [&_h2]:font-bold [&_h2]:tracking-tight [&_h2]:text-foreground [&_h3]:mt-6 [&_h3]:text-base [&_h3]:font-semibold [&_h3]:text-foreground [&_li]:mt-1 [&_p]:text-sm [&_p]:text-muted-foreground [&_ul]:list-disc [&_ul]:space-y-1.5 [&_ul]:pl-5 [&_ul]:text-sm">
+            <div className="prose prose-sm sm:prose-base mt-8 max-w-none space-y-5 leading-relaxed text-foreground/90 [&_h2]:mt-9 [&_h2]:text-lg [&_h2]:font-bold [&_h2]:tracking-tight [&_h2]:text-foreground [&_h3]:mt-6 [&_h3]:text-base [&_h3]:font-semibold [&_h3]:text-foreground [&_li]:mt-1 [&_p]:text-sm [&_p]:text-foreground/85 [&_ul]:list-disc [&_ul]:space-y-1.5 [&_ul]:pl-5 [&_ul]:text-sm">
               {children}
             </div>
           </>

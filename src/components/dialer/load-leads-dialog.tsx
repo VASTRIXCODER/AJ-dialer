@@ -1,11 +1,10 @@
 "use client";
 
 import { Check, CircleHelp, Layers, MapPin, Megaphone, PenLine, Users, X } from "lucide-react";
-import { SelectMenu } from "@/components/ui/select-menu";
 import { useMemo } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-
+import { Select } from "@/components/ui/input";
 import { Modal } from "@/components/ui/modal";
 import { applyLabelOverride } from "@/lib/leads/group-labels";
 import type { Lead } from "@/lib/types";
@@ -191,17 +190,18 @@ export function LoadLeadsDialog({
             <p className="mb-2 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
               <Megaphone className="h-3.5 w-3.5" /> Campaign
             </p>
-            <SelectMenu
-              label="Filter by campaign"
-              className="w-full"
-              triggerClassName="w-full"
+            <Select
               value={campaignFilter}
-              onChange={(v) => onCampaignFilterChange(v)}
-              options={[
-                { value: "", label: "All campaigns" },
-                ...campaigns.map((c) => ({ value: c.id, label: c.name })),
-              ]}
-            />
+              onChange={(e) => onCampaignFilterChange(e.target.value)}
+              aria-label="Filter by campaign"
+            >
+              <option value="">All campaigns</option>
+              {campaigns.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
+            </Select>
           </div>
         )}
       </div>

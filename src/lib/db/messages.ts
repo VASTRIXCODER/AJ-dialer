@@ -16,7 +16,6 @@ import type { ConsentScope } from "../consent/state";
 import type { OrgFull } from "../org/membership";
 import { createAdminClient, isAdminConfigured } from "../supabase/admin";
 import { count } from "../telemetry";
-import { orgTimezone } from "../metrics/definitions";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Messages, threads, and the context the send gate needs to judge one.
@@ -189,7 +188,7 @@ export async function buildSendContext(input: {
 }): Promise<SendContext> {
   const now = input.now ?? new Date();
   const messaging = input.org?.settings.messaging;
-  const orgTz = orgTimezone(input.org);
+  const orgTz = input.org?.timezone || "America/Chicago";
 
   // BOTH candidate zones, not a choice between them. See the gate: when they
   // disagree the message must be inside the window in each.
@@ -284,17 +283,11 @@ export async function countAcceptedSends(
     const admin = createAdminClient();
     // Keyed on the thread's contact digits rather than to_number, so duplicate
     // lead rows for one human cannot double their allowance.
-    const { data: threads, error: threadsErr } = await admin
+    const { data: threads } = await admin
       .from("message_threads")
       .select("id")
       .eq("org_id", orgId)
       .eq("contact_digits", digits);
-    // Fails CLOSED, like the count below it. This read was unchecked, so a
-    // resolved error produced no thread ids, the early return said "nothing
-    // sent today", and the per-contact cap read as completely unspent — the
-    // cap's own catch already returns MAX_SAFE_INTEGER for exactly this
-    // reason, and the first of its two reads was skipping that.
-    if (threadsErr) return Number.MAX_SAFE_INTEGER;
     const ids = ((threads ?? []) as Row[]).map((t) => s(t.id));
     if (!ids.length) return 0;
     const { count: c, error } = await admin
@@ -343,21 +336,14 @@ export async function isMessagingPaused(): Promise<boolean> {
   if (!isAdminConfigured()) return true;
   try {
     const admin = createAdminClient();
-    const { data, error } = await admin
+    const { data } = await admin
       .from("app_settings")
       .select("messaging_paused")
       .eq("id", "global")
       .maybeSingle();
-    // A read that FAILED is doubt, and the docstring above says what doubt
-    // means here. This returned `data?.messaging_paused === true` from an
-    // unchecked destructure, so a database incident — the exact situation the
-    // switch exists for — read as "not paused" and sending continued.
-    //
-    // A missing column or a missing row is different, and still reads as not
-    // paused: the switch has to be turned ON deliberately, and an unapplied
-    // migration must not silently stop a workspace that has messaging
-    // configured and enabled.
-    if (error) return true;
+    // Absent column or row reads as NOT paused — the switch has to be turned
+    // ON deliberately, and a missing migration must not silently stop a
+    // workspace that has messaging configured and enabled.
     return data?.messaging_paused === true;
   } catch {
     return true;
@@ -560,21 +546,14 @@ export async function cancelPendingMessagesForPhone(input: {
   if (!isAdminConfigured() || !input.orgId || !digits) return 0;
   try {
     const admin = createAdminClient();
-    const { data: threads, error: threadsErr } = await admin
+    const { data: threads } = await admin
       .from("message_threads")
       .select("id")
       .eq("org_id", input.orgId)
       .eq("contact_digits", digits);
-    // Returning 0 here made "the read failed" identical to "they had nothing
-    // pending" — so an inbound STOP could leave already-approved messages
-    // sitting in the queue and the drain would send them. The caller wraps
-    // this, so a throw is caught and, unlike a 0, is distinguishable.
-    if (threadsErr) {
-      throw new Error("Could not read this contact's threads to cancel pending messages");
-    }
     const ids = ((threads ?? []) as Row[]).map((t) => s(t.id));
     if (!ids.length) return 0;
-    const { data, error: cancelErr } = await admin
+    const { data } = await admin
       .from("messages")
       .update({
         status: "canceled",
@@ -586,11 +565,6 @@ export async function cancelPendingMessagesForPhone(input: {
       .in("thread_id", ids)
       .in("status", ["draft", "needs_approval", "approved", "queued"])
       .select("id");
-    // Same reasoning as the read above: a failed cancel that reports 0 is a
-    // STOP the product believes it honoured and did not.
-    if (cancelErr) {
-      throw new Error("Could not cancel this contact's pending messages");
-    }
     return (data ?? []).length;
   } catch {
     return 0;
@@ -864,5 +838,30 @@ export async function recordInboundMessage(input: {
   }
 }
 
-// hasInboundSince lived here. Its docstring asserted a role in the consent
-// model that it did not have, and nothing imported it.
+/**
+ * Has this person replied since `since`?
+ *
+ * The `replied` stop rule reads this. Kept here rather than in the engine so
+ * the engine imports nothing from the messaging layer — an architecture test
+ * enforces that separation, because the engine must not be able to send.
+ */
+export async function hasInboundSince(input: {
+  orgId: string;
+  leadId: string;
+  since: string;
+}): Promise<boolean> {
+  if (!isAdminConfigured() || !input.orgId) return false;
+  try {
+    const admin = createAdminClient();
+    const { count: c } = await admin
+      .from("messages")
+      .select("id", { count: "exact", head: true })
+      .eq("org_id", input.orgId)
+      .eq("lead_id", input.leadId)
+      .eq("direction", "inbound")
+      .gte("created_at", input.since);
+    return (c ?? 0) > 0;
+  } catch {
+    return false;
+  }
+}

@@ -180,6 +180,7 @@ export function FloorFilters({
       <DensityToggle
         value={density}
         onChange={onDensityChange}
+        storageKey="floor:density"
       />
     </div>
   );

@@ -70,7 +70,7 @@ export default async function LeadRecordPage({
         </Link>
         <div className="flex flex-wrap items-center gap-3 pt-1">
           <h1 className="text-2xl font-bold tracking-tight sm:text-[28px]">{name}</h1>
-          <Badge tone={status.tone} icon={status.icon}>{status.label}</Badge>
+          <Badge tone={status.tone}>{status.label}</Badge>
         </div>
         {panel.lead.phone && (
           <a

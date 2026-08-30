@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { Check, X } from "lucide-react";
+import { X } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -39,7 +39,7 @@ export function FilterChip({
   return (
     <span
       className={cn(
-        "inline-flex items-stretch overflow-hidden rounded-full text-xs font-semibold transition-colors duration-[var(--dur-state)]",
+        "inline-flex items-stretch overflow-hidden rounded-full text-xs font-semibold transition-colors duration-200",
         active
           ? "bg-primary-soft text-primary ring-1 ring-inset ring-primary/25"
           : "bg-muted text-muted-foreground ring-1 ring-inset ring-border/60 hover:bg-secondary hover:text-foreground",
@@ -55,18 +55,10 @@ export function FilterChip({
           showClear ? "pr-1.5" : "pr-2.5",
         )}
       >
-        {/* Active carries a CHECK, not only a blue tint. The two states were
-            the same radius, padding, weight and ring width, differing in fill
-            colour alone — so "which of these eight filters are on" was a
-            colour-discrimination task. */}
-        {active ? (
-          <Check className="h-3.5 w-3.5 shrink-0" aria-hidden />
-        ) : (
-          Icon && <Icon className="h-3.5 w-3.5 shrink-0" />
-        )}
-        <span className={active ? "font-bold" : undefined}>{label}</span>
+        {Icon && <Icon className="h-3.5 w-3.5 shrink-0" />}
+        <span>{label}</span>
         {value && (
-          <span className={cn("font-normal", active ? "text-primary/80" : "text-ink-3")}>
+          <span className={cn("font-normal", active ? "text-primary/80" : "text-muted-foreground/80")}>
             {value}
           </span>
         )}

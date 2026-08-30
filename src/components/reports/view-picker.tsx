@@ -4,8 +4,7 @@ import { Bookmark, BookmarkPlus, Loader2, Trash2, X } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { SelectMenu } from "@/components/ui/select-menu";
+import { Input, Select } from "@/components/ui/input";
 import { Tooltip } from "@/components/ui/tooltip";
 import {
   MAX_REPORT_VIEWS,
@@ -91,18 +90,24 @@ export function ReportViewPicker({
   return (
     <div className="flex flex-wrap items-center gap-1.5">
       {views.length > 0 && (
-        <SelectMenu
-          label="Saved report views"
-          placeholder="Saved views…"
-          size="sm"
-          triggerClassName="h-9 min-w-36"
-          value={active?.id ?? null}
-          onChange={(id) => {
-            const v = views.find((x) => x.id === id);
+        <Select
+          aria-label="Saved report views"
+          className="h-9 w-auto min-w-36 text-xs"
+          value={active?.id ?? ""}
+          onChange={(e) => {
+            const v = views.find((x) => x.id === e.target.value);
             if (v) router.push(reportViewHref(v.config));
           }}
-          options={views.map((v) => ({ value: v.id, label: v.name }))}
-        />
+        >
+          <option value="" disabled>
+            Saved views…
+          </option>
+          {views.map((v) => (
+            <option key={v.id} value={v.id}>
+              {v.name}
+            </option>
+          ))}
+        </Select>
       )}
 
       {canWrite && !naming && (

@@ -84,7 +84,6 @@ export default async function BillsFinePage({
           description={`${vocab.LeadNounPlural} who don't need you right now — worth revisiting when their situation changes.`}
         />
         <EmptyState
-          variant="page"
           icon={CheckCircle2}
           title={`Nothing set aside yet`}
           description={`When a rep or the AI agent marks a ${vocab.leadNoun} as “${vocab.noNeedLabel}”, they'll appear here for follow-up.`}
@@ -135,53 +134,17 @@ export default async function BillsFinePage({
       </PageHeader>
 
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-        <MetricCard
-          label="Total"
-          value={total === null ? null : String(total)}
-          unavailable="Couldn't count this list"
-          window="current"
-          scope={teamWide ? "org" : "me"}
-          icon={CheckCircle2}
-          accent="warning"
-        />
-        <MetricCard
-          // BOTH money fields have to be positive for a lead to be in here —
-          // the old label implied one. `withBills` is `number | null` so a
-          // failed count can say so; `String(null)` is the string "null", which
-          // MetricCard cannot parse and therefore rendered verbatim, in 40px
-          // tabular numerals, where a count should be.
-          label={`With ${primaryLabel.toLowerCase()} and payment`}
-          value={withBills === null ? null : String(withBills)}
-          unavailable="Couldn't count these"
-          window="current"
-          scope={teamWide ? "org" : "me"}
-          icon={Zap}
-          accent="accent"
-        />
+        <MetricCard label="Total" value={String(total)} icon={CheckCircle2} accent="warning" />
+        <MetricCard label={`With ${primaryLabel.toLowerCase()} data`} value={String(withBills)} icon={Zap} accent="accent" />
         <MetricCard
           label="Avg monthly spend"
-          // null, not a dash. Handing MetricCard the string "—" makes `value`
-          // truthy, so the card takes its normal path and `unavailable` — the
-          // line that would say WHY there is no number — becomes unreachable.
           value={
-            avgEnergyCost && avgEnergyCost > 0 ? formatCurrency(Math.round(avgEnergyCost)) : null
+            avgEnergyCost && avgEnergyCost > 0 ? formatCurrency(Math.round(avgEnergyCost)) : "—"
           }
-          unavailable="No leads here have both figures on file"
-          window="current"
-          scope={teamWide ? "org" : "me"}
           icon={Zap}
           accent="success"
         />
-        {/* "Ready to re-dial" used to live here, rendering `String(total)` —
-            byte-for-byte the same expression as the Total tile two cards to the
-            left. Two of the four KPIs on this screen always printed the
-            identical number under different labels, and the second label made a
-            claim about dialability that the query never checked: not phone
-            validity, not DNC, not the attempt cap, not the calling window. It
-            is gone rather than renamed. The number that belongs here is a real
-            eligibility count, and the app already knows how to compute one
-            (src/lib/db/my-day.ts's who-next ladder) — wiring that is a
-            different change from removing a tile that was lying. */}
+        <MetricCard label="Ready to re-dial" value={String(total)} icon={Phone} accent="primary" />
       </div>
 
       <Card className="overflow-hidden">
@@ -196,7 +159,7 @@ export default async function BillsFinePage({
           </div>
           {/* GET form: submitting replaces the query string, resetting to page 1. */}
           <form method="get" action="/bills-fine" className="relative w-full sm:w-72">
-            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-3" />
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground/70" />
             <Input
               type="search"
               name="q"

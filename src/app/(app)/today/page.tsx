@@ -1,6 +1,5 @@
 import {
   AlarmClock,
-  AlertTriangle,
   CalendarCheck,
   CheckCircle2,
   ClipboardList,
@@ -20,7 +19,6 @@ import { buttonVariants } from "@/components/ui/button";
 import { SectionCard } from "@/components/shared/section-card";
 import { floatingRelativeTime } from "@/lib/appointments/time";
 import { dialDeepLink } from "@/lib/dialer/deep-link";
-import { sumKnown } from "@/lib/db/counts";
 import { getMyDay, type MyDayData } from "@/lib/db/my-day";
 import { getScope } from "@/lib/db/scope";
 import { orgTimezone } from "@/lib/metrics/definitions";
@@ -60,7 +58,6 @@ export default async function TodayPage() {
           description="Your working queue for today — callbacks, tasks, signals and appointments in one place."
         />
         <EmptyState
-          variant="page"
           icon={Sunrise}
           title="Nothing queued yet"
           description={`Load ${vocab.leadNounPlural} into the dialer to start building your day.`}
@@ -91,19 +88,9 @@ export default async function TodayPage() {
   const ApptPlural =
     vocab.appointmentNounPlural.charAt(0).toUpperCase() +
     vocab.appointmentNounPlural.slice(1);
-  // The callback counts are `number | null`, where null means the read failed.
-  // `null + null + null === 0` is TRUE in JavaScript, so summing them directly
-  // told a rep "nothing is waiting on you" precisely when the app had no idea
-  // what was waiting on them. Never claim silence we could not verify.
-  const cb = sumKnown([callbacks.overdue, callbacks.dueToday, callbacks.unscheduled]);
-  const has = (v: number | null) => v !== null && v > 0;
-  /** A count the tile can render, or null so it shows an em dash. */
-  const num = (v: number | null) => (v === null ? null : String(v));
-  const UNREAD = "Couldn't read this count — it is not necessarily zero.";
   const nothingWaiting =
     !whoNext &&
-    cb.total === 0 &&
-    cb.unknown === 0 &&
+    callbacks.overdue + callbacks.dueToday + callbacks.unscheduled === 0 &&
     workItems.open === 0 &&
     signals.length === 0 &&
     appointmentsToday.count === 0;
@@ -141,7 +128,7 @@ export default async function TodayPage() {
       {whoNext && (
         <SectionCard
           title="Who should I call next?"
-          description="Picked from your promises and signals — never anyone on the Do-Not-Call list, outside their OWN local calling hours, or held by another rep."
+          description="Picked from your promises and signals — never anyone on the Do-Not-Call list, outside calling hours, or held by another rep."
         >
           <div className="flex flex-wrap items-center gap-3">
             <div className="min-w-0 flex-1">
@@ -169,7 +156,6 @@ export default async function TodayPage() {
 
       {nothingWaiting && (
         <EmptyState
-          variant="page"
           icon={CheckCircle2}
           title="Nothing is waiting on you"
           description={`No callbacks due, no open tasks, no hot signals. Load ${vocab.leadNounPlural} into the dialer to keep the day moving.`}
@@ -177,42 +163,30 @@ export default async function TodayPage() {
       )}
 
       {/* Start here — the queues with your name on them. Empty ones collapse. */}
-      {(has(callbacks.overdue) ||
-        has(callbacks.dueToday) ||
-        has(callbacks.unscheduled) ||
-        cb.unknown > 0 ||
-        has(workItems.open) ||
+      {(callbacks.overdue > 0 ||
+        callbacks.dueToday > 0 ||
+        callbacks.unscheduled > 0 ||
+        workItems.open > 0 ||
         signals.length > 0) && (
         <div className="grid gap-4 lg:grid-cols-2">
-          {(has(callbacks.overdue) ||
-            has(callbacks.dueToday) ||
-            has(callbacks.unscheduled) ||
-            cb.unknown > 0) && (
+          {(callbacks.overdue > 0 || callbacks.dueToday > 0 || callbacks.unscheduled > 0) && (
             <SectionCard
               title="Your callbacks"
               description="Promises with your name on them · today"
             >
               <div className="mb-3 flex flex-wrap gap-2">
-                {has(callbacks.overdue) && (
+                {callbacks.overdue > 0 && (
                   <Badge tone="danger" className="gap-1">
                     <AlarmClock className="h-3 w-3" /> {callbacks.overdue} overdue
                   </Badge>
                 )}
-                {has(callbacks.dueToday) && (
+                {callbacks.dueToday > 0 && (
                   <Badge tone="warning" className="gap-1">
                     <PhoneIncoming className="h-3 w-3" /> {callbacks.dueToday} due later today
                   </Badge>
                 )}
-                {has(callbacks.unscheduled) && (
+                {callbacks.unscheduled > 0 && (
                   <Badge tone="neutral">{callbacks.unscheduled} without a time</Badge>
-                )}
-                {cb.unknown > 0 && (
-                  // Say the count is missing rather than render nothing, which
-                  // would read as "none".
-                  <Badge tone="warning" className="gap-1">
-                    <AlertTriangle className="h-3 w-3" />
-                    {cb.unknown === 1 ? "1 count" : `${cb.unknown} counts`} couldn&apos;t be read
-                  </Badge>
                 )}
               </div>
               <ul className="space-y-2">
@@ -243,7 +217,7 @@ export default async function TodayPage() {
             </SectionCard>
           )}
 
-          {(has(workItems.open) || signals.length > 0) && (
+          {(workItems.open > 0 || signals.length > 0) && (
             <SectionCard
               title="Tasks & signals"
               description="Open work and live alerts on your book"
@@ -285,10 +259,7 @@ export default async function TodayPage() {
                   ))}
                 </ul>
               )}
-              {/* "+N more" is derived from the exact count, so it must not be
-                  derived from a null one — that would print "+NaN more open
-                  tasks". The count query failing is said once, in the tile. */}
-              {workItems.open !== null && workItems.open > workItems.items.length && (
+              {workItems.open > workItems.items.length && (
                 <p className="mt-2 text-xs text-muted-foreground">
                   +{workItems.open - workItems.items.length} more open task
                   {workItems.open - workItems.items.length === 1 ? "" : "s"}
@@ -300,7 +271,7 @@ export default async function TodayPage() {
       )}
 
       {/* Appointments today. */}
-      {has(appointmentsToday.count) && (
+      {appointmentsToday.count > 0 && (
         <SectionCard
           title={`${ApptPlural} today`}
           description={`${appointmentsToday.count} on your calendar · today`}
@@ -368,57 +339,26 @@ export default async function TodayPage() {
       {/* End-of-day readout — always rendered: real zeros are information here,
           and the scope + window are on the card ("You · today"). */}
       <div>
-        {/* The heading used to be the only place the window and the scope were
-            stated, so all four tiles had an empty caption line and lost their
-            meaning the moment one was screenshotted or drilled into. Each tile
-            says it for itself now. */}
         <p className="mb-3 text-xs font-bold uppercase tracking-wide text-muted-foreground">
-          Today so far
+          Today so far · you · org time
         </p>
         <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-          <MetricCard
-            label="Dials"
-            value={num(today.dials)}
-            unavailable={UNREAD}
-            definitionKey="calls_today"
-            window="today"
-            scope="me"
-            icon={Phone}
-            accent="accent"
-          />
+          <MetricCard label="Dials" value={String(today.dials)} icon={Phone} accent="accent" />
           <MetricCard
             label="Conversations"
-            value={num(today.conversations)}
-            unavailable={UNREAD}
-            definitionKey="human_connects"
-            window="today"
-            scope="me"
+            value={String(today.conversations)}
             icon={PhoneCall}
             accent="success"
           />
           <MetricCard
-            // Call outcomes, not rows in the appointments table — a different
-            // quantity from the dashboard's "Appointments", and now labelled
-            // as one rather than sharing its name.
             label={`${ApptPlural} booked`}
-            value={num(today.appointments)}
-            unavailable={UNREAD}
-            definitionKey="appointment_outcomes"
-            window="today"
-            scope="me"
+            value={String(today.appointments)}
             icon={CalendarCheck}
             accent="warning"
           />
           <MetricCard
             label="Talk time"
-            // 0:00 is a real reading — a rep who has dialed all morning and
-            // connected with nobody. It must not also be what a failed read
-            // looks like, which is what `talkSec` folding to 0 made it.
-            value={today.talkSec === null ? null : formatDuration(today.talkSec)}
-            unavailable={UNREAD}
-            definitionKey="talk_time_total"
-            window="today"
-            scope="me"
+            value={today.talkSec > 0 ? formatDuration(today.talkSec) : "0:00"}
             icon={Timer}
             accent="accent"
           />

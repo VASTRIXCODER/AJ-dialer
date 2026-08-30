@@ -1,5 +1,6 @@
+import { CONNECTED_OUTCOMES } from "./call-analytics";
 import { DIALABLE_STATUSES } from "./leads/dialable";
-import { isConnectedRecord } from "./metrics/definitions";
+import type { CallOutcome } from "./types";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Pure per-campaign aggregation — lead pipeline + call performance keyed by
@@ -9,34 +10,7 @@ import { isConnectedRecord } from "./metrics/definitions";
 
 type Row = Record<string, unknown>;
 
-/**
- * How many real rows one input row stands for.
- *
- * These functions used to be fed the lead and call rows themselves, which meant
- * fetching them — and the fetch was capped (20,000 call records against a
- * PostgREST page ceiling, ordered by a `gen_random_uuid()` primary key, so the
- * sample was not merely partial but arbitrary). Measured: 34,079 call records,
- * of which about 59% arrived, rendered as six confident totals and a funnel.
- *
- * The counting now happens in SQL — app_campaign_stats — and each row that
- * arrives carries `n`. Absent means one, so every existing caller and test is
- * unchanged, and the CLASSIFICATION rules below stay the only copy.
- */
-const weight = (r: Row): number => {
-  const n = Number(r.n ?? 1);
-  return Number.isFinite(n) && n > 0 ? n : 0;
-};
-
-const sum = (rows: Row[]): number => rows.reduce((t, r) => t + weight(r), 0);
-
 const DIALABLE: ReadonlySet<string> = new Set(DIALABLE_STATUSES);
-
-/** One connect definition, shared with every other surface in the product. */
-const isConnected = (c: Row): boolean =>
-  isConnectedRecord({
-    outcome: (c.outcome ?? null) as string | null,
-    humanConnected: (c.human_connected ?? null) as boolean | null,
-  });
 const pct = (n: number, d: number) => (d > 0 ? Math.round((n / d) * 1000) / 10 : 0);
 
 export interface CampaignStats {
@@ -66,10 +40,9 @@ export function emptyStats(): CampaignStats {
 }
 
 /**
- * Compute stats for one campaign from lead + call rows.
- *
+ * Compute stats for one campaign from already-fetched lead + call rows.
  * `leads` rows need { campaign_id, status }; `calls` rows need
- * { campaign_id, outcome }. Either may carry `n` — see `weight`.
+ * { campaign_id, outcome }.
  */
 export function statsForCampaign(
   campaignId: string,
@@ -78,20 +51,15 @@ export function statsForCampaign(
 ): CampaignStats {
   const myLeads = leads.filter((l) => String(l.campaign_id ?? "") === campaignId);
   const myCalls = calls.filter((c) => String(c.campaign_id ?? "") === campaignId);
-  const totalLeads = sum(myLeads);
-  const dialableLeads = sum(myLeads.filter((l) => DIALABLE.has(String(l.status))));
-  // `last_contacted_at`, not `status !== "new"`. The status test counted a
-  // lead imported straight onto the do-not-call list as somebody the floor had
-  // spoken to, and missed a contacted lead that was reset to "new" for a retry.
-  // It is the same signal classifyLeadBucket uses to tell untouched from
-  // in-progress, so the two screens now agree.
-  const contactedLeads = sum(myLeads.filter((l) => Boolean(l.contacted)));
-  const calls_ = sum(myCalls);
-  // Through isConnectedRecord — the one definition of "connected" in the
-  // product. This was the only connect rate that did not go through it, and it
-  // ignored `human_connected` entirely.
-  const connects = sum(myCalls.filter(isConnected));
-  const appointments = sum(myCalls.filter((c) => c.outcome === "appointment_booked"));
+  const totalLeads = myLeads.length;
+  const dialableLeads = myLeads.filter((l) => DIALABLE.has(String(l.status))).length;
+  const contactedLeads = myLeads.filter((l) => String(l.status ?? "new") !== "new").length;
+  const calls_ = myCalls.length;
+  const connects = myCalls.filter((c) => {
+    const o = c.outcome as CallOutcome | null;
+    return o != null && CONNECTED_OUTCOMES.has(o);
+  }).length;
+  const appointments = myCalls.filter((c) => c.outcome === "appointment_booked").length;
   return {
     totalLeads,
     dialableLeads,
@@ -127,9 +95,12 @@ export function emptyVariantStats(): ScriptVariantStats {
 }
 
 function variantStats(rows: Row[]): ScriptVariantStats {
-  const calls = sum(rows);
-  const connects = sum(rows.filter(isConnected));
-  const appointments = sum(rows.filter((c) => c.outcome === "appointment_booked"));
+  const calls = rows.length;
+  const connects = rows.filter((c) => {
+    const o = c.outcome as CallOutcome | null;
+    return o != null && CONNECTED_OUTCOMES.has(o);
+  }).length;
+  const appointments = rows.filter((c) => c.outcome === "appointment_booked").length;
   return {
     calls,
     connects,

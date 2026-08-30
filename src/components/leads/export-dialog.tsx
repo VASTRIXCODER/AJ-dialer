@@ -13,8 +13,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useVocabulary } from "@/components/layout/vocabulary";
 import { Button } from "@/components/ui/button";
 import { useConfirm } from "@/components/ui/confirm-dialog";
-import { Input, Label } from "@/components/ui/input";
-import { SelectMenu } from "@/components/ui/select-menu";
+import { Input, Label, Select } from "@/components/ui/input";
 import { Modal } from "@/components/ui/modal";
 import { useToast } from "@/components/ui/toast";
 import {
@@ -393,7 +392,7 @@ export function ExportDialog({
                           >
                             <input
                               type="checkbox"
-                              className="h-[22px] w-[22px] rounded border-border"
+                              className="h-4 w-4 rounded border-border"
                               checked={selectedKeys.has(key)}
                               onChange={() => toggle(key)}
                             />
@@ -409,7 +408,7 @@ export function ExportDialog({
               <div>
                 <Label>
                   Columns &amp; headers{" "}
-                  <span className="normal-case tracking-normal text-ink-3 tabular">
+                  <span className="normal-case tracking-normal text-muted-foreground/80 tabular">
                     ({columns.length}/{EXPORT_MAX_COLUMNS})
                   </span>
                 </Label>
@@ -469,51 +468,43 @@ export function ExportDialog({
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
               <div>
                 <Label>Delimiter</Label>
-                <SelectMenu
-                  label="Delimiter"
-                  className="w-full"
-                  triggerClassName="w-full"
+                <Select
                   value={format.delimiter === "\t" ? "tab" : format.delimiter}
-                  onChange={(v) =>
+                  onChange={(e) =>
                     setFormat((f) => ({
                       ...f,
-                      delimiter: v === "tab" ? "\t" : (v as "," | ";"),
+                      delimiter: e.target.value === "tab" ? "\t" : (e.target.value as "," | ";"),
                     }))
                   }
-                  options={[
-                    { value: ",", label: "Comma (,)" },
-                    { value: ";", label: "Semicolon (;)" },
-                    { value: "tab", label: "Tab" },
-                  ]}
-                />
+                >
+                  <option value=",">Comma (,)</option>
+                  <option value=";">Semicolon (;)</option>
+                  <option value="tab">Tab</option>
+                </Select>
               </div>
               <div>
                 <Label>Dates</Label>
-                <SelectMenu
-                  label="Dates"
-                  className="w-full"
-                  triggerClassName="w-full"
+                <Select
                   value={format.dateFormat}
-                  onChange={(v) => setFormat((f) => ({ ...f, dateFormat: v as "iso" | "us" }))}
-                  options={[
-                    { value: "iso", label: "ISO (2026-08-28)" },
-                    { value: "us", label: "US (08/28/2026)" },
-                  ]}
-                />
+                  onChange={(e) =>
+                    setFormat((f) => ({ ...f, dateFormat: e.target.value as "iso" | "us" }))
+                  }
+                >
+                  <option value="iso">ISO (2026-08-28)</option>
+                  <option value="us">US (08/28/2026)</option>
+                </Select>
               </div>
               <div>
                 <Label>Empty cells</Label>
-                <SelectMenu
-                  label="Empty cells"
-                  className="w-full"
-                  triggerClassName="w-full"
+                <Select
                   value={format.nullAs === "—" ? "dash" : "blank"}
-                  onChange={(v) => setFormat((f) => ({ ...f, nullAs: v === "dash" ? "—" : "" }))}
-                  options={[
-                    { value: "blank", label: "Blank" },
-                    { value: "dash", label: "— (em dash)" },
-                  ]}
-                />
+                  onChange={(e) =>
+                    setFormat((f) => ({ ...f, nullAs: e.target.value === "dash" ? "—" : "" }))
+                  }
+                >
+                  <option value="blank">Blank</option>
+                  <option value="dash">— (em dash)</option>
+                </Select>
               </div>
               <div>
                 <Label>Timezone</Label>
@@ -528,7 +519,7 @@ export function ExportDialog({
             <label className="flex w-fit items-center gap-2 text-sm text-muted-foreground">
               <input
                 type="checkbox"
-                className="h-[22px] w-[22px] rounded border-border"
+                className="h-4 w-4 rounded border-border"
                 checked={format.bom}
                 onChange={(e) => setFormat((f) => ({ ...f, bom: e.target.checked }))}
               />

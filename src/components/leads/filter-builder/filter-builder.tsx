@@ -3,8 +3,7 @@
 import * as React from "react";
 import { ListFilter, Plus, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { SelectMenu } from "@/components/ui/select-menu";
+import { Input, Select } from "@/components/ui/input";
 import type { LeadFieldDef } from "@/lib/leads/field-schema";
 import type {
   FilterCmp,
@@ -198,15 +197,18 @@ function ConditionValue({
   const str = typeof cond.value === "string" ? cond.value : "";
   if (cond.cmp === "eq" || cond.cmp === "neq") {
     const selectFor = (options: { value: string; label: string }[], name: string) => (
-      <SelectMenu
-        label={name}
-        size="sm"
-        className="min-w-[9rem] flex-1"
-        triggerClassName="h-9 w-full"
-        value={str || null}
-        onChange={(v) => onValue(v)}
-        options={options}
-      />
+      <Select
+        aria-label={name}
+        className="h-9 min-w-[9rem] flex-1 py-1.5"
+        value={str}
+        onChange={(e) => onValue(e.target.value)}
+      >
+        {options.map((o) => (
+          <option key={o.value} value={o.value}>
+            {o.label}
+          </option>
+        ))}
+      </Select>
     );
     if (field.input === "status") return selectFor(statusOptions, "Status value");
     if (field.input === "campaign")
@@ -369,7 +371,7 @@ export function FilterBuilder({
         return (
           <React.Fragment key={gi}>
             {gi > 0 && (
-              <div className="text-center text-[11px] font-bold uppercase tracking-widest text-ink-3">
+              <div className="text-center text-[10px] font-bold uppercase tracking-widest text-muted-foreground/70">
                 {spec.op}
               </div>
             )}
@@ -398,41 +400,43 @@ export function FilterBuilder({
                   const field = fieldOptionFor(catalog, cond);
                   return (
                     <div key={ci} className="flex flex-wrap items-center gap-1.5">
-                      {/* SelectMenu has no optgroup, so the group name rides
-                          along as each option's hint — the same information,
-                          on the line under the label, and it survives the
-                          type-ahead that optgroup labels never participated
-                          in anyway. */}
-                      <SelectMenu
-                        label="Field"
-                        placeholder="Unknown field"
-                        size="sm"
-                        className="w-full sm:w-44"
-                        triggerClassName="h-9 w-full"
-                        value={field?.id ?? null}
-                        onChange={(v) => changeField(gi, ci, v)}
-                        options={(["standard", "custom", "activity"] as const).flatMap((g) =>
-                          (grouped.get(g) ?? []).map((f) => ({
-                            value: f.id,
-                            label: f.label,
-                            hint: FIELD_GROUP_LABELS[g],
-                          })),
-                        )}
-                      />
+                      <Select
+                        aria-label="Field"
+                        className="h-9 w-full py-1.5 sm:w-44"
+                        value={field?.id ?? ""}
+                        onChange={(e) => changeField(gi, ci, e.target.value)}
+                      >
+                        {!field && <option value="">Unknown field</option>}
+                        {(["standard", "custom", "activity"] as const).map((g) => {
+                          const opts = grouped.get(g);
+                          if (!opts?.length) return null;
+                          return (
+                            <optgroup key={g} label={FIELD_GROUP_LABELS[g]}>
+                              {opts.map((f) => (
+                                <option key={f.id} value={f.id}>
+                                  {f.label}
+                                </option>
+                              ))}
+                            </optgroup>
+                          );
+                        })}
+                      </Select>
                       {field && (
                         <>
-                          <SelectMenu
-                            label="Operator"
-                            size="sm"
-                            className="w-full sm:w-40"
-                            triggerClassName="h-9 w-full"
+                          <Select
+                            aria-label="Operator"
+                            className="h-9 w-full py-1.5 sm:w-40"
                             value={cond.cmp}
-                            onChange={(v) => changeCmp(gi, ci, field, v as FilterCmp)}
-                            options={cmpsFor(field.family).map((c) => ({
-                              value: c as string,
-                              label: CMP_LABELS[c],
-                            }))}
-                          />
+                            onChange={(e) =>
+                              changeCmp(gi, ci, field, e.target.value as FilterCmp)
+                            }
+                          >
+                            {cmpsFor(field.family).map((c) => (
+                              <option key={c} value={c}>
+                                {CMP_LABELS[c]}
+                              </option>
+                            ))}
+                          </Select>
                           <ConditionValue
                             field={field}
                             cond={cond}

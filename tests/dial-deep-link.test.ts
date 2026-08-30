@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { deepLinkChannel, dialDeepLink } from "../src/lib/dialer/deep-link";
+import { dialDeepLink } from "../src/lib/dialer/deep-link";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The dialer deep link. Two invariants worth a test:
@@ -60,56 +60,5 @@ describe("dialDeepLink", () => {
   it("degrades to the plain dialer when there is no number", () => {
     expect(dialDeepLink({ phone: "", name: "Ana" })).toBe("/dialer");
     expect(dialDeepLink({ phone: "   " })).toBe("/dialer");
-  });
-});
-
-// ─────────────────────────────────────────────────────────────────────────────
-// …and who places the call once the link is followed.
-//
-// The bug: the auto-dial bailed out silently whenever the dialer was in AI mode
-// — which is the BOOT mode on every AI-configured workspace. The rep pressed
-// "Call" on a person they had just searched for, landed on a dialer sitting
-// under a "Dialing now…" banner that described nothing, and did the natural
-// thing: pressed Start. Start opens a session on whoever the loaded queue is
-// parked on. A completely different person answered.
-// ─────────────────────────────────────────────────────────────────────────────
-
-describe("deepLinkChannel — who is going to dial this number", () => {
-  it("uses manual dialing whenever the workspace allows it", () => {
-    // Even on an AI-configured workspace booting into AI mode: the rep is at
-    // the keyboard, having just pressed Call on one specific person.
-    expect(
-      deepLinkChannel({ manualEnabled: true, aiAgentConfigured: true, aiEnabled: true }),
-    ).toBe("manual");
-    expect(
-      deepLinkChannel({ manualEnabled: true, aiAgentConfigured: false, aiEnabled: false }),
-    ).toBe("manual");
-  });
-
-  it("hands an AI-only workspace's link to the agent", () => {
-    expect(
-      deepLinkChannel({ manualEnabled: false, aiAgentConfigured: true, aiEnabled: true }),
-    ).toBe("ai");
-  });
-
-  it("says nobody can dial it rather than promising a hand-off that never happens", () => {
-    // Real states: an AI-only workspace whose agent isn't wired up yet, and one
-    // whose plan lapsed. Both used to sit forever under "Handing this number to
-    // the AI agent…".
-    expect(
-      deepLinkChannel({ manualEnabled: false, aiAgentConfigured: false, aiEnabled: true }),
-    ).toBe("none");
-    expect(
-      deepLinkChannel({ manualEnabled: false, aiAgentConfigured: true, aiEnabled: false }),
-    ).toBe("none");
-  });
-
-  it("never returns a channel the workspace has switched off", () => {
-    for (const aiAgentConfigured of [true, false]) {
-      for (const aiEnabled of [true, false]) {
-        const channel = deepLinkChannel({ manualEnabled: false, aiAgentConfigured, aiEnabled });
-        expect(channel).not.toBe("manual");
-      }
-    }
   });
 });

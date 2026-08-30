@@ -85,7 +85,7 @@ export function leadToFilterShape(lead: Lead): LeadForFilter {
     state: lead.state,
     county: lead.county ?? null,
     zip: lead.zip,
-    timezone: lead.timezone ?? "",
+    timezone: lead.timezone,
     status: lead.status,
     campaignId: lead.campaignId,
     leadGroup: lead.leadGroup ?? null,

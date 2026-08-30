@@ -16,7 +16,6 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { cn, relativeTime } from "@/lib/utils";
-import { SelectMenu } from "@/components/ui/select-menu";
 
 interface Pack {
   id: string;
@@ -133,7 +132,7 @@ export function LeadPacksPanel({ members }: { members: { id: string; name: strin
                   type="checkbox"
                   checked={onlyUnassigned}
                   onChange={(e) => setOnlyUnassigned(e.target.checked)}
-                  className="h-[22px] w-[22px] rounded border-input accent-primary"
+                  className="h-3.5 w-3.5 rounded border-input accent-primary"
                 />
                 Only unassigned ({unassignedCount})
               </label>
@@ -179,34 +178,28 @@ export function LeadPacksPanel({ members }: { members: { id: string; name: strin
                             <Badge tone="neutral">Unassigned</Badge>
                           )}
                         </p>
-                        {/* The counted total is authoritative — it is what the
-                            progress bar is a share of, and `size` is the
-                            allocation the pack was cut at, which drifts the
-                            moment a lead is reassigned or deleted. This used to
-                            read `p.progress.total || p.size`, which only fell
-                            back at zero: back when the count was truncated, a
-                            wrong nonzero total beat the stored one. */}
                         <p className="mt-0.5 text-xs text-muted-foreground">
-                          {p.progress.total} lead{p.progress.total === 1 ? "" : "s"}
+                          {p.progress.total || p.size} lead
+                          {(p.progress.total || p.size) === 1 ? "" : "s"}
                           {p.assignedAt ? ` · handed over ${relativeTime(p.assignedAt)}` : ""}
                         </p>
                       </div>
 
                       <div className="flex items-center gap-2">
-                        <SelectMenu
-                          label={`Assign ${p.label || `pack ${p.seq}`} to`}
-                          placeholder="Assign to…"
-                          size="sm"
-                          triggerClassName="h-9"
-                          value={p.assignedTo ?? null}
+                        <select
+                          value={p.assignedTo ?? ""}
                           disabled={busy === p.id}
-                          disabledReason="Saving…"
-                          onChange={(v) => assign(p.id, v || null)}
-                          options={members.map((m) => ({
-                            value: m.id,
-                            label: m.name || "Teammate",
-                          }))}
-                        />
+                          onChange={(e) => assign(p.id, e.target.value || null)}
+                          aria-label={`Assign ${p.label || `pack ${p.seq}`} to`}
+                          className="h-9 rounded-lg border border-border bg-background/60 px-2.5 text-sm font-medium focus-visible:border-primary/50 focus-visible:outline-none disabled:opacity-50"
+                        >
+                          <option value="">Assign to…</option>
+                          {members.map((m) => (
+                            <option key={m.id} value={m.id}>
+                              {m.name || "Teammate"}
+                            </option>
+                          ))}
+                        </select>
                         {p.assignedTo && (
                           <Button
                             variant="outline"

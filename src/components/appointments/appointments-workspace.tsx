@@ -1,7 +1,6 @@
 "use client";
 
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
-import { SelectMenu } from "@/components/ui/select-menu";
 import {
   AlertTriangle,
   CalendarCheck,
@@ -26,11 +25,10 @@ import {
 import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useMemo, useState } from "react";
 import { MetricCard } from "@/components/dashboard/metric-card";
-import { useDensity } from "@/components/layout/density";
 import { OutcomeGrid } from "@/components/dialer/outcome-grid";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-
+import { Select } from "@/components/ui/input";
 import { Modal } from "@/components/ui/modal";
 import { Portal } from "@/components/ui/portal";
 import { bucketOf, matchesFilters, organizeAppointments } from "@/lib/appointments-organize";
@@ -62,8 +60,6 @@ import {
   type ViewKey,
 } from "./shared";
 import { useAppointmentDrag } from "./use-appointment-drag";
-import { Z } from "@/lib/z-layers";
-import { DensityToggle } from "@/components/ui/density-toggle";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The appointments workspace. Four views over one dataset:
@@ -124,11 +120,7 @@ export function AppointmentsWorkspace({
     const d = urlDate ? parseFloating(`${urlDate}T00:00:00`) : null;
     return d ?? startOfDay(new Date());
   });
-  // A fourth copy of the density preference used to live here, under
-  // `preferences.appointments.density`, saved only when the rep pressed "Save
-  // as default". It is the workspace setting now — one place, applied the
-  // moment it changes, and it follows them to their other machine.
-  const { density, setDensity } = useDensity();
+  const [density, setDensity] = useState<Density>(prefs.density ?? "comfortable");
   const [source, setSource] = useState<SourceFilter>(prefs.source ?? "all");
   const [sort, setSort] = useState<SortKey>(prefs.sort ?? "smart");
   const [rep, setRep] = useState<string>("all");
@@ -149,25 +141,19 @@ export function AppointmentsWorkspace({
   // moves when you type in a search box isn't a KPI.
   const kpi = useMemo(() => {
     let review = 0;
-    let overdue = 0;
     let upcoming = 0;
     let completed = 0;
     let noShow = 0;
     for (const a of appts) {
       const b = bucketOf(a);
       if (b === "review") review += 1;
-      // Overdue is counted on its own and kept OUT of "upcoming". It used to be
-      // folded in, so an appointment whose time had already passed was reported
-      // under the caption "Scheduled ahead" — the one bucket that most needs
-      // someone to act on it was hidden inside the number that says nothing
-      // needs doing yet.
-      if (b === "overdue") overdue += 1;
-      if (b === "today" || b === "tomorrow" || b === "week" || b === "later") upcoming += 1;
+      if (b === "overdue" || b === "today" || b === "tomorrow" || b === "week" || b === "later")
+        upcoming += 1;
       if (a.status === "completed") completed += 1;
       if (a.status === "no_show") noShow += 1;
     }
     const showRate = completed + noShow ? Math.round((completed / (completed + noShow)) * 100) : 0;
-    return { review, overdue, upcoming, completed, showRate };
+    return { review, upcoming, completed, showRate };
   }, [appts]);
 
   const buckets = useMemo(() => {
@@ -275,9 +261,7 @@ export function AppointmentsWorkspace({
       const res = await fetch("/api/profile", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        // Density is deliberately NOT in here: it is a workspace setting that
-        // saves itself, not one of this screen's remembered defaults.
-        body: JSON.stringify({ preferences: { appointments: { view, source, sort } } }),
+        body: JSON.stringify({ preferences: { appointments: { view, density, source, sort } } }),
       });
       if (res.ok) {
         setSavedDefault(true);
@@ -286,7 +270,7 @@ export function AppointmentsWorkspace({
     } catch {
       /* non-fatal */
     }
-  }, [view, source, sort]);
+  }, [view, density, source, sort]);
 
   // ── navigation ─────────────────────────────────────────────────────────────
   const step = useCallback(
@@ -351,52 +335,30 @@ export function AppointmentsWorkspace({
 
       <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
         <MetricCard
-          // Deliberately unkeyed. /callbacks has a heading with this exact
-          // label counting OPEN call_review_queue rows — a different table
-          // entirely. Two screens sharing a label is bad enough; sharing a
-          // glossary entry would assert they are the same number.
           label="Needs review"
           value={String(kpi.review)}
-          scope={access.canManage ? "org" : "me"}
-          window="current"
-          // "All caught up" was a claim about the whole workspace made by a tile
-          // that only ever counted one bucket — it read as reassurance while
-          // appointments sat overdue two tiles away. The caption now says only
-          // what this number actually measures.
-          sub={kpi.review ? "Awaiting approval" : "None waiting"}
+          sub={kpi.review ? "Awaiting approval" : "All caught up"}
           icon={Sparkles}
           accent={kpi.review ? "warning" : "success"}
         />
         <MetricCard
           label="Upcoming"
           value={String(kpi.upcoming)}
-          // Also unkeyed, and for the same reason: /callbacks has an "Upcoming"
-          // that counts open callbacks with any future due time, where this
-          // counts appointments in a bounded today→+7d→later window.
-          sub={
-            kpi.overdue
-              ? `${kpi.overdue} already overdue`
-              : "scheduled ahead"
-          }
-          window="current"
-          scope={access.canManage ? "org" : "me"}
+          sub="Scheduled ahead"
           icon={CalendarClock}
-          accent={kpi.overdue ? "warning" : "accent"}
+          accent="accent"
         />
         <MetricCard
           label="Completed"
           value={String(kpi.completed)}
-          window="current"
-          scope={access.canManage ? "org" : "me"}
+          sub="Reviews held"
           icon={CalendarCheck}
           accent="success"
         />
         <MetricCard
           label="Show rate"
           value={`${kpi.showRate}%`}
-          definitionKey="appointment_show_rate"
-          window="current"
-          scope={access.canManage ? "org" : "me"}
+          sub="Held vs no-show"
           icon={Star}
           accent="primary"
         />
@@ -654,7 +616,7 @@ function Toolbar({
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder="Search name, phone, or notes…"
-              className="w-full rounded-xl border border-input bg-background/40 py-2.5 pl-9 pr-3 text-sm transition-all duration-200 placeholder:text-ink-3 focus-visible:border-primary/50 focus-visible:bg-background/70 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-primary/15"
+              className="w-full rounded-xl border border-input bg-background/40 py-2.5 pl-9 pr-3 text-sm transition-all duration-200 placeholder:text-muted-foreground/70 focus-visible:border-primary/50 focus-visible:bg-background/70 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-primary/15"
             />
           </div>
         )}
@@ -680,33 +642,33 @@ function Toolbar({
         </div>
 
         {access.canTeam && reps.length > 0 && (
-          <SelectMenu
-            label="Rep"
-            size="sm"
-            triggerClassName="h-9"
+          <Select
             value={rep}
-            onChange={(v) => setRep(v)}
-            options={[
-              { value: "all", label: "All reps" },
-              ...reps.map((r) => ({ value: r, label: r })),
-            ]}
-          />
+            onChange={(e) => setRep(e.target.value)}
+            className="h-auto w-auto py-2 text-sm"
+            aria-label="Rep"
+          >
+            <option value="all">All reps</option>
+            {reps.map((r) => (
+              <option key={r} value={r}>
+                {r}
+              </option>
+            ))}
+          </Select>
         )}
 
         {!isCalendar && (
-          <SelectMenu
-            label="Sort"
-            size="sm"
-            triggerClassName="h-9"
+          <Select
             value={sort}
-            onChange={(v) => setSort(v as SortKey)}
-            options={[
-              { value: "smart", label: "Smart order" },
-              { value: "soonest", label: "Soonest first" },
-              { value: "newest", label: "Newest added" },
-              { value: "name", label: "Name (A–Z)" },
-            ]}
-          />
+            onChange={(e) => setSort(e.target.value as SortKey)}
+            className="h-auto w-auto py-2 text-sm"
+            aria-label="Sort"
+          >
+            <option value="smart">Smart order</option>
+            <option value="soonest">Soonest first</option>
+            <option value="newest">Newest added</option>
+            <option value="name">Name (A–Z)</option>
+          </Select>
         )}
 
         <div className="ml-auto flex items-center gap-2">
@@ -717,12 +679,6 @@ function Toolbar({
                 type="button"
                 onClick={() => setView(key)}
                 className={cn(seg, view === key ? on : off)}
-                // Below `sm` the label span is `hidden`, which removes it from
-                // the accessibility tree — so these read as unlabelled buttons
-                // on a phone. `title` is not a name a screen reader announces
-                // reliably, and aria-pressed is what a segmented control owes.
-                aria-label={label}
-                aria-pressed={view === key}
                 title={label}
               >
                 <Icon className="h-3.5 w-3.5" />
@@ -731,22 +687,18 @@ function Toolbar({
             ))}
           </div>
 
-          {/* The shared control. The bespoke one this replaces was invisible
-              below 1024px (`hidden … lg:flex`), absent in the calendar views,
-              had no aria-pressed, and called the value "Comfortable" where the
-              rest of the product says "Cozy" — four ways for one setting to
-              look like two. Unconditional now: the calendars have rows too. */}
-          <DensityToggle value={density} onChange={setDensity} />
+          {!isCalendar && (
+            <button
+              type="button"
+              onClick={() => setDensity(density === "comfortable" ? "compact" : "comfortable")}
+              className="hidden h-9 items-center gap-1.5 rounded-xl border border-border/60 bg-surface/50 px-3 text-xs font-semibold text-muted-foreground transition-colors hover:text-foreground lg:flex"
+              title="Toggle density"
+            >
+              {density === "comfortable" ? "Comfortable" : "Compact"}
+            </button>
+          )}
 
-          {/* Below `sm` the label span is hidden, so this is an icon with no
-              accessible name. */}
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={onSaveDefault}
-            aria-label={savedDefault ? "Default view saved" : "Save this as your default view"}
-            className="gap-1.5"
-          >
+          <Button variant="outline" size="sm" onClick={onSaveDefault} className="gap-1.5">
             {savedDefault ? (
               <Check className="h-3.5 w-3.5 text-success" />
             ) : (
@@ -756,7 +708,7 @@ function Toolbar({
           </Button>
 
           {access.canManage && (
-            <Button size="sm" onClick={onCreate} aria-label="New appointment" className="gap-1.5">
+            <Button size="sm" onClick={onCreate} className="gap-1.5">
               <Plus className="h-3.5 w-3.5" />
               <span className="hidden sm:inline">New</span>
             </Button>
@@ -872,7 +824,7 @@ function BulkBar({
         animate={{ y: 0, opacity: 1 }}
         exit={reduce ? { opacity: 0 } : { y: 80, opacity: 0 }}
         transition={{ type: "spring", stiffness: 380, damping: 32 }}
-        className="fixed inset-x-0 bottom-5 flex justify-center px-4"
+        className="fixed inset-x-0 bottom-5 z-[80] flex justify-center px-4"
       >
         <div className="glass flex items-center gap-2 rounded-2xl border border-border/60 p-2 pl-4 shadow-lift">
           <span className="text-sm font-semibold">{count} selected</span>
@@ -904,7 +856,7 @@ function BulkBar({
             label={`Route ${count} back`}
             maxWidth="max-w-md"
             panelClassName="p-5"
-            zIndex={Z.overlay + 1}
+            zIndex={101}
           >
             <div className="mb-4">
               <p className="text-base font-semibold">Route {count} back</p>

@@ -90,7 +90,7 @@ function UploadTile({
       >
         <div
           className={cn(
-            "flex h-10 w-10 items-center justify-center rounded-xl text-white",
+            "flex h-10 w-10 items-center justify-center rounded-xl text-white shadow-glow",
             groupKey === null ? "bg-warning" : manual ? "bg-muted-foreground" : "bg-brand",
           )}
         >
@@ -189,7 +189,7 @@ function AutoSortTile({
             : "border-accent/40 bg-accent-soft/20 hover:border-accent/60 hover:bg-accent-soft/30",
         )}
       >
-        <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-accent text-white">
+        <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-accent text-white shadow-glow">
           {status.type === "working" ? (
             <Loader2 className="h-5 w-5 animate-spin" />
           ) : (

@@ -14,7 +14,6 @@ import {
 } from "react";
 import { cn } from "@/lib/utils";
 import { Portal } from "./portal";
-import { Z } from "@/lib/z-layers";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // SelectMenu — choosing ONE value from a known set.
@@ -113,9 +112,7 @@ export function SelectMenu<T extends string = string>({
         onClick={() => !disabled && setOpen(!open)}
         onKeyDown={onTriggerKeyDown}
         className={cn(
-          // Opaque, matching Input's well — a control that displays a value
-          // must not have the page showing through it.
-          "inline-flex items-center gap-2 rounded-xl border border-input bg-surface-2 font-medium text-foreground transition-colors duration-[var(--dur-state)]",
+          "inline-flex items-center gap-2 rounded-xl border border-input bg-background/40 font-medium text-foreground transition-all duration-200",
           "focus-visible:border-primary/50 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-primary/15",
           "disabled:cursor-not-allowed disabled:opacity-60",
           size === "sm" ? "px-2.5 py-1.5 text-xs" : "px-3.5 py-2.5 text-sm",
@@ -239,12 +236,6 @@ function SelectPopup<T extends string>({
     else if (e.key === "Home") next = 0;
     else if (e.key === "End") next = items.length - 1;
     else if (e.key.length === 1 && !e.metaKey && !e.ctrlKey && !e.altKey) {
-      // Typeahead owns every printable key while the list is open — whether or
-      // not it matches an option. A key that fell through used to reach the
-      // page's window-level shortcut listener: typing "m" for "min" in the
-      // booking dialog's duration picker muted the live call instead.
-      e.preventDefault();
-      e.stopPropagation();
       const now = Date.now();
       typed.current =
         now - typed.current.at < 1000
@@ -268,15 +259,14 @@ function SelectPopup<T extends string>({
       aria-label={label}
       onKeyDown={onKeyDown}
       className={cn(
-        "fixed max-h-80 min-w-44 max-w-80 overflow-y-auto rounded-xl border border-border/70 bg-card p-1 shadow-2",
+        "fixed z-[130] max-h-80 min-w-44 max-w-80 overflow-y-auto rounded-xl border border-border/70 bg-card p-1 shadow-lift",
         pos ? "opacity-100" : "opacity-0",
       )}
-      style={{
-        zIndex: Z.popover,
-        ...(pos
+      style={
+        pos
           ? { top: pos.top, left: pos.left, minWidth: Math.max(176, pos.minWidth) }
-          : { top: -9999, left: -9999 }),
-      }}
+          : { top: -9999, left: -9999 }
+      }
     >
       {options.map((o) => {
         const isSelected = o.value === value;

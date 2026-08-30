@@ -46,29 +46,20 @@ export async function GET() {
       const admin = createAdminClient();
       const activeOrgId = viewer.org?.id ?? null;
 
-      // Counted, not fetched. This is the "where did my leads go?" probe, and
-      // its decision rule below turns on `ownedTotalAnyOrg === 0` meaning "the
-      // rows really are gone". That was evaluated against a PAGE LENGTH:
-      // `.limit(100_000)` with no `.range()` is capped at the PostgREST
-      // response ceiling, and seven owners here hold more than that, the
-      // largest 13,347. A saturating number sat next to an exact one, in the
-      // one endpoint somebody opens when they think data has been lost.
-      //
-      // Only org_id is grouped, so this can't return anyone's contact data.
-      const { data: grouped, error } = await admin.rpc("app_owned_lead_counts", {
-        p_owner: viewer.user.id,
-      });
+      // Only org_id is selected, so this can't return anyone's contact data.
+      const { data, error } = await admin
+        .from("leads")
+        .select("org_id")
+        .eq("owner_id", viewer.user.id)
+        .limit(100_000);
       if (error) throw new Error(error.message);
 
       const counts = new Map<string | null, number>();
-      let owned = 0;
-      for (const r of (grouped ?? []) as Row[]) {
+      for (const r of (data ?? []) as Row[]) {
         const key = r.org_id ? String(r.org_id) : null;
-        const n = Number(r.n ?? 0);
-        counts.set(key, (counts.get(key) ?? 0) + n);
-        owned += n;
+        counts.set(key, (counts.get(key) ?? 0) + 1);
       }
-      ownedTotalAnyOrg = owned;
+      ownedTotalAnyOrg = (data ?? []).length;
 
       // Name only the orgs this caller actually belongs to.
       const { data: memberships } = await admin
@@ -92,11 +83,10 @@ export async function GET() {
         .sort((a, b) => b.count - a.count);
 
       if (activeOrgId) {
-        const { count, error: cntErr } = await admin
+        const { count } = await admin
           .from("leads")
           .select("id", { count: "exact", head: true })
           .eq("org_id", activeOrgId);
-        if (cntErr) throw new Error(cntErr.message);
         activeOrgTotal = count ?? 0;
       }
     } catch (e) {

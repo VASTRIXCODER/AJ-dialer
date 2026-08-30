@@ -4,7 +4,6 @@ import { createAdminClient, isAdminConfigured } from "../supabase/admin";
 import { isSupabaseConfigured } from "../supabase/config";
 import { createClient } from "../supabase/server";
 import { logLeadEventBulk } from "./lead-events";
-import { readProfileScope } from "./scope";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Handing a lead pack to a rep.
@@ -57,19 +56,15 @@ async function supervisorScope(): Promise<
     data: { user },
   } = await supabase.auth.getUser();
   if (!user) return { ok: false, error: "You must be signed in." };
-  // Role comes from the membership row for the ACTIVE org, not from the
-  // denormalized profiles.role — see resolveSupervisor. A read failure throws
-  // rather than answering "not a supervisor", which would tell an admin they
-  // lack a permission they hold.
-  let prof;
-  try {
-    prof = await readProfileScope(supabase, user.id);
-  } catch (e) {
-    return { ok: false, error: e instanceof Error ? e.message : "Couldn't confirm your role." };
-  }
-  const orgId = prof.org_id;
+  const { data: prof } = await supabase
+    .from("profiles")
+    .select("org_id, role")
+    .eq("id", user.id)
+    .maybeSingle();
+  const orgId = prof?.org_id ? String(prof.org_id) : null;
+  const role = String(prof?.role ?? "rep");
   if (!orgId || !UUID.test(orgId)) return { ok: false, error: "Join an organization first." };
-  if (!prof.supervisor)
+  if (!["owner", "admin", "manager"].includes(role))
     return { ok: false, error: "Only admins and managers can assign lead packs." };
   return { ok: true, userId: user.id, orgId };
 }
@@ -97,29 +92,26 @@ export async function listAssignablePacks(): Promise<AssignablePack[]> {
       ((members ?? []) as Row[]).map((m) => [String(m.user_id), String(m.name ?? "")]),
     );
 
-    // Counted in SQL, one round trip for every pack on the screen. This used to
-    // select the lead ROWS with `.limit(100_000)` and no `.range()`, which
-    // PostgREST truncates far below that — 9,816 leads across 73 packs arrived
-    // as one short page and every total below was a share of it. Worse, the
-    // stored `lead_packs.size` was only consulted when a total came out at 0,
-    // so a truncated NONZERO total beat the number that was actually right.
-    const { data: leads, error: leadsErr } = await admin.rpc("app_pack_progress", {
-      p_pack_ids: rows.map((r) => String(r.id)),
-    });
-    if (leadsErr) {
-      throw new Error(`Couldn't count what's in these packs: ${leadsErr.message}`);
-    }
+    // One query for every pack's leads, bucketed in memory — per-pack count
+    // queries would be a round trip per pack on a screen that lists them all.
+    const { data: leads } = await admin
+      .from("leads")
+      .select("lead_pack_id,status")
+      .in(
+        "lead_pack_id",
+        rows.map((r) => String(r.id)),
+      )
+      .limit(100_000);
 
     const stats = new Map<string, { total: number; worked: number; appointments: number }>();
     for (const l of (leads ?? []) as Row[]) {
       const pid = String(l.lead_pack_id ?? "");
       if (!pid) continue;
       const s = stats.get(pid) ?? { total: 0, worked: 0, appointments: 0 };
-      const n = Number(l.n ?? 0);
+      s.total++;
       const status = String(l.status ?? "new");
-      s.total += n;
-      if (status !== "new") s.worked += n; // "worked" = has left the untouched state
-      if (status === "appointment") s.appointments += n;
+      if (status !== "new") s.worked++; // "worked" = has left the untouched state
+      if (status === "appointment") s.appointments++;
       stats.set(pid, s);
     }
 

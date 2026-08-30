@@ -4,8 +4,7 @@ import { BatteryCharging, Car, Loader2, Waves, X } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { Input, Label, Textarea } from "@/components/ui/input";
-import { SelectMenu } from "@/components/ui/select-menu";
+import { Input, Label, Select, Textarea } from "@/components/ui/input";
 import { Modal } from "@/components/ui/modal";
 import {
   parseFieldValue,
@@ -346,17 +345,16 @@ export function EditLeadDialog({
               </>
             ) : (
               <>
-                <SelectMenu
-                  label="Status"
-                  className="w-full"
-                  triggerClassName="w-full"
+                <Select
                   value={f.status}
-                  onChange={(v) => set("status", v as LeadStatus)}
-                  options={EDITABLE_STATUSES.map((value) => ({
-                    value: value as string,
-                    label: leadStatusConfig[value].label,
-                  }))}
-                />
+                  onChange={(e) => set("status", e.target.value as LeadStatus)}
+                >
+                  {EDITABLE_STATUSES.map((value) => (
+                    <option key={value} value={value}>
+                      {leadStatusConfig[value].label}
+                    </option>
+                  ))}
+                </Select>
                 <p className="mt-1.5 text-xs text-muted-foreground">
                   To book an appointment or callback, use "Change disposition" from the dialer
                   or pipeline tabs — it needs a scheduled time too.
@@ -389,7 +387,7 @@ export function EditLeadDialog({
                 type="checkbox"
                 checked={f.multipleSystems}
                 onChange={(e) => set("multipleSystems", e.target.checked)}
-                className="h-[22px] w-[22px] rounded border-border"
+                className="h-4 w-4 rounded border-border"
               />
               Multiple solar systems on the property
             </label>
@@ -432,7 +430,7 @@ export function EditLeadDialog({
                         type="checkbox"
                         checked={custom[def.key] === true}
                         onChange={(e) => setCustomField(def.key, e.target.checked)}
-                        className="h-[22px] w-[22px] rounded border-border"
+                        className="h-4 w-4 rounded border-border"
                       />
                       {def.label}
                     </label>

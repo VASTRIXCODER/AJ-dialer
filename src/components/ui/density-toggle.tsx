@@ -1,37 +1,66 @@
 "use client";
 
 import { Rows2, Rows3 } from "lucide-react";
+import { useEffect, useState } from "react";
 import { cn } from "@/lib/utils";
-import type { Density } from "@/lib/ui-density";
 
 // ─────────────────────────────────────────────────────────────────────────────
-// DensityToggle — the compact/comfortable switch. Two real buttons
-// (aria-pressed), labels always visible; the state is never icon-colour alone.
+// DensityToggle — the one compact/comfortable switch, persisted PER SURFACE via
+// a localStorage key so the floor, leads, and reports can each remember their
+// own preference. Two real buttons (aria-pressed), labels always visible — the
+// state is never icon-color alone.
 //
-// It used to persist PER SURFACE under a caller-supplied localStorage key, and
-// `useStoredDensity` hydrated each surface separately. That is why the product
-// had three densities: the dialer's lanes, the monitor's floor and the
-// appointments list each remembered a different answer, and /leads — the
-// biggest grid of all — had no control at all.
-//
-// Persistence now belongs to the workspace: `useDensity()` from
-// src/components/layout/density.tsx owns it, writes it to the rep's profile so
-// it follows them between machines, and seeds the first paint server-side.
-// This component is presentation only.
+// Persistence contract: the toggle WRITES localStorage[storageKey] on change;
+// callers hydrate their initial value with useStoredDensity(storageKey), which
+// reads in an effect (never in the initializer — SSR renders the default and a
+// localStorage read during hydration would mismatch it).
 // ─────────────────────────────────────────────────────────────────────────────
 
-export type { Density };
+export type Density = "compact" | "comfortable";
+
+function isDensity(v: unknown): v is Density {
+  return v === "compact" || v === "comfortable";
+}
+
+/** Controlled density state, remembered per `storageKey` across visits. */
+export function useStoredDensity(
+  storageKey: string,
+  initial: Density = "comfortable",
+): [Density, (d: Density) => void] {
+  const [density, setDensity] = useState<Density>(initial);
+  useEffect(() => {
+    try {
+      const stored = window.localStorage.getItem(storageKey);
+      if (isDensity(stored)) setDensity(stored);
+    } catch {
+      /* storage may be blocked (private mode) — keep the default */
+    }
+  }, [storageKey]);
+  return [density, setDensity];
+}
 
 export function DensityToggle({
   value,
   onChange,
+  storageKey,
   className,
 }: {
   value: Density;
   onChange: (value: Density) => void;
+  /** localStorage key this surface persists its preference under. */
+  storageKey?: string;
   className?: string;
 }) {
-  const pick = onChange;
+  function pick(next: Density) {
+    if (storageKey) {
+      try {
+        window.localStorage.setItem(storageKey, next);
+      } catch {
+        /* persistence is best-effort */
+      }
+    }
+    onChange(next);
+  }
 
   const options: { value: Density; label: string; icon: typeof Rows2 }[] = [
     { value: "comfortable", label: "Cozy", icon: Rows2 },

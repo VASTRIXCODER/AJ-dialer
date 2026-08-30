@@ -157,17 +157,11 @@ export async function createSmartList(
   }
 
   const admin = createAdminClient();
-  const { count, error: countErr } = await admin
+  const { count } = await admin
     .from("smart_lists")
     .select("id", { count: "exact", head: true })
     .eq("org_id", scope.orgId);
-  // A cap that cannot read its own count is spent. `count ?? 0` made a failed
-  // read say "you have zero lists", which is the answer that lets the cap be
-  // exceeded — the one thing a cap exists to stop.
-  if (countErr || count === null) {
-    return { error: "Couldn't check how many lists this workspace has. Try again in a moment." };
-  }
-  if (count >= MAX_LISTS) {
+  if ((count ?? 0) >= MAX_LISTS) {
     return { error: `That's the maximum of ${MAX_LISTS} lists. Delete one first.` };
   }
 

@@ -5,8 +5,7 @@ import { MapPin, Phone } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Avatar, type AvatarTone } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
-import { DensityToggle } from "@/components/ui/density-toggle";
-import { useDensity } from "@/components/layout/density";
+import { DensityToggle, useStoredDensity } from "@/components/ui/density-toggle";
 import { LaneCard } from "@/components/ui/lane-card";
 import { StatusPill } from "@/components/ui/status-pill";
 import {
@@ -87,7 +86,6 @@ function LaneRow({
   now,
   campaignName,
   compact,
-  rail,
   anotherAnswered,
 }: {
   line: DialLine;
@@ -95,28 +93,13 @@ function LaneRow({
   meta: LaneMeta | undefined;
   now: number;
   campaignName: string | null;
-  /** DENSITY. Spacing and row height only — never type size, never content. */
   compact: boolean;
-  /**
-   * The narrow released rail under the live cockpit. This is a LAYOUT variant,
-   * not a preference: it genuinely has no room for the number's inferred
-   * location or the campaign badge.
-   *
-   * The two used to be one boolean, so choosing Compact density deleted both
-   * rows from the full-size lanes and re-typeset the monogram 14px → 12px. The
-   * density contract in globals.css says it changes row height and vertical
-   * padding, and nothing else.
-   */
-  rail: boolean;
   anotherAnswered: boolean;
 }) {
   const name = `${line.lead.firstName} ${line.lead.lastName}`.trim();
   const loc = inferNumberLocation(line.lead.phone);
   const ended = isLaneEnded(line.status);
-  const reason = laneTerminationReason(line.status, {
-    anotherAnswered,
-    refusal: line.refusal,
-  });
+  const reason = laneTerminationReason(line.status, { anotherAnswered });
   const elapsedSec = Math.max(0, Math.floor((now - (meta?.since ?? now)) / 1000));
   const pulsing = Boolean(meta && now - meta.changedAt < PULSE_MS);
 
@@ -130,19 +113,18 @@ function LaneRow({
           <Avatar
             initials={initials(name || formatPhone(line.lead.phone))}
             tone={line.status === "connected" ? "success" : tones[index % tones.length]}
-            size={rail ? "sm" : "md"}
+            size={compact ? "sm" : "md"}
           />
           <div className="min-w-0">
             <p className="flex items-center gap-1.5 truncate text-sm font-semibold">
               <span className="truncate">{name || formatPhone(line.lead.phone)}</span>
-              {/* Marks the lane that just changed state. It used to ping —
-                  a scale(2) transform — on a row carrying a name, a number and
-                  a running timer. Colour alone now. */}
+              {/* Event pulse — pings on every observed state change; the dot
+                  itself stays under reduced motion (state ≠ motion alone). */}
               {pulsing && (
-                <span
-                  className="inline-flex h-1.5 w-1.5 shrink-0 rounded-full bg-primary"
-                  aria-hidden
-                />
+                <span className="relative flex h-1.5 w-1.5 shrink-0">
+                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary opacity-60 motion-reduce:hidden" />
+                  <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-primary" />
+                </span>
               )}
             </p>
             <p className="flex flex-wrap items-center gap-x-1.5 truncate text-xs text-muted-foreground">
@@ -153,9 +135,9 @@ function LaneRow({
                 </span>
               )}
             </p>
-            {!rail && loc && (
+            {!compact && loc && (
               <p
-                className="mt-0.5 flex items-center gap-1 text-[11px] text-ink-3"
+                className="mt-0.5 flex items-center gap-1 text-[11px] text-muted-foreground/80"
                 title="Inferred from the phone number's area code — numbers are portable, so this is about the NUMBER, not necessarily where they live."
               >
                 <MapPin className="h-3 w-3 shrink-0" />
@@ -176,7 +158,7 @@ function LaneRow({
       body={
         ended && reason ? (
           <p className="text-xs font-medium text-muted-foreground">{reason}</p>
-        ) : !rail && campaignName ? (
+        ) : !compact && campaignName ? (
           <Badge tone="outline" className="max-w-full">
             <span className="truncate">{campaignName}</span>
           </Badge>
@@ -200,18 +182,12 @@ export function ParallelLanes({
 }) {
   const { dialer, campaigns } = useDialerContext();
   const { state } = dialer;
-  // The workspace setting, not a private one. This used to remember its own
-  // answer under "aj:density:dialer-lanes", so a rep who tightened the floor
-  // found the lanes unchanged.
-  const { density, setDensity } = useDensity();
+  const [density, setDensity] = useStoredDensity("aj:density:dialer-lanes");
   const { metaFor, now } = useLaneMeta(lines);
 
   const anotherAnswered =
     lines.some((l) => l.status === "connected") || state.status === "live";
   const shown = variant === "rail" ? lines.filter((l) => l.status !== "connected") : lines;
-  // Two different things, deliberately kept apart. `compact` is the user's
-  // density preference and may only move spacing; `rail` is a layout variant
-  // that genuinely cannot fit two of the rows.
   const compact = variant === "rail" || density === "compact";
 
   if (!shown.length) return null;
@@ -236,6 +212,7 @@ export function ParallelLanes({
             <DensityToggle
               value={density}
               onChange={setDensity}
+              storageKey="aj:density:dialer-lanes"
             />
           </div>
           {/* Session stats — every number here is counted in THIS browser
@@ -243,7 +220,7 @@ export function ParallelLanes({
           <p className="mb-2.5 text-[11px] text-muted-foreground tabular">
             <b className="font-bold text-foreground">{state.callsThisSession}</b> dials ·{" "}
             <b className="font-bold text-foreground">{state.connectsThisSession}</b> connects{" "}
-            <span className="text-ink-3">
+            <span className="text-muted-foreground/70">
               this session, counted on this device
             </span>
           </p>
@@ -265,7 +242,6 @@ export function ParallelLanes({
               now={now}
               campaignName={line.lead.campaignId ? campaignNameFor(line.lead.campaignId) : null}
               compact={compact}
-              rail={variant === "rail"}
               anotherAnswered={anotherAnswered}
             />
           ))}

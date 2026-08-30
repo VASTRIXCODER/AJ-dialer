@@ -427,8 +427,7 @@ export function DialerProvider({
       const res = await fetch(`/api/leads/queue${scoped}`, { cache: "no-store" });
       const json = (await res.json().catch(() => ({}))) as {
         leads?: Lead[];
-        // Null when the book could not be counted — see getMyLeadsCount.
-        total?: number | null;
+        total?: number;
         error?: string;
       };
 
@@ -447,35 +446,22 @@ export function DialerProvider({
 
       const leads = json.leads;
       setQueue(leads);
-      // A new list is a new run — whatever ended before is no longer the state
-      // the cockpit should be describing.
-      dialer.clearRunEnded();
       // A plain load is the DEFAULT session: standard segments, strict order,
       // no refill — a stale builder meta must not govern a fresh queue.
       applySessionMeta({ ...DEFAULT_SESSION_META });
       // total counts EVERY lead in scope, leads.length only the dialable subset
       // (dialable status + a 10+ digit phone). Silently loading fewer than the
       // rep's book size — with no explanation — read as "some leads vanished."
-      //
-      // A NULL total means the count failed. Folding that to 0 sent a rep with
-      // a full book the message "No leads found — import a CSV on the Leads tab
-      // first", which is both false and an instruction to do the one thing that
-      // would make it worse.
-      const total = typeof json.total === "number" ? json.total : null;
-      const skipped = total === null ? 0 : Math.max(0, total - leads.length);
+      const skipped = Math.max(0, (json.total ?? 0) - leads.length);
       if (leads.length) {
         setLoadMsg(
           skipped > 0
-            ? `Loaded ${leads.length} of ${total} leads into the dialer — ${skipped} skipped (no valid phone number, already dispositioned, or on the do-not-call list).`
+            ? `Loaded ${leads.length} of ${json.total} leads into the dialer — ${skipped} skipped (no valid phone number, already dispositioned, or on the do-not-call list).`
             : `Loaded ${leads.length} lead${leads.length === 1 ? "" : "s"} into the dialer.`,
         );
-      } else if (total === null) {
+      } else if ((json.total ?? 0) > 0) {
         setLoadMsg(
-          "Nothing is ready to dial right now, and we couldn’t check how many leads are in your book. Try again in a moment.",
-        );
-      } else if (total > 0) {
-        setLoadMsg(
-          `Found ${total} leads, but none are ready to dial yet — they need a New / No-answer / Callback status and a valid phone number.`,
+          `Found ${json.total} leads, but none are ready to dial yet — they need a New / No-answer / Callback status and a valid phone number.`,
         );
       } else {
         setLoadMsg("No leads found — import a CSV on the Leads tab first.");
@@ -506,17 +492,6 @@ export function DialerProvider({
     setActivated(true);
   }
 
-  // loadMsg describes something that just HAPPENED to the queue. It was set in
-  // nine places and cleared in one, so "Auto-dial finished — every lead in your
-  // list has been dialed." stayed pinned under the toolbar through the next
-  // session and every live call in it. Dialing is the event that makes it
-  // stale: the moment the engine leaves idle, the message is about a past the
-  // rep has moved on from.
-  const dialerStatus = dialer.state.status;
-  useEffect(() => {
-    if (dialerStatus !== "idle") setLoadMsg(null);
-  }, [dialerStatus]);
-
   // Auto-dial "repeat the whole list": when a full pass completes (queueLap
   // increments), refetch the dial queue before the next pass so leads just
   // dispositioned drop out. Lives here (not the page) so it keeps running while
@@ -539,12 +514,6 @@ export function DialerProvider({
       const meta = sessionMetaRef.current;
       if (meta.summary != null && !meta.refill) {
         dialer.setAutoDial(false);
-        // The queue is deliberately LEFT in place — a finished session is still
-        // the thing the rep built, and clearing it would erase the record of
-        // what they just worked. The cockpit's terminal panel (state.runEnded)
-        // is what stops it reading as "Ready to dial · 1 of N" with a live
-        // Start button, which is what it used to do indefinitely.
-        dialer.markRunEnded("session");
         setLoadMsg(
           "Auto-dial finished — your session's list is done. Load a new session to keep going (or turn on Auto-refill in the builder).",
         );
@@ -565,7 +534,6 @@ export function DialerProvider({
         dialer.restartAutoDialLap();
       } else {
         dialer.setAutoDial(false);
-        dialer.markRunEnded("empty");
         setLoadMsg("Auto-dial finished — every lead in your list has been dialed.");
       }
     })();

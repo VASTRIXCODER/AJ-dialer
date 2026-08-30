@@ -13,7 +13,6 @@ import { createAdminClient, isAdminConfigured } from "@/lib/supabase/admin";
 import { nextActionForOutcome } from "./next-action";
 import { stageForLeadStatus, type OpportunityStage } from "./stage-machine";
 import type { CallOutcome, LeadStatus } from "@/lib/types";
-import { DEFAULT_TIMEZONE, storedOrgTimezone } from "../metrics/definitions";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // One-way sync: Phase 1 call write paths → the opportunity (P2.1 §6 of the
@@ -58,7 +57,7 @@ const TZ_TTL_MS = 300_000;
 async function orgTimezoneFor(orgId: string): Promise<string> {
   const hit = tzCache.get(orgId);
   if (hit && Date.now() - hit.at < TZ_TTL_MS) return hit.tz;
-  let tz = DEFAULT_TIMEZONE;
+  let tz = "America/Chicago";
   if (isAdminConfigured()) {
     try {
       const { data } = await createAdminClient()
@@ -66,10 +65,7 @@ async function orgTimezoneFor(orgId: string): Promise<string> {
         .select("timezone")
         .eq("id", orgId)
         .maybeSingle();
-      // storedOrgTimezone, not a truthiness test: the column defaulted to
-      // America/Los_Angeles, so `data.timezone` is truthy on ten of eleven
-      // workspaces without anyone having chosen it.
-      tz = storedOrgTimezone(data?.timezone as string | null) ?? DEFAULT_TIMEZONE;
+      if (data?.timezone) tz = String(data.timezone);
     } catch {
       /* default zone is a fine fallback for a bookkeeping stamp */
     }

@@ -16,7 +16,6 @@ import {
   mergeAiDispositionPolicy,
   type AiDispositionPolicy,
 } from "../ai/disposition-policy";
-import { DEFAULT_TIMEZONE } from "../metrics/definitions";
 
 export type DispositionTone = "success" | "warning" | "danger" | "neutral";
 
@@ -581,7 +580,7 @@ export const DEFAULT_ORG_SETTINGS: OrgSettings = {
   orchestration: { enabled: false },
   automation: {
     enabled: false,
-    timezone: DEFAULT_TIMEZONE,
+    timezone: "America/Chicago",
     days: [0, 1, 2, 3, 4, 5, 6],
     // 8–9am, 11am–3pm, 5–7pm (end hour is exclusive).
     windows: [

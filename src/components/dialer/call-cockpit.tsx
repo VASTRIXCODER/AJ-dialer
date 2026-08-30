@@ -4,7 +4,6 @@ import { AnimatePresence, motion } from "framer-motion";
 import {
   AlertCircle,
   Bot,
-  CheckCircle2,
   Grid3x3,
   Hash,
   Loader2,
@@ -97,20 +96,16 @@ function ControlButton({
         disabled && "cursor-not-allowed opacity-50",
       )}
     >
-      {/* Mute / hold / keypad — pressed mid-call, mid-sentence. Colour is the
-          whole state channel: the button used to shrink 10% on press, paint a
-          20px red halo when muted (an arbitrary shadow outside the three-token
-          elevation ladder), and sit on a 60%-alpha surface with a blur behind
-          its own glyph. */}
       <span
         className={cn(
-          "flex h-12 w-12 items-center justify-center rounded-full border transition-colors duration-[var(--dur-state)]",
+          "flex h-12 w-12 items-center justify-center rounded-full border transition-all duration-150",
+          !disabled && "active:scale-90",
           active
             ? danger
-              ? "border-danger bg-danger text-danger-foreground"
-              : "border-primary/60 bg-primary-soft text-primary"
+              ? "border-danger bg-danger text-danger-foreground shadow-[0_0_20px_-4px_hsl(var(--danger)/0.6)]"
+              : "border-primary/60 bg-primary-soft text-primary shadow-[0_0_20px_-4px_hsl(var(--glow)/0.6)]"
             : cn(
-                "border-border/70 bg-surface text-foreground",
+                "border-border/70 bg-surface/60 text-foreground backdrop-blur",
                 !disabled && "hover:bg-muted",
               ),
         )}
@@ -199,10 +194,6 @@ export function CallCockpit({
   onStopAICampaign,
   onEndAISession,
   onReconnect,
-  keypadOpen,
-  onToggleKeypad,
-  manualPadOpen,
-  onToggleManualPad,
   wrapupNotes,
   onNotesChange,
   dispositions,
@@ -212,14 +203,6 @@ export function CallCockpit({
   state: DialerState;
   focusLead: Lead | null;
   hasQueue: boolean;
-  /** The in-call DTMF pad. Lifted out of this component so the "#" shortcut,
-   *  which is registered on the page above, can open the same one the Keypad
-   *  button does. */
-  keypadOpen: boolean;
-  onToggleKeypad: () => void;
-  /** The idle "dial a specific number" pad — the other thing "#" reveals. */
-  manualPadOpen: boolean;
-  onToggleManualPad: () => void;
   /** The rep's in-call notes at wrap-up — evidence for the AI summary. */
   wrapupNotes?: string;
   /** Edit those notes from the wrap-up screen — same note the qualify panel shows. */
@@ -265,6 +248,8 @@ export function CallCockpit({
   onEndAISession: () => void;
   onReconnect: () => void;
 }) {
+  const [showKeypad, setShowKeypad] = useState(false);
+  const [manualOpen, setManualOpen] = useState(!hasQueue);
   const [pendingAiNumber, setPendingAiNumber] = useState<string | null>(null);
   const vocab = useVocabulary();
   // AI is usable only when configured AND permitted for this viewer; mode
@@ -278,9 +263,6 @@ export function CallCockpit({
   const micBlocked = !ai && state.micBlocked;
   const canCall = state.mode === "live" && !micBlocked;
   const canStart = ai ? hasQueue : canCall && Boolean(focusLead);
-  // A finished auto-dial run. `status: "idle"` is also the state before a rep
-  // has dialed anything, so the cockpit needs this to tell the two apart.
-  const runEnded = state.runEnded;
   const name = focusLead ? `${focusLead.firstName} ${focusLead.lastName}` : "No lead";
   const aiLockText =
     aiLockReason === "role"
@@ -337,7 +319,7 @@ export function CallCockpit({
               type="button"
               onClick={() => onSetAutoDial(!state.autoDial)}
               className={cn(
-                "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-semibold transition-colors duration-[var(--dur-state)]",
+                "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-semibold transition-colors active:scale-95",
                 state.autoDial
                   ? "border-border bg-surface text-foreground hover:bg-muted"
                   : "border-warning/40 bg-warning/10 text-warning hover:bg-warning/15",
@@ -364,7 +346,7 @@ export function CallCockpit({
             <button
               type="button"
               onClick={onReconnect}
-              className="inline-flex items-center gap-1.5 rounded-full border border-border bg-surface px-2.5 py-1 text-[11px] font-semibold text-foreground transition-colors duration-[var(--dur-state)] hover:bg-muted"
+              className="inline-flex items-center gap-1.5 rounded-full border border-border bg-surface px-2.5 py-1 text-[11px] font-semibold text-foreground transition-colors hover:bg-muted active:scale-95"
             >
               <RotateCcw className="h-3 w-3" />
               Reconnect
@@ -386,26 +368,15 @@ export function CallCockpit({
         </div>
       </div>
 
-      {/* Top-aligned, not centred.
-      
-          `justify-center` centred the call controls inside whatever height the
-          TALLEST neighbour forced — so the Start/End button's position was a
-          function of how long the qualify panel happened to be, and it moved
-          between leads. That is why this file ships a scroll-to-controls
-          button at all. With each pane scrolling independently the controls now
-          sit where they were drawn. */}
-      <div className="flex flex-1 flex-col items-center p-6">
-        {/* Not `mode="wait"`. It held the incoming block until the outgoing
-            one finished, so on pickup the rep's screen was still mid-transition
-            while a stranger was saying hello. */}
-        <AnimatePresence>
+      <div className="flex flex-1 flex-col items-center justify-center p-6">
+        <AnimatePresence mode="wait">
           {/* ── IDLE — the idle cockpit ──────────────────────────── */}
           {state.status === "idle" && (
             <motion.div
               key="idle"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -10 }}
               className="flex w-full max-w-sm flex-col items-center gap-6"
             >
               {/* Agent picker — which AI persona to dial as. Only meaningful in AI
@@ -442,65 +413,32 @@ export function CallCockpit({
               )}
 
               <div className="text-center">
-                {/* Still. The idle cockpit reads as a Stage moment — "ready to
-                    dial" — but it is a PANEL inside the working screen, sharing
-                    it with the queue toolbar and the live floor, not a
-                    full-screen state. A 7-second float loop under a rep's eye
-                    for the whole time they are between calls is decoration on
-                    the working surface. */}
-                {/* An auto-dial run that FINISHED is not the same state as one
-                    that has not started, and `status: "idle"` is both. Without
-                    this the rep landed on "Ready to dial", an enabled Start
-                    button, and — for the 2.5s before the lap handler turns
-                    auto-dial off — the line "Keeps dialing through your whole
-                    list on repeat", describing in the present tense the thing
-                    that had just stopped. In a builder session it never
-                    cleared at all. */}
-                <div
-                  className={cn(
-                    "mx-auto mb-4 flex h-20 w-20 items-center justify-center rounded-3xl",
-                    runEnded ? "bg-success/12 text-success" : "bg-brand",
-                  )}
-                >
-                  {runEnded ? (
-                    <CheckCircle2 className="h-9 w-9" />
-                  ) : ai ? (
+                <div className="mx-auto mb-4 flex h-20 w-20 animate-float items-center justify-center rounded-3xl bg-brand shadow-glow">
+                  {ai ? (
                     <Bot className="h-9 w-9 text-white" />
                   ) : (
                     <Sparkles className="h-9 w-9 text-white" />
                   )}
                 </div>
                 <h2 className="text-xl font-bold">
-                  {runEnded
-                    ? runEnded.reason === "session"
-                      ? "Session finished"
-                      : "Auto-dial finished"
-                    : hasQueue
-                      ? ai
-                        ? "Ready — AI will dial"
-                        : "Ready to dial"
-                      : "Your queue is empty"}
+                  {hasQueue
+                    ? ai
+                      ? "Ready — AI will dial"
+                      : "Ready to dial"
+                    : "Your queue is empty"}
                 </h2>
                 <p className="mt-1 text-sm text-muted-foreground">
-                  {runEnded
-                    ? `${runEnded.dialed} dialed · ${runEnded.connected} connected${
-                        runEnded.reason === "session"
-                          ? ". Load a new session to keep going."
-                          : runEnded.reason === "empty"
-                            ? ". Nothing in your list is still dialable."
-                            : "."
-                      }`
-                    : !hasQueue
-                      ? ai
-                        ? "Import leads to let the AI agent start calling your list."
-                        : "Connect your lead source to power-dial, or place a manual call below."
-                      : ai
-                        ? state.parallelCount > 1
-                          ? `The AI agent will call ${state.parallelCount} ${vocab.leadNounPlural} at once. Oversee them in the Live Monitor.`
-                          : "The AI agent dials, qualifies & books — you oversee from the Live Monitor."
-                        : state.parallelCount > 1
-                          ? `${state.parallelCount} lines will ring at once. First answer connects instantly.`
-                          : "Single-line power dialing through your queue."}
+                  {!hasQueue
+                    ? ai
+                      ? "Import leads to let the AI agent start calling your list."
+                      : "Connect your lead source to power-dial, or place a manual call below."
+                    : ai
+                      ? state.parallelCount > 1
+                        ? `The AI agent will call ${state.parallelCount} ${vocab.leadNounPlural} at once. Oversee them in the Live Monitor.`
+                        : "The AI agent dials, qualifies & books — you oversee from the Live Monitor."
+                      : state.parallelCount > 1
+                        ? `${state.parallelCount} lines will ring at once. First answer connects instantly.`
+                        : "Single-line power dialing through your queue."}
                 </p>
                 {/* Mode locks still say WHY when a mode is gated — the switcher
                     itself lives in the header above. */}
@@ -533,10 +471,10 @@ export function CallCockpit({
                             type="button"
                             onClick={() => onSetParallel(n)}
                             className={cn(
-                              "rounded-xl border py-2.5 text-sm font-bold transition-colors duration-[var(--dur-state)]",
+                              "rounded-xl border py-2.5 text-sm font-bold transition-all active:scale-95",
                               state.parallelCount === n
-                                ? "border-primary/60 bg-primary-soft text-primary"
-                                : "border-border/70 bg-surface text-muted-foreground hover:bg-muted",
+                                ? "border-primary/60 bg-primary-soft text-primary shadow-[0_0_20px_-6px_hsl(var(--glow)/0.7)]"
+                                : "border-border/70 bg-surface/50 text-muted-foreground backdrop-blur hover:bg-muted",
                             )}
                           >
                             {n}X
@@ -546,7 +484,7 @@ export function CallCockpit({
                     </div>
                   )}
 
-                  <label className="flex w-full cursor-pointer items-center justify-between rounded-xl border border-border/70 bg-surface px-4 py-3">
+                  <label className="flex w-full cursor-pointer items-center justify-between rounded-xl border border-border/70 bg-surface/50 px-4 py-3 backdrop-blur">
                     <span className="flex items-center gap-2 text-sm font-medium">
                       <SkipForward className="h-4 w-4 text-muted-foreground" />
                       {ai ? "Auto-dial the whole list" : "Auto-dial next"}
@@ -566,7 +504,7 @@ export function CallCockpit({
                       />
                     </span>
                   </label>
-                  {state.autoDial && !runEnded && (
+                  {state.autoDial && (
                     <p className="-mt-2 text-center text-[11px] text-muted-foreground">
                       Keeps dialing through your whole list on repeat — refreshing it after
                       each pass so anyone just dispositioned isn&apos;t called again.
@@ -616,15 +554,15 @@ export function CallCockpit({
                 {hasQueue && (
                   <button
                     type="button"
-                    onClick={onToggleManualPad}
+                    onClick={() => setManualOpen((v) => !v)}
                     className="mx-auto mb-3 flex items-center gap-1.5 text-sm font-medium text-muted-foreground hover:text-foreground"
                   >
                     <Hash className="h-4 w-4" />
-                    {manualPadOpen ? "Hide number pad" : "Dial a specific number"}
+                    {manualOpen ? "Hide number pad" : "Dial a specific number"}
                   </button>
                 )}
                 <AnimatePresence initial={false}>
-                  {manualPadOpen && (
+                  {manualOpen && (
                     <motion.div
                       initial={{ opacity: 0, height: 0 }}
                       animate={{ opacity: 1, height: "auto" }}
@@ -685,9 +623,9 @@ export function CallCockpit({
           {state.status === "dialing" && (
             <motion.div
               key="dialing"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -10 }}
               className="flex w-full max-w-md flex-col gap-5"
             >
               <div className="text-center">
@@ -734,37 +672,26 @@ export function CallCockpit({
           {state.status === "live" && focusLead && (
             <motion.div
               key="live"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
+              initial={{ opacity: 0, scale: 0.94, y: 8 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.96, y: -8 }}
+              transition={{ type: "spring", stiffness: 280, damping: 26 }}
               className="flex w-full max-w-sm flex-col items-center gap-5"
             >
-              {/* A live call is a state, not an event. This carried a 72px
-                  blurred green orb breathing on a 4s loop and a halo expanding
-                  out of it every 1.8s, for the whole duration of every call —
-                  four minutes or forty — behind the face of the person the rep
-                  is talking to. The ring says "live" once and then holds
-                  still; the beat belongs to the moment of pickup. */}
               <span className="relative">
-                {/* The connect beat. One 240ms ring, keyed on the pickup
-                    timestamp so it replays on every call rather than once per
-                    mount, and gone before the rep has finished registering it.
-                    This is the phase's single sanctioned crossing between the
-                    Stage and the Instrument. */}
                 <span
-                  key={state.connectedAt ?? "live"}
-                  className="animate-connect pointer-events-none absolute inset-0 rounded-full"
-                  aria-hidden
+                  className="glow-orb absolute -inset-5 animate-glow-pulse"
+                  style={{
+                    background:
+                      "radial-gradient(circle at center, hsl(var(--success)/0.6), transparent 70%)",
+                  }}
                 />
+                <span className="absolute inset-0 animate-pulse-ring rounded-full" />
                 <Avatar
                   initials={initials(name)}
                   tone="success"
                   size="lg"
-                  className="relative h-24 w-24 text-3xl ring-2 ring-success"
-                />
-                <span
-                  className="absolute -bottom-0.5 -right-0.5 h-5 w-5 rounded-full border-2 border-card bg-success"
-                  aria-hidden
+                  className="relative h-24 w-24 text-3xl ring-4 ring-success/30"
                 />
               </span>
               <div className="text-center">
@@ -776,7 +703,6 @@ export function CallCockpit({
                   <p className="mt-0.5 flex items-center justify-center gap-1 text-xs font-medium text-muted-foreground">
                     <Phone className="h-3 w-3" />
                     Dialing from {formatPhone(state.callerIdInfo.callerId)}
-                    {state.callerIdInfo.localPresence ? " — local to them" : ""}
                   </p>
                 )}
                 <div className="mt-2 inline-flex items-center gap-2 rounded-full bg-success/10 px-3 py-1 text-sm font-bold text-success tabular">
@@ -784,19 +710,14 @@ export function CallCockpit({
                   {formatDuration(state.durationSec)}
                   {state.onHold && <span className="text-warning">· On hold</span>}
                   {state.recording && (
-                    // Static. Tailwind's `pulse` bottoms out at opacity .5,
-                    // which takes this dot to ~2.2:1 against its pill — under
-                    // the 3:1 floor for a non-text indicator — every second.
-                    // And the fact does not change: the call is being recorded
-                    // for its whole duration.
                     <span className="flex items-center gap-1 text-danger">
-                      · <span className="h-1.5 w-1.5 rounded-full bg-danger" aria-hidden /> REC
+                      · <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-danger" /> REC
                     </span>
                   )}
                 </div>
                 {state.reconnecting && (
                   <p className="mt-1.5 flex items-center justify-center gap-1.5 text-xs font-semibold text-warning">
-                    <span className="h-1.5 w-1.5 rounded-full bg-warning" aria-hidden />
+                    <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-warning" />
                     Reconnecting — hold on, the call is still connected
                   </p>
                 )}
@@ -809,7 +730,7 @@ export function CallCockpit({
               />
 
               <AnimatePresence>
-                {keypadOpen && (
+                {showKeypad && (
                   <motion.div
                     initial={{ opacity: 0, height: 0 }}
                     animate={{ opacity: 1, height: "auto" }}
@@ -827,7 +748,7 @@ export function CallCockpit({
               <MuteStatus muted={state.muted} />
               <div className="flex items-center justify-center gap-5">
                 <ControlButton label={state.muted ? "Unmute" : "Mute"} icon={Mic} activeIcon={MicOff} active={state.muted} onClick={onToggleMute} title="Mute your microphone (m)" />
-                <ControlButton label="Keypad" icon={Grid3x3} active={keypadOpen} onClick={onToggleKeypad} title="Show the keypad (#)" />
+                <ControlButton label="Keypad" icon={Grid3x3} active={showKeypad} onClick={() => setShowKeypad((v) => !v)} />
                 <ControlButton label={state.onHold ? "Resume" : "Hold"} icon={Pause} activeIcon={Play} active={state.onHold} onClick={onToggleHold} />
               </div>
 
@@ -852,9 +773,9 @@ export function CallCockpit({
           {state.status === "wrapup" && (
             <motion.div
               key="wrapup"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -10 }}
               className="w-full max-w-md"
             >
               <WrapupPanel

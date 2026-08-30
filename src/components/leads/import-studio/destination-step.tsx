@@ -4,7 +4,6 @@ import { ShieldCheck } from "lucide-react";
 import type { ReactNode } from "react";
 import { Card } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
-import { SelectMenu } from "@/components/ui/select-menu";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Destination step: which group the rows land in, which campaign they belong
@@ -47,44 +46,46 @@ export function DestinationStep({
           </p>
         </div>
 
-        <div className="block">
+        <label className="block">
           <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
             Group
           </span>
-          <SelectMenu
-            label="Group"
-            className="mt-1.5 w-full max-w-sm"
-            triggerClassName="h-10 w-full"
+          <select
             value={dest.group}
-            onChange={(v) => onChange({ ...dest, group: v })}
-            options={[
-              { value: "__misc__", label: "Miscellaneous (unsorted)" },
-              ...groups.map((g) => ({ value: g.key, label: g.label })),
-            ]}
-          />
-        </div>
+            onChange={(e) => onChange({ ...dest, group: e.target.value })}
+            className="mt-1.5 h-10 w-full max-w-sm rounded-xl border border-border bg-background/60 px-2.5 text-sm text-foreground focus-visible:border-primary/50 focus-visible:outline-none"
+          >
+            <option value="__misc__">Miscellaneous (unsorted)</option>
+            {groups.map((g) => (
+              <option key={g.key} value={g.key}>
+                {g.label}
+              </option>
+            ))}
+          </select>
+        </label>
 
-        <div className="block">
+        <label className="block">
           <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
             Campaign
           </span>
-          <SelectMenu
-            label="Campaign"
-            className="mt-1.5 w-full max-w-sm"
-            triggerClassName="h-10 w-full"
-            value={dest.campaignId || "none"}
-            onChange={(v) => onChange({ ...dest, campaignId: v === "none" ? "" : v })}
-            options={[
-              { value: "none", label: "No campaign" },
-              ...campaigns.map((c) => ({ value: c.id, label: c.name })),
-            ]}
-          />
+          <select
+            value={dest.campaignId}
+            onChange={(e) => onChange({ ...dest, campaignId: e.target.value })}
+            className="mt-1.5 h-10 w-full max-w-sm rounded-xl border border-border bg-background/60 px-2.5 text-sm text-foreground focus-visible:border-primary/50 focus-visible:outline-none"
+          >
+            <option value="">No campaign</option>
+            {campaigns.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name}
+              </option>
+            ))}
+          </select>
           <span className="mt-1.5 flex max-w-md items-start gap-1.5 text-xs text-muted-foreground">
             <ShieldCheck className="mt-0.5 h-3.5 w-3.5 shrink-0" />
             A list can't be dialed until its campaign is compliance-certified. If this
             one isn't yet, you'll be asked to certify before the import starts.
           </span>
-        </div>
+        </label>
 
         <div>
           <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">

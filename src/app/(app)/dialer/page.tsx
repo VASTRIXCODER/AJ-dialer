@@ -89,10 +89,7 @@ export default async function DialerPage({
         title="Power Dialer"
         description="Browser-based dialing with live qualification. No desk phone required."
       >
-        {/* A null count means the queue could not be counted — not that it is
-            empty. Falling through to "ready" says nothing false; "0 in queue"
-            would. */}
-        {queueCount !== null && queueCount > 0 ? (
+        {queueCount > 0 ? (
           <Badge tone="accent" className="gap-1.5">
             <Users className="h-3.5 w-3.5" />
             {queueCount} in queue

@@ -2,11 +2,7 @@ import { NextResponse } from "next/server";
 import { applyCallEvent } from "@/lib/calls/apply-event";
 import { writeAudit } from "@/lib/db/app-control";
 import { zonedDayKey, zonedDayStartMs } from "@/lib/dialer/schedule";
-import {
-  connectedRecordFilter,
-  isConnectedRecord,
-  orgTimezone,
-} from "@/lib/metrics/definitions";
+import { orgTimezone } from "@/lib/metrics/definitions";
 import { processLeadIntake } from "@/lib/orchestration/events";
 import { listActiveOrgsWithSettings } from "@/lib/org/membership";
 import { createAdminClient, isAdminConfigured } from "@/lib/supabase/admin";
@@ -332,57 +328,34 @@ async function checkMetricDrift(
       const fromIso = new Date(yesterdayStartMs).toISOString();
       const toIso = new Date(todayStartMs).toISOString();
 
-      // One scope predicate, applied to both sides: org rows, plus the owner's
-      // legacy pre-org rows (org_id null).
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const scoped = <T extends { gte: (...a: any[]) => any }>(qb: T) => {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        let q: any = qb.gte("started_at", fromIso).lt("started_at", toIso);
-        q = org.ownerId
-          ? q.or(`org_id.eq.${org.id},and(owner_id.eq.${org.ownerId},org_id.is.null)`)
-          : q.eq("org_id", org.id);
-        return q;
-      };
+      const { data: summary, error: rpcError } = await admin.rpc("app_metrics_summary", {
+        p_org: org.id,
+        p_user: org.ownerId,
+        p_supervisor: true,
+        p_from: fromIso,
+        p_to: toIso,
+        p_campaign: null,
+        p_rep: null,
+        p_channel: null,
+      });
+      if (rpcError) throw new Error(rpcError.message);
+      const rpcCalls = Number((summary as { calls?: unknown } | null)?.calls ?? NaN);
 
-      // WHAT THIS AUDITS, and why it changed.
-      //
-      // It used to compare app_metrics_summary against a head count. No screen
-      // reads that RPC — every shipped number comes from getReportingData
-      // (src/lib/db/metrics.ts) — so agreement proved nothing about anything a
-      // user sees, and the audit_log entry recorded assurance nobody had.
-      //
-      // The invariant that IS load-bearing spans SQL and JS: "connected" is
-      // defined twice, once as a PostgREST filter string (connectedRecordFilter,
-      // used for every count the database performs) and once as a predicate
-      // (isConnectedRecord, used for every count performed over fetched rows).
-      // tests/metric-registry.test.ts already proves they agree over every
-      // synthetic combination; nothing has ever checked them against the shapes
-      // real data actually takes. A divergence silently corrupts every connect
-      // rate in the product, on every screen, in the same direction.
-      const { count: filterConnected, error: filterErr } = await scoped(
-        admin.from("call_records").select("id", { count: "exact", head: true }),
-      ).or(connectedRecordFilter());
-      if (filterErr) throw new Error(filterErr.message);
-
-      // The same rows, judged by the JS predicate. Paged, because this one
-      // cannot be a head count — it has to see each row.
-      let predicateConnected = 0;
-      for (let from = 0; ; from += 1000) {
-        const { data: page, error: pageErr } = await scoped(
-          admin.from("call_records").select("outcome,human_connected"),
-        ).range(from, from + 999);
-        if (pageErr) throw new Error(pageErr.message);
-        const rows = (page ?? []) as { outcome: string | null; human_connected: boolean | null }[];
-        for (const r of rows) {
-          if (isConnectedRecord({ outcome: r.outcome, humanConnected: r.human_connected })) {
-            predicateConnected += 1;
-          }
-        }
-        if (rows.length < 1000) break;
-      }
+      // Independent recount with the RPC's exact supervisor scope predicate:
+      // org rows, plus the owner's legacy pre-org rows (org_id null).
+      let q = admin
+        .from("call_records")
+        .select("id", { count: "exact", head: true })
+        .gte("started_at", fromIso)
+        .lt("started_at", toIso);
+      q = org.ownerId
+        ? q.or(`org_id.eq.${org.id},and(owner_id.eq.${org.ownerId},org_id.is.null)`)
+        : q.eq("org_id", org.id);
+      const { count: directCalls, error: countError } = await q;
+      if (countError) throw new Error(countError.message);
 
       checked++;
-      if ((filterConnected ?? -1) !== predicateConnected) {
+      if (!Number.isFinite(rpcCalls) || rpcCalls !== (directCalls ?? 0)) {
         drifts++;
         await writeAudit({
           action: "metric_drift",
@@ -391,15 +364,13 @@ async function checkMetricDrift(
           targetId: org.id,
           targetKind: "org",
           detail: {
-            metric: "connected_calls",
-            reason:
-              "connectedRecordFilter() (SQL) and isConnectedRecord() (JS) disagree on real rows",
+            metric: "calls",
             day: zonedDayKey(new Date(yesterdayStartMs), tz),
             timezone: tz,
             from: fromIso,
             to: toIso,
-            filterConnected: filterConnected ?? null,
-            predicateConnected,
+            rpcCalls,
+            directCalls: directCalls ?? 0,
           },
         });
       }

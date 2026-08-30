@@ -35,13 +35,11 @@ import {
   resolveOutcomeConfig,
 } from "@/lib/status";
 import {
-  cn,
   formatDuration,
   formatNumber,
   leadDisplayName,
   relativeTime,
 } from "@/lib/utils";
-import { CELL } from "@/lib/ui-density";
 
 export const dynamic = "force-dynamic";
 
@@ -141,78 +139,12 @@ export default async function CampaignDetailPage({
       </div>
 
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-6">
-        {/* Three of the five reasons these carried no definitionKey are now
-            gone, and the fixes are recorded here because the reasons were:
-
-              · they were computed over a CAPPED, id-ordered prefix of the org's
-                call history — an arbitrary sample, since `id` is a random uuid.
-                Now counted in SQL (app_campaign_call_counts), no ceiling.
-              · "Contacted" was `status !== "new"`, which counted a lead
-                imported straight onto the do-not-call list as somebody the
-                floor had spoken to. Now `last_contacted_at`, the same signal
-                the Assignments board uses.
-              · "Connect rate" was the one connect rate in the product that did
-                not go through isConnectedRecord. Now it does.
-
-            Two remain, and both are about what the LABELS claim rather than
-            what the math does: the scope is org-wide for every viewer including
-            a plain rep (campaigns are shared, but `scope="campaign"` does not
-            disclose that), and "Dialable status" counts a status without
-            re-checking DNC or the calling window — which is why it is named
-            after the status rather than after readiness to dial. */}
-        <MetricCard
-          label="Leads"
-          value={formatNumber(st.totalLeads)}
-          window="all_time"
-          scope="campaign"
-          icon={Users}
-          accent="primary"
-        />
-        <MetricCard
-          label="Dialable status"
-          // Named after what it counts. It is a status test — it does not
-          // re-check the do-not-call list, the calling window, or whether the
-          // number has ten digits, all of which the dialer applies at load.
-          // "Dialable" promised a readiness this number does not measure.
-          sub="not re-checked against DNC"
-          value={formatNumber(st.dialableLeads)}
-          window="current"
-          scope="campaign"
-          icon={PhoneOutgoing}
-          accent="accent"
-        />
-        <MetricCard
-          label="Contacted"
-          value={formatNumber(st.contactedLeads)}
-          window="current"
-          scope="campaign"
-          icon={Users}
-          accent="primary"
-        />
-        <MetricCard
-          label="Calls"
-          value={formatNumber(st.calls)}
-          window="all_time"
-          scope="campaign"
-          icon={PhoneCall}
-          accent="warning"
-        />
-        <MetricCard
-          label="Connect rate"
-          value={`${st.connectRate}%`}
-          window="all_time"
-          scope="campaign"
-          icon={Zap}
-          accent="accent"
-        />
-        <MetricCard
-          label="Appointments"
-          value={formatNumber(st.appointments)}
-          window="all_time"
-          scope="campaign"
-          icon={CalendarCheck}
-          accent="success"
-        />
+        <MetricCard label="Leads" value={formatNumber(st.totalLeads)} icon={Users} accent="primary" />
+        <MetricCard label="Dialable" value={formatNumber(st.dialableLeads)} icon={PhoneOutgoing} accent="accent" />
+        <MetricCard label="Contacted" value={formatNumber(st.contactedLeads)} icon={Users} accent="primary" />
+        <MetricCard label="Calls" value={formatNumber(st.calls)} icon={PhoneCall} accent="warning" />
+        <MetricCard label="Connect rate" value={`${st.connectRate}%`} icon={Zap} accent="accent" />
+        <MetricCard label="Appointments" value={formatNumber(st.appointments)} icon={CalendarCheck} accent="success" />
       </div>
 
       <SectionCard
@@ -259,12 +191,12 @@ export default async function CampaignDetailPage({
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-border text-left text-xs uppercase tracking-wide text-muted-foreground">
-                  <th className={cn(CELL, "font-semibold")}>Variant</th>
-                  <th className={cn(CELL, "font-semibold")}>Calls</th>
-                  <th className={cn(CELL, "font-semibold")}>Connects</th>
-                  <th className={cn(CELL, "font-semibold")}>Connect rate</th>
-                  <th className={cn(CELL, "font-semibold")}>Appointments</th>
-                  <th className={cn(CELL, "font-semibold")}>Appt rate</th>
+                  <th className="pb-2 pr-4 font-semibold">Variant</th>
+                  <th className="pb-2 pr-4 font-semibold">Calls</th>
+                  <th className="pb-2 pr-4 font-semibold">Connects</th>
+                  <th className="pb-2 pr-4 font-semibold">Connect rate</th>
+                  <th className="pb-2 pr-4 font-semibold">Appointments</th>
+                  <th className="pb-2 font-semibold">Appt rate</th>
                 </tr>
               </thead>
               <tbody>
@@ -272,16 +204,16 @@ export default async function CampaignDetailPage({
                   const vs = scriptTest[v];
                   return (
                     <tr key={v} className="border-b border-border/60 last:border-0">
-                      <td className={cn(CELL)}>
+                      <td className="py-2.5 pr-4">
                         <Badge tone={v === "a" ? "primary" : "accent"}>
                           Script {v.toUpperCase()}
                         </Badge>
                       </td>
-                      <td className={cn(CELL, "tabular")}>{formatNumber(vs.calls)}</td>
-                      <td className={cn(CELL, "tabular")}>{formatNumber(vs.connects)}</td>
-                      <td className={cn(CELL, "tabular")}>{vs.connectRate}%</td>
-                      <td className={cn(CELL, "tabular")}>{formatNumber(vs.appointments)}</td>
-                      <td className={cn(CELL, "tabular")}>{vs.apptRate}%</td>
+                      <td className="py-2.5 pr-4 tabular">{formatNumber(vs.calls)}</td>
+                      <td className="py-2.5 pr-4 tabular">{formatNumber(vs.connects)}</td>
+                      <td className="py-2.5 pr-4 tabular">{vs.connectRate}%</td>
+                      <td className="py-2.5 pr-4 tabular">{formatNumber(vs.appointments)}</td>
+                      <td className="py-2.5 tabular">{vs.apptRate}%</td>
                     </tr>
                   );
                 })}
@@ -317,10 +249,10 @@ export default async function CampaignDetailPage({
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-border text-left text-xs uppercase tracking-wide text-muted-foreground">
-                    <th className={cn(CELL, "font-semibold")}>Lead</th>
-                    <th className={cn(CELL, "font-semibold")}>Status</th>
-                    <th className={cn(CELL, "font-semibold")}>AI score</th>
-                    <th className={cn(CELL, "font-semibold")}>Last contacted</th>
+                    <th className="pb-2 pr-4 font-semibold">Lead</th>
+                    <th className="pb-2 pr-4 font-semibold">Status</th>
+                    <th className="pb-2 pr-4 font-semibold">AI score</th>
+                    <th className="pb-2 font-semibold">Last contacted</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -328,17 +260,17 @@ export default async function CampaignDetailPage({
                     const lc = leadStatusConfig[l.status];
                     return (
                       <tr key={l.id} className="border-b border-border/60 last:border-0">
-                        <td className={cn(CELL, "max-w-[220px] font-medium")}>
+                        <td className="max-w-[220px] py-2.5 pr-4 font-medium">
                           {/* Name → Lead 360, over this page. */}
                           <LeadOpenLink leadId={l.id}>
                             {leadDisplayName(`${l.firstName} ${l.lastName}`, l.phone, vocab.leadNoun)}
                           </LeadOpenLink>
                         </td>
-                        <td className={cn(CELL)}>
-                          <Badge tone={lc.tone} icon={lc.icon}>{lc.label}</Badge>
+                        <td className="py-2.5 pr-4">
+                          <Badge tone={lc.tone}>{lc.label}</Badge>
                         </td>
-                        <td className={cn(CELL, "tabular")}>{l.aiScore ?? "—"}</td>
-                        <td className={cn(CELL, "whitespace-nowrap text-muted-foreground")}>
+                        <td className="py-2.5 pr-4 tabular">{l.aiScore ?? "—"}</td>
+                        <td className="whitespace-nowrap py-2.5 text-muted-foreground">
                           {l.lastContactedAt ? relativeTime(l.lastContactedAt) : "Never"}
                         </td>
                       </tr>
@@ -361,7 +293,6 @@ export default async function CampaignDetailPage({
                 const oc = (r.outcome ? outcomeConfig[r.outcome] : undefined) ?? {
                   label: "No outcome",
                   tone: "neutral" as const,
-                  icon: undefined,
                 };
                 return (
                   <div key={r.id} className="flex items-center justify-between gap-3">
@@ -375,7 +306,7 @@ export default async function CampaignDetailPage({
                         {formatDuration(r.durationSec)} · {relativeTime(r.startedAt)}
                       </p>
                     </div>
-                    <Badge tone={oc.tone} icon={oc.icon}>{oc.label}</Badge>
+                    <Badge tone={oc.tone}>{oc.label}</Badge>
                   </div>
                 );
               })}

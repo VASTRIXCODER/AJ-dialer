@@ -26,77 +26,37 @@ export interface DncEntry {
   createdAt: string;
 }
 
-/**
- * Thrown when the suppression list could not be READ.
- *
- * Distinct from "the list is empty", which is a perfectly ordinary answer and
- * must keep working.
- */
-export class DncUnavailableError extends Error {
-  constructor(detail: string) {
-    super(`Could not read the Do-Not-Call list: ${detail}`);
-    this.name = "DncUnavailableError";
+/** The org's full suppression set (last-10 digits), for scrubbing lead lists. */
+export async function getDncDigits(orgId: string | null): Promise<Set<string>> {
+  if (!orgId || !isAdminConfigured()) return new Set();
+  try {
+    const admin = createAdminClient();
+    const { data } = await admin
+      .from("dnc_numbers")
+      .select("phone_digits")
+      .eq("org_id", orgId);
+    return new Set(((data ?? []) as Row[]).map((r) => String(r.phone_digits)));
+  } catch {
+    return new Set();
   }
 }
 
-/**
- * The org's full suppression set (last-10 digits), for scrubbing lead lists.
- *
- * FAILS CLOSED. This used to destructure `data` alone and return
- * `new Set(data ?? [])` inside a try/catch — and supabase-js does not throw on
- * a failed read, it RESOLVES `{ data: null, error }`. So a transient database
- * error produced an EMPTY SUPPRESSION SET, the catch never fired, and every
- * caller read that as "nobody has asked us not to call them".
- *
- * There are twelve callers, and they include the manual dial route
- * (src/app/api/twilio/call/route.ts), the session builder, the import scrub and
- * the orchestration engine. A single failed read on any of those paths meant
- * dialing, importing or messaging straight through the entire list.
- *
- * This is the same supabase-js behaviour the zero rule was written for, with
- * the consequence turned all the way up: there, a number rendered as 0; here,
- * a suppression silently stops existing. So the failure is now loud. A caller
- * that genuinely can degrade has to say so, rather than getting it by default.
- *
- * An unconfigured admin client still returns an empty set — that is demo mode,
- * where there is no list rather than an unreadable one.
- */
-export async function getDncDigits(orgId: string | null): Promise<Set<string>> {
-  if (!orgId || !isAdminConfigured()) return new Set();
-  const admin = createAdminClient();
-  const { data, error } = await admin
-    .from("dnc_numbers")
-    .select("phone_digits")
-    .eq("org_id", orgId);
-  if (error) throw new DncUnavailableError(error.message);
-  return new Set(((data ?? []) as Row[]).map((r) => String(r.phone_digits)));
-}
-
-/**
- * Is a single number suppressed for this org?
- *
- * FAILS CLOSED, for the same reason as getDncDigits above: this returned
- * `Boolean(data)` from a destructure that never looked at `error`, so a failed
- * read said "no, go ahead" — on the AI dialer's pre-flight check
- * (src/lib/ai-dialer.ts:178) and the outbound message gate
- * (src/lib/db/messages.ts:208), which are the last checks before a phone rings
- * or a text is sent.
- *
- * Throws `DncUnavailableError` when it cannot tell. "Not suppressed" now means
- * the list was read and the number was not in it.
- */
+/** Is a single number suppressed for this org? */
 export async function isOnDnc(orgId: string | null, phone: string): Promise<boolean> {
   const key = dncKey(phone);
   if (!orgId || !key || !isAdminConfigured()) return false;
-  const admin = createAdminClient();
-  const { data, error } = await admin
-    .from("dnc_numbers")
-    .select("id")
-    .eq("org_id", orgId)
-    .eq("phone_digits", key)
-    .maybeSingle();
-  if (error) throw new DncUnavailableError(error.message);
-  return Boolean(data);
+  try {
+    const admin = createAdminClient();
+    const { data } = await admin
+      .from("dnc_numbers")
+      .select("id")
+      .eq("org_id", orgId)
+      .eq("phone_digits", key)
+      .maybeSingle();
+    return Boolean(data);
+  } catch {
+    return false;
+  }
 }
 
 /** Add one number to the org's suppression list (idempotent upsert). */
@@ -203,47 +163,27 @@ export async function removeFromDnc(
   }
 }
 
-/**
- * List the org's suppression entries, newest first (for the Admin screen).
- *
- * Throws `DncUnavailableError` when the read fails, rather than returning `[]`.
- * An admin looking at an empty suppression table must not be looking at a
- * failed query — "nobody is on the list" and "we could not ask" are the two
- * answers this screen most needs to keep apart.
- */
-export async function listDnc(orgId: string | null, max = 50_000): Promise<DncEntry[]> {
+/** List the org's suppression entries, newest first (for the Admin screen). */
+export async function listDnc(orgId: string | null, limit = 5000): Promise<DncEntry[]> {
   if (!orgId || !isAdminConfigured()) return [];
-  const admin = createAdminClient();
-  // PAGED. This was `.limit(5000)` with no `.range()` — capped at the
-  // PostgREST response ceiling, so the list stopped well short and said
-  // nothing. The screen renders `entries.length` as "N suppressed" and builds
-  // the compliance CSV from the same array, so an admin producing a
-  // suppression list for a request got a silently short file. Latent at 164
-  // entries today; the whole point of the list is that it grows.
-  const PAGE = 1000;
-  const out: DncEntry[] = [];
-  for (let from = 0; from < max; from += PAGE) {
-    const { data, error } = await admin
+  try {
+    const admin = createAdminClient();
+    const { data } = await admin
       .from("dnc_numbers")
       .select("id, phone_digits, reason, source, created_at")
       .eq("org_id", orgId)
       .order("created_at", { ascending: false })
-      .order("id", { ascending: true })
-      .range(from, from + PAGE - 1);
-    if (error) throw new DncUnavailableError(error.message);
-    const rows = (data ?? []) as Row[];
-    out.push(
-      ...rows.map((r) => ({
-        id: String(r.id),
-        phoneDigits: String(r.phone_digits ?? ""),
-        reason: String(r.reason ?? ""),
-        source: String(r.source ?? ""),
-        createdAt: String(r.created_at ?? ""),
-      })),
-    );
-    if (rows.length < PAGE) break;
+      .limit(limit);
+    return ((data ?? []) as Row[]).map((r) => ({
+      id: String(r.id),
+      phoneDigits: String(r.phone_digits ?? ""),
+      reason: String(r.reason ?? ""),
+      source: String(r.source ?? ""),
+      createdAt: String(r.created_at ?? ""),
+    }));
+  } catch {
+    return [];
   }
-  return out;
 }
 
 /** Drop every lead whose phone is on the suppression set. */

@@ -1,9 +1,8 @@
 import "server-only";
 
-import { connectedRecordFilter, isConnectedRecord } from "../metrics/definitions";
+import { CONNECTED_OUTCOMES } from "../call-analytics";
 import { zonedDayStartMs, zonedFloatingNow } from "../dialer/schedule";
 import { createAdminClient, isAdminConfigured } from "../supabase/admin";
-import { askedCount } from "./counts";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Command Center (P2.10): the supervisor's org-wide cockpit. Every number is
@@ -20,19 +19,10 @@ const n = (v: unknown) => Number(v ?? 0) || 0;
 const PAGE = 1000;
 /** Row-scan bound for the per-rep breakdown (12 pages = 12,000 calls/day). */
 const SCAN_PAGES = 12;
-/**
- * Bound on the running-playbook-instance scan.
- *
- * It was 2,000 — above PAGE, the response ceiling declared four lines up. A
- * `.limit()` above that ceiling is not a limit: the response is truncated at
- * the ceiling instead, so `rows.length >= INSTANCE_SCAN` could never be true
- * and the "≥" the Command Center renders from it could never appear. The scan
- * was capped at 1,000 the whole time, silently.
- *
- * Set to the ceiling, so the bound and the disclosure agree. Anything larger
- * needs paging, not a bigger number.
- */
-const INSTANCE_SCAN = PAGE;
+/** Bound on the running-playbook-instance scan. */
+const INSTANCE_SCAN = 2000;
+/** Conversation-grade outcomes, as a PostgREST in() list. */
+const CONNECTED_LIST = `(${[...CONNECTED_OUTCOMES].join(",")})`;
 
 export interface LeakRow {
   id: string;
@@ -60,19 +50,12 @@ export interface PlaybookSummary {
 }
 
 export interface CommandCenterData {
-  /**
-   * Every count here is `number | null`, and the null is load-bearing: it
-   * means the read FAILED, not that the answer is zero. supabase-js resolves
-   * rather than throws on a failed query, so a `?? 0` here would print an
-   * authoritative zero at the top of a supervisor's screen and tell them
-   * there is nothing to chase. The tiles render an em dash for null.
-   */
   today: {
-    dials: number | null;
-    conversations: number | null;
-    appointments: number | null;
+    dials: number;
+    conversations: number;
+    appointments: number;
     leadsWorked: number;
-    newLeads: number | null;
+    newLeads: number;
     /** Median minutes from received → first attempt, for opportunities first
      *  attempted today. Null = no valid denominator ("not enough data"). */
     speedToLeadMin: number | null;
@@ -85,12 +68,11 @@ export interface CommandCenterData {
   speedSampled: boolean;
   /** True when the running-instance scan hit its bound (counts are a floor). */
   instancesCapped: boolean;
-  /** Same rule as `today`: null is "could not ask", not "none waiting". */
   queues: {
-    overdueCallbacks: number | null;
-    unscheduledCallbacks: number | null;
-    untouchedNew: number | null;
-    hotSignals: number | null;
+    overdueCallbacks: number;
+    unscheduledCallbacks: number;
+    untouchedNew: number;
+    hotSignals: number;
   };
   leaks: { count: number; sample: LeakRow[] };
   reps: RepToday[];
@@ -128,11 +110,7 @@ async function readCommandCenter(input: {
 
   const [dialsRes, convosRes, apptCountRes] = await Promise.all([
     callsToday(),
-    // The canonical connect predicate, not a hand-rolled approximation of
-    // it — see connectedRecordFilter. The old expression counted a voicemail
-    // carrying human_connected=true, and counted a row the answer pipeline had
-    // positively marked human_connected=false.
-    callsToday().or(connectedRecordFilter()),
+    callsToday().or(`human_connected.is.true,outcome.in.${CONNECTED_LIST}`),
     callsToday().eq("outcome", "appointment_booked"),
   ]);
 
@@ -256,28 +234,16 @@ async function readCommandCenter(input: {
   ]);
 
   // ── Today strip ────────────────────────────────────────────────────────────
-  // The same predicate the headline count uses, and the same one the dashboard
-  // and reports use. This was a THIRD hand-rolled version — it counted a
-  // voicemail flagged human_connected=true, and let a connected outcome
-  // overrule a positively-recorded human_connected=false.
   const isConversation = (r: Row) =>
-    isConnectedRecord({
-      humanConnected: typeof r.human_connected === "boolean" ? r.human_connected : null,
-      outcome: s(r.outcome) || null,
-    });
-  // `count ?? 0` is the wrong default on every one of these. supabase-js does
-  // not throw on a failed read — it RESOLVES `{ data: null, count: null,
-  // error }` — so the nullish coalesce silently turns "we could not ask" into
-  // "the answer is none", and the Command Center then states it as fact at the
-  // top of the screen. Ask the error, and let the tile say it does not know.
+    r.human_connected === true || (CONNECTED_OUTCOMES as Set<string>).has(s(r.outcome));
   const today = {
-    dials: askedCount(dialsRes),
-    conversations: askedCount(convosRes),
-    appointments: askedCount(apptCountRes),
+    dials: dialsRes.count ?? 0,
+    conversations: convosRes.count ?? 0,
+    appointments: apptCountRes.count ?? 0,
     // Distinct-count isn't expressible in PostgREST — this one rides the
     // bounded scan and is labeled when the scan capped.
     leadsWorked: new Set(calls.map((r) => s(r.lead_id)).filter(Boolean)).size,
-    newLeads: askedCount(newLeadsRes),
+    newLeads: newLeadsRes.count ?? 0,
     speedToLeadMin: null as number | null,
   };
   const sttRows = ((sttRes.data ?? []) as Row[])
@@ -298,13 +264,11 @@ async function readCommandCenter(input: {
   const speedSampled = sttRows.length >= 1000;
 
   // ── Attention queues ───────────────────────────────────────────────────────
-  // Same rule as the Today strip. A queue that reads 0 because the query
-  // failed tells a supervisor there is nothing to chase.
   const queues = {
-    overdueCallbacks: askedCount(overdueCbRes),
-    unscheduledCallbacks: askedCount(unschedCbRes),
-    untouchedNew: askedCount(untouchedRes),
-    hotSignals: askedCount(hotSigRes),
+    overdueCallbacks: overdueCbRes.count ?? 0,
+    unscheduledCallbacks: unschedCbRes.count ?? 0,
+    untouchedNew: untouchedRes.count ?? 0,
+    hotSignals: hotSigRes.count ?? 0,
   };
 
   // ── Pipeline leaks (sample + true count) ───────────────────────────────────

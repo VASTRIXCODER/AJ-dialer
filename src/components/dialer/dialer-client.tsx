@@ -29,7 +29,6 @@ import {
   persistDisposition,
   replayQueuedDispositions,
 } from "@/lib/dialer/disposition-queue";
-import { deepLinkChannel } from "@/lib/dialer/deep-link";
 import { describeOrgHours, isWithinOrgHours } from "@/lib/dialer/schedule";
 import { browserWrapupStore, clearWrapupDraft } from "@/lib/dialer/wrapup-draft";
 import { filterOutcomeOptionsByKeys, resolveOutcomeOptions } from "@/lib/status";
@@ -52,7 +51,6 @@ import { groupLabel, LoadLeadsDialog } from "./load-leads-dialog";
 import { QualifyPanel } from "./qualify-panel";
 import { SessionBuilder } from "./session-builder";
 import { Teleprompter } from "./teleprompter";
-import { DEFAULT_TIMEZONE } from "@/lib/metrics/definitions";
 
 export function DialerClient({
   queue: initialQueue,
@@ -136,7 +134,7 @@ export function DialerClient({
     if (!hours) return;
     const evaluate = () =>
       setOutsideOrgHours(
-        !isWithinOrgHours(new Date(), hours, config.orgTimezone || DEFAULT_TIMEZONE),
+        !isWithinOrgHours(new Date(), hours, config.orgTimezone || "America/Chicago"),
       );
     evaluate();
     const t = setInterval(evaluate, 60_000);
@@ -146,13 +144,6 @@ export function DialerClient({
   // so this is purely a visibility tab — polling independently of the dial
   // engine, the same pattern DialerFloor uses.
   const [tab, setTab] = useState<"queue" | "booked">("queue");
-  // Disabling the Booked tab during a call isn't enough on its own: auto-dial
-  // can start a round while the rep is already sitting on it, and the tab
-  // replaces the whole call surface. Anything on the wire pulls them back to
-  // the controls.
-  useEffect(() => {
-    if (state.status !== "idle") setTab("queue");
-  }, [state.status]);
   const [bookedLeads, setBookedLeads] = useState<BookedLead[]>([]);
   const [bookedLoading, setBookedLoading] = useState(true);
   const bookedAlive = useRef(true);
@@ -299,64 +290,15 @@ export function DialerClient({
   // disposition time without re-binding on every render.
   const pendingCallbackIdRef = useRef<string | null>(callbackId ?? null);
 
-  // Which channel this workspace can actually place a deep-linked number on.
-  // ONE value, read by both the effect that dials and the banner that narrates
-  // it — so the banner can never describe something that isn't going to happen.
-  const channel = deepLinkChannel({
-    manualEnabled: config.manualEnabled,
-    aiAgentConfigured: config.aiAgentConfigured,
-    aiEnabled: config.aiEnabled,
-  });
-
-  // Auto-dial a deep-linked number (?dial=) as soon as the dialer can place it.
-  //
-  // This used to bail out whenever the dialer was in AI mode — which is the
-  // BOOT mode on every AI-configured workspace. So pressing "Call" on a lead
-  // you searched for landed you on a dialer that just sat there under a
-  // "Dialing now…" banner, and the natural next move — press Start — opened a
-  // session on whoever the loaded queue was parked on. The rep watched the
-  // banner name the person they picked while a completely different person
-  // answered. A ?dial= link is an explicit instruction about WHO to call, so
-  // it is now honored in whichever channel the workspace actually allows:
-  // manual dialing → drop to manual and place it; AI-only → let the agent
-  // place it. Never silently discarded, never left for Start to reinterpret.
-  //
-  // The manual leg is gated on `deepLinkChannel` rather than on Twilio being
-  // live: a workspace with manual dialing turned OFF still has a working Voice
-  // device, and this path used to dial straight through a policy the rest of
-  // the cockpit enforces.
+  // Auto-dial a callback number as soon as the Twilio device is live and idle.
   const callbackFiredRef = useRef(false);
   useEffect(() => {
     if (!callbackPhone || callbackFiredRef.current) return;
-    if (state.status !== "idle") return;
-    if (channel === "none") return;
-    if (state.aiMode) {
-      if (channel === "manual") {
-        // Flip once; the effect re-runs with aiMode false and dials below.
-        dialer.setAiMode(false);
-      } else {
-        callbackFiredRef.current = true;
-        const parts = (callbackName ?? "").trim().split(/\s+/).filter(Boolean);
-        void dialer.aiDialNumber(callbackPhone, {
-          firstName: parts[0],
-          lastName: parts.slice(1).join(" ") || undefined,
-        });
-      }
-      return;
-    }
-    if (channel === "manual" && state.mode === "live") {
+    if (state.mode === "live" && state.status === "idle" && !state.aiMode) {
       callbackFiredRef.current = true;
       dialer.dialNumber(callbackPhone, callbackName);
     }
-  }, [
-    state.mode,
-    state.status,
-    state.aiMode,
-    callbackPhone,
-    callbackName,
-    channel,
-    dialer,
-  ]);
+  }, [state.mode, state.status, state.aiMode, callbackPhone, callbackName, dialer]);
 
   // Which lead the side panels describe right now (null when the queue is empty
   // and no call is active — production ships with no placeholder lead).
@@ -521,12 +463,6 @@ export function DialerClient({
       ),
     [vocab, dispositions, focusCampaign?.dispositionKeys],
   );
-  // The two number pads. They live up here rather than inside CallCockpit so
-  // that "#" and the Keypad button open the SAME one — the shortcut is
-  // registered on the shell above the cockpit and cannot reach its state.
-  const [keypadOpen, setKeypadOpen] = useState(false);
-  const [manualPadOpen, setManualPadOpen] = useState(queueForDialer.length === 0);
-
   const kbdHandlers = useMemo(
     () => ({
       onStartCall: () => {
@@ -545,12 +481,6 @@ export function DialerClient({
         if (state.status !== "wrapup") return;
         const opt = outcomeOptions[n - 1];
         if (opt) onOutcome(opt.value, opt.key);
-      },
-      // On a call, "#" is the DTMF pad. Off one, it is the "dial a specific
-      // number" pad — the same key for "give me digits", either way.
-      onToggleKeypad: () => {
-        if (state.status === "live") setKeypadOpen((v) => !v);
-        else if (state.status === "idle") setManualPadOpen((v) => !v);
       },
     }),
     [dialer, state.status, outcomeOptions, onOutcome],
@@ -612,44 +542,18 @@ export function DialerClient({
 
       {/* Callback auto-dial banner — shown until the call fires */}
       {callbackPhone && !callbackFiredRef.current && state.status === "idle" && (
-        <Card
-          className={cn(
-            "flex flex-col items-start gap-3 p-4 sm:flex-row sm:items-center",
-            channel === "none"
-              ? "border-warning/30 bg-warning/5"
-              : "border-accent/30 bg-accent/5",
-          )}
-        >
-          <div
-            className={cn(
-              "flex h-10 w-10 shrink-0 items-center justify-center rounded-xl",
-              channel === "none"
-                ? "bg-warning/15 text-warning"
-                : "bg-accent/15 text-accent",
-            )}
-          >
+        <Card className="flex flex-col items-start gap-3 border-accent/30 bg-accent/5 p-4 sm:flex-row sm:items-center">
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-accent/15 text-accent">
             <Phone className="h-5 w-5" />
           </div>
           <div className="flex-1">
             <p className="text-sm font-semibold">
-              {channel === "none" ? "Can’t place this call" : "Callback ready"}
-              {callbackName ? ` — ${callbackName}` : ""}
+              Callback ready{callbackName ? ` — ${callbackName}` : ""}
             </p>
-            {/* Three channels, three sentences, and none of them describes a
-                call that isn't going to be placed. The third case is real: an
-                AI-only workspace whose agent isn't set up, or whose plan
-                lapsed, used to sit under "Handing this number to the AI
-                agent…" forever. */}
             <p className="text-sm text-muted-foreground">
-              {channel === "ai"
-                ? "Handing this number to the AI agent…"
-                : channel === "manual"
-                  ? state.mode === "live"
-                    ? "Dialing now…"
-                    : "Connecting to Twilio — will dial automatically once ready."
-                  : config.aiAgentConfigured
-                    ? "Manual dialing is off for this workspace and the AI dialer isn’t available on your plan, so nothing can dial this number. Ask an admin to turn manual dialing back on."
-                    : "Manual dialing is off for this workspace and no AI agent is set up yet, so nothing can dial this number. Ask an admin to connect an agent, or to turn manual dialing back on."}
+              {state.mode === "live"
+                ? "Dialing now…"
+                : "Connecting to Twilio — will dial automatically once ready."}
             </p>
           </div>
         </Card>
@@ -674,23 +578,11 @@ export function DialerClient({
             <PhoneCall className="h-4 w-4" />
             Dial queue
           </button>
-          {/* Not while anything is on the wire. This tab replaces the WHOLE
-              three-column grid, CallCockpit included — a rep who tapped it
-              mid-call lost the timer, mute, hold, keypad, End call and the
-              disposition grid in one click, with the call still up and no way
-              to touch it. `Load leads` and `Filters` above already gate the
-              same way. */}
           <button
             type="button"
             onClick={() => setTab("booked")}
-            disabled={state.status !== "idle"}
-            title={
-              state.status !== "idle"
-                ? "Finish the call first — this tab replaces the call controls."
-                : undefined
-            }
             className={cn(
-              "flex items-center gap-1.5 border-b-2 px-3 py-2 text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50",
+              "flex items-center gap-1.5 border-b-2 px-3 py-2 text-sm font-medium transition-colors",
               tab === "booked"
                 ? "border-primary text-foreground"
                 : "border-transparent text-muted-foreground hover:text-foreground",
@@ -718,7 +610,7 @@ export function DialerClient({
           Both doors lead to the SessionBuilder — two identically-labeled
           buttons doing different things is how the builder stayed invisible
           (quick load lives inside it, one click away). */}
-      <div className="relative flex flex-wrap items-center gap-2.5">
+      <div className="flex flex-wrap items-center gap-2.5">
         <Button
           size="sm"
           variant="outline"
@@ -809,34 +701,13 @@ export function DialerClient({
           {config.dialScope === "org" && !myLeadsOnly ? "org" : "of your"} lead
           {queueForDialer.length === 1 ? "" : "s"} ready to dial
         </span>
-        {/* A live region: this is the only feedback a rep gets for "Load
-            leads", and it announced nothing to a screen reader. `polite` so it
-            waits for a gap rather than cutting across a call. */}
-        {/* Absolutely positioned so a message does not push the grid — and the
-            grid already starts 422px down. `basis-full` meant every "Loaded 41
-            leads" reflowed the whole working surface by a line. */}
-        <span
-          className="pointer-events-none absolute left-0 top-full pt-1 text-xs text-muted-foreground"
-          role="status"
-          aria-live="polite"
-        >
-          {loadMsg}
-        </span>
+        {loadMsg && (
+          <span className="basis-full text-xs text-muted-foreground">{loadMsg}</span>
+        )}
       </div>
 
-      {/* Three independently-scrolling panes, not three columns of one long
-          page.
-          
-          The grid starts ~422px down (topbar 72 + PageHeader 99 + gaps +
-          ShellHeader 58 + tab strip 31 + floor strip 42 + toolbar 48), and the
-          right column runs ~680px with no script and ~1000px with a
-          teleprompter. At 1440×900 that leaves 478px of visible height, so the
-          call controls — the thing a rep reaches for while somebody is talking
-          — sat below the fold whenever the qualify panel was long. Each pane
-          gets its own scrollbar and a height budget tied to the viewport, so
-          the tallest neighbour can no longer push the others down. */}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-12">
-        <Card className="overflow-hidden lg:col-span-3 lg:sticky lg:top-4 lg:max-h-[calc(100vh-7rem)] lg:overflow-y-auto">
+        <Card className="overflow-hidden lg:col-span-3">
           <LeadPanel
             lead={focusLead}
             upNext={upNext}
@@ -846,7 +717,6 @@ export function DialerClient({
             onPrev={dialer.prevLead}
             onNext={dialer.nextLead}
             onSelect={dialer.selectLead}
-            pinned={Boolean(state.pinnedLeadId) && state.pinnedLeadId === focusLead?.id}
             navDisabled={state.status !== "idle"}
             onLoadLeads={() => setBuilderOpen(true)}
             loadingLeads={loadingLeads}
@@ -859,14 +729,8 @@ export function DialerClient({
           />
         </Card>
 
-        {/* min-h is gone: it forced 640px of column whatever was in it, which
-            is most of the viewport before anything renders. */}
-        <Card className="overflow-hidden lg:col-span-5 lg:sticky lg:top-4 lg:max-h-[calc(100vh-7rem)] lg:overflow-y-auto">
+        <Card className="overflow-hidden lg:col-span-5 lg:min-h-[640px]">
           <CallCockpit
-            keypadOpen={keypadOpen}
-            onToggleKeypad={() => setKeypadOpen((v) => !v)}
-            manualPadOpen={manualPadOpen}
-            onToggleManualPad={() => setManualPadOpen((v) => !v)}
             state={state}
             focusLead={focusLead}
             hasQueue={queueForDialer.length > 0}
@@ -906,10 +770,7 @@ export function DialerClient({
 
         {/* data-dialer-teleprompter: the live cockpit's "Script" reach button
             scrolls this card into view (it can sit below the fold mid-call). */}
-        <Card
-          className="overflow-hidden lg:col-span-4 lg:sticky lg:top-4 lg:max-h-[calc(100vh-7rem)] lg:overflow-y-auto"
-          data-dialer-teleprompter=""
-        >
+        <Card className="overflow-hidden lg:col-span-4" data-dialer-teleprompter="">
           <div className="border-b border-border px-5 py-3">
             <h3 className="font-semibold">
               {/* Two things vary here. An org can switch every qualify field off

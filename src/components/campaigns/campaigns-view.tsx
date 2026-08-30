@@ -15,9 +15,9 @@ import {
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { SpotlightCard } from "@/components/motion";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
 import { useConfirm } from "@/components/ui/confirm-dialog";
 import { Input, Label } from "@/components/ui/input";
 import type { CampaignStats } from "@/lib/campaign-stats";
@@ -179,7 +179,7 @@ export function CampaignsView({
             const st = c.stats;
             const pending = pendingId === c.id;
             return (
-              <Card
+              <SpotlightCard
                 key={c.id}
                 className={`flex flex-col overflow-hidden ${c.archivedAt ? "opacity-60" : ""}`}
               >
@@ -257,7 +257,7 @@ export function CampaignsView({
                     </button>
                   </div>
                 </div>
-              </Card>
+              </SpotlightCard>
             );
           })}
         </div>
@@ -270,7 +270,7 @@ function Stat({ label, value, accent }: { label: string; value: number; accent?:
   return (
     <div className="rounded-xl bg-muted/60 p-2.5 text-center">
       <p className={`text-lg font-bold tabular ${accent ? "text-primary" : ""}`}>{value}</p>
-      <p className="text-[11px] text-muted-foreground">{label}</p>
+      <p className="text-[10px] text-muted-foreground">{label}</p>
     </div>
   );
 }

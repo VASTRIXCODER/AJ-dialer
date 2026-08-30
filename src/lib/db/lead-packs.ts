@@ -139,6 +139,22 @@ export function planCityPacks(
   return packs;
 }
 
+export async function listLeadPacks(orgId: string | null, limit = 200): Promise<LeadPack[]> {
+  if (!orgId) return [];
+  try {
+    const supabase = await createClient();
+    const { data, error } = await supabase
+      .from("lead_packs")
+      .select("*")
+      .eq("org_id", orgId)
+      .order("created_at", { ascending: false })
+      .limit(limit);
+    if (error || !data) return [];
+    return data.map(rowToPack);
+  } catch {
+    return [];
+  }
+}
 
 /**
  * Create the pack rows for one upload up front, so the importer can stamp each

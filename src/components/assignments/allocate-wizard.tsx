@@ -16,8 +16,7 @@ import { useVocabulary } from "@/components/layout/vocabulary";
 import { FilterBuilder } from "@/components/leads/filter-builder";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Input, Label } from "@/components/ui/input";
-import { SelectMenu } from "@/components/ui/select-menu";
+import { Input, Label, Select } from "@/components/ui/input";
 import { Modal } from "@/components/ui/modal";
 import { useToast } from "@/components/ui/toast";
 import type { AllocationPreview } from "@/lib/db/assignments";
@@ -286,16 +285,19 @@ export function AllocateWizard({
 
             {kind === "smart_list" && (
               <div>
-                <Label>Smart list</Label>
-                <SelectMenu
-                  label="Smart list"
-                  placeholder="Pick a list…"
-                  className="w-full"
-                  triggerClassName="w-full"
-                  value={smartListId || null}
-                  onChange={(v) => setSmartListId(v)}
-                  options={smartLists.map((l) => ({ value: l.id, label: l.name }))}
-                />
+                <Label htmlFor="alloc-smart-list">Smart list</Label>
+                <Select
+                  id="alloc-smart-list"
+                  value={smartListId}
+                  onChange={(e) => setSmartListId(e.target.value)}
+                >
+                  <option value="">Pick a list…</option>
+                  {smartLists.map((l) => (
+                    <option key={l.id} value={l.id}>
+                      {l.name}
+                    </option>
+                  ))}
+                </Select>
                 {smartLists.length === 0 && (
                   <p className="mt-1.5 text-xs text-muted-foreground">
                     No smart lists yet — save one from the {vocab.LeadNounPlural} page first.
@@ -320,16 +322,15 @@ export function AllocateWizard({
         {step === 1 && (
           <div className="grid gap-4 sm:grid-cols-2">
             <div>
-              <Label>Assign to</Label>
-              <SelectMenu
-                label="Assign to"
-                placeholder="Pick a teammate…"
-                className="w-full"
-                triggerClassName="w-full"
-                value={repId || null}
-                onChange={(v) => setRepId(v)}
-                options={members.map((m) => ({ value: m.id, label: m.name || "Teammate" }))}
-              />
+              <Label htmlFor="alloc-rep">Assign to</Label>
+              <Select id="alloc-rep" value={repId} onChange={(e) => setRepId(e.target.value)}>
+                <option value="">Pick a teammate…</option>
+                {members.map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.name || "Teammate"}
+                  </option>
+                ))}
+              </Select>
             </div>
             <div>
               <Label htmlFor="alloc-count">How many</Label>
@@ -370,19 +371,16 @@ export function AllocateWizard({
                 />
               </div>
               <div>
-                <Label>Priority</Label>
-                <SelectMenu
-                  label="Priority"
-                  className="w-full"
-                  triggerClassName="w-full"
+                <Label htmlFor="alloc-priority">Priority</Label>
+                <Select
+                  id="alloc-priority"
                   value={String(priority)}
-                  onChange={(v) => setPriority(Number(v) || 0)}
-                  options={[
-                    { value: "0", label: "Normal" },
-                    { value: "1", label: "High" },
-                    { value: "2", label: "Urgent" },
-                  ]}
-                />
+                  onChange={(e) => setPriority(Number(e.target.value) || 0)}
+                >
+                  <option value="0">Normal</option>
+                  <option value="1">High</option>
+                  <option value="2">Urgent</option>
+                </Select>
               </div>
               <div>
                 <Label htmlFor="alloc-due">Due date</Label>
@@ -394,33 +392,31 @@ export function AllocateWizard({
                 />
               </div>
               <div>
-                <Label>Dialing mode</Label>
-                <SelectMenu
-                  label="Dialing mode"
-                  className="w-full"
-                  triggerClassName="w-full"
+                <Label htmlFor="alloc-mode">Dialing mode</Label>
+                <Select
+                  id="alloc-mode"
                   value={dialingMode}
-                  onChange={(v) => setDialingMode(v as "manual" | "ai" | "either")}
-                  options={[
-                    { value: "either", label: "Either" },
-                    { value: "manual", label: "Manual only" },
-                    { value: "ai", label: "AI only" },
-                  ]}
-                />
+                  onChange={(e) => setDialingMode(e.target.value as "manual" | "ai" | "either")}
+                >
+                  <option value="either">Either</option>
+                  <option value="manual">Manual only</option>
+                  <option value="ai">AI only</option>
+                </Select>
               </div>
               <div>
-                <Label>Campaign</Label>
-                <SelectMenu
-                  label="Campaign"
-                  className="w-full"
-                  triggerClassName="w-full"
-                  value={campaignId || "none"}
-                  onChange={(v) => setCampaignId(v === "none" ? "" : v)}
-                  options={[
-                    { value: "none", label: "None" },
-                    ...campaigns.map((c) => ({ value: c.id, label: c.name })),
-                  ]}
-                />
+                <Label htmlFor="alloc-campaign">Campaign</Label>
+                <Select
+                  id="alloc-campaign"
+                  value={campaignId}
+                  onChange={(e) => setCampaignId(e.target.value)}
+                >
+                  <option value="">None</option>
+                  {campaigns.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name}
+                    </option>
+                  ))}
+                </Select>
               </div>
               <div>
                 <Label htmlFor="alloc-attempts">Max attempts</Label>

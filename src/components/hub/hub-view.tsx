@@ -18,11 +18,10 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { LogoMark } from "@/components/brand/logo";
 import { Button } from "@/components/ui/button";
-import { Input, Label, Textarea } from "@/components/ui/input";
-import { SelectMenu } from "@/components/ui/select-menu";
+import { Input, Label, Select, Textarea } from "@/components/ui/input";
 import { Modal } from "@/components/ui/modal";
 import type { OrgBlueprint, OrgFeatures } from "@/lib/org/settings";
-import { DIALER_TEMPLATES, templateLabel, templatePlate } from "@/lib/org/templates";
+import { DIALER_TEMPLATES, templateLabel } from "@/lib/org/templates";
 import { ROLE_LABEL, type OrgRole } from "@/lib/permissions";
 
 type Membership = {
@@ -152,17 +151,8 @@ export function HubView({
                 type="button"
                 onClick={() => enter(m.id)}
                 disabled={entering === m.id}
-                className="surface-glass group flex flex-col overflow-hidden rounded-2xl border border-border/60 text-left shadow-soft transition-colors duration-200 hover:border-border"
+                className="surface-glass group flex flex-col rounded-2xl border border-border/60 p-5 text-left shadow-soft transition-all duration-300 hover:-translate-y-0.5 hover:border-border hover:shadow-lift"
               >
-                {/* The workspace's vertical, as a Stage plate. The org picker is
-                    a place a rep arrives and chooses, not one they work in, so
-                    it is allowed to be cinematic — see templatePlate. */}
-                <span
-                  aria-hidden
-                  className="block h-20 w-full bg-surface-2 bg-cover bg-center"
-                  style={{ backgroundImage: `url(${templatePlate(m.dialerTemplate)})` }}
-                />
-                <span className="flex flex-1 flex-col p-5">
                 <div className="flex items-center gap-3">
                   <span
                     className="flex h-11 w-11 items-center justify-center overflow-hidden rounded-xl text-white shadow-soft"
@@ -196,12 +186,12 @@ export function HubView({
                   {m.tagline || m.productName || templateLabel(m.dialerTemplate)}
                 </p>
                 {m.description ? (
-                  <p className="mt-1.5 line-clamp-2 text-xs text-ink-3">
+                  <p className="mt-1.5 line-clamp-2 text-xs text-muted-foreground/80">
                     {m.description}
                   </p>
                 ) : null}
                 {m.website ? (
-                  <p className="mt-1 truncate text-[11px] text-ink-3">
+                  <p className="mt-1 truncate text-[11px] text-muted-foreground/70">
                     {m.website.replace(/^https?:\/\//, "")}
                   </p>
                 ) : null}
@@ -214,7 +204,6 @@ export function HubView({
                       <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-0.5" />
                     </>
                   )}
-                </span>
                 </span>
               </button>
             ))}
@@ -263,7 +252,7 @@ export function HubView({
         />
         {superadmin && (
           <div className="surface-glass flex flex-col rounded-2xl border border-border/60 p-6 shadow-soft">
-            <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-brand text-white">
+            <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-brand text-white shadow-glow">
               <Wand2 className="h-5 w-5" />
             </span>
             <h3 className="mt-3 text-base font-bold tracking-tight">
@@ -438,7 +427,7 @@ function AIBuilder({
     <Modal onClose={onClose} label="AI organization builder" maxWidth="max-w-2xl">
       <div className="flex items-center justify-between border-b border-border/60 p-5">
         <div className="flex items-center gap-3">
-          <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-brand text-white">
+          <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-brand text-white shadow-glow">
             <Wand2 className="h-5 w-5" />
           </span>
           <div>
@@ -596,14 +585,16 @@ function BlueprintPreview({
         </div>
         <div>
           <Label>Specialization</Label>
-          <SelectMenu
-            label="Specialization"
-            className="w-full"
-            triggerClassName="w-full"
+          <Select
             value={bp.template}
-            onChange={(v) => onChange({ ...bp, template: v })}
-            options={DIALER_TEMPLATES.map((t) => ({ value: t.value, label: t.label }))}
-          />
+            onChange={(e) => onChange({ ...bp, template: e.target.value })}
+          >
+            {DIALER_TEMPLATES.map((t) => (
+              <option key={t.value} value={t.value}>
+                {t.label}
+              </option>
+            ))}
+          </Select>
         </div>
         <div>
           <Label>Brand colors</Label>

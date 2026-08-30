@@ -374,7 +374,7 @@ async function demoPanel(leadId: string): Promise<LeadPanelResult> {
           assignedRepId: null,
           status: lead.status,
           phone: lead.phone,
-          timezone: lead.timezone ?? null,
+          timezone: lead.timezone,
           attemptCount: calls.length,
           lastAttemptAt: null,
           nextEligibleAt: null,

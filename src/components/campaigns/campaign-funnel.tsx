@@ -105,7 +105,7 @@ export function CampaignFunnel({
                   <span
                     tabIndex={0}
                     aria-label={`${s.label} drilldown note`}
-                    className="inline-flex text-ink-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    className="inline-flex text-muted-foreground/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                   >
                     <Info className="h-3.5 w-3.5" />
                   </span>

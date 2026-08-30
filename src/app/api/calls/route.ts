@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import { analyzeCall } from "@/lib/ai/analyze-call";
 import { insertCallRecord } from "@/lib/db/records";
-import { storedLeadTimezone } from "@/lib/dialer/lead-timezone";
 import { getViewer } from "@/lib/org/membership";
 import { resolveDispositionByKey } from "@/lib/status";
 import { createClient } from "@/lib/supabase/server";
@@ -168,9 +167,7 @@ export async function POST(req: Request) {
           notes: row.notes as string | undefined,
           aiScore: row.ai_score as number | undefined,
           createdAt: String(row.created_at ?? ""),
-          // Through the helper: the column has a schema default, so the raw
-          // value is not evidence of a chosen zone (see storedLeadTimezone).
-          timezone: storedLeadTimezone(row.timezone as string | null) ?? undefined,
+          timezone: String(row.timezone ?? ""),
         };
         // The lead's org, not the viewer's profile default — analyzeCall
         // resolves the vertical context and disposition policy from it.

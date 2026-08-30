@@ -4,8 +4,7 @@ import { CalendarCheck, Clock, MapPin, X } from "lucide-react";
 import { useMemo, useState } from "react";
 import { useVocabulary } from "@/components/layout/vocabulary";
 import { Button } from "@/components/ui/button";
-import { Input, Label, Textarea } from "@/components/ui/input";
-import { SelectMenu } from "@/components/ui/select-menu";
+import { Input, Label, Select, Textarea } from "@/components/ui/input";
 import { Modal } from "@/components/ui/modal";
 import {
   DEFAULT_DURATION_MIN,
@@ -170,25 +169,22 @@ export function BookAppointmentDialog({
               type="datetime-local"
               value={when}
               onChange={(e) => setWhen(e.target.value)}
-              className="w-full rounded-xl border border-input bg-surface-2 px-3.5 py-2.5 text-sm transition-colors duration-200 focus-visible:border-primary/50 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-primary/15"
+              className="w-full rounded-xl border border-input bg-background/40 px-3.5 py-2.5 text-sm transition-all duration-200 focus-visible:border-primary/50 focus-visible:bg-background/70 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-primary/15"
             />
           </div>
           <div>
-            {/* No htmlFor: SelectMenu renders a button, not a form control with
-                an id, and carries this text as its accessible name instead. A
-                dangling htmlFor is worse than none. */}
-            <Label>Duration</Label>
-            <SelectMenu
-              label="Duration"
-              className="w-full"
-              triggerClassName="w-full"
+            <Label htmlFor="book-duration">Duration</Label>
+            <Select
+              id="book-duration"
               value={String(durationMin)}
-              onChange={(v) => setDurationMin(Number(v))}
-              options={DURATIONS.map((d) => ({
-                value: String(d),
-                label: d < 60 ? `${d} min` : d === 60 ? "1 hour" : `${d / 60} hours`,
-              }))}
-            />
+              onChange={(e) => setDurationMin(Number(e.target.value))}
+            >
+              {DURATIONS.map((d) => (
+                <option key={d} value={d}>
+                  {d < 60 ? `${d} min` : d === 60 ? "1 hour" : `${d / 60} hours`}
+                </option>
+              ))}
+            </Select>
           </div>
         </div>
 

@@ -10,7 +10,7 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { AiSourceBadge } from "@/components/ai/source-badge";
-import { Card } from "@/components/ui/card";
+import { SpotlightCard } from "@/components/motion";
 import { Badge } from "@/components/ui/badge";
 import type { ExecutiveReport } from "@/lib/ai/types";
 import { cn } from "@/lib/utils";
@@ -73,7 +73,7 @@ export function AiExecReport() {
   }, [load]);
 
   return (
-    <Card className="overflow-hidden p-6">
+    <SpotlightCard tilt={false} className="overflow-hidden p-6">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-accent-soft text-accent">
@@ -120,10 +120,7 @@ export function AiExecReport() {
           className="mt-5 space-y-5"
         >
           <div>
-            {/* Plain ink, not a gradient. This is the report's headline —
-                something a manager reads and acts on, inside the app. A
-                three-stop gradient across a sentence is depth behind text. */}
-            <p className="text-lg font-bold tracking-tight text-foreground">
+            <p className="text-lg font-bold tracking-tight text-gradient-brand">
               {report.headline}
             </p>
             <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
@@ -168,6 +165,6 @@ export function AiExecReport() {
           </div>
         </motion.div>
       )}
-    </Card>
+    </SpotlightCard>
   );
 }

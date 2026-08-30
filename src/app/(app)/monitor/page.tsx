@@ -29,7 +29,6 @@ export default async function MonitorPage({
           description="Oversee live calls between your reps and customers."
         />
         <EmptyState
-          variant="page"
           icon={Radio}
           title="Live monitoring is for supervisors"
           description="Listening in on live calls is available to managers and admins. Ask an admin if you need access."

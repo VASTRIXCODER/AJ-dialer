@@ -8,207 +8,112 @@
 
 @custom-variant dark (&:is(.dark *));
 
-/* ─────────────────────────────────────────────────────────────────────────────
-   THE PALETTE
-
-   Every value below is measured, not chosen by eye. The ratios in the comments
-   are real WCAG 2.x contrast figures against the surface each token is allowed
-   to sit on, and `tests/tokens-contrast.test.ts` recomputes all of them from
-   this file on every run — if someone nudges a lightness, the suite says so.
-
-   Two rules the numbers depend on:
-
-   1. NO OPACITY MODIFIER ON AN INK TOKEN. `text-ink-2/60` has no measured
-      ratio and is banned. If text needs to be quieter it takes the next token
-      down, which does.
-   2. `--surface-4` NEVER CARRIES TEXT AT REST. It is the control-hover and
-      keycap plane; `--ink-3` measures 4.14:1 on it, under the 4.5:1 body-text
-      floor. Surfaces void through 3 are the ones text may land on.
-
-   The older semantic names (--background, --card, --primary, --danger …) are
-   kept as aliases at the bottom so the 176 components that use them keep
-   working and immediately inherit the measured colour. They are var() chains,
-   which resolve in the *element's* theme context — so they are declared once,
-   here, and never need repeating in .dark.
-   ───────────────────────────────────────────────────────────────────────────── */
-
 :root {
   color-scheme: light;
 
-  /* ── Density · the ONE display setting, reachable from CSS ───────────────
-     Mirrored onto <html data-density> by DensityProvider. It lives here rather
-     than in a prop because two of the product's ten tables are SERVER
-     components — they cannot call useDensity(), and that is exactly how they
-     ended up hardcoded while the setting silently applied to two others.
-     VERTICAL ONLY: the horizontal padding is a constant (px-5, 16px) at every
-     density, because moving it re-flows every column sideways and a manager
-     flipping to Compact loses the position of everything they were reading. */
-  --cell-py: 8px;
-  --row-min-h: 40px;
+  /* Surfaces — cool, icy light mode (blue-tinted, never warm/paper) */
+  --background: 213 40% 97.5%;
+  --surface: 0 0% 100%;
+  --surface-muted: 214 38% 95.5%;
+  --foreground: 222 47% 11%;
+  --muted: 214 32% 93.5%;
+  --muted-foreground: 215 16% 42%;
 
-  /* ── Surface · four planes. Void never holds content directly. ─────────── */
-  --surface-void: 220 20% 97.1%; /* #F6F7F9  app ground */
-  --surface-1: 0 0% 100%; /* #FFFFFF  cards, panels, table body */
-  --surface-2: 216 20% 95.1%; /* #F0F2F5  table header, toolbar, wells */
-  --surface-3: 214.3 17.1% 92%; /* #E7EAEE  row selected, popover ground */
-  --surface-4: 213.3 15.3% 88.4%; /* #DDE1E6  control hover, keycap — no text */
+  --card: 0 0% 100%;
+  --card-foreground: 222 47% 11%;
 
-  /* ── Ink · worst ratio is against surface-3 ────────────────────────────── */
-  --ink: 214.3 14.9% 9.2%; /* #14171B  14.90 : 1 */
-  --ink-2: 212 8.7% 33.9%; /* #4F565E   6.16 : 1 */
-  --ink-3: 212 7.1% 41.4%; /* #626971   4.61 : 1 */
+  --popover: 0 0% 100%;
+  --popover-foreground: 222 47% 11%;
 
-  /* ── Line · line is decorative (1.4.11 exempt); the other two are not ──── */
-  --line: 213.3 16.4% 89.2%; /* #DFE3E8 */
-  --line-strong: 220 3.9% 54.7%; /* #878A90  3.09 : 1  meets non-text 3:1 */
-  --line-active: 220 3.7% 47.3%; /* #74777D  4.00 : 1 */
+  /* Brand — electric azure (one dominant accent) */
+  --primary: 214 90% 52%;
+  --primary-foreground: 0 0% 100%;
+  --primary-soft: 214 100% 95.5%;
 
-  /* ── Accent and signal · always paired with SHAPE, never colour alone:
-        live ● filled dot · ringing ○ hollow ring · stopped ■ filled square ─ */
-  --accent: 218.5 78.1% 48.4%; /* #1B60DC  4.99 : 1 */
-  --accent-bg: 220 85.7% 94.5%; /* #E5EDFD */
-  --accent-line: 217.9 82.9% 83.9%; /* #B4CDF8 */
+  /* Secondary accent — cyan highlight */
+  --accent: 190 90% 42%;
+  --accent-foreground: 0 0% 100%;
+  --accent-soft: 190 88% 94%;
 
-  --signal-live: 154.6 72.9% 26.1%; /* #12734A  5.23 : 1 */
-  --signal-live-bg: 150 50% 92.2%; /* #E1F5EB */
-  --signal-live-line: 151.2 42.6% 76.1%; /* #A8DCC3 */
+  --secondary: 214 32% 93.5%;
+  --secondary-foreground: 222 40% 18%;
 
-  --signal-ring: 37.3 85.2% 29.2%; /* #8A5A0B  5.28 : 1 */
-  --signal-ring-bg: 38.7 79.5% 92.4%; /* #FBF0DC */
-  --signal-ring-line: 40.5 62.5% 74.9%; /* #E7CD97 */
+  /* Semantic */
+  --success: 158 64% 38%;
+  --success-foreground: 0 0% 100%;
+  --warning: 36 95% 47%;
+  --warning-foreground: 36 100% 10%;
+  --danger: 352 78% 53%;
+  --danger-foreground: 0 0% 100%;
 
-  --signal-stop: 356.8 65.2% 45.1%; /* #BE2830  5.30 : 1 */
-  --signal-stop-bg: 356.8 76% 95.1%; /* #FCE9EA */
-  --signal-stop-line: 356.5 66.2% 84.9%; /* #F2BFC2 */
-
-  /* Text drawn ON a filled accent/signal. Light fills are dark enough to take
-     white (worst case 5.60:1); dark fills are bright and take the void. */
-  --on-fill: 0 0% 100%;
-
-  /* ── Chart · six slots, each with a fixed series meaning so the same thing
-        is the same colour on every screen. ──────────────────────────────── */
-  --chart-1: 218.5 78.1% 48.4%; /* #1B60DC  dials */
-  --chart-2: 154.6 72.9% 26.1%; /* #12734A  connects */
-  --chart-3: 37.3 85.2% 29.2%; /* #8A5A0B  appointments */
-  --chart-4: 260.6 50.4% 49.8%; /* #6B3FBF  callbacks */
-  --chart-5: 187.3 79.3% 26.5%; /* #0E6C79  voicemail */
-  --chart-6: 212 7.7% 38.2%; /* #5A6169  other / no answer */
+  --border: 214 28% 88%;
+  --input: 214 28% 88%;
+  --ring: 214 90% 52%;
 
   --radius: 0.95rem;
+
+  /* Ambient lighting + elevation reference colors */
+  --glow: 214 95% 56%;
   --shadow-color: 222 60% 22%;
 
-  /* Four elevation planes. Level 0 is the absence of a shadow and has no
-     token — rows, inline panels and toolbars separate by tonal step alone. */
-  --elev-1: 0 1px 2px rgba(16, 24, 40, 0.06);
-  --elev-2:
-    0 4px 12px -2px rgba(16, 24, 40, 0.1), 0 1px 3px rgba(16, 24, 40, 0.06);
-  --elev-3:
-    0 18px 48px -12px rgba(16, 24, 40, 0.16), 0 2px 8px rgba(16, 24, 40, 0.08);
+  /* Chart palette — blue family with violet/teal support */
+  --chart-1: 214 92% 54%;
+  --chart-2: 190 90% 46%;
+  --chart-3: 234 84% 62%;
+  --chart-4: 270 78% 62%;
+  --chart-5: 162 68% 42%;
 }
 
 .dark {
   color-scheme: dark;
 
-  --surface-void: 220 13% 4.5%; /* #0A0B0D */
-  --surface-1: 216 13.5% 7.3%; /* #101215 */
-  --surface-2: 214.3 13.2% 10.4%; /* #171A1E */
-  --surface-3: 213.3 13% 13.5%; /* #1E2227 */
-  --surface-4: 212.7 12.6% 17.1%; /* #262B31  no text */
+  /* Deep midnight navy — illuminated from within */
+  --background: 222 48% 5%;
+  --surface: 220 42% 8.5%;
+  --surface-muted: 219 38% 12%;
+  --foreground: 210 40% 96%;
+  --muted: 219 32% 15%;
+  --muted-foreground: 215 22% 65%;
 
-  --ink: 210 15.8% 92.5%; /* #E9ECEF  13.48 : 1 */
-  --ink-2: 213.8 9.4% 66.7%; /* #A2A9B2   6.74 : 1 */
-  --ink-3: 213.8 7% 54.9%; /* #848B94   4.65 : 1 */
+  --card: 220 40% 9.5%;
+  --card-foreground: 210 40% 96%;
 
-  --line: 212.7 13.3% 16.3%; /* #24292F */
-  --line-strong: 218.2 5.3% 41%; /* #63676E  3.07 : 1 */
-  --line-active: 218.2 4.5% 48.4%; /* #767A81  4.05 : 1 */
+  --popover: 221 44% 8%;
+  --popover-foreground: 210 40% 96%;
 
-  --accent: 218.2 100% 64.9%; /* #4C8DFF  5.45 : 1 */
-  --accent-bg: 217.7 50.6% 16.7%; /* #152540 */
-  --accent-line: 218.1 49.7% 33.5%; /* #2B4A80 */
+  /* Brand — electric azure that glows on dark glass */
+  --primary: 212 100% 62%;
+  --primary-foreground: 222 60% 6%;
+  --primary-soft: 214 70% 17%;
 
-  --signal-live: 149 58.6% 49.2%; /* #34C77B  7.98 : 1 */
-  --signal-live-bg: 152.1 50% 11%; /* #0E2A1D */
-  --signal-live-line: 150.9 54.2% 23.1%; /* #1B5B3C */
+  /* Cyan accent */
+  --accent: 190 95% 55%;
+  --accent-foreground: 222 60% 6%;
+  --accent-soft: 192 70% 16%;
 
-  --signal-ring: 35.8 78.8% 57.5%; /* #E8A33D  8.09 : 1 */
-  --signal-ring-bg: 34.3 46.7% 11.8%; /* #2C2010 */
-  --signal-ring-line: 38.3 58% 23.3%; /* #5E4519 */
+  --secondary: 219 30% 16%;
+  --secondary-foreground: 210 36% 92%;
 
-  --signal-stop: 357.3 83.8% 63.7%; /* #F0555C  5.12 : 1 */
-  --signal-stop-bg: 353.6 43.8% 12.5%; /* #2E1215 */
-  --signal-stop-line: 355.8 49.7% 28%; /* #6B2429 */
+  --success: 156 64% 46%;
+  --success-foreground: 222 60% 6%;
+  --warning: 38 95% 58%;
+  --warning-foreground: 38 100% 8%;
+  --danger: 352 84% 62%;
+  --danger-foreground: 0 0% 100%;
 
-  /* Dark fills are bright — white on them measures 2.16-3.41:1 and fails.
-     The void reads 5.77-9.13:1 on the same fills. */
-  --on-fill: var(--surface-void);
+  /* Borders are whispers — depth carries hierarchy, not boxes */
+  --border: 215 32% 20%;
+  --input: 216 30% 22%;
+  --ring: 212 100% 62%;
 
-  --chart-1: 218.2 100% 64.9%; /* #4C8DFF  dials */
-  --chart-2: 149 58.6% 49.2%; /* #34C77B  connects */
-  --chart-3: 35.8 78.8% 57.5%; /* #E8A33D  appointments */
-  --chart-4: 266 84.1% 75.3%; /* #B98BF5  callbacks */
-  --chart-5: 186.7 64.9% 56.5%; /* #48C8D8  voicemail */
-  --chart-6: 216 6.8% 57.1%; /* #8A9099  other / no answer */
-
+  --glow: 212 100% 60%;
   --shadow-color: 224 70% 2%;
 
-  --elev-1: 0 1px 2px rgba(0, 0, 0, 0.5);
-  --elev-2: 0 4px 12px -2px rgba(0, 0, 0, 0.55), 0 1px 3px rgba(0, 0, 0, 0.4);
-  --elev-3: 0 18px 48px -12px rgba(0, 0, 0, 0.7), 0 2px 8px rgba(0, 0, 0, 0.5);
-}
-
-/* ─────────────────────────────────────────────────────────────────────────────
-   COMPATIBILITY ALIASES
-
-   Declared once, in :root, and never repeated in .dark — a custom property
-   holding `var(--x)` is substituted lazily, in the context of the element that
-   uses it, so these resolve to the dark palette inside `.dark` automatically.
-
-   Two of the old names change meaning rather than value, per the migration
-   map: `--accent` was a second cyan hue and is now the one accent (the product
-   had two competing brand colours), and `--glow` no longer names a separate
-   luminous colour. Both now point at `--accent`, which is what collapsing to a
-   single accent means in practice.
-   ───────────────────────────────────────────────────────────────────────────── */
-:root {
-  --background: var(--surface-void);
-  --surface: var(--surface-1);
-  --surface-muted: var(--surface-2);
-  --card: var(--surface-1);
-  --popover: var(--surface-3);
-  --muted: var(--surface-2);
-  --secondary: var(--surface-3);
-
-  --foreground: var(--ink);
-  --card-foreground: var(--ink);
-  --popover-foreground: var(--ink);
-  --secondary-foreground: var(--ink);
-  --muted-foreground: var(--ink-2);
-
-  --primary: var(--accent);
-  --primary-foreground: var(--on-fill);
-  --primary-soft: var(--accent-bg);
-  --accent-foreground: var(--on-fill);
-  --accent-soft: var(--accent-bg);
-
-  --success: var(--signal-live);
-  --success-foreground: var(--on-fill);
-  --warning: var(--signal-ring);
-  --warning-foreground: var(--on-fill);
-  --danger: var(--signal-stop);
-  --danger-foreground: var(--on-fill);
-
-  --border: var(--line);
-  /* An input's boundary is what identifies it as a control, so it needs the
-     3:1 of 1.4.11 — the old value was ~1.3:1 in light mode and failed. */
-  --input: var(--line-strong);
-  --ring: var(--accent);
-  --glow: var(--accent);
-}
-
-[data-density="compact"] {
-  --cell-py: 4px;
-  --row-min-h: 32px;
+  --chart-1: 212 100% 64%;
+  --chart-2: 190 95% 56%;
+  --chart-3: 234 90% 72%;
+  --chart-4: 270 84% 74%;
+  --chart-5: 162 70% 52%;
 }
 
 @theme inline {
@@ -251,178 +156,34 @@
   --color-chart-3: hsl(var(--chart-3));
   --color-chart-4: hsl(var(--chart-4));
   --color-chart-5: hsl(var(--chart-5));
-  --color-chart-6: hsl(var(--chart-6));
 
-  /* ── The measured palette, addressable directly ─────────────────────────
-     Everything above this line is a compatibility alias. New work names the
-     plane or the signal it means — `bg-surface-2`, `text-ink-3`,
-     `border-line-strong`, `text-signal-live` — because those names carry a
-     verified contrast ratio and `bg-card` no longer says which plane it is. */
-  --color-surface-void: hsl(var(--surface-void));
-  --color-surface-1: hsl(var(--surface-1));
-  --color-surface-2: hsl(var(--surface-2));
-  --color-surface-3: hsl(var(--surface-3));
-  --color-surface-4: hsl(var(--surface-4));
-
-  --color-ink: hsl(var(--ink));
-  --color-ink-2: hsl(var(--ink-2));
-  --color-ink-3: hsl(var(--ink-3));
-  --color-on-fill: hsl(var(--on-fill));
-
-  --color-line: hsl(var(--line));
-  --color-line-strong: hsl(var(--line-strong));
-  --color-line-active: hsl(var(--line-active));
-
-  --color-accent-bg: hsl(var(--accent-bg));
-  --color-accent-line: hsl(var(--accent-line));
-
-  --color-signal-live: hsl(var(--signal-live));
-  --color-signal-live-bg: hsl(var(--signal-live-bg));
-  --color-signal-live-line: hsl(var(--signal-live-line));
-  --color-signal-ring: hsl(var(--signal-ring));
-  --color-signal-ring-bg: hsl(var(--signal-ring-bg));
-  --color-signal-ring-line: hsl(var(--signal-ring-line));
-  --color-signal-stop: hsl(var(--signal-stop));
-  --color-signal-stop-bg: hsl(var(--signal-stop-bg));
-  --color-signal-stop-line: hsl(var(--signal-stop-line));
-
-  /* ── Radius · four values plus a pill ───────────────────────────────────
-     Literal pixels. They used to be derived with calc() from a 0.95rem base,
-     which produced 10.2 / 12.2 / 15.2 / 19.2 / 25.2px — nothing landed on a
-     whole pixel and nothing was reusable. 2xl and 3xl clamp to the top of the
-     scale rather than inventing values above it; W2 assigns the right step per
-     primitive (chips and inputs 4, buttons and selects 6, cards and panels 10,
-     modals and drawers 14). */
-  --radius-sm: 4px;
-  --radius-md: 6px;
-  --radius-lg: 10px;
-  --radius-xl: 14px;
-  --radius-2xl: 14px;
-  --radius-3xl: 14px;
+  --radius-sm: calc(var(--radius) - 5px);
+  --radius-md: calc(var(--radius) - 3px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --radius-2xl: calc(var(--radius) + 10px);
 
   --font-sans: var(--font-inter), -apple-system, BlinkMacSystemFont, "Segoe UI",
     sans-serif;
   --font-mono: var(--font-mono), "JetBrains Mono", "SF Mono", monospace;
 
-  /* ── Space · 4px base ───────────────────────────────────────────────────
-     Cell padding is 16px at every density. Density changes row height and
-     vertical padding — never font size, never horizontal padding. */
-  --spacing-1: 2px;
-  --spacing-2: 4px;
-  --spacing-3: 8px;
-  --spacing-4: 12px;
-  --spacing-5: 16px;
-  --spacing-6: 24px;
-  --spacing-7: 32px;
-  --spacing-8: 40px;
-  --spacing-9: 48px;
-  --spacing-10: 64px;
-
-  /* ── Type · the scale, addressable by intent ────────────────────────────
-     `text-sm` says how big; `text-label-14` says what it is. Every step below
-     is at or above the 11px floor, and the two numeric steps carry tabular
-     figures so a column of digits does not jitter as it updates. W2 migrates
-     components onto these as each primitive is rebuilt. */
-  --text-display-32: 32px;
-  --text-display-32--line-height: 36px;
-  --text-display-32--letter-spacing: -0.028em;
-  --text-display-32--font-weight: 700;
-
-  --text-display-24: 24px;
-  --text-display-24--line-height: 30px;
-  --text-display-24--letter-spacing: -0.022em;
-  --text-display-24--font-weight: 700;
-
-  --text-heading-18: 18px;
-  --text-heading-18--line-height: 24px;
-  --text-heading-18--letter-spacing: -0.014em;
-  --text-heading-18--font-weight: 600;
-
-  --text-heading-15: 15px;
-  --text-heading-15--line-height: 20px;
-  --text-heading-15--letter-spacing: -0.008em;
-  --text-heading-15--font-weight: 600;
-
-  /* The workhorse: table cells, buttons, anything on one line. */
-  --text-label-14: 14px;
-  --text-label-14--line-height: 18px;
-  --text-label-14--font-weight: 500;
-
-  /* Same size, different job: notes and briefings, which wrap. */
-  --text-copy-14: 14px;
-  --text-copy-14--line-height: 22px;
-  --text-copy-14--font-weight: 400;
-
-  --text-label-13: 13px;
-  --text-label-13--line-height: 17px;
-  --text-label-13--font-weight: 500;
-
-  --text-label-12: 12px;
-  --text-label-12--line-height: 16px;
-  --text-label-12--letter-spacing: 0.01em;
-  --text-label-12--font-weight: 500;
-
-  /* Column headers and section labels. The absolute floor for all text. */
-  --text-caps-11: 11px;
-  --text-caps-11--line-height: 14px;
-  --text-caps-11--letter-spacing: 0.12em;
-  --text-caps-11--font-weight: 500;
-
-  --text-mono-13: 13px;
-  --text-mono-13--line-height: 18px;
-  --text-mono-13--font-weight: 500;
-
-  --text-metric-40: 40px;
-  --text-metric-40--line-height: 40px;
-  --text-metric-40--letter-spacing: -0.03em;
-  --text-metric-40--font-weight: 700;
-
-  /* ── Elevation · four planes, and only four ─────────────────────────────
-     Level 0 is no shadow at all — table rows, inline panels and toolbars
-     separate by tonal step alone. Separation comes from tone first, shadow
-     second, never both on the same element. */
-  --shadow-1: var(--elev-1);
-  --shadow-2: var(--elev-2);
-  --shadow-3: var(--elev-3);
-  /* Existing names, remapped: cards sit at level 1, modals and drawers at 3. */
-  --shadow-soft: var(--elev-1);
-  --shadow-lift: var(--elev-3);
-
-  /* ── The four curves ─────────────────────────────────────────────────────
-     Everything in the product that moves is one of these, and no more:
-
-       enter    180ms  the Stage, appearing
-       exit     120ms  the Stage, leaving
-       state     90ms  colour and opacity only — the ONLY one an Instrument
-                       surface may use. WCAG 2.3.3 explicitly excludes colour
-                       and opacity changes from its definition of motion.
-       connect  240ms  the single crossing between the two: a human picks up
-
-     An Instrument surface does not translate, scale, rotate or stagger. It is
-     the surface a rep reads numbers off for eight hours. */
-  --ease-enter: cubic-bezier(0.16, 1, 0.3, 1);
-  --ease-exit: cubic-bezier(0.4, 0, 1, 1);
-  --dur-enter: 180ms;
-  --dur-exit: 120ms;
-  --dur-state: 90ms;
-  --dur-connect: 240ms;
+  /* One elevation model — ambient, blue-tinted, layered */
+  --shadow-glow: 0 0 0 1px hsl(var(--glow) / 0.25),
+    0 10px 40px -10px hsl(var(--glow) / 0.55);
+  --shadow-soft: 0 1px 2px hsl(var(--shadow-color) / 0.28),
+    0 10px 30px -16px hsl(var(--shadow-color) / 0.45);
+  --shadow-lift: 0 2px 6px hsl(var(--shadow-color) / 0.32),
+    0 24px 60px -20px hsl(var(--shadow-color) / 0.6);
 
   --animate-pulse-ring: pulse-ring 1.8s cubic-bezier(0.4, 0, 0.6, 1) infinite;
   --animate-shimmer: shimmer 2.2s linear infinite;
   --animate-fade-up: fade-up 0.55s cubic-bezier(0.16, 1, 0.3, 1) both;
-  /* Opacity alone — what an Instrument surface uses to appear. */
-  --animate-fade-in: fade-in var(--dur-enter) var(--ease-enter) both;
-  /* The connect beat. ONE iteration, 240ms, on human pickup — the single
-     sanctioned crossing between the Stage and the Instrument. Note the `1`:
-     this is the same shape as the halo that used to run `infinite` behind a
-     live call for its whole duration, and the difference between the two is
-     the entire point. */
-  --animate-connect: connect-beat var(--dur-connect) var(--ease-enter) 1 both;
   --animate-float: float 7s ease-in-out infinite;
   --animate-marquee: marquee 32s linear infinite;
   --animate-aurora: aurora 24s ease-in-out infinite;
   --animate-glow-pulse: glow-pulse 4s ease-in-out infinite;
   --animate-breathe: breathe 8s ease-in-out infinite;
+  --animate-sheen: sheen 1.1s cubic-bezier(0.16, 1, 0.3, 1);
   --animate-mesh: mesh-drift 34s ease-in-out infinite;
   --animate-border-flow: border-flow 6s linear infinite;
   --animate-rise: rise 22s linear infinite;
@@ -450,27 +211,6 @@
   }
   100% {
     background-position: 200% 0;
-  }
-}
-
-@keyframes fade-in {
-  from {
-    opacity: 0;
-  }
-  to {
-    opacity: 1;
-  }
-}
-
-/* Fired once, at the instant a homeowner says hello. A ring leaves the answered
-   contact and dissipates — it is over before the rep has finished registering
-   it, which is the difference between a signal and a decoration. */
-@keyframes connect-beat {
-  from {
-    box-shadow: 0 0 0 0 hsl(var(--signal-live) / 0.6);
-  }
-  to {
-    box-shadow: 0 0 0 16px hsl(var(--signal-live) / 0);
   }
 }
 
@@ -538,6 +278,21 @@
   }
 }
 
+/* Specular light sweeping across a glass surface */
+@keyframes sheen {
+  0% {
+    transform: translateX(-130%) skewX(-18deg);
+    opacity: 0;
+  }
+  18% {
+    opacity: 1;
+  }
+  100% {
+    transform: translateX(240%) skewX(-18deg);
+    opacity: 0;
+  }
+}
+
 /* Slow atmospheric mesh evolution behind the whole app */
 @keyframes mesh-drift {
   0%,
@@ -587,13 +342,6 @@
     scroll-behavior: smooth;
     font-feature-settings: "cv11", "ss01";
     font-variation-settings: normal;
-    /* The shell has a sticky 60px top bar and, during a call, a fixed bar at
-       the bottom. Without this, tabbing down a long table — or following a
-       deep link to a row — parks the focused row underneath one of them, and
-       the rep has to scroll to see what they just selected.
-       `--callbar-h` is published by GlobalCallBar only while it is up, so the
-       bottom reservation is 16px when no call is running. */
-    scroll-padding-block: 76px calc(16px + var(--callbar-h, 0px));
   }
 
   body {
@@ -655,34 +403,28 @@
 }
 
 @layer utilities {
-  /* ── Content surfaces are OPAQUE ────────────────────────────────────────────
-     Both of these were translucent — `.glass` at 55% alpha, `.surface-glass` a
-     72→86% gradient — and between them they back every floating panel and every
-     Card in the product. That put a blur and a moving background behind working
-     text: modal bodies, the command palette, toasts, the call bar, the topbar,
-     and the entire content layer.
-
-     Separation comes from the tonal step, which is real in both themes
-     (light 97.5% → 100%, dark 5% → 8.5% → 9.5%), plus one level of shadow —
-     never from letting the page show through.
-
-     Translucency survives exactly where it belongs: the SCRIMS behind modals,
-     drawers and the palette are separate elements and still carry their own
-     `bg-background/70 backdrop-blur-xl`. Real glass returns in W2 on the three
-     surfaces the design system permits it, and nowhere else. */
+  /* ── Glass philosophy — translucent surfaces suspended above depth ──────── */
   .glass {
-    background-color: hsl(var(--surface));
+    background-color: hsl(var(--surface) / 0.55);
+    backdrop-filter: blur(22px) saturate(180%);
+    -webkit-backdrop-filter: blur(22px) saturate(180%);
     box-shadow:
       inset 0 1px 0 0 hsl(0 0% 100% / 0.06),
-      var(--elev-1);
+      var(--shadow-soft);
   }
 
-  /* The default content plane — Card, and everything built on it. */
+  /* Premium card surface — translucent with an inner top highlight */
   .surface-glass {
-    background-color: hsl(var(--card));
+    background-image: linear-gradient(
+      180deg,
+      hsl(var(--card) / 0.86),
+      hsl(var(--card) / 0.72)
+    );
+    backdrop-filter: blur(18px) saturate(160%);
+    -webkit-backdrop-filter: blur(18px) saturate(160%);
     box-shadow:
       inset 0 1px 0 0 hsl(0 0% 100% / 0.07),
-      var(--elev-1);
+      var(--shadow-soft);
   }
 
   /* Hairline edge highlight without a hard border */
@@ -702,16 +444,56 @@
   }
   .hover-lift:hover {
     transform: translateY(-3px);
-    box-shadow: var(--elev-3);
+    box-shadow: var(--shadow-lift);
   }
 
-  /* `.spotlight` and `.sheen` are gone.
-     The first painted a brand-coloured radial glow that followed the pointer
-     across a card; the second swept a translating white gradient across every
-     button label on hover. Both are depth and translate-motion on surfaces a
-     rep works, which the design system rules out. Buttons now change
-     brightness only, and a card is identified by its tonal step.
-     `.spotlight` had no remaining callers once SpotlightCard was deleted. */
+  /* Pointer-following spotlight — illuminates a surface before it's clicked.
+     Drive --mx/--my (in %) from JS; falls back to a top-center glow on hover. */
+  .spotlight::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    background: radial-gradient(
+      20rem 20rem at var(--mx, 50%) var(--my, 0%),
+      hsl(var(--glow) / 0.16),
+      transparent 60%
+    );
+    opacity: 0;
+    transition: opacity 0.45s var(--ease-out-quint);
+    pointer-events: none;
+    z-index: 1;
+  }
+  .spotlight:hover::after {
+    opacity: 1;
+  }
+
+  /* Specular sheen that sweeps across glass on hover */
+  .sheen {
+    position: relative;
+    overflow: hidden;
+  }
+  .sheen::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: 0;
+    z-index: 1;
+    height: 100%;
+    width: 55%;
+    background: linear-gradient(
+      100deg,
+      transparent,
+      hsl(0 0% 100% / 0.16),
+      transparent
+    );
+    transform: translateX(-130%) skewX(-18deg);
+    opacity: 0;
+    pointer-events: none;
+  }
+  .sheen:hover::before {
+    animation: sheen 1.1s var(--ease-out-quint);
+  }
 
   /* Animated gradient border ring (masked so the fill stays clean) */
   .gradient-border {
@@ -788,13 +570,13 @@
   /* Was .bg-solar. The gradient has never actually been solar-colored — the name
      was a leftover from the product's first vertical, and it turned up in the
      className of every card, avatar and wordmark in the app. */
-  /* Flat, not a gradient. This was indigo -> blue -> cyan across 135 degrees,
-     and it backed the primary button — so every primary label in the product
-     sat on a moving three-stop gradient, which is depth behind text on a small
-     object. One accent, one fill. 42 call sites inherit this without changing. */
   .bg-brand {
-    background-image: none;
-    background-color: hsl(var(--accent));
+    background-image: linear-gradient(
+      135deg,
+      hsl(234 90% 60%),
+      hsl(212 100% 58%) 52%,
+      hsl(190 95% 56%)
+    );
   }
 
   .text-gradient-brand {
@@ -809,57 +591,26 @@
     color: transparent;
   }
 
-  /* ── The ambient field ──────────────────────────────────────────────────
-     Three rendered plates of volumetric light, composited over the app
-     ground. `screen` on dark and `multiply` on light means the flat area of
-     each plate contributes nothing, so the images need no alpha channel and
-     stay tiny — six plates, 17 KB in total.
-
-     Only mounted on Stage routes. See AmbientBackground for the frame budget,
-     the 30fps cap and the reduced-motion path. */
-  .ambient-field {
-    background-color: hsl(var(--surface-void));
-  }
-  .ambient-plate {
-    position: absolute;
-    /* Overscanned so the drift never exposes an edge. */
-    inset: -12%;
-    background-size: cover;
-    background-position: center;
-    background-repeat: no-repeat;
-    mix-blend-mode: multiply;
-    will-change: transform;
-  }
-  .dark .ambient-plate {
-    mix-blend-mode: screen;
-  }
-  .ambient-plate-1 {
-    background-image: url("/ambient/light-1.webp");
-  }
-  .ambient-plate-2 {
-    background-image: url("/ambient/light-2.webp");
-  }
-  .ambient-plate-3 {
-    background-image: url("/ambient/light-3.webp");
-  }
-  .dark .ambient-plate-1 {
-    background-image: url("/ambient/dark-1.webp");
-  }
-  .dark .ambient-plate-2 {
-    background-image: url("/ambient/dark-2.webp");
-  }
-  .dark .ambient-plate-3 {
-    background-image: url("/ambient/dark-3.webp");
-  }
-
-  /* Kept for the marketing page, which is Stage and may use a flat wash. */
+  /* ── Background system — environmental depth on every screen ────────────── */
+  /* Cinematic aurora field: layered radial light sources over the base. */
   .bg-aurora {
     background-color: hsl(var(--background));
-    background-image: radial-gradient(
-      42rem 42rem at 12% -8%,
-      hsl(var(--accent) / 0.1),
-      transparent 60%
-    );
+    background-image:
+      radial-gradient(
+        42rem 42rem at 12% -8%,
+        hsl(214 95% 50% / 0.18),
+        transparent 60%
+      ),
+      radial-gradient(
+        38rem 38rem at 98% 4%,
+        hsl(190 95% 52% / 0.14),
+        transparent 58%
+      ),
+      radial-gradient(
+        50rem 50rem at 78% 102%,
+        hsl(255 85% 58% / 0.16),
+        transparent 60%
+      );
   }
 
   /* Soft fractal noise — barely-perceptible film grain to kill banding */
@@ -900,38 +651,18 @@
     background-size: 24px 24px;
   }
 
-  /* The four elevation planes. Level 0 has no class — it is the absence of a
-     shadow, and it is the default for rows, inline panels and toolbars. */
-  .shadow-1 {
-    box-shadow: var(--elev-1);
-  }
-  .shadow-2 {
-    box-shadow: var(--elev-2);
-  }
-  .shadow-3 {
-    box-shadow: var(--elev-3);
-  }
-  /* Existing names, kept so 58 call sites keep working. */
   .shadow-soft {
-    box-shadow: var(--elev-1);
+    box-shadow: var(--shadow-soft);
   }
   .shadow-lift {
-    box-shadow: var(--elev-3);
+    box-shadow: var(--shadow-lift);
   }
-  /* .shadow-glow is gone. It painted a brand-coloured halo under small icon
-     tiles and buttons — depth behind a small object on a working surface,
-     which the design system rules out. `bg-brand` already identifies them. */
+  .shadow-glow {
+    box-shadow: var(--shadow-glow);
+  }
 
   .animate-fade-up {
     animation: var(--animate-fade-up);
-  }
-  .animate-fade-in {
-    animation: var(--animate-fade-in);
-  }
-  /* Apply with a `key` that changes per call, so the beat replays on every
-     pickup instead of once per mount. */
-  .animate-connect {
-    animation: var(--animate-connect);
   }
   .animate-float {
     animation: var(--animate-float);

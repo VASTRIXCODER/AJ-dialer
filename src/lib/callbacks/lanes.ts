@@ -46,31 +46,6 @@ export function dueAtMs(dueAt: string | null | undefined): number | null {
 }
 
 /**
- * "Now" on the ORG's wall clock, in the same units `laneOf` compares against.
- *
- * This exists because `due_at` is a FLOATING time — "call back at 5pm", with no
- * zone — and `parseFloating` necessarily resolves it in whatever zone the
- * runtime happens to be in. Comparing that against a bare `Date.now()` silently
- * compares two different clocks:
- *
- *   · on the server (Vercel runs UTC), a Chicago org's 5pm promise resolved to
- *     17:00 UTC and was therefore "overdue" from noon local — five hours early,
- *     every day, on the tiles at the top of /callbacks.
- *   · in the browser it resolved in the REP's zone, so the board underneath
- *     those tiles disagreed with them from the very first paint for anyone not
- *     sitting in the server's zone.
- *
- * Passing "now" through `parseFloating` too means the runtime's own zone is
- * applied to BOTH sides and cancels out exactly, whatever it is.
- * `src/lib/dialer/schedule.ts` documents this same failure as the reason
- * `zonedFloatingNow` exists; the database layer was fixed for it and this one
- * was not.
- */
-export function orgNowMs(now: Date, orgFloatingNow: string): number {
-  return dueAtMs(orgFloatingNow) ?? now.getTime();
-}
-
-/**
  * Which lane a callback belongs in right now. A callback with NO agreed time
  * is honestly "due" — it was promised, it has no future slot to wait for.
  */

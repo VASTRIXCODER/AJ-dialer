@@ -27,22 +27,22 @@ function Toggle({
   onClick: () => void;
 }) {
   return (
-    <button
+    <motion.button
       type="button"
       onClick={onClick}
-      aria-pressed={active}
+      whileTap={{ scale: 0.93 }}
+      whileHover={{ y: -2 }}
+      transition={{ type: "spring", stiffness: 400, damping: 22 }}
       className={cn(
-        // A form control the rep taps while a homeowner is talking. Colour on
-        // the 90ms state curve; it used to jump 2px and spring back.
-        "flex items-center gap-2 rounded-xl border px-3 py-2.5 text-sm font-medium transition-colors duration-[var(--dur-state)]",
+        "flex items-center gap-2 rounded-xl border px-3 py-2.5 text-sm font-medium transition-colors duration-200",
         active
-          ? "border-primary/50 bg-primary-soft text-primary"
+          ? "border-primary/50 bg-primary-soft text-primary shadow-[0_0_18px_-6px_hsl(var(--glow)/0.6)]"
           : "border-border bg-surface text-muted-foreground hover:bg-muted",
       )}
     >
       <Icon className="h-4 w-4" />
       {label}
-    </button>
+    </motion.button>
   );
 }
 

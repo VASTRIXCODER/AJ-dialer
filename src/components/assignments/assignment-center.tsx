@@ -96,7 +96,7 @@ export function AssignmentCenter({
                     type="checkbox"
                     checked={showArchived}
                     onChange={(e) => setShowArchived(e.target.checked)}
-                    className="h-[22px] w-[22px] rounded border-input accent-primary"
+                    className="h-3.5 w-3.5 rounded border-input accent-primary"
                   />
                   Show archived{archivedCount > 0 ? ` (${archivedCount})` : ""}
                 </label>

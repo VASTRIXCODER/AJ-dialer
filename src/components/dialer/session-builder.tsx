@@ -24,11 +24,6 @@ import {
 import type { Lead, LeadStatus } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { groupLabel } from "./load-leads-dialog";
-import { useDialerContext } from "./dialer-context";
-import { resolveLeadTimezone } from "@/lib/dialer/lead-timezone";
-import { isWithinOrgHours } from "@/lib/dialer/schedule";
-import { SelectMenu } from "@/components/ui/select-menu";
-import { DEFAULT_TIMEZONE } from "@/lib/metrics/definitions";
 
 interface Segment {
   key: string;
@@ -93,11 +88,6 @@ export function SessionBuilder({
   // Saved statuses are validated against the REAL segment keys — a stale
   // stored key would render no checked card while the server silently counted
   // its default fallback instead.
-  // The workspace's own calling window and zone, for the pre-flight count.
-  const { config } = useDialerContext();
-  const hours = config.callingHours;
-  const orgTz = config.orgTimezone || DEFAULT_TIMEZONE;
-
   const knownKeys = new Set<string>(SEGMENTS.map((s) => s.key));
   const savedStatuses = (initial?.statuses ?? []).filter((s) => knownKeys.has(s));
   const [statuses, setStatuses] = useState<string[]>(
@@ -199,23 +189,6 @@ export function SessionBuilder({
         body: JSON.stringify(spec()),
       });
       const json = (await res.json()) as { leads: Lead[]; count: number };
-      // How many of this session cannot be dialed RIGHT NOW because it is the
-      // wrong time where the contact is. The dial route already refuses these
-      // one lane at a time, in the contact's own zone — but only after the rep
-      // has pressed Start, so a session that is 40% Eastern at 8:45pm looked
-      // like a full session and then cancelled its way through it.
-      //
-      // Same expression the dial route uses, so the two cannot disagree.
-      const outOfWindow = hours
-        ? json.leads.filter(
-            (l) =>
-              !isWithinOrgHours(
-                new Date(),
-                hours,
-                resolveLeadTimezone(l.phone ?? "", l.timezone, orgTz),
-              ),
-          ).length
-        : 0;
       const picked = report?.segments.filter((s) => statuses.includes(s.key)) ?? [];
       const parts = picked.map(
         (s) => `${Math.min(s.count, json.count)} ${segLabel(s.key, s.label).toLowerCase()}`,
@@ -226,10 +199,7 @@ export function SessionBuilder({
         ` · ${ORDER_LABELS[order].toLowerCase()}` +
         (canOrgWide && orgWide ? " · whole org" : "") +
         (strictOrder ? " · strict list order" : " · pool order") +
-        (refill ? " · auto-refill on" : "") +
-        (outOfWindow
-          ? ` · ${outOfWindow} outside their calling hours right now`
-          : "");
+        (refill ? " · auto-refill on" : "");
       onLoad(json.leads, {
         statuses: statuses as LeadStatus[],
         strictOrder,
@@ -318,17 +288,18 @@ export function SessionBuilder({
                       <h3 className="mb-2 text-xs font-bold uppercase tracking-wide text-muted-foreground">
                         Campaign
                       </h3>
-                      <SelectMenu
-                        label="Campaign"
-                        className="w-full"
-                        triggerClassName="h-10 w-full"
-                        value={campaignId || "all"}
-                        onChange={(v) => setCampaignId(v === "all" ? "" : v)}
-                        options={[
-                          { value: "all", label: "All campaigns" },
-                          ...campaigns.map((c) => ({ value: c.id, label: c.name })),
-                        ]}
-                      />
+                      <select
+                        value={campaignId}
+                        onChange={(e) => setCampaignId(e.target.value)}
+                        className="h-10 w-full rounded-xl border border-border bg-background px-3 text-sm outline-none focus-visible:border-primary/50"
+                      >
+                        <option value="">All campaigns</option>
+                        {campaigns.map((c) => (
+                          <option key={c.id} value={c.id}>
+                            {c.name}
+                          </option>
+                        ))}
+                      </select>
                     </div>
                   )}
                   {groups.length > 0 && (
@@ -443,7 +414,7 @@ export function SessionBuilder({
                           {s.count.toLocaleString()}
                         </p>
                         {optIn && on && (
-                          <p className="mt-1 text-[11px] leading-tight text-warning">
+                          <p className="mt-1 text-[10px] leading-tight text-warning">
                             {segHint(s.hint)}
                           </p>
                         )}
@@ -550,7 +521,7 @@ export function SessionBuilder({
                       type="checkbox"
                       checked={strictOrder}
                       onChange={(e) => setStrictOrder(e.target.checked)}
-                      className="h-[22px] w-[22px] accent-[hsl(var(--primary))]"
+                      className="h-5 w-5 accent-[hsl(var(--primary))]"
                     />
                   </label>
                   <label className="flex cursor-pointer items-center justify-between gap-3 rounded-xl border border-border/70 bg-surface/50 px-4 py-3">
@@ -567,7 +538,7 @@ export function SessionBuilder({
                       type="checkbox"
                       checked={refill}
                       onChange={(e) => setRefill(e.target.checked)}
-                      className="h-[22px] w-[22px] accent-[hsl(var(--primary))]"
+                      className="h-5 w-5 accent-[hsl(var(--primary))]"
                     />
                   </label>
                 </div>

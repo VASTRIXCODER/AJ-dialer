@@ -9,7 +9,6 @@ import {
 import type { OpportunityStage } from "../opportunities/stage-machine";
 import { createAdminClient, isAdminConfigured } from "../supabase/admin";
 import type { Scope } from "./scope";
-import { askedCount } from "./counts";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The CRM workspace's reads.
@@ -125,11 +124,9 @@ export interface QueueItem {
 export interface CrmQueue {
   items: QueueItem[];
   /** Exact count of everything claimable in scope, not just this page. */
-  /** null = the count could not be READ, not zero. See askedCount. */
-  claimable: number | null;
+  claimable: number;
   /** Mine right now: reserved by me and still inside the lease. */
-  /** null = the count could not be READ, not zero. See askedCount. */
-  held: number | null;
+  held: number;
 }
 
 /** Ordering key per lane: what "needs attention first" means there. */
@@ -409,8 +406,8 @@ export async function getCrmQueue(scope: Scope): Promise<CrmQueue | null> {
     }
 
     return {
-      claimable: askedCount(countRes),
-      held: askedCount(heldCountRes),
+      claimable: countRes.count ?? 0,
+      held: heldCountRes.count ?? 0,
       items: rows.map((r): QueueItem => {
         const lead = leads.get(s(r.lead_id));
         return {

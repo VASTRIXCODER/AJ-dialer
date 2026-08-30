@@ -32,30 +32,20 @@ import {
   ROLE_LABEL,
 } from "@/lib/permissions";
 import { cn } from "@/lib/utils";
-import { useDensity } from "@/components/layout/density";
-import { DensityToggle } from "@/components/ui/density-toggle";
 
 function Switch({
   checked,
   onChange,
-  label,
 }: {
   checked: boolean;
   onChange: (v: boolean) => void;
-  /** Required. This control is the ONLY thing on a preference row that a
-   *  screen reader can operate, and it used to announce "button" — no name, no
-   *  state — on every row of the Settings page. */
-  label: string;
 }) {
   return (
     <button
       type="button"
-      role="switch"
-      aria-checked={checked}
-      aria-label={label}
       onClick={() => onChange(!checked)}
       className={cn(
-        "relative h-6 w-11 shrink-0 rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
+        "relative h-6 w-11 shrink-0 rounded-full transition-colors",
         checked ? "bg-primary" : "bg-muted",
       )}
     >
@@ -91,7 +81,7 @@ function PrefRow({
         <p className="text-sm font-semibold">{title}</p>
         <p className="text-xs text-muted-foreground">{desc}</p>
       </div>
-      <Switch checked={checked} onChange={onChange} label={title} />
+      <Switch checked={checked} onChange={onChange} />
     </div>
   );
 }
@@ -118,7 +108,6 @@ export function SettingsView({
   dialerPrefs?: DialerUserPrefs;
 }) {
   const { theme, setTheme } = useTheme();
-  const { density, setDensity } = useDensity();
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
 
@@ -287,13 +276,13 @@ export function SettingsView({
                   key={p}
                   className={cn(
                     "flex items-center gap-2 rounded-lg px-2 py-1.5 text-sm",
-                    granted ? "text-foreground" : "text-ink-3",
+                    granted ? "text-foreground" : "text-muted-foreground/60",
                   )}
                 >
                   <span
                     className={cn(
                       "flex h-5 w-5 shrink-0 items-center justify-center rounded-md",
-                      granted ? "bg-success/15 text-success" : "bg-muted text-ink-3",
+                      granted ? "bg-success/15 text-success" : "bg-muted text-muted-foreground/60",
                     )}
                   >
                     {granted ? <Check className="h-3.5 w-3.5" /> : <Minus className="h-3 w-3" />}
@@ -321,7 +310,7 @@ export function SettingsView({
                   type="button"
                   onClick={() => setTheme(t.key)}
                   className={cn(
-                    "flex flex-col items-center gap-2 rounded-xl border p-4 transition-colors duration-[var(--dur-state)]",
+                    "flex flex-col items-center gap-2 rounded-xl border p-4 transition-all active:scale-95",
                     active
                       ? "border-primary bg-primary-soft text-primary"
                       : "border-border bg-surface text-muted-foreground hover:bg-muted",
@@ -332,21 +321,6 @@ export function SettingsView({
                 </button>
               );
             })}
-          </div>
-
-          {/* Density is a workspace-level display setting, persisted to the
-              same profile as the theme — and until now it had no home. It was
-              reachable only from three toolbars (the dialer's lanes, the
-              monitor's floor filters, the leads grid), so a rep who had not
-              opened one of those three screens could not discover it existed. */}
-          <div className="mt-5 flex flex-wrap items-center justify-between gap-3 border-t border-border/60 pt-5">
-            <div>
-              <p className="text-sm font-semibold">Row density</p>
-              <p className="text-xs text-muted-foreground">
-                How tight the rows are in every table and list. Follows you between machines.
-              </p>
-            </div>
-            <DensityToggle value={density} onChange={setDensity} />
           </div>
         </Card>
 

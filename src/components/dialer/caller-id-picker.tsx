@@ -26,10 +26,7 @@ export function CallerIdPicker({
   rotateEvery: number;
   /** Numbers the rep has toggled off. */
   excludedCallerIds: string[];
-  /** What the LAST placed call used. Not a prediction of the next one: with
-   *  the default rotateEvery of 1 the next call is a different number every
-   *  time, and an unlabelled marker sitting on the previous number read as
-   *  "this is the one you are about to dial from". */
+  /** What the last placed call actually used — marks the active pill. */
   active: CallerIdInfo | null;
   /** True while a call is in flight — toggling mid-call is a no-op. */
   disabled: boolean;
@@ -64,7 +61,7 @@ export function CallerIdPicker({
               "flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium transition-colors",
               on
                 ? "border-primary/40 bg-primary-soft text-primary"
-                : "border-border/60 bg-muted/30 text-ink-3 line-through",
+                : "border-border/60 bg-muted/30 text-muted-foreground/50 line-through",
               disabled || isLastOn
                 ? "cursor-not-allowed opacity-70"
                 : "hover:bg-muted/70",
@@ -72,25 +69,12 @@ export function CallerIdPicker({
           >
             <Phone className="h-3 w-3" />
             {formatPhone(num)}
-            {active?.callerId === num && (
-              <span
-                className="inline-flex items-center gap-0.5"
-                title={
-                  active.localPresence
-                    ? "Last call used this number — chosen to match their area code"
-                    : "Last call used this number"
-                }
-              >
-                <RotateCcw className="h-3 w-3" aria-hidden />
-                <span className="sr-only">Used by the last call</span>
-                <span aria-hidden>last</span>
-              </span>
-            )}
+            {active?.callerId === num && <RotateCcw className="h-3 w-3" />}
           </button>
         );
       })}
       {enabledCount > 1 && (
-        <span className="text-[11px] text-ink-3">
+        <span className="text-[11px] text-muted-foreground/70">
           · every {rotateEvery} call{rotateEvery === 1 ? "" : "s"}
         </span>
       )}

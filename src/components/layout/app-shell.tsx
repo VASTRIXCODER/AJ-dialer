@@ -7,17 +7,15 @@ import { CommandPalette } from "@/components/ai/command-palette";
 import { type DialerConfig, DialerProvider } from "@/components/dialer/dialer-context";
 import { GlobalCallBar } from "@/components/dialer/global-call-bar";
 import { Lead360Provider } from "@/components/leads/lead-360/lead-360-provider";
-import { DensityProvider } from "./density";
 import { orgAccentCss } from "@/lib/org/accent";
 import type { OrgFeatures } from "@/lib/org/settings";
 import { DEFAULT_VOCABULARY, type OrgVocabulary } from "@/lib/org/vocabulary";
-import type { Density } from "@/lib/ui-density";
+import { AmbientBackground } from "./ambient-background";
 import { Sidebar } from "./sidebar";
 import { Topbar } from "./topbar";
 import type { Permission } from "@/lib/permissions";
 import { PermissionsProvider } from "./permissions";
 import { VocabularyProvider } from "./vocabulary";
-import { Z } from "@/lib/z-layers";
 
 type Account = { name: string; email: string; initials: string };
 
@@ -36,7 +34,6 @@ export function AppShell({
   role = null,
   superadmin = false,
   vocabulary = DEFAULT_VOCABULARY,
-  density = null,
   dialerConfig,
 }: {
   children: React.ReactNode;
@@ -56,9 +53,6 @@ export function AppShell({
   superadmin?: boolean;
   /** The org's own nouns, resolved server-side. See useVocabulary(). */
   vocabulary?: OrgVocabulary;
-  /** The viewer's stored display density, resolved server-side so the first
-   *  paint is already at the density they chose. Null = they never set one. */
-  density?: Density | null;
   /** Config for the app-wide dialer engine (persists calls across navigation). */
   dialerConfig: DialerConfig;
 }) {
@@ -80,9 +74,6 @@ export function AppShell({
 
   return (
     <VocabularyProvider value={vocabulary}>
-    {/* One density for the whole workspace — it used to be three unrelated
-        per-surface toggles, and the biggest grid in the product had none. */}
-    <DensityProvider initial={density}>
     {/* Outside Lead 360 so the drawer's sections can ask what the viewer may
         do without every host threading a prop down to them. Display only —
         every route re-checks server-side. */}
@@ -93,20 +84,11 @@ export function AppShell({
     <Lead360Provider>
     {accentCss ? <style dangerouslySetInnerHTML={{ __html: accentCss }} /> : null}
     <div className="relative flex min-h-screen" {...(accentCss ? { "data-org-accent": "" } : {})}>
-      {/* No ambient field here, deliberately.
-          It used to render behind the whole authenticated app, which put a
-          drifting aurora and three animated glow orbs underneath every table,
-          every form and every number a rep reads for eight hours. Depth behind
-          content-layer text is the one thing the design system rules out
-          outright.
-          The field belongs to the Stage and is mounted there instead: the
-          sign-in routes, /hub, the marketing page, and the maintenance and
-          paywall locks. The dialer's idle state gets it back in W3, scoped to
-          the idle state alone — it goes dark the moment a call connects. */}
+      <AmbientBackground />
       <CommandPalette />
 
       {/* Desktop sidebar */}
-      <aside className="fixed inset-y-0 left-0 hidden w-[268px] lg:block" style={{ zIndex: Z.sidebar }}>
+      <aside className="fixed inset-y-0 left-0 z-30 hidden w-[268px] lg:block">
         <Sidebar account={account} {...sidebarProps} />
       </aside>
 
@@ -119,14 +101,14 @@ export function AppShell({
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
               onClick={() => setMobileOpen(false)}
-              className="fixed inset-0 bg-background/60 backdrop-blur-md lg:hidden" style={{ zIndex: Z.navScrim }}
+              className="fixed inset-0 z-40 bg-background/60 backdrop-blur-md lg:hidden"
             />
             <motion.aside
               initial={{ x: "-100%" }}
               animate={{ x: 0 }}
               exit={{ x: "-100%" }}
               transition={{ type: "spring", damping: 32, stiffness: 320 }}
-              className="fixed inset-y-0 left-0 w-[284px] lg:hidden" style={{ zIndex: Z.navPanel }}
+              className="fixed inset-y-0 left-0 z-50 w-[284px] lg:hidden"
             >
               <button
                 type="button"
@@ -153,12 +135,7 @@ export function AppShell({
           voiceConfigured={voiceConfigured}
           aiConfigured={aiConfigured}
         />
-        {/* The call bar is `position: fixed`, so it covers whatever is at the
-            bottom of the page. Reserve its height — and only while it is
-            actually up, which is what `--callbar-h` means. Without this, the
-            last row of every table and the bottom buttons of every form were
-            unclickable for the whole duration of a call. */}
-        <main className="flex-1 pb-[var(--callbar-h,0px)]">{children}</main>
+        <main className="flex-1">{children}</main>
       </div>
 
       {/* Follows the rep to every page so an in-progress call never drops. */}
@@ -167,7 +144,6 @@ export function AppShell({
     </Lead360Provider>
     </DialerProvider>
     </PermissionsProvider>
-    </DensityProvider>
     </VocabularyProvider>
   );
 }

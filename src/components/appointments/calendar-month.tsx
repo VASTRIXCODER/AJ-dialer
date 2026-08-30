@@ -14,7 +14,7 @@ import {
 } from "@/lib/appointments/time";
 import type { AppointmentRow } from "@/lib/db/pipeline";
 import { cn } from "@/lib/utils";
-import { chipGlyph, chipTone, isDead, isReview, type ApptAccess } from "./shared";
+import { chipTone, isDead, isReview, type ApptAccess } from "./shared";
 import type { DragPreview, DraggableAppt, HitTest } from "./use-appointment-drag";
 
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -142,7 +142,7 @@ export function CalendarMonth({
                     today
                       ? "bg-primary text-primary-foreground"
                       : outside
-                        ? "text-ink-3"
+                        ? "text-muted-foreground/50"
                         : "text-muted-foreground",
                   )}
                 >
@@ -153,12 +153,7 @@ export function CalendarMonth({
                     type="button"
                     onClick={() => onCreate(withHour(day, 10))}
                     aria-label={`Add an appointment on ${key}`}
-                    // `opacity-0` unhidden only by group-hover is invisible on
-                    // a touch device — and still hit-testable, so a tap near
-                    // the date number silently opened the new-appointment
-                    // dialog. Visible at rest on a coarse pointer; the
-                    // hover-reveal stays for a mouse, where it earns its keep.
-                    className="flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-opacity hover:bg-muted hover:text-foreground focus-visible:opacity-100 group-hover/cell:opacity-100 [@media(pointer:coarse)]:opacity-60"
+                    className="flex h-5 w-5 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-opacity hover:bg-muted hover:text-foreground focus-visible:opacity-100 group-hover/cell:opacity-100"
                   >
                     <Plus className="h-3.5 w-3.5" />
                   </button>
@@ -230,7 +225,6 @@ function MonthChip({
 }) {
   const start = parseFloating(a.scheduledAt);
   const draggable = access.canManage && a.status !== "cancelled";
-  const glyph = chipGlyph(a);
 
   return (
     <div
@@ -249,7 +243,7 @@ function MonthChip({
           onOpen(a);
         }
       }}
-      title={`${a.leadName} — ${start ? formatTime(start) : "No time"}${glyph ? ` · ${glyph.label}` : ""}`}
+      title={`${a.leadName} — ${start ? formatTime(start) : "No time"}`}
       className={cn(
         "flex w-full items-center gap-1 rounded-md border px-1.5 py-1 text-left text-[11px] font-medium transition-shadow",
         chipTone(a),
@@ -258,18 +252,11 @@ function MonthChip({
         "hover:shadow-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40",
       )}
     >
-      {/* The state, as a character. chipTone is colour only, so completed vs
-          scheduled and cancelled vs no-show were hue-only distinctions. */}
-      {glyph && (
-        <span aria-hidden className="shrink-0 font-bold leading-none">
-          {glyph.glyph}
-        </span>
-      )}
       {a.source === "ai" && <Sparkles className="h-2.5 w-2.5 shrink-0" />}
       {conflicted && <TriangleAlert className="h-2.5 w-2.5 shrink-0 text-danger" />}
       {start && <span className="shrink-0 tabular opacity-80">{shortTime(start)}</span>}
       <span className={cn("truncate", isDead(a) && "line-through")}>{a.leadName}</span>
-      {isReview(a) && <span className="ml-auto shrink-0 text-[11px] font-bold uppercase">●</span>}
+      {isReview(a) && <span className="ml-auto shrink-0 text-[9px] font-bold uppercase">●</span>}
     </div>
   );
 }

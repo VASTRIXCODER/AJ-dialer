@@ -442,20 +442,12 @@ export async function suppressOpportunitiesForPhone(input: {
     const admin = createAdminClient();
     // ilike is a coarse prefilter; the exact last-10 comparison happens here so
     // "5551234567" can't match "19995551234567".
-    const { data: leadRows, error: leadsErr } = await admin
+    const { data: leadRows } = await admin
       .from("leads")
       .select("id, phone")
       .eq("org_id", input.orgId)
       .ilike("phone", `%${digits}%`)
       .limit(50);
-    // Reached from the inbound-STOP path. Returning 0 made "the read failed"
-    // identical to "they had no open opportunities", so a customer who had just
-    // said stop kept generating escalations and call tasks from a running
-    // playbook. The caller wraps this, so a throw is caught and — unlike a 0 —
-    // is distinguishable from success.
-    if (leadsErr) {
-      throw new Error("Could not read this contact's leads to suppress their playbooks");
-    }
     const leadIds = ((leadRows ?? []) as Record<string, unknown>[])
       .filter(
         (l) => String(l.phone ?? "").replace(/\D/g, "").slice(-10) === digits,
@@ -463,15 +455,12 @@ export async function suppressOpportunitiesForPhone(input: {
       .map((l) => String(l.id));
     if (!leadIds.length) return 0;
 
-    const { data: opps, error: oppsErr } = await admin
+    const { data: opps } = await admin
       .from("opportunities")
       .select("id, stage")
       .eq("org_id", input.orgId)
       .in("lead_id", leadIds)
       .neq("op_status", "closed");
-    if (oppsErr) {
-      throw new Error("Could not read this contact's opportunities to suppress them");
-    }
 
     let closed = 0;
     for (const o of (opps ?? []) as Record<string, unknown>[]) {

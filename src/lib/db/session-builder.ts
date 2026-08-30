@@ -14,7 +14,9 @@ import { createAdminClient, isAdminConfigured } from "../supabase/admin";
 import { isSupabaseConfigured } from "../supabase/config";
 import { createClient } from "../supabase/server";
 import type { Lead } from "../types";
-import { readProfileScope } from "./scope";
+
+/** Roles allowed to build ORG-WIDE sessions — mirrors getDialQueue's scope. */
+const SUPERVISOR_ROLES = new Set(["owner", "admin", "manager"]);
 
 interface SessionScope {
   userId: string;
@@ -30,18 +32,22 @@ async function resolveSessionScope(
     data: { user },
   } = await supabase.auth.getUser();
   if (!user) return null;
-  // Throws when the profile or the membership cannot be read, rather than
-  // silently answering "rep" — which here means an org-wide session quietly
-  // builds from one person's own uploads.
-  const prof = await readProfileScope(supabase, user.id, "org_id, role, disabled");
+  const { data: prof } = await supabase
+    .from("profiles")
+    .select("org_id, role, disabled")
+    .eq("id", user.id)
+    .maybeSingle();
   // A suspended account gets NOTHING here — the org-wide path below reads
   // through the service-role client, which bypasses the RLS backstop that
   // suspension otherwise relies on when the auth ban API hiccups.
-  if (prof.disabled) return null;
+  if (prof?.disabled) return null;
   return {
     userId: user.id,
-    orgId: prof.org_id,
-    supervisor: prof.supervisor && isAdminConfigured(),
+    orgId: prof?.org_id ? String(prof.org_id) : null,
+    supervisor:
+      Boolean(prof?.org_id) &&
+      SUPERVISOR_ROLES.has(String(prof?.role ?? "")) &&
+      isAdminConfigured(),
   };
 }
 

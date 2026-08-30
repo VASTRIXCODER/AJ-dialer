@@ -150,11 +150,7 @@ export interface Lead {
   createdAt: string;
   /** Qualification confidence 0-100 produced by the AI agent */
   aiScore?: number;
-  /** An IANA zone somebody actually CHOSE for this contact. Absent is the
-   *  normal case — the column has a schema default, so a value that equals it
-   *  is not evidence (see storedLeadTimezone). Consumers infer from the
-   *  number's area code instead of assuming. */
-  timezone?: string;
+  timezone: string;
   /** The account (user id) that uploaded this lead — drives per-uploader scoping. */
   ownerId?: string;
   /** Uploader's display name, resolved for the supervisor's sectioned view. */

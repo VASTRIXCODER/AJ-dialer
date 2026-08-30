@@ -17,8 +17,7 @@ import { useVocabulary } from "@/components/layout/vocabulary";
 import { SectionCard } from "@/components/shared/section-card";
 import { Button } from "@/components/ui/button";
 import { useConfirm } from "@/components/ui/confirm-dialog";
-import { Input, Label, Textarea } from "@/components/ui/input";
-import { SelectMenu } from "@/components/ui/select-menu";
+import { Input, Label, Select, Textarea } from "@/components/ui/input";
 import { useToast } from "@/components/ui/toast";
 import type {
   CampaignAudience,
@@ -289,17 +288,18 @@ export function CampaignBuilder({
               />
             </Field>
             <Field label="Status">
-              <SelectMenu
-                label="Status"
-                className="w-full"
-                triggerClassName="w-full"
+              <Select
                 value={identity.status}
-                onChange={(v) => setIdentity({ ...identity, status: v as CampaignStatus })}
-                options={(Object.keys(campaignStatusConfig) as CampaignStatus[]).map((value) => ({
-                  value: value as string,
-                  label: campaignStatusConfig[value].label,
-                }))}
-              />
+                onChange={(e) =>
+                  setIdentity({ ...identity, status: e.target.value as CampaignStatus })
+                }
+              >
+                {(Object.keys(campaignStatusConfig) as CampaignStatus[]).map((value) => (
+                  <option key={value} value={value}>
+                    {campaignStatusConfig[value].label}
+                  </option>
+                ))}
+              </Select>
             </Field>
           </div>
           <Field label="Description" className="sm:col-span-2">
@@ -389,15 +389,18 @@ export function CampaignBuilder({
                   No smart lists yet — create one from the {vocab.LeadNounPlural} page first.
                 </p>
               ) : (
-                <SelectMenu
-                  label="Smart list"
-                  placeholder="Choose a smart list…"
-                  className="w-full"
-                  triggerClassName="w-full"
-                  value={audSmartListId || null}
-                  onChange={(v) => setAudSmartListId(v)}
-                  options={smartLists.map((l) => ({ value: l.id, label: l.name }))}
-                />
+                <Select
+                  value={audSmartListId}
+                  onChange={(e) => setAudSmartListId(e.target.value)}
+                  aria-label="Smart list"
+                >
+                  <option value="">Choose a smart list…</option>
+                  {smartLists.map((l) => (
+                    <option key={l.id} value={l.id}>
+                      {l.name}
+                    </option>
+                  ))}
+                </Select>
               )}
             </div>
           )}
@@ -772,7 +775,7 @@ function CheckRow({
         type="checkbox"
         checked={checked}
         onChange={onToggle}
-        className="mt-0.5 h-[22px] w-[22px] shrink-0 rounded border-input accent-primary"
+        className="mt-0.5 h-4 w-4 shrink-0 rounded border-input accent-primary"
       />
       <span className="min-w-0">
         <span className="block text-sm font-medium">{label}</span>
@@ -799,7 +802,7 @@ function RadioRow({
         type="radio"
         checked={checked}
         onChange={onSelect}
-        className="mt-0.5 h-[22px] w-[22px] shrink-0 rounded border-input accent-primary"
+        className="mt-0.5 h-4 w-4 shrink-0 rounded border-input accent-primary"
       />
       <span className="min-w-0">
         <span className="block text-sm font-medium">{label}</span>

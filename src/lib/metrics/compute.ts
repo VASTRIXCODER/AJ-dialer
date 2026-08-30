@@ -1,5 +1,5 @@
 import { zonedDayHour, zonedDayKey, zonedDayStartMs } from "../dialer/schedule";
-import { isCancelledAppointment, isConnectedRecord } from "./definitions";
+import { isConnectedRecord } from "./definitions";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Pure metric computations — the arithmetic behind definitions.ts, operating on
@@ -192,7 +192,7 @@ export function appointmentsSet(
   let count = 0;
   for (const a of appts) {
     const status = a.status?.toLowerCase();
-    if (isCancelledAppointment(status)) continue;
+    if (status === "cancelled" || status === "canceled") continue;
     const key = zonedDayKey(new Date(a.createdAt), tz);
     if (key >= fromKey && key <= toKey) count += 1;
   }

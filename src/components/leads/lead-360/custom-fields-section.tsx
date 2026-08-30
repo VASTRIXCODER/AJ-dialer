@@ -21,7 +21,7 @@ export function CustomFieldsSection({ fields }: { fields: LeadPanelField[] }) {
   const renderGroup = (group: LeadPanelField[], heading: string) =>
     group.length > 0 && (
       <div>
-        <p className="mb-1.5 text-[11px] font-bold uppercase tracking-wider text-ink-3">
+        <p className="mb-1.5 text-[10px] font-bold uppercase tracking-wider text-muted-foreground/70">
           {heading}
         </p>
         <dl className="grid grid-cols-1 gap-x-6 sm:grid-cols-2">

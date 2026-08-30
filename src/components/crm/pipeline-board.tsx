@@ -345,7 +345,7 @@ function Card({
           <Menu>
             <MenuTrigger
               label={`Actions for ${card.leadName}`}
-              className="inline-flex h-6 w-6 items-center justify-center rounded-lg text-muted-foreground hover:bg-muted/70 hover:text-foreground"
+              className="rounded-lg p-1 text-muted-foreground hover:bg-muted/70 hover:text-foreground"
             >
               <MoreHorizontal className="h-3.5 w-3.5" />
             </MenuTrigger>

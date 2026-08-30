@@ -1,5 +1,6 @@
 "use client";
 
+import { motion } from "framer-motion";
 import { Bot, Delete, Phone } from "lucide-react";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
@@ -66,16 +67,15 @@ export function DialPad({
 
       <div className="grid grid-cols-3 gap-2.5">
         {KEYS.map((k) => (
-          <button
+          <motion.button
             key={k.d}
             type="button"
             onClick={() => press(k.d)}
+            whileTap={{ scale: 0.9 }}
+            whileHover={{ y: -2 }}
+            transition={{ type: "spring", stiffness: 500, damping: 24 }}
             className={cn(
-              // Colour only. The compact variant of this pad is mounted DURING
-              // a call, where the rep is punching an IVR extension against a
-              // menu that is counting down — every key used to lift 2px on
-              // hover and spring on tap.
-              "group flex flex-col items-center justify-center rounded-2xl border border-border bg-surface transition-colors duration-[var(--dur-state)] hover:border-primary/40 hover:bg-primary-soft active:bg-primary-soft",
+              "group flex flex-col items-center justify-center rounded-2xl border border-border bg-surface transition-colors duration-200 hover:border-primary/40 hover:bg-primary-soft",
               compact ? "h-12" : "h-16",
             )}
           >
@@ -83,11 +83,11 @@ export function DialPad({
               {k.d}
             </span>
             {!compact && k.s && (
-              <span className="text-[11px] font-bold tracking-widest text-muted-foreground">
+              <span className="text-[9px] font-bold tracking-widest text-muted-foreground">
                 {k.s}
               </span>
             )}
-          </button>
+          </motion.button>
         ))}
       </div>
 

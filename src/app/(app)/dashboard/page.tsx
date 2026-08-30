@@ -57,20 +57,7 @@ const liveLabel = (s: string) =>
 
 export default async function DashboardPage() {
   const [
-    {
-      metrics,
-      kpiSeries,
-      outcomeBreakdown,
-      hourlyCalls,
-      liveCalls,
-      appointments,
-      connectRateToday,
-      // Whose rows these are. getReportingData has always returned it and this
-      // page dropped it, so a manager and a rep saw identical tiles holding
-      // org-wide and personal numbers with nothing to tell them apart. Reports
-      // renders a badge for the same fact; the tiles carry it now.
-      scope,
-    },
+    { metrics, kpiSeries, outcomeBreakdown, hourlyCalls, liveCalls, appointments, connectRateToday },
     viewer,
     { reps: teamReps, meId },
     // The dashboard's headline KPIs / dispositions / pipeline insights are scoped
@@ -80,9 +67,6 @@ export default async function DashboardPage() {
     // 90-day window keeps the dashboard fast and flat as the org grows (the 7-day
     // trend and today's tiles are unaffected). Reports still offers true all-time.
   ] = await Promise.all([getReportingData(90), getViewer(), getTeamLeaderboard()]);
-
-  // The tiles below all cover the same rows, so they all carry the same scope.
-  const tileScope = scope === "org" ? "org" : "me";
 
   // Top performers today, org-wide (every onboarded member counts) — ranked by
   // the org's configurable leaderboard points, with the one deterministic
@@ -116,7 +100,6 @@ export default async function DashboardPage() {
           description="Your floor analytics will appear here once calling begins."
         />
         <EmptyState
-          variant="page"
           icon={LayoutDashboard}
           title="No activity yet"
           description="Import your leads and start dialing — calls, connect rates, appointments, and live monitoring will populate here in real time."
@@ -189,51 +172,41 @@ export default async function DashboardPage() {
           value={formatNumber(metrics.callsToday)}
           icon={PhoneCall}
           accent="primary"
+          sub="dials placed today"
           definitionKey="calls_today"
-          window="today"
-          scope={tileScope}
         />
         <MetricCard
           label="Connect rate"
           value={formatPercent(connectRateToday, 1)}
           icon={Zap}
           accent="accent"
+          sub="conversations / dials · today"
           definitionKey="connect_rate"
-          window="today"
-          scope={tileScope}
         />
         <MetricCard
-          // The org's own noun — this tile said "reviews booked" to every
-          // tenant. It counts rows in the appointments table, which is a
-          // different quantity from the call-outcome count on /today and
-          // /command; those carry `appointment_outcomes` for that reason.
-          label={`${vocab.appointmentNounPlural.charAt(0).toUpperCase()}${vocab.appointmentNounPlural.slice(1)}`}
+          label="Appointments"
           value={formatNumber(metrics.appointmentsBooked)}
           icon={CalendarCheck}
           accent="success"
+          // The org's own noun — this tile said "reviews booked" to every tenant.
+          sub={`${vocab.appointmentNounPlural} booked · 90d`}
           definitionKey="appointments_set"
-          window="last_90d"
-          scope={tileScope}
         />
         <MetricCard
           label="Avg talk time"
           value={formatDuration(metrics.avgCallLenSec)}
           icon={Clock}
           accent="warning"
+          sub="per conversation · 90d"
           definitionKey="avg_talk_time"
-          window="last_90d"
-          scope={tileScope}
         />
       </div>
 
       {/* Charts row */}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         <SectionCard
-          // NOT "this week". buildSeries(7) is a ROLLING seven days ending
-          // today; the leaderboard's week is the workspace's configured
-          // calendar week, and the two disagree on six days out of seven.
-          title="Performance · last 7 days"
-          description="Dials vs. live conversations · rolling, ending today"
+          title="Performance this week"
+          description="Dials vs. live conversations"
           className="lg:col-span-2"
           action={{ label: "Reports", href: "/reports" }}
         >
@@ -309,7 +282,7 @@ export default async function DashboardPage() {
             <ul className="space-y-3">
               {liveCalls.slice(0, 5).map((call) => (
                 <li key={call.id} className="flex items-center gap-3">
-                  <span className="relative flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-brand text-white">
+                  <span className="relative flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-brand text-white shadow-glow">
                     <Bot className="h-4 w-4" />
                     {call.state === "in_progress" && (
                       <span className="absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full border-2 border-card bg-success" />

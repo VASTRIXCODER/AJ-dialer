@@ -31,7 +31,6 @@ import type { CallOutcome, CampaignStatus } from "../types";
 import { formatAddress } from "../utils";
 import { apptScope } from "./appointments";
 import { canActOn, getScope } from "./scope";
-import { askedCount } from "./counts";
 
 // Account-scoped reads/writes for the pipeline surfaces. Each returns empty (or
 // a graceful error) in demo mode instead of throwing. Appointments + callbacks
@@ -166,42 +165,38 @@ export async function getCampaigns(): Promise<CampaignRow[]> {
     const reader = useOrg ? createAdminClient() : await createClient();
     const col = useOrg ? "org_id" : "owner_id";
     const val = useOrg ? (scope.orgId as string) : scope.userId;
-    // The stats inputs are COUNTED, not fetched.
-    //
-    // They used to be paged with a ceiling — 50,000 leads and 20,000 call
-    // records — ordered by `id`, which is a gen_random_uuid() primary key. So
-    // the ceiling did not take the newest rows or the oldest: it took an
-    // arbitrary sample. Measured: 34,079 call records, of which about 59%
-    // arrived, and the campaign page renders six MetricCards and a conversion
-    // funnel from them as totals.
-    //
-    // app_campaign_lead_counts / app_campaign_call_counts group in SQL and
-    // return a handful of rows carrying `n` (the org's 21,301 call records
-    // come back as ten). campaign-stats.ts sums those weights, so the rules for
-    // "dialable", "connected" and the A/B split still live in exactly one
-    // place. No ceiling, at any book size.
-    const [cRes, leadRes, callRes] = await Promise.all([
+    // The stats inputs MUST page: a bare .limit() above 1,000 is a no-op
+    // (PostgREST silently caps every un-ranged response at 1,000 rows — see
+    // the header comment), so campaign lead counts, connect rates, and the
+    // script A/B split were computed over an arbitrary 1,000-row sample of
+    // any real book. Ordered so pages are stable while paging.
+    const [cRes, leads, calls] = await Promise.all([
       reader
         .from("campaigns")
         .select("*")
         .eq(col, val)
         .order("created_at", { ascending: false })
         .limit(useOrg ? 2000 : 500),
-      reader.rpc("app_campaign_lead_counts", { p_column: col, p_value: val }),
-      reader.rpc("app_campaign_call_counts", { p_column: col, p_value: val }),
+      fetchPagedUpTo(
+        () =>
+          reader
+            .from("leads")
+            .select("campaign_id,status")
+            .eq(col, val)
+            .order("id", { ascending: true }),
+        useOrg ? 50000 : 5000,
+      ),
+      fetchPagedUpTo(
+        () =>
+          reader
+            .from("call_records")
+            .select("campaign_id,outcome,script_variant")
+            .eq(col, val)
+            .order("id", { ascending: true }),
+        useOrg ? 20000 : 2000,
+      ),
     ]);
     if (cRes.error) console.error("[pipeline] getCampaigns campaigns query failed:", cRes.error.message);
-    // A failed count is not a campaign with no activity. Every rate below is a
-    // ratio, and a zero numerator over a zero denominator renders as a
-    // confident 0% — the shape of a campaign that is running and converting
-    // nobody, which is a thing someone would switch off.
-    if (leadRes.error || callRes.error) {
-      throw new Error(
-        `Couldn't count campaign activity: ${(leadRes.error ?? callRes.error)?.message}`,
-      );
-    }
-    const leads = (leadRes.data ?? []) as Row[];
-    const calls = (callRes.data ?? []) as Row[];
     return ((cRes.data ?? []) as Row[]).map((r) => ({
       id: s(r.id),
       name: s(r.name),
@@ -800,8 +795,7 @@ export interface BillsFineResult {
   /** Count of EVERY row the scope + search match — not just this page. */
   total: number;
   /** Full-book count of rows carrying both bill amounts (same scope + search). */
-  /** null = the count could not be READ, not zero. See askedCount. */
-  withBills: number | null;
+  withBills: number;
   /** Average combined monthly energy cost across `withBills` rows; null when none. */
   avgEnergyCost: number | null;
   /** Whether the viewer sees the whole org's book (drives the Team-wide badge). */
@@ -875,14 +869,14 @@ export async function getBillsFine(
     // If the count query failed, fall back to what this page proves exists so
     // the UI never claims an empty book while showing rows.
     const total = totalRes.count ?? from + rows.length;
-    const withBills = askedCount(withBillsRes);
+    const withBills = withBillsRes.count ?? 0;
 
     // Average combined energy cost over the whole (filtered) book. There's no
     // aggregate endpoint to lean on, so read just the two numeric columns in
     // bounded pages — exact up to BILLS_FINE_AVG_MAX with-bill rows, a large
     // deterministic sample beyond that.
     let avgEnergyCost: number | null = null;
-    if (withBills === null || withBills > 0) {
+    if (withBills > 0) {
       const billRows = await fetchPagedUpTo(
         () =>
           filtered(reader.from("leads").select("utility_bill,solar_payment"))
@@ -944,8 +938,7 @@ export interface CallbacksResult {
   /** Open callbacks only (completed/cancelled are excluded), soonest due first. */
   rows: CallbackRow[];
   /** Full-book count of completed callbacks — they never ride along as rows. */
-  /** null = the count could not be READ, not zero. */
-  completedCount: number | null;
+  completedCount: number;
   /** Whether the viewer sees the whole org's callbacks. */
   teamWide: boolean;
 }
@@ -953,7 +946,64 @@ export interface CallbacksResult {
 /** Open callbacks worth showing on the board — closed history stays in the DB. */
 const CALLBACKS_MAX = 500;
 
-// getCallbacks lived here: a SECOND callbacks board, with its own divergent
-// lane rules, zero importers, and a comment at line ~576 still citing it as
-// the exemplar. The one the product actually renders is
-// getCallbackBoard in src/lib/db/callbacks.ts.
+export async function getCallbacks(): Promise<CallbacksResult> {
+  const empty: CallbacksResult = { rows: [], completedCount: 0, teamWide: false };
+  if (!isSupabaseConfigured()) return empty;
+  try {
+    const scope = await getScope();
+    if (!scope) return empty;
+    // Finalize any stuck calls first so callback-dispositioned ones show up.
+    await reconcileOwnerActiveCalls();
+    const orgWide = scope.supervisor && isAdminConfigured() && Boolean(scope.orgId);
+    const reader = orgWide ? createAdminClient() : await createClient();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const scoped = (base: any) => {
+      let q = base.eq(orgWide ? "org_id" : "owner_id", orgWide ? scope.orgId : scope.userId);
+      // A rep's "own" scope must stay within their CURRENT org — never surface
+      // callbacks they happen to own from an org they've since left.
+      if (!orgWide && scope.orgId) q = q.eq("org_id", scope.orgId);
+      return q;
+    };
+    // Closed rows accumulate forever — only OPEN work belongs on the board.
+    // Statuses in play: rows insert as "due" (records.ts) and the page's ⋯ menu
+    // writes "completed" | "cancelled" | "due" (dispositions.ts). Soonest due
+    // first so a bounded read can never crowd today's queue out with history;
+    // the Completed KPI comes from its own count so truncation can't skew it.
+    const [listRes, doneRes] = await Promise.all([
+      scoped(reader.from("callbacks").select("*"))
+        .not("status", "in", '("completed","cancelled")')
+        .order("due_at", { ascending: true, nullsFirst: false })
+        .order("created_at", { ascending: false })
+        .limit(CALLBACKS_MAX),
+      scoped(reader.from("callbacks").select("id", { count: "exact", head: true })).eq(
+        "status",
+        "completed",
+      ),
+    ]);
+    if (listRes.error) console.error("[pipeline] getCallbacks query failed:", listRes.error.message);
+    if (doneRes.error)
+      console.error("[pipeline] getCallbacks completed count failed:", doneRes.error.message);
+    const names = orgWide ? await memberNames(scope.orgId as string) : null;
+    return {
+      rows: ((listRes.data ?? []) as Row[]).map((r) => ({
+        id: s(r.id),
+        leadId: r.lead_id ? s(r.lead_id) : null,
+        // "" when the row carries no name — the callbacks PAGE substitutes the
+        // org's own lead noun (vocabulary), not a hardcoded vertical's word.
+        leadName: s(r.lead_name),
+        phone: s(r.phone),
+        reason: s(r.reason),
+        status: s(r.status) || "due",
+        dueAt: r.due_at ? s(r.due_at) : null,
+        createdAt: s(r.created_at),
+        repName: names ? names.get(s(r.owner_id)) || "Rep" : undefined,
+        teamWide: orgWide,
+      })),
+      completedCount: doneRes.count ?? 0,
+      teamWide: orgWide,
+    };
+  } catch (e) {
+    console.error("[pipeline] getCallbacks failed:", e instanceof Error ? e.message : e);
+    return empty;
+  }
+}

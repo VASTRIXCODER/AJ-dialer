@@ -8,8 +8,7 @@ import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import type { RecentCall } from "@/lib/db/metrics";
 import { resolveOutcomeConfig } from "@/lib/status";
-import { formatClock, formatDuration, initials, leadDisplayName, cn } from "@/lib/utils";
-import { CELL } from "@/lib/ui-density";
+import { formatClock, formatDuration, initials, leadDisplayName } from "@/lib/utils";
 
 /**
  * Recent-calls table. Every row opens the SAME detail view regardless of
@@ -28,12 +27,12 @@ export function RecentCalls({ calls }: { calls: RecentCall[] }) {
         <table className="w-full min-w-[760px] text-sm">
           <thead>
             <tr className="border-b border-border text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-              <th className={cn(CELL)}>Source</th>
-              <th className={cn(CELL)}>{vocab.LeadNoun}</th>
-              <th className={cn(CELL)}>Time</th>
-              <th className={cn(CELL, "text-right")}>Duration</th>
-              <th className={cn(CELL)}>Outcome</th>
-              <th className={cn(CELL, "text-right")}>Details</th>
+              <th className="px-5 py-3">Source</th>
+              <th className="px-5 py-3">{vocab.LeadNoun}</th>
+              <th className="px-5 py-3">Time</th>
+              <th className="px-5 py-3 text-right">Duration</th>
+              <th className="px-5 py-3">Outcome</th>
+              <th className="px-5 py-3 text-right">Details</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-border">
@@ -50,12 +49,9 @@ export function RecentCalls({ calls }: { calls: RecentCall[] }) {
                 <tr
                   key={rec.id}
                   onClick={open}
-                  // aria-hidden would be wrong (the cells carry the content);
-                  // the row is simply not focusable, and the View button in the
-                  // last cell is the keyboard route.
                   className="cursor-pointer transition-colors hover:bg-muted/40"
                 >
-                  <td className={cn(CELL)}>
+                  <td className="px-5 py-3">
                     <div className="flex items-center gap-2">
                       <Badge tone={isAI ? "accent" : "neutral"} className="gap-1">
                         {isAI ? <Bot className="h-3 w-3" /> : <User className="h-3 w-3" />}
@@ -71,23 +67,23 @@ export function RecentCalls({ calls }: { calls: RecentCall[] }) {
                       )}
                     </div>
                   </td>
-                  <td className={cn(CELL, "text-muted-foreground")}>
+                  <td className="px-5 py-3 text-muted-foreground">
                     {leadDisplayName(rec.leadName, rec.phone, vocab.leadNoun)}
                   </td>
-                  <td className={cn(CELL, "text-muted-foreground tabular")}>
+                  <td className="px-5 py-3 text-muted-foreground tabular">
                     {formatClock(rec.startedAt)}
                   </td>
-                  <td className={cn(CELL, "text-right tabular")}>
+                  <td className="px-5 py-3 text-right tabular">
                     {rec.durationSec ? formatDuration(rec.durationSec) : "—"}
                   </td>
-                  <td className={cn(CELL)}>
+                  <td className="px-5 py-3">
                     {cfg ? (
-                      <Badge tone={cfg.tone} icon={cfg.icon}>{cfg.label}</Badge>
+                      <Badge tone={cfg.tone}>{cfg.label}</Badge>
                     ) : (
                       <span className="text-xs text-muted-foreground">—</span>
                     )}
                   </td>
-                  <td className={cn(CELL, "text-right")}>
+                  <td className="px-5 py-3 text-right">
                     <div className="flex items-center justify-end gap-3">
                       {recordingHref && (
                         <a
@@ -101,21 +97,7 @@ export function RecentCalls({ calls }: { calls: RecentCall[] }) {
                           Play
                         </a>
                       )}
-                      {/* A real button. The row's onClick is a mouse
-                          convenience; this was the only route to the call
-                          detail modal and it was a <span>, so the table had no
-                          keyboard path at all. onClick stops propagating so
-                          the row handler does not also fire. */}
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          open();
-                        }}
-                        className="rounded-lg px-2 py-1 text-xs font-medium text-primary transition-colors hover:bg-primary-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                      >
-                        View →
-                      </button>
+                      <span className="text-xs font-medium text-primary">View →</span>
                     </div>
                   </td>
                 </tr>

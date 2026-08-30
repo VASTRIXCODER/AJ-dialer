@@ -351,3 +351,8 @@ export function applyAIMapping(
 /** True when Claude can be used to parse leads. */
 export const canAIParse = isAIConfigured;
 
+/** Infer the schema with Claude and extract every lead. Throws if AI is off. */
+export async function aiParseLeads(grid: string[][]): Promise<ParseResult> {
+  const mapping = await aiInferMapping(grid);
+  return applyAIMapping(grid, mapping);
+}

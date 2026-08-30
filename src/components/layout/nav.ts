@@ -65,32 +65,6 @@ export function navLabel(
   return typeof value === "string" && value.trim() ? value : item.label;
 }
 
-/**
- * Which nav item — if any — the current path belongs to. Longest match wins.
- *
- * The obvious test, `pathname === href || pathname.startsWith(href + "/")`,
- * lights every ancestor: on `/monitor/team` both "Live Monitor" (`/monitor`)
- * and "Team Status" (`/monitor/team`) came out active. Two items carrying
- * `aria-current="page"` is invalid — a document has exactly one current page —
- * so a screen reader announced the rep as being in two places at once, and
- * sighted users saw two highlighted rows with no way to tell which was real.
- *
- * Deciding across the whole candidate list rather than per item is what makes
- * the winner unique. Matching stays on segment boundaries, so `/leads` can
- * never claim `/leadsource`, and an href of `/` only ever matches exactly.
- *
- * Pass the items the viewer can actually see: if a parent route is hidden by
- * permission, its child should still win rather than fall through to nothing.
- */
-export function activeNavHref(pathname: string, hrefs: string[]): string | null {
-  let winner: string | null = null;
-  for (const href of hrefs) {
-    if (pathname !== href && !pathname.startsWith(`${href}/`)) continue;
-    if (winner === null || href.length > winner.length) winner = href;
-  }
-  return winner;
-}
-
 export const navGroups: NavGroup[] = [
   {
     label: "Workspace",

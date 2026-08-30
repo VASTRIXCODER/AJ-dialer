@@ -24,17 +24,8 @@ async function requireManager() {
 export async function GET() {
   const gate = await requireManager();
   if (gate.error) return gate.error;
-  // A failed read is not an empty list. listDnc throws now, so the screen can
-  // say it could not ask rather than showing a reassuring empty table.
-  try {
-    const entries = await listDnc(gate.viewer!.org!.id);
-    return NextResponse.json({ entries });
-  } catch {
-    return NextResponse.json(
-      { error: "Couldn't read the Do-Not-Call list just now. This is a database read — the list itself is unchanged." },
-      { status: 503 },
-    );
-  }
+  const entries = await listDnc(gate.viewer!.org!.id);
+  return NextResponse.json({ entries });
 }
 
 /** Add one number ({ phone, reason }) or import many ({ phones: string[] }). */

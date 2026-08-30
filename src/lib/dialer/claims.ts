@@ -114,81 +114,22 @@ export function orderedCandidateIds(
   return out;
 }
 
-// ── The picked lead ──────────────────────────────────────────────────────────
-//
-// The bug this section exists for: a rep searched the queue for ONE person,
-// picked them, pressed Start — and a completely different person answered.
-//
-// selectLead only moved the cursor, and the claim opens a 200-wide window AT
-// the cursor and takes the first ELIGIBLE lead in it. So a pick that was held
-// by a teammate, cooling down between attempts, at its attempt cap, DNC'd, or
-// outside its calling window was silently skipped and the NEXT candidate was
-// dialed instead — while the panel went on naming the lead the rep chose.
-//
-// An explicit pick is an instruction, not a starting position. It is dialed,
-// or the round is refused and the rep is told why. There is no third option.
-
-/** A lead the rep PICKED BY NAME could not be claimed. Never a substitution. */
+/**
+ * A lead the rep PICKED BY NAME could not be claimed.
+ *
+ * The bug this exists for: searching the queue for one person and pressing
+ * Start dialed somebody else entirely. The claim window opens AT the picked
+ * lead but the server returns the first ELIGIBLE lead in it, so a pick that
+ * was held by a teammate / cooling down / over its attempt cap / out of hours
+ * was silently skipped and the next candidate rang instead — a completely
+ * different person, with the panel still showing the one the rep chose.
+ *
+ * An explicit pick is not a starting position, it is an instruction. When it
+ * can't be honored the round is REFUSED and this is why — nobody is dialed in
+ * their place.
+ */
 export function pinnedLeadUnavailableMessage(name: string): string {
   return `${name} can’t be dialed right now — the lead is held by another rep, cooling down between attempts, at its attempt limit, on the Do-Not-Call list, or outside its calling window. Nobody else was dialed in their place. Try again in a moment, or pick a different lead.`;
-}
-
-/** One claim round-trip, as the engine's fetch-backed caller implements it. */
-export type ClaimFn<T> = (req: { count: number; leadIds: string[] }) => Promise<T[]>;
-
-export type PinnedRoundOutcome<T> =
-  /** Dial these, `leads[0]` being the pick. `candidates` re-ranks the round. */
-  | { status: "dial"; leads: T[]; candidates: string[] }
-  /** Dial NOBODY. Show `message`; hand `release` back to the pool. */
-  | { status: "refuse"; message: string; release: string[] };
-
-/**
- * Build the round for an explicitly picked lead.
- *
- * Claims the pick ALONE first, so eligibility is decided about them and nobody
- * else. Only if that succeeds are the remaining parallel lanes filled from the
- * rest of the rep's window — the pick always leads the round. If the pick
- * can't be claimed, the round is refused and any lead the server handed back
- * anyway is released rather than left locked for the reservation TTL.
- *
- * Pure except for the injected `claim`, so the whole decision is testable
- * against a fake server — no React, no fetch.
- */
-export async function claimPinnedRound<
-  T extends { id: string },
->(opts: {
-  pinned: T;
-  /** The rep's ordered claim window (starts at the pick). */
-  candidates: readonly string[];
-  /** Lines this round may use; 1 means the pick and nobody else. */
-  parallel: number;
-  claim: ClaimFn<T>;
-  /** How to name the pick in the refusal message. */
-  describe: (lead: T) => string;
-}): Promise<PinnedRoundOutcome<T>> {
-  const { pinned, parallel, claim, describe } = opts;
-  const held = await claim({ count: 1, leadIds: [pinned.id] });
-  const got = held.find((l) => l.id === pinned.id);
-  if (!got) {
-    return {
-      status: "refuse",
-      message: pinnedLeadUnavailableMessage(describe(pinned)),
-      // Scoping the claim to one id means anything else coming back is a
-      // server bug — but an undialed hold locks that lead away from every
-      // other rep for the TTL, so give it straight back.
-      release: held.map((l) => l.id).filter((id) => id !== pinned.id),
-    };
-  }
-  const leads: T[] = [got];
-  let candidates = [...opts.candidates];
-  const spare = Math.max(0, Math.floor(parallel) - 1);
-  const rest = candidates.filter((id) => id !== pinned.id);
-  if (spare > 0 && rest.length) {
-    const extra = await claim({ count: spare, leadIds: rest });
-    leads.push(...extra.filter((l) => l.id !== pinned.id));
-    candidates = [pinned.id, ...rest];
-  }
-  return { status: "dial", leads, candidates };
 }
 
 /**

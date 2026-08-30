@@ -31,7 +31,6 @@ import {
 import { useEffect, useMemo, useRef, useState } from "react";
 import { CallDetailModal } from "@/components/calls/call-detail-modal";
 import { WhyNowCard } from "@/components/dialer/why-now";
-import { LeadClock } from "@/components/dialer/lead-clock";
 import { useVocabulary } from "@/components/layout/vocabulary";
 import { useLead360 } from "@/components/leads/lead-360/lead-360-provider";
 import { truePeopleSearchUrl } from "@/lib/leads/people-search-url";
@@ -79,16 +78,12 @@ export function LeadPanel({
   canReverseSearch = false,
   reverseSearchConfigured = false,
   onLeadPatched,
-  pinned = false,
 }: {
   lead: Lead | null;
   upNext: Lead[];
   queue?: Lead[];
   index?: number;
   total?: number;
-  /** The rep picked this lead out of the browser, so the next call goes to
-   *  THEM — not to whoever the queue would otherwise serve up. Say so. */
-  pinned?: boolean;
   onPrev?: () => void;
   onNext?: () => void;
   onSelect?: (leadId: string) => void;
@@ -137,14 +132,6 @@ export function LeadPanel({
             <Users className="h-3.5 w-3.5" />
             Lead {Math.min(index + 1, total)} of {total}
           </button>
-          {pinned && (
-            <span
-              className="shrink-0 rounded-full bg-primary-soft px-2 py-1 text-[11px] font-bold uppercase tracking-wide text-primary"
-              title="You picked this lead — Start calls them, or tells you why it can't."
-            >
-              Your pick
-            </span>
-          )}
           <button
             type="button"
             onClick={onNext}
@@ -856,9 +843,7 @@ function LeadDetail({
               <Badge tone="primary" className="capitalize">
                 {lead.status.replace("_", " ")}
               </Badge>
-              {/* This used to render the raw IANA string — "America/New_York"
-                  — which tells a rep nothing they can act on. The clock does. */}
-              <LeadClock phone={lead.phone ?? ""} timezone={lead.timezone} />
+              {lead.timezone && <Badge tone="neutral">{lead.timezone}</Badge>}
               {/* Lead 360 slides OVER the dialer — nothing here remounts, so
                   it's safe to open mid-call. */}
               <button
@@ -939,7 +924,7 @@ function LeadDetail({
               const value = leadFieldValue(lead, def);
               return (
                 <div key={def.key} className="rounded-xl bg-muted px-3 py-2">
-                  <p className="truncate text-[11px] font-bold uppercase tracking-wide text-muted-foreground">
+                  <p className="truncate text-[10px] font-bold uppercase tracking-wide text-muted-foreground">
                     {tileLabel(def.label)}
                   </p>
                   <p className="text-base font-bold tabular">
@@ -993,11 +978,8 @@ function LeadDetail({
                 <p className="truncate text-sm font-medium">
                   {l.firstName} {l.lastName}
                 </p>
-                <p className="flex items-center gap-1.5 truncate text-xs text-muted-foreground">
-                  <span className="truncate">
-                    {[l.city, l.state].filter(Boolean).join(", ") || "—"}
-                  </span>
-                  <LeadClock phone={l.phone ?? ""} timezone={l.timezone} compact />
+                <p className="truncate text-xs text-muted-foreground">
+                  {[l.city, l.state].filter(Boolean).join(", ") || "—"}
                 </p>
               </div>
               {l.aiScore != null && (
@@ -1080,7 +1062,7 @@ function CallHistory({ leadId }: { leadId: string }) {
                 {/* What this call left behind, so the rep knows there's something
                     worth opening before they open it. */}
                 {hasDetail && (
-                  <span className="flex items-center gap-1 text-ink-3">
+                  <span className="flex items-center gap-1 text-muted-foreground/70">
                     {c.hasRecording && <Headphones className="h-3 w-3" />}
                     {c.hasTranscript && <FileText className="h-3 w-3" />}
                     {c.hasNotes && <NotebookPen className="h-3 w-3" />}
@@ -1089,8 +1071,7 @@ function CallHistory({ leadId }: { leadId: string }) {
                 {cfg && (
                   <Badge
                     tone={cfg.tone === "success" ? "success" : cfg.tone === "danger" ? "danger" : cfg.tone === "warning" ? "warning" : "neutral"}
-                    icon={cfg.icon}
-                    className="ml-auto text-[11px] px-1.5 py-0.5"
+                    className="ml-auto text-[10px] px-1.5 py-0.5"
                   >
                     {cfg.label}
                   </Badge>
@@ -1113,15 +1094,6 @@ function CallHistory({ leadId }: { leadId: string }) {
 }
 
 // ── Browse / pick any lead ──────────────────────────────────────────────────
-/**
- * How many households the browser renders at once.
- *
- * Bounded because this is a client-side list over the whole loaded queue and
- * 37,987 rows of DOM is not a list, it's a freeze. The cap is fine; being
- * silent about it was not.
- */
-const BROWSE_MAX = 200;
-
 function LeadBrowser({
   queue,
   currentId,
@@ -1193,7 +1165,7 @@ function LeadBrowser({
           value={q}
           onChange={(e) => setQ(e.target.value)}
           placeholder="Search leads by name, city, phone…"
-          className="h-12 w-full bg-transparent text-sm outline-none placeholder:text-ink-3"
+          className="h-12 w-full bg-transparent text-sm outline-none placeholder:text-muted-foreground/70"
         />
         <button
           type="button"
@@ -1210,7 +1182,7 @@ function LeadBrowser({
             No leads match “{q.trim()}”.
           </p>
         ) : (
-          households.slice(0, BROWSE_MAX).map((group) => {
+          households.slice(0, 200).map((group) => {
             // Prefer the entry the dialer is already on, so picking the
             // household keeps the rep on the number they're working.
             const l = group.find((g) => g.id === currentId) ?? group[0];
@@ -1239,7 +1211,7 @@ function LeadBrowser({
                 </div>
                 {extra > 0 && (
                   <span
-                    className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-[11px] font-bold text-muted-foreground"
+                    className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-[10px] font-bold text-muted-foreground"
                     title={`${group.length} numbers on file for this household`}
                   >
                     +{extra} number{extra === 1 ? "" : "s"}
@@ -1253,15 +1225,6 @@ function LeadBrowser({
               </button>
             );
           })
-        )}
-        {/* The cap was silent, and this modal opens from a button labelled
-            "Lead 1 of 37,987" — so a rep scrolled to the bottom of what looked
-            like the whole book and found 200 people. */}
-        {households.length > BROWSE_MAX && (
-          <p className="px-3 py-3 text-center text-xs text-muted-foreground">
-            Showing the first {BROWSE_MAX} of {households.length.toLocaleString()} — type to
-            narrow.
-          </p>
         )}
       </div>
     </Modal>

@@ -17,7 +17,6 @@ import {
 } from "react";
 import { cn } from "@/lib/utils";
 import { Portal } from "./portal";
-import { Z } from "@/lib/z-layers";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Menu — the app's one dropdown-menu shape (WAI-ARIA menu-button pattern).
@@ -216,10 +215,10 @@ function MenuPopup({
       role="menu"
       onKeyDown={onKeyDown}
       className={cn(
-        "fixed min-w-44 max-w-72 rounded-xl border border-border/70 bg-card p-1 shadow-lift",
+        "fixed z-[130] min-w-44 max-w-72 rounded-xl border border-border/70 bg-card p-1 shadow-lift",
         pos ? "opacity-100" : "opacity-0", // measured off-screen first paint
       )}
-      style={{ zIndex: Z.popover, ...(pos ?? { top: -9999, left: -9999 }) }}
+      style={pos ?? { top: -9999, left: -9999 }}
     >
       {children}
     </div>
@@ -263,7 +262,7 @@ export function MenuItem({
         "flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-sm font-medium transition-colors",
         "focus-visible:outline-none focus:bg-muted/70",
         disabled
-          ? "cursor-not-allowed text-ink-3"
+          ? "cursor-not-allowed text-muted-foreground/50"
           : danger
             ? "text-danger hover:bg-danger/10"
             : "text-foreground hover:bg-muted/70",

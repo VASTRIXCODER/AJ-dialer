@@ -148,7 +148,7 @@ export function WrapupPanel({
               <NotebookPen className="h-3.5 w-3.5" />
               Notes
             </span>
-            <span className="font-medium normal-case tracking-normal text-ink-3">
+            <span className="font-medium normal-case tracking-normal text-muted-foreground/70">
               Saved with the disposition
             </span>
           </label>
@@ -163,7 +163,7 @@ export function WrapupPanel({
         </div>
       )}
 
-      <OutcomeGrid onSelect={onOutcome} dispositions={dispositions} allowedKeys={allowedKeys} showKeys />
+      <OutcomeGrid onSelect={onOutcome} dispositions={dispositions} allowedKeys={allowedKeys} />
 
       <div className="flex gap-2">
         {/* Redial the SAME contact right now — DND setups often let a quick

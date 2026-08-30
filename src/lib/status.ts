@@ -1,23 +1,4 @@
 import {
-  Ban,
-  CalendarCheck,
-  CheckCircle2,
-  CircleDashed,
-  CircleDot,
-  Coffee,
-  Headphones,
-  Pause,
-  PhoneCall,
-  PhoneMissed,
-  PhoneOff,
-  Sparkles,
-  ThumbsDown,
-  ThumbsUp,
-  Voicemail,
-  XCircle,
-  type LucideIcon,
-} from "lucide-react";
-import {
   BEHAVIOR_TO_OUTCOME,
   resolveDispositionDefs,
   type DispositionBehavior,
@@ -33,23 +14,6 @@ import type {
 } from "./types";
 
 type Tone = "neutral" | "primary" | "accent" | "success" | "warning" | "danger";
-
-/**
- * Every state a rep reads carries a GLYPH as well as a hue.
- *
- * These maps used to be `{ label, tone }`, and `Badge`'s tones differ only in
- * fill and text colour — its one shape lever, `dot`, draws the identical 6px
- * circle for every tone. So "Qualified" and "Appointment" (both success),
- * "Callback" and "No need right now" (both warning), and "Wrong number" and
- * "Do not call" (both danger) were separated by hue alone, across 61 sites.
- * About one man in twelve cannot reliably make that distinction, and nobody
- * can make it at a glance down a dense grid.
- *
- * The icon travels with the config so a call site cannot render the colour and
- * forget the shape — `StatusPill` already worked this way, but its union only
- * covered live-call and presence words.
- */
-export type StatusConfig = { label: string; tone: Tone; icon: LucideIcon };
 
 /**
  * What a live call looks like in the Live Monitor.
@@ -81,46 +45,52 @@ export const liveStateConfig: Record<
   failed: { label: "Didn't connect", tone: "danger", live: false, timer: false },
 };
 
-export const leadStatusConfig: Record<LeadStatus, StatusConfig> = {
-  new: { label: "New", tone: "accent", icon: Sparkles },
-  contacted: { label: "Contacted", tone: "primary", icon: PhoneCall },
-  qualified: { label: "Qualified", tone: "success", icon: ThumbsUp },
-  appointment: { label: "Appointment", tone: "success", icon: CalendarCheck },
-  callback: { label: "Callback", tone: "warning", icon: PhoneMissed },
-  not_interested: { label: "Not interested", tone: "neutral", icon: ThumbsDown },
-  no_answer: { label: "No answer", tone: "neutral", icon: PhoneOff },
+export const leadStatusConfig: Record<LeadStatus, { label: string; tone: Tone }> = {
+  new: { label: "New", tone: "accent" },
+  contacted: { label: "Contacted", tone: "primary" },
+  qualified: { label: "Qualified", tone: "success" },
+  appointment: { label: "Appointment", tone: "success" },
+  callback: { label: "Callback", tone: "warning" },
+  not_interested: { label: "Not interested", tone: "neutral" },
+  no_answer: { label: "No answer", tone: "neutral" },
   // Neutral default; resolveLeadStatusConfig() swaps in the vertical's wording.
-  bills_fine: { label: "No need right now", tone: "warning", icon: CheckCircle2 },
-  dnc: { label: "Do not call", tone: "danger", icon: Ban },
+  bills_fine: { label: "No need right now", tone: "warning" },
+  dnc: { label: "Do not call", tone: "danger" },
 };
 
-export const campaignStatusConfig: Record<CampaignStatus, StatusConfig> = {
-  active: { label: "Active", tone: "success", icon: CircleDot },
-  paused: { label: "Paused", tone: "warning", icon: Pause },
-  completed: { label: "Completed", tone: "neutral", icon: CheckCircle2 },
+export const campaignStatusConfig: Record<
+  CampaignStatus,
+  { label: string; tone: Tone }
+> = {
+  active: { label: "Active", tone: "success" },
+  paused: { label: "Paused", tone: "warning" },
+  completed: { label: "Completed", tone: "neutral" },
 };
 
-export const repStatusConfig: Record<string, StatusConfig> = {
-  on_call: { label: "On call", tone: "success", icon: Headphones },
-  available: { label: "Available", tone: "accent", icon: CircleDot },
-  wrap_up: { label: "Wrap-up", tone: "warning", icon: Pause },
-  break: { label: "Break", tone: "neutral", icon: Coffee },
-  offline: { label: "Offline", tone: "neutral", icon: CircleDashed },
+export const repStatusConfig: Record<
+  string,
+  { label: string; tone: Tone }
+> = {
+  on_call: { label: "On call", tone: "success" },
+  available: { label: "Available", tone: "accent" },
+  wrap_up: { label: "Wrap-up", tone: "warning" },
+  break: { label: "Break", tone: "neutral" },
+  offline: { label: "Offline", tone: "neutral" },
 };
 
-export const outcomeConfig: Record<CallOutcome, StatusConfig> = {
-  appointment_booked: { label: "Appointment", tone: "success", icon: CalendarCheck },
-  callback_scheduled: { label: "Callback", tone: "warning", icon: PhoneMissed },
-  qualified: { label: "Qualified", tone: "success", icon: ThumbsUp },
-  not_interested: { label: "Not interested", tone: "neutral", icon: ThumbsDown },
+export const outcomeConfig: Record<CallOutcome, { label: string; tone: Tone }> = {
+  appointment_booked: { label: "Appointment", tone: "success" },
+  callback_scheduled: { label: "Callback", tone: "warning" },
+  qualified: { label: "Qualified", tone: "success" },
+  not_interested: { label: "Not interested", tone: "neutral" },
   // Vertical-neutral default. `bills_fine` is a solar-era KEY that can't move
   // (it's on historical call records and in every disposition query), but the
   // words a rep reads are resolved per workspace — see resolveOutcomeConfig.
-  bills_fine: { label: "No need right now", tone: "warning", icon: CheckCircle2 },
-  no_answer: { label: "No answer", tone: "neutral", icon: PhoneOff },
-  voicemail: { label: "Voicemail", tone: "neutral", icon: Voicemail },
-  wrong_number: { label: "Wrong number", tone: "danger", icon: XCircle },
-  do_not_call: { label: "Do not call", tone: "danger", icon: Ban },
+  bills_fine: { label: "No need right now", tone: "warning" },
+  no_answer: { label: "No answer", tone: "neutral" },
+  voicemail: { label: "Voicemail", tone: "neutral" },
+  wrong_number: { label: "Wrong number", tone: "danger" },
+  do_not_call: { label: "Do not call", tone: "danger" },
 };
 
 /**
@@ -134,7 +104,7 @@ export const outcomeConfig: Record<CallOutcome, StatusConfig> = {
  */
 export function resolveOutcomeConfig(
   vocabulary?: Pick<OrgVocabulary, "noNeedLabel" | "appointmentNoun"> | null,
-): Record<CallOutcome, StatusConfig> {
+): Record<CallOutcome, { label: string; tone: Tone }> {
   if (!vocabulary) return outcomeConfig;
   return {
     ...outcomeConfig,
@@ -266,7 +236,7 @@ export function filterOutcomeOptionsByKeys(
  */
 export function resolveLeadStatusConfig(
   vocabulary?: Pick<OrgVocabulary, "noNeedLabel"> | null,
-): Record<LeadStatus, StatusConfig> {
+): Record<LeadStatus, { label: string; tone: Tone }> {
   if (!vocabulary) return leadStatusConfig;
   return {
     ...leadStatusConfig,

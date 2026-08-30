@@ -7,7 +7,6 @@ import type { TeamLeaderboardRep } from "@/lib/db/metrics";
 import { compareRanked } from "@/lib/leaderboard";
 import { drillConnected, drillDialed, drillOutcome, drillRep } from "@/lib/reports/drill";
 import { cn, formatDuration, formatNumber } from "@/lib/utils";
-import { CELL } from "@/lib/ui-density";
 
 // Server (presentational) report sections — no hooks, safe in the server page.
 // Drill-downs: every countable row links to /leads pre-filtered to (a leads-side
@@ -137,7 +136,7 @@ export function ChannelCompare({ channelStats }: { channelStats: ChannelRow[] })
               <span
                 className={cn(
                   "flex h-8 w-8 items-center justify-center rounded-lg",
-                  isAI ? "bg-brand text-white" : "bg-accent-soft text-accent",
+                  isAI ? "bg-brand text-white shadow-glow" : "bg-accent-soft text-accent",
                 )}
               >
                 <Icon className="h-4 w-4" />
@@ -150,22 +149,22 @@ export function ChannelCompare({ channelStats }: { channelStats: ChannelRow[] })
             <div className="grid grid-cols-2 gap-2 text-center">
               <div className="rounded-lg bg-muted/60 p-2">
                 <p className="text-lg font-bold tabular">{c.connectRate}%</p>
-                <p className="text-[11px] text-muted-foreground">Connect</p>
+                <p className="text-[10px] text-muted-foreground">Connect</p>
               </div>
               <div className="rounded-lg bg-muted/60 p-2">
                 <p className="text-lg font-bold tabular">{c.apptRate}%</p>
-                <p className="text-[11px] text-muted-foreground">Appt rate</p>
+                <p className="text-[10px] text-muted-foreground">Appt rate</p>
               </div>
               <div className="rounded-lg bg-muted/60 p-2">
                 <p className="text-lg font-bold tabular">{formatNumber(c.appointments)}</p>
-                <p className="text-[11px] text-muted-foreground">Appointments</p>
+                <p className="text-[10px] text-muted-foreground">Appointments</p>
               </div>
               <div className="rounded-lg bg-muted/60 p-2">
                 <p className="text-lg font-bold tabular">
                   <PhoneOutgoing className="mr-1 inline h-3 w-3 text-muted-foreground" />
                   {formatDuration(c.avgTalkSec)}
                 </p>
-                <p className="text-[11px] text-muted-foreground">Avg talk</p>
+                <p className="text-[10px] text-muted-foreground">Avg talk</p>
               </div>
             </div>
           </div>
@@ -185,15 +184,15 @@ export function RepPerformance({ reps }: { reps: TeamLeaderboardRep[] }) {
       <table className="w-full text-sm">
         <thead>
           <tr className="border-b border-border text-left text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-            <th className={cn(CELL)}>#</th>
-            <th className={cn(CELL)}>Rep</th>
-            <th className={cn(CELL, "text-right")}>Calls</th>
-            <th className={cn(CELL, "text-right")}>Connect</th>
-            <th className={cn(CELL, "text-right")}>Appts</th>
-            <th className={cn(CELL, "text-right")} title="Appointments booked, as a share of connected calls">
+            <th className="px-4 py-2">#</th>
+            <th className="px-4 py-2">Rep</th>
+            <th className="px-4 py-2 text-right">Calls</th>
+            <th className="px-4 py-2 text-right">Connect</th>
+            <th className="px-4 py-2 text-right">Appts</th>
+            <th className="px-4 py-2 text-right" title="Appointments booked, as a share of connected calls">
               Conv
             </th>
-            <th className={cn(CELL, "text-right")} title="Points from your org's leaderboard scoring">
+            <th className="px-4 py-2 text-right" title="Points from your org's leaderboard scoring">
               Points
             </th>
           </tr>
@@ -201,8 +200,8 @@ export function RepPerformance({ reps }: { reps: TeamLeaderboardRep[] }) {
         <tbody className="divide-y divide-border">
           {ranked.map((r, i) => (
             <tr key={r.id} className="transition-colors hover:bg-muted/40">
-              <td className={cn(CELL, "text-muted-foreground tabular")}>{i + 1}</td>
-              <td className={cn(CELL)}>
+              <td className="px-4 py-2.5 text-muted-foreground tabular">{i + 1}</td>
+              <td className="px-4 py-2.5">
                 <DrillLink
                   filter={drillRep(r.id)}
                   className="rounded-lg"
@@ -219,13 +218,13 @@ export function RepPerformance({ reps }: { reps: TeamLeaderboardRep[] }) {
                   </div>
                 </DrillLink>
               </td>
-              <td className={cn(CELL, "text-right font-bold tabular")}>{formatNumber(r.monthly.calls)}</td>
-              <td className={cn(CELL, "text-right tabular")}>{r.monthly.connectRate}%</td>
-              <td className={cn(CELL, "text-right font-bold tabular text-primary")}>
+              <td className="px-4 py-2.5 text-right font-bold tabular">{formatNumber(r.monthly.calls)}</td>
+              <td className="px-4 py-2.5 text-right tabular">{r.monthly.connectRate}%</td>
+              <td className="px-4 py-2.5 text-right font-bold tabular text-primary">
                 {formatNumber(r.monthly.appointments)}
               </td>
-              <td className={cn(CELL, "text-right tabular")}>{r.monthly.conversionRate}%</td>
-              <td className={cn(CELL, "text-right")}>
+              <td className="px-4 py-2.5 text-right tabular">{r.monthly.conversionRate}%</td>
+              <td className="px-4 py-2.5 text-right">
                 <Badge tone="success">{r.monthly.points}</Badge>
               </td>
             </tr>

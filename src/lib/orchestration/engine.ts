@@ -12,7 +12,6 @@ import {
   type Step,
 } from "./definition";
 import { firstTrippedStopRule, idempotencyKeyFor, waitUntil, type StopSnapshot } from "./plan";
-import { orgTimezone } from "../metrics/definitions";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Orchestration engine v0 — the deterministic tick behind /api/cron/orchestrate.
@@ -328,20 +327,15 @@ async function attemptsSinceActivation(
 ): Promise<number> {
   if (!leadId) return 0;
   try {
-    const { count: n, error } = await admin
+    const { count: n } = await admin
       .from("call_records")
       .select("id", { count: "exact", head: true })
       .eq("org_id", inst.org_id)
       .eq("lead_id", leadId)
       .gte("started_at", inst.started_at);
-    // Fails CLOSED, like the messaging caps. This is a per-playbook attempt
-    // ceiling, and returning 0 on a failed count read as "no attempts spent" —
-    // so the playbook would keep dialing straight past the maximum an operator
-    // configured. Reporting the cap as spent pauses it instead.
-    if (error) return Number.MAX_SAFE_INTEGER;
     return n ?? 0;
   } catch {
-    return Number.MAX_SAFE_INTEGER;
+    return 0;
   }
 }
 
@@ -407,7 +401,7 @@ export async function orchestrationTick(now = new Date()): Promise<TickResult> {
       ]),
     );
     const orgTz = new Map(
-      (orgs ?? []).map((o) => [String(o.id), orgTimezone(o as { timezone?: string | null })]),
+      (orgs ?? []).map((o) => [String(o.id), String(o.timezone ?? "") || "America/Chicago"]),
     );
     // Suppression, batched. `dnc_or_opt_out` is ALWAYS enforced, so this is
     // needed for every instance — but it resolves to two reads per tick rather
@@ -547,7 +541,7 @@ export async function orchestrationTick(now = new Date()): Promise<TickResult> {
           // nobody works.
           const wantsOrg =
             (step.for as { timezone?: string } | undefined)?.timezone === "org";
-          const fallback = orgTz.get(String(inst.org_id)) ?? orgTimezone(null);
+          const fallback = orgTz.get(String(inst.org_id)) ?? "America/Chicago";
           let tz = fallback;
           if (!wantsOrg) {
             const { data: lead } = await admin

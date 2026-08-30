@@ -20,7 +20,6 @@ export default async function LeaderboardPage() {
           description="Every rep on the floor, ranked by your org's own scoring — today, this calendar week, and this calendar month."
         />
         <EmptyState
-          variant="page"
           icon={Trophy}
           title="No ranking yet"
           description="Rankings appear here as your team logs calls and books appointments."

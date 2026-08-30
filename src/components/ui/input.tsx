@@ -1,24 +1,14 @@
 import * as React from "react";
 import { cn } from "@/lib/utils";
 
-// An opaque inset well. This was `bg-background/40`, a 40%-opacity fill sitting
-// behind whatever the user types — the page showing through the box they are
-// reading their own words in. `--surface-2` is the plane the design system
-// reserves for inset wells, and it is a real tonal step from the card in both
-// themes. The focus ring is the focus signal; it does not need a colour change
-// underneath the text as well.
 const base =
-  "w-full rounded-xl border border-input bg-surface-2 px-3.5 py-2.5 text-sm text-foreground transition-colors duration-[var(--dur-state)] placeholder:text-ink-3 focus-visible:border-primary/50 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-primary/15 disabled:cursor-not-allowed disabled:opacity-60";
+  "w-full rounded-xl border border-input bg-background/40 px-3.5 py-2.5 text-sm text-foreground transition-all duration-200 placeholder:text-muted-foreground/70 focus-visible:border-primary/50 focus-visible:bg-background/70 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-primary/15 disabled:cursor-not-allowed disabled:opacity-60";
 
 export const Input = React.forwardRef<
   HTMLInputElement,
   React.InputHTMLAttributes<HTMLInputElement>
 >(({ className, ...props }, ref) => (
-  // h-[44px] matches Button md exactly. They sit next to each other in every
-  // filter row and every form, and they were 42 and 44 — close enough to read
-  // as a mistake rather than a choice, which is what it was. On the input only:
-  // `base` is shared with Textarea, which sets its own min-height.
-  <input ref={ref} className={cn(base, "h-[44px] py-0", className)} {...props} />
+  <input ref={ref} className={cn(base, className)} {...props} />
 ));
 Input.displayName = "Input";
 
@@ -34,15 +24,13 @@ export const Textarea = React.forwardRef<
 ));
 Textarea.displayName = "Textarea";
 
-// `Select` — a styled native <select> — used to live here. It is gone rather
-// than deprecated: a component that still exports gets imported again, and the
-// whole point of the sweep was that the product has exactly ONE way to choose a
-// value. Use `SelectMenu` from ./select-menu. The native element could not be
-// tokenised (its popup is drawn by the OS, in the OS's colours, ignoring the
-// app's theme entirely), could not carry an icon or say why an option is
-// unavailable, and on Windows rendered a system list that looked nothing like
-// the rest of the product. tests/token-discipline.test.ts keeps it from coming
-// back.
+export const Select = React.forwardRef<
+  HTMLSelectElement,
+  React.SelectHTMLAttributes<HTMLSelectElement>
+>(({ className, ...props }, ref) => (
+  <select ref={ref} className={cn(base, "cursor-pointer", className)} {...props} />
+));
+Select.displayName = "Select";
 
 export function Label({
   className,

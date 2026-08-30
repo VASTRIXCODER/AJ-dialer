@@ -40,16 +40,10 @@ export function isLaneEnded(status: LaneStatus): boolean {
  */
 export function laneTerminationReason(
   status: LaneStatus,
-  opts: { anotherAnswered?: boolean; refusal?: string | null } = {},
+  opts: { anotherAnswered?: boolean } = {},
 ): string | null {
   switch (status) {
     case "canceled":
-      // A refusal the SERVER gave a reason for — a contact outside their own
-      // calling hours, most often. That string used to be composed by the dial
-      // route, sent back per leg, and thrown away by the client, so every
-      // refusal looked identical to "another line answered" and a rep watching
-      // three lanes cancel had no way to tell a policy from a race.
-      if (opts.refusal) return opts.refusal;
       return opts.anotherAnswered ? "Released — another line answered" : "Released";
     case "no_answer":
       return "No answer";

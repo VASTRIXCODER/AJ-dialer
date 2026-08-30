@@ -30,11 +30,9 @@ export function Waveform({
       {Array.from({ length: bars }).map((_, i) => {
         const dist = Math.abs(i - center) / center; // 0 center → 1 edges
         const peak = 1 - dist * 0.72;
-        // Flat. A gradient is decorative colour, and this sits on the live-call
-        // surface. (The bars' height animation stays: it is neither a translate
-        // nor a scale, and it is the only thing that reads as "audio". It is
-        // aria-hidden decoration either way — it does not sample real levels.)
-        const color = muted ? "bg-muted-foreground/40" : "bg-success";
+        const color = muted
+          ? "bg-muted-foreground/40"
+          : "bg-gradient-to-t from-success/40 to-success";
 
         if (reduce || !active) {
           return (

@@ -15,6 +15,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { ChatAssistant } from "@/components/ai/chat-assistant";
+import { SpotlightCard } from "@/components/motion";
 import { PageContainer, PageHeader } from "@/components/shared/page-header";
 import { SectionCard } from "@/components/shared/section-card";
 import { Badge } from "@/components/ui/badge";
@@ -97,7 +98,7 @@ export default async function AiAgentPage() {
         <PageHeader title="AI Command Center" description={intelligenceLayerDesc} />
         <Card className="flex flex-col items-center gap-6 px-8 py-16 text-center">
           <span className="flex h-20 w-20 items-center justify-center rounded-3xl border-2 border-dashed border-border bg-muted/40">
-            <Lock className="h-9 w-9 text-ink-3" />
+            <Lock className="h-9 w-9 text-muted-foreground/60" />
           </span>
           <div className="max-w-md">
             <p className="text-xl font-bold tracking-tight">
@@ -215,14 +216,14 @@ export default async function AiAgentPage() {
         </div>
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
           {services.map((s) => (
-            <Card key={s.name} className="p-4">
+            <SpotlightCard key={s.name} className="p-4">
               <div className="flex items-start justify-between">
                 <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary-soft text-primary ring-1 ring-inset ring-white/5 transition-transform duration-300 group-hover:scale-110">
                   <s.icon className="h-5 w-5" />
                 </span>
                 <span
                   className={cn(
-                    "flex items-center gap-1 text-[11px] font-bold uppercase tracking-wide",
+                    "flex items-center gap-1 text-[10px] font-bold uppercase tracking-wide",
                     aiLive ? "text-success" : "text-muted-foreground",
                   )}
                 >
@@ -232,7 +233,7 @@ export default async function AiAgentPage() {
               </div>
               <p className="mt-3 text-sm font-semibold">{s.name}</p>
               <p className="mt-1 text-xs leading-relaxed text-muted-foreground">{s.desc}</p>
-            </Card>
+            </SpotlightCard>
           ))}
         </div>
       </div>

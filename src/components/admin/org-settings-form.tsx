@@ -22,9 +22,7 @@ import { useState } from "react";
 import { SectionCard } from "@/components/shared/section-card";
 import { Button } from "@/components/ui/button";
 import { useConfirm } from "@/components/ui/confirm-dialog";
-import { Input, Label, Textarea } from "@/components/ui/input";
-import { SelectMenu } from "@/components/ui/select-menu";
-import { SecretValue } from "@/components/ui/secret-value";
+import { Input, Label, Select, Textarea } from "@/components/ui/input";
 import { Tooltip } from "@/components/ui/tooltip";
 import { EMILY_SYSTEM_PROMPT } from "@/lib/ai/agent-prompt";
 import { describeDays, describeWindows } from "@/lib/dialer/schedule";
@@ -46,7 +44,6 @@ import { BEHAVIOR_DESCRIPTIONS } from "@/lib/status";
 import { DIALER_TEMPLATES, templateProfile } from "@/lib/org/templates";
 import { ROLE_LABEL } from "@/lib/permissions";
 import { cn } from "@/lib/utils";
-import { DEFAULT_TIMEZONE } from "@/lib/metrics/definitions";
 
 const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
@@ -378,20 +375,18 @@ export function OrgSettingsForm({
             />
           </Field>
           <Field label="Specialization">
-            <SelectMenu
-              label="Specialization"
-              className="w-full"
-              triggerClassName="w-full"
+            <Select
               value={identity.dialerTemplate}
-              onChange={(v) => setIdentity({ ...identity, dialerTemplate: v })}
-              options={DIALER_TEMPLATES.map((t) => ({
-                value: t.value,
-                label: t.label,
-                // The blurb was crammed onto the same line as the name with an
-                // em dash; as a hint it gets its own line under the label.
-                hint: t.blurb,
-              }))}
-            />
+              onChange={(e) =>
+                setIdentity({ ...identity, dialerTemplate: e.target.value })
+              }
+            >
+              {DIALER_TEMPLATES.map((t) => (
+                <option key={t.value} value={t.value}>
+                  {t.label} — {t.blurb}
+                </option>
+              ))}
+            </Select>
           </Field>
           <Field label="Website">
             <Input
@@ -450,17 +445,16 @@ export function OrgSettingsForm({
             onChange={(v) => setAccess({ ...access, allowJoin: v })}
           />
           <Field label="Default role for new members">
-            <SelectMenu
-              label="Default role for new members"
-              className="w-full"
-              triggerClassName="w-full"
+            <Select
               value={access.defaultRole}
-              onChange={(v) => setAccess({ ...access, defaultRole: v })}
-              options={(["rep", "manager", "admin"] as const).map((r) => ({
-                value: r as string,
-                label: ROLE_LABEL[r],
-              }))}
-            />
+              onChange={(e) => setAccess({ ...access, defaultRole: e.target.value })}
+            >
+              {(["rep", "manager", "admin"] as const).map((r) => (
+                <option key={r} value={r}>
+                  {ROLE_LABEL[r]}
+                </option>
+              ))}
+            </Select>
           </Field>
         </div>
         <div className="mt-4 flex justify-end">
@@ -487,11 +481,7 @@ export function OrgSettingsForm({
             <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
               Join code
             </p>
-            <SecretValue
-              value={joinCode}
-              label="Join code"
-              valueClassName="text-xl font-bold tracking-[0.25em]"
-            />
+            <p className="font-mono text-xl font-bold tracking-[0.25em]">{joinCode}</p>
           </div>
           <Button
             size="sm"
@@ -526,20 +516,19 @@ export function OrgSettingsForm({
       >
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <Field label="Default dialer mode">
-            <SelectMenu
-              label="Default dialer mode"
-              className="w-full"
-              triggerClassName="w-full"
+            <Select
               value={dialing.defaultMode}
-              onChange={(v) =>
-                setDialing({ ...dialing, defaultMode: v as typeof dialing.defaultMode })
+              onChange={(e) =>
+                setDialing({
+                  ...dialing,
+                  defaultMode: e.target.value as typeof dialing.defaultMode,
+                })
               }
-              options={[
-                { value: "ai", label: "AI (when available)" },
-                { value: "manual", label: "Manual" },
-                { value: "parallel", label: "Parallel (multi-line)" },
-              ]}
-            />
+            >
+              <option value="ai">AI (when available)</option>
+              <option value="manual">Manual</option>
+              <option value="parallel">Parallel (multi-line)</option>
+            </Select>
             <p className="mt-1 text-xs text-muted-foreground">
               Which mode the dialer opens in. Reps can still switch modes they have
               access to; AI falls back to manual for anyone who can’t use it.
@@ -882,25 +871,8 @@ export function OrgSettingsForm({
         description="Your floor's calling window. Advisory by default (the dialer shows an outside-hours banner); turn on enforcement to actually block dialing."
       >
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-          <Field
-            label="Timezone"
-            className="sm:col-span-3"
-            // Unset is now VISIBLE. The column used to default to
-            // America/Los_Angeles, so this field arrived pre-filled with a zone
-            // nobody had chosen — ten of eleven workspaces — and there was no
-            // way for an admin to tell. The window it drives is a TCPA
-            // constraint, so a fabricated value is worse than a blank one.
-            hint={
-              timezone.trim()
-                ? undefined
-                : `Not set — calling windows fall back to ${DEFAULT_TIMEZONE} until you pick one.`
-            }
-          >
-            <Input
-              value={timezone}
-              placeholder={`e.g. ${DEFAULT_TIMEZONE}`}
-              onChange={(e) => setTimezone(e.target.value)}
-            />
+          <Field label="Timezone" className="sm:col-span-3">
+            <Input value={timezone} onChange={(e) => setTimezone(e.target.value)} />
           </Field>
           <NumberField
             label="Start hour (0–23)"
@@ -1253,17 +1225,14 @@ export function OrgSettingsForm({
                 !d.enabled && "opacity-60",
               )}
             >
-              {/* Reorder — the wrap-up grid renders in exactly this order.
-                  These were h-4 w-6, which on this project's spacing scale is
-                  12 × 24px: two stacked 12px-tall targets, and the pair sat in
-                  a row of 44px controls. */}
-              <div className="flex flex-col gap-0.5">
+              {/* Reorder — the wrap-up grid renders in exactly this order */}
+              <div className="flex flex-col">
                 <button
                   type="button"
                   aria-label={`Move ${d.label} up`}
                   disabled={i === 0}
                   onClick={() => moveDisposition(i, -1)}
-                  className="flex h-[22px] w-[26px] items-center justify-center rounded text-muted-foreground transition-colors hover:text-foreground disabled:opacity-30"
+                  className="flex h-4 w-6 items-center justify-center rounded text-muted-foreground transition-colors hover:text-foreground disabled:opacity-30"
                 >
                   <ArrowUp className="h-3 w-3" />
                 </button>
@@ -1272,7 +1241,7 @@ export function OrgSettingsForm({
                   aria-label={`Move ${d.label} down`}
                   disabled={i === dispositions.length - 1}
                   onClick={() => moveDisposition(i, 1)}
-                  className="flex h-[22px] w-[26px] items-center justify-center rounded text-muted-foreground transition-colors hover:text-foreground disabled:opacity-30"
+                  className="flex h-4 w-6 items-center justify-center rounded text-muted-foreground transition-colors hover:text-foreground disabled:opacity-30"
                 >
                   <ArrowDown className="h-3 w-3" />
                 </button>
@@ -1283,38 +1252,41 @@ export function OrgSettingsForm({
                 className="w-40 min-w-[9rem] flex-1"
                 onChange={(e) => updateDisposition(i, { label: e.target.value })}
               />
-              <SelectMenu
-                label="Tone"
-                size="sm"
+              <Select
                 className="w-28"
-                triggerClassName="h-9 w-full"
+                aria-label="Tone"
                 value={d.tone}
-                onChange={(v) => updateDisposition(i, { tone: v as DispositionTone })}
-                options={[
-                  { value: "success", label: "Positive" },
-                  { value: "warning", label: "Neutral" },
-                  { value: "danger", label: "Negative" },
-                  { value: "neutral", label: "Info" },
-                ]}
-              />
+                onChange={(e) =>
+                  updateDisposition(i, { tone: e.target.value as DispositionTone })
+                }
+              >
+                <option value="success">Positive</option>
+                <option value="warning">Neutral</option>
+                <option value="danger">Negative</option>
+                <option value="neutral">Info</option>
+              </Select>
               {d.system ? (
                 // System rows: the behavior IS what the key means — read-only.
                 <span className="inline-flex h-9 items-center rounded-lg bg-muted px-3 text-xs font-medium text-muted-foreground">
                   {BEHAVIOR_DESCRIPTIONS[d.behavior]}
                 </span>
               ) : (
-                <SelectMenu
-                  label="What pressing it does"
-                  size="sm"
+                <Select
                   className="w-52"
-                  triggerClassName="h-9 w-full"
+                  aria-label="What pressing it does"
                   value={d.behavior}
-                  onChange={(v) => updateDisposition(i, { behavior: v as DispositionBehavior })}
-                  options={DISPOSITION_BEHAVIORS.map((b) => ({
-                    value: b as string,
-                    label: BEHAVIOR_DESCRIPTIONS[b],
-                  }))}
-                />
+                  onChange={(e) =>
+                    updateDisposition(i, {
+                      behavior: e.target.value as DispositionBehavior,
+                    })
+                  }
+                >
+                  {DISPOSITION_BEHAVIORS.map((b) => (
+                    <option key={b} value={b}>
+                      {BEHAVIOR_DESCRIPTIONS[b]}
+                    </option>
+                  ))}
+                </Select>
               )}
               {d.key === "do_not_call" ? (
                 <Tooltip content="Legally load-bearing — can't be turned off.">
@@ -1355,34 +1327,36 @@ export function OrgSettingsForm({
               />
             </Field>
             <Field label="What pressing it does">
-              <SelectMenu
-                label="What pressing it does"
-                size="sm"
+              <Select
                 className="w-52"
-                triggerClassName="h-9 w-full"
                 value={newDispo.behavior}
-                onChange={(v) => setNewDispo({ ...newDispo, behavior: v as DispositionBehavior })}
-                options={DISPOSITION_BEHAVIORS.map((b) => ({
-                  value: b as string,
-                  label: BEHAVIOR_DESCRIPTIONS[b],
-                }))}
-              />
+                onChange={(e) =>
+                  setNewDispo({
+                    ...newDispo,
+                    behavior: e.target.value as DispositionBehavior,
+                  })
+                }
+              >
+                {DISPOSITION_BEHAVIORS.map((b) => (
+                  <option key={b} value={b}>
+                    {BEHAVIOR_DESCRIPTIONS[b]}
+                  </option>
+                ))}
+              </Select>
             </Field>
             <Field label="Tone">
-              <SelectMenu
-                label="Tone"
-                size="sm"
+              <Select
                 className="w-28"
-                triggerClassName="h-9 w-full"
                 value={newDispo.tone}
-                onChange={(v) => setNewDispo({ ...newDispo, tone: v as DispositionTone })}
-                options={[
-                  { value: "success", label: "Positive" },
-                  { value: "warning", label: "Neutral" },
-                  { value: "danger", label: "Negative" },
-                  { value: "neutral", label: "Info" },
-                ]}
-              />
+                onChange={(e) =>
+                  setNewDispo({ ...newDispo, tone: e.target.value as DispositionTone })
+                }
+              >
+                <option value="success">Positive</option>
+                <option value="warning">Neutral</option>
+                <option value="danger">Negative</option>
+                <option value="neutral">Info</option>
+              </Select>
             </Field>
             <Button
               size="sm"
@@ -1474,7 +1448,7 @@ export function OrgSettingsForm({
                   )}
                 >
                   {f.label}
-                  <span className={cn("font-normal", on ? "text-primary/70" : "text-ink-3")}>
+                  <span className={cn("font-normal", on ? "text-primary/70" : "text-muted-foreground/70")}>
                     · {f.type}
                   </span>
                 </button>
@@ -1751,17 +1725,15 @@ export function OrgSettingsForm({
               }
             />
             <Field label="Week starts on">
-              <SelectMenu
-                label="Week starts on"
-                className="w-full"
-                triggerClassName="w-full"
+              <Select
                 value={String(lb.weekStart)}
-                onChange={(v) => setLb({ ...lb, weekStart: v === "0" ? 0 : 1 })}
-                options={[
-                  { value: "1", label: "Monday" },
-                  { value: "0", label: "Sunday" },
-                ]}
-              />
+                onChange={(e) =>
+                  setLb({ ...lb, weekStart: e.target.value === "0" ? 0 : 1 })
+                }
+              >
+                <option value="1">Monday</option>
+                <option value="0">Sunday</option>
+              </Select>
             </Field>
           </div>
         </div>
@@ -1819,20 +1791,16 @@ export function OrgSettingsForm({
 function Field({
   label,
   className,
-  hint,
   children,
 }: {
   label: string;
   className?: string;
-  /** Rendered under the control — same treatment NumberField already gives it. */
-  hint?: string;
   children: React.ReactNode;
 }) {
   return (
     <div className={className}>
       <Label>{label}</Label>
       {children}
-      {hint && <p className="mt-1 text-xs text-muted-foreground">{hint}</p>}
     </div>
   );
 }

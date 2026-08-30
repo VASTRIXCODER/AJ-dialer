@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { MetricCard } from "@/components/dashboard/metric-card";
+import { AmbientBackground } from "@/components/layout/ambient-background";
 import { SectionCard } from "@/components/shared/section-card";
 import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
@@ -27,30 +28,6 @@ import { Card } from "@/components/ui/card";
 import { templateLabel } from "@/lib/org/templates";
 import { cn, initials, relativeTime } from "@/lib/utils";
 import { type Org, OrganizationsTab } from "./super-orgs";
-import { SelectMenu } from "@/components/ui/select-menu";
-import { CardSkeleton, MetricRowSkeleton, TableSkeleton } from "@/components/shared/skeletons";
-
-/**
- * -- LOCKSTEP: keep in sync with ACCOUNT_PAGE in src/lib/db/app-control.ts --
- *
- * The page size `listAccounts` reads. Declared here rather than imported
- * because app-control.ts is `server-only`, and this is a client component —
- * importing a VALUE across that boundary type-checks fine and breaks the
- * production bundle. tests/superadmin-account-cap.test.ts asserts the two
- * numbers agree.
- */
-const ACCOUNT_PAGE = 200;
-
-/**
- * PostgREST's per-response ceiling — what an un-ranged `select` actually
- * returns, whatever `.limit()` says.
- *
- * The organizations and companies lists are un-ranged selects, so past this
- * they stop and the tiles below read the ceiling forever. Latent at 11 orgs;
- * disclosed anyway, because the fix that gave Accounts its "≥" stopped one tile
- * short of the row it sits in.
- */
-const LIST_PAGE = 1000;
 
 type Settings = { maintenance: boolean; message: string };
 type Account = {
@@ -86,18 +63,9 @@ export function SuperConsole() {
   const [err, setErr] = useState("");
 
   const load = useCallback(() => {
-    setErr("");
     fetch("/api/superadmin/control")
-      .then(async (r) => ({ ok: r.ok, body: await r.json().catch(() => ({})) }))
-      .then(({ ok, body: j }) => {
-        // res.ok was unchecked, so a 503 whose body is `{ error }` emptied every
-        // list — and an empty superadmin console does not look like an error, it
-        // looks like a platform with no accounts and no workspaces. Leave what
-        // is on screen alone and say what happened.
-        if (!ok) {
-          setErr(j.error ?? "Could not load console data.");
-          return;
-        }
+      .then((r) => r.json())
+      .then((j) => {
         if (j.settings) setSettings(j.settings);
         setAccounts(j.accounts ?? []);
         setOrgs(j.organizations ?? []);
@@ -137,23 +105,16 @@ export function SuperConsole() {
   }
 
   const suspended = accounts.filter((a) => a.disabled).length;
-  // A sum over counts that may individually be unknown is itself unknown —
-  // adding the knowable ones and printing the subtotal as "Pending" is the
-  // quietest kind of wrong number, because it always looks plausible.
-  const pending = orgs.some((o) => o.pendingCount === null)
-    ? null
-    : orgs.reduce((n, o) => n + (o.pendingCount ?? 0), 0);
+  const pending = orgs.reduce((n, o) => n + o.pendingCount, 0);
 
   return (
     <div className="superadmin-theme relative min-h-screen bg-background text-foreground">
-      {/* The console is an Instrument, not a Stage: it is org tables, KPI tiles
-          and destructive controls. The ambient field is not mounted here for
-          the same reason it is not mounted in the app shell. */}
+      <AmbientBackground />
 
       {/* Header */}
       <header className="relative border-b border-border/60 surface-glass">
         <div className="mx-auto flex max-w-7xl flex-wrap items-center gap-3 px-4 py-4 sm:px-6">
-          <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-brand text-white">
+          <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-brand text-white shadow-glow">
             <ShieldAlert className="h-6 w-6" />
           </span>
           <div className="flex-1">
@@ -210,16 +171,10 @@ export function SuperConsole() {
           <p className="rounded-lg bg-danger/10 px-3 py-2 text-sm font-medium text-danger">{err}</p>
         )}
         {loading ? (
-          /* The whole page used to collapse to a centred dot for the length of
-             the first fetch, then snap back to a full console — the layout
-             jumped every time anyone opened /console. A spinner is for an
-             action in place; a page shows the shape of what is coming. */
-          <>
-            <MetricRowSkeleton count={4} />
-            <CardSkeleton>
-              <TableSkeleton rows={6} />
-            </CardSkeleton>
-          </>
+          <div className="flex items-center justify-center gap-2 py-20 text-sm text-muted-foreground">
+            <Loader2 className="h-4 w-4 animate-spin" />
+            Loading console…
+          </div>
         ) : tab === "overview" ? (
           <Overview
             orgs={orgs}
@@ -272,8 +227,7 @@ function Overview({
   companies: Company[];
   accounts: Account[];
   suspended: number;
-  /** Null when any workspace's pending count could not be read. */
-  pending: number | null;
+  pending: number;
   settings: Settings;
   busy: string | null;
   onMaintenance: (on: boolean) => void;
@@ -282,70 +236,13 @@ function Overview({
   return (
     <div className="space-y-5">
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
-        {/* These two are LIST LENGTHS, like Accounts beside them. The lists are
-            un-ranged selects, so past the PostgREST response ceiling they stop
-            and the tile reads the ceiling forever. Latent at 11 orgs and a
-            handful of companies — disclosed anyway, because the fix for
-            Accounts stopped one tile short of the row it sits in. */}
-        <MetricCard
-          label="Organizations"
-          value={`${orgs.length >= LIST_PAGE ? "≥" : ""}${orgs.length}`}
-          windowDetail={orgs.length >= LIST_PAGE ? "first page only" : undefined}
-          window="current"
-          scope="platform"
-          icon={Building2}
-          accent="primary"
-        />
-        <MetricCard
-          label="Companies"
-          value={`${companies.length >= LIST_PAGE ? "≥" : ""}${companies.length}`}
-          windowDetail={companies.length >= LIST_PAGE ? "first page only" : undefined}
-          window="current"
-          scope="platform"
-          icon={Building2}
-          accent="accent"
-        />
-        <MetricCard
-          label="Accounts"
-          // listAccounts reads ONE page of auth users (perPage: 200,
-          // src/lib/db/app-control.ts). Past 200 accounts this tile reads "200"
-          // forever — a page size rendered as a platform total. The number is
-          // still a page size; it no longer claims not to be. Paging the real
-          // total is a change to app-control.ts, not to a caption.
-          value={`${accounts.length >= ACCOUNT_PAGE ? "≥" : ""}${accounts.length}`}
-          windowDetail={accounts.length >= ACCOUNT_PAGE ? "first page only" : undefined}
-          window="current"
-          scope="platform"
-          icon={Users}
-          accent="success"
-        />
-        <MetricCard
-          label="Pending"
-          value={pending === null ? null : String(pending)}
-          unavailable="A workspace's pending count couldn't be read"
-          window="current"
-          scope="platform"
-          icon={UserCheck}
-          accent="warning"
-        />
-        <MetricCard
-          label="Suspended"
-          value={String(suspended)}
-          // Inherits the same one-page cap as Accounts: account 201 can be
-          // suspended and never appear here.
-          windowDetail={accounts.length >= ACCOUNT_PAGE ? "first page only" : undefined}
-          window="current"
-          scope="platform"
-          icon={Ban}
-          accent="danger"
-        />
+        <MetricCard label="Organizations" value={String(orgs.length)} icon={Building2} accent="primary" />
+        <MetricCard label="Companies" value={String(companies.length)} icon={Building2} accent="accent" />
+        <MetricCard label="Accounts" value={String(accounts.length)} icon={Users} accent="success" />
+        <MetricCard label="Pending" value={String(pending)} icon={UserCheck} accent="warning" />
+        <MetricCard label="Suspended" value={String(suspended)} icon={Ban} accent="danger" />
         <MetricCard
           label="App status"
-          // Not a metric — a word in a 40px numeric slot, next to five counts.
-          // It should be a Badge; converting it means restructuring this row,
-          // which is a visual change I cannot verify from here. It at least
-          // stops pretending it covers a window.
-          sub="global kill switch"
           value={settings.maintenance ? "Offline" : "Live"}
           icon={Power}
           accent={settings.maintenance ? "danger" : "success"}
@@ -398,12 +295,8 @@ function Overview({
                   <p className="truncate font-semibold">{o.name}</p>
                   <p className="truncate text-xs text-muted-foreground">{templateLabel(o.dialerTemplate)}</p>
                 </div>
-                <span className="text-xs text-muted-foreground">
-                  {o.memberCount === null ? "members unknown" : `${o.memberCount} members`}
-                </span>
-                {o.pendingCount !== null && o.pendingCount > 0 && (
-                  <Badge tone="warning">{o.pendingCount} pending</Badge>
-                )}
+                <span className="text-xs text-muted-foreground">{o.memberCount} members</span>
+                {o.pendingCount > 0 && <Badge tone="warning">{o.pendingCount} pending</Badge>}
                 <Badge tone={o.status === "active" ? "success" : "warning"} className="capitalize">
                   {o.status}
                 </Badge>
@@ -470,34 +363,32 @@ function AccountsTab({
                     {a.lastSignInAt ? ` · seen ${relativeTime(a.lastSignInAt)}` : ""}
                   </p>
                 </div>
-                <SelectMenu
-                  label="Organization"
-                  size="sm"
-                  triggerClassName="h-8"
-                  value={a.orgId ?? "none"}
+                <select
+                  className={sel}
+                  value={a.orgId ?? ""}
                   disabled={busy === `as-${a.id}`}
-                  disabledReason="Saving…"
-                  onChange={(v) => onAssign(a.id, v === "none" ? null : v, null)}
-                  options={[
-                    { value: "none", label: "Unassigned" },
-                    ...orgs.map((o) => ({ value: o.id, label: o.name })),
-                  ]}
-                />
-                <SelectMenu
-                  label="Company"
-                  size="sm"
-                  triggerClassName="h-8"
-                  value={a.companyId ?? "none"}
+                  onChange={(e) => onAssign(a.id, e.target.value || null, null)}
+                >
+                  <option value="">Unassigned</option>
+                  {orgs.map((o) => (
+                    <option key={o.id} value={o.id}>
+                      {o.name}
+                    </option>
+                  ))}
+                </select>
+                <select
+                  className={sel}
+                  value={a.companyId ?? ""}
                   disabled={!a.orgId || busy === `as-${a.id}`}
-                  disabledReason={
-                    a.orgId ? "Saving…" : "Assign an organization first."
-                  }
-                  onChange={(v) => onAssign(a.id, a.orgId, v === "none" ? null : v)}
-                  options={[
-                    { value: "none", label: "No company" },
-                    ...orgCompanies.map((c) => ({ value: c.id, label: c.name })),
-                  ]}
-                />
+                  onChange={(e) => onAssign(a.id, a.orgId, e.target.value || null)}
+                >
+                  <option value="">No company</option>
+                  {orgCompanies.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name}
+                    </option>
+                  ))}
+                </select>
                 <Badge tone={a.disabled ? "warning" : "success"}>
                   {a.disabled ? "Suspended" : "Active"}
                 </Badge>

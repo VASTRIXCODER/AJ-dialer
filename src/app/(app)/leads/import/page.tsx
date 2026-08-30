@@ -32,7 +32,6 @@ export default async function ImportStudioPage({
       <PageContainer>
         <PageHeader title="Import Studio" />
         <EmptyState
-          variant="page"
           icon={ShieldOff}
           title="Imports need a manager"
           description={`Ask a manager or admin to import ${vocab.leadNounPlural} — your account doesn't have the import permission.`}

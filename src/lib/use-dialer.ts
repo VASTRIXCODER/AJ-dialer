@@ -10,7 +10,6 @@ import {
 import {
   advanceCursorPastClaims,
   claimEmptyMessage,
-  claimPinnedRound,
   computeReleaseSet,
   orderedCandidateIds,
   reorderClaimed,
@@ -23,7 +22,7 @@ import { decideMuteToggle, type MuteCapability } from "./dialer/mute-intent";
 import type { DialerUserPrefs } from "./dialer/user-prefs";
 import type { AgentKey } from "./elevenlabs";
 import type { CallOutcome, Lead } from "./types";
-import { formatPhone, leadDisplayName, toE164 } from "./utils";
+import { formatPhone, toE164 } from "./utils";
 
 export type DialerStatus = "idle" | "dialing" | "live" | "wrapup" | "ai";
 export type DialerMode = "connecting" | "live" | "offline";
@@ -94,16 +93,6 @@ export interface DialLine {
   id: string;
   lead: Lead;
   status: "ringing" | "connected" | "canceled" | "no_answer";
-  /**
-   * Why the server refused this leg, when it did — verbatim from the dial
-   * route, which composes a real sentence per leg ("Outside this contact's
-   * calling hours (Mon–Fri, 8am–8pm, their local time)").
-   *
-   * The route has always sent it and the client always dropped it on the
-   * floor, so a lane refused by policy was indistinguishable from one released
-   * because another line answered.
-   */
-  refusal?: string;
 }
 
 /** One AI call launched in the current dialer session. */
@@ -136,23 +125,6 @@ export interface CallerIdInfo {
   pool: string[];
   poolIndex: number;
   rotateEvery: number;
-  /** True when the server picked this number to MATCH the contact's area code
-   *  rather than by ordinary rotation. The server has always computed this and
-   *  the client type dropped it on the floor, so "Dialing from (415) 555-0100"
-   *  could never say why that number and not another. */
-  localPresence?: boolean;
-}
-
-/** How an auto-dial run ended, and what it got through. */
-export interface RunEnd {
-  /**
-   * `lap` — the pass reached the end of the queue.
-   * `session` — a builder session finished and auto-refill was off.
-   * `empty` — the refetch came back with nothing still dialable.
-   */
-  reason: "lap" | "session" | "empty";
-  dialed: number;
-  connected: number;
 }
 
 export interface DialerState {
@@ -161,10 +133,6 @@ export interface DialerState {
   sessionMode: SessionMode;
   lines: DialLine[];
   connectedLead: Lead | null;
-  /** Epoch ms of the moment a human answered THIS call — the connect beat's
-   *  trigger. Null while idle; a new value on every pickup, which is what makes
-   *  the beat replay per call instead of once per mount. */
-  connectedAt: number | null;
   durationSec: number;
   muted: boolean;
   /** What the mute control can honestly do for the CURRENT attempt — "arming"
@@ -205,22 +173,6 @@ export interface DialerState {
    *  starting the next pass, so "repeat the list" never blindly re-calls
    *  someone just marked not-interested/DNC/booked. */
   queueLap: number;
-  /**
-   * A finished auto-dial run, and why it stopped.
-   *
-   * `status: "idle"` is the state a rep sits in BEFORE dialing, so an auto-dial
-   * run that finished landed on the cold-start cockpit: "Ready to dial", an
-   * enabled Start button, and the paragraph "Keeps dialing through your whole
-   * list on repeat" — describing, in the present tense, the thing that had just
-   * stopped. `autoDial` was still true for the 2,500ms the lap handler sleeps
-   * before turning it off, so the rep read that copy for two and a half seconds
-   * every time; in the builder branch it never cleared the queue at all, so a
-   * finished session kept showing "1 of N" and a live Start button forever.
-   *
-   * Set in the same patch as the lap bump; cleared the moment a new call starts
-   * or a new queue loads.
-   */
-  runEnded: RunEnd | null;
   error: string | null;
   callSid: string | null;
   /** Conference room for the active manual call — links its recording. */
@@ -242,9 +194,6 @@ export interface DialerState {
   activeAgent: AgentKey;
   aiCalls: AiLaunch[];
   aiCampaign: "idle" | "running" | "done";
-  /** The lead the rep picked out of the queue browser. While set, the next
-   *  round dials exactly this lead or refuses — see selectLead. */
-  pinnedLeadId: string | null;
 }
 
 // ── Daily dial counter (persists across refresh / logout) ─────────────────────
@@ -431,7 +380,6 @@ export function useDialer(
     sessionMode: deriveSessionMode(bootAiMode, bootParallelCount),
     lines: [],
     connectedLead: null,
-    connectedAt: null,
     durationSec: 0,
     muted: false,
     muteCapability: "unsupported",
@@ -449,7 +397,6 @@ export function useDialer(
     dialsToday: 0,
     queueIndex: 0,
     queueLap: 0,
-    runEnded: null,
     error: null,
     callSid: null,
     room: null,
@@ -461,7 +408,6 @@ export function useDialer(
     activeAgent: "primary",
     aiCalls: [],
     aiCampaign: "idle",
-    pinnedLeadId: null,
   });
 
   const queueIndexRef = useRef(0);
@@ -529,14 +475,6 @@ export function useDialer(
   const claimAdvancedRef = useRef(false);
   const lapWrappedRef = useRef(false);
   /**
-   * The lead the rep explicitly PICKED out of the queue browser (selectLead).
-   * A pinned round dials that person or refuses — it never substitutes whoever
-   * happens to be eligible nearby. Cleared when the pick is consumed by a round
-   * or abandoned by browsing/skipping/dispositioning away from it; a pin whose
-   * lead has left the queue resolves to nothing and is ignored.
-   */
-  const pinnedLeadIdRef = useRef<string | null>(null);
-  /**
    * Conversations we've launched that haven't finished. THIS is what makes
    * `parallelCount` an actual concurrency limit rather than a batch size.
    */
@@ -586,29 +524,6 @@ export function useDialer(
   const statusRef = useRef<DialerStatus>("idle");
   useEffect(() => {
     statusRef.current = state.status;
-  }, [state.status]);
-
-  // ── Don't let the tab close out from under a live call ─────────────────────
-  // Cmd-W or a stray refresh tore the Device down with no prompt: the homeowner
-  // was cut off mid-sentence, and the disposition the rep was about to file —
-  // which lives only in React state until it is submitted — went with it. The
-  // browser's own leave-confirmation is the only thing that can interrupt an
-  // unload, and it will only show it if a handler cancels the event.
-  //
-  // Registered only while something is actually in progress, so an idle tab
-  // never prompts.
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    if (state.status === "idle") return;
-    const onBeforeUnload = (e: BeforeUnloadEvent) => {
-      e.preventDefault();
-      // Legacy browsers need returnValue set; the string itself is ignored by
-      // every current engine, which shows its own wording.
-      e.returnValue = "";
-      return "";
-    };
-    window.addEventListener("beforeunload", onBeforeUnload);
-    return () => window.removeEventListener("beforeunload", onBeforeUnload);
   }, [state.status]);
   /** A mute toggle pressed before device.connect() resolved — applied by
    *  attachCallHandlers the moment the rep leg exists (pre-answer mute). */
@@ -1345,9 +1260,6 @@ export function useDialer(
         status: "live",
         connectedLead: lead,
         durationSec: 0,
-        // The moment a human said hello. The views key their one-shot connect
-        // beat off this, so it replays per call rather than once per mount.
-        connectedAt: Date.now(),
         connectsThisSession: s.connectsThisSession + 1,
         lines: s.lines.map((l) =>
           l.lead.id === lead.id
@@ -1442,7 +1354,6 @@ export function useDialer(
         status: "idle",
         lines: [],
         connectedLead: null,
-        connectedAt: null,
         durationSec: 0,
         reconnecting: false,
         muteCapability: "unsupported",
@@ -1576,34 +1487,23 @@ export function useDialer(
   // ── Lead navigation (browse the queue without calling) ────────────────────
   const nextLead = useCallback(() => {
     if (!queue.length) return;
-    pinnedLeadIdRef.current = null; // browsing past the pick abandons it
     queueIndexRef.current = (queueIndexRef.current + 1) % queue.length;
     patch({ queueIndex: queueIndexRef.current });
   }, [patch, queue.length]);
 
   const prevLead = useCallback(() => {
     if (!queue.length) return;
-    pinnedLeadIdRef.current = null;
     queueIndexRef.current =
       (queueIndexRef.current - 1 + queue.length) % queue.length;
     patch({ queueIndex: queueIndexRef.current });
   }, [patch, queue.length]);
 
-  /**
-   * The rep searched the queue and PICKED this person (lead-panel's browser is
-   * the only caller). That is an instruction, not a starting position — so the
-   * pick is PINNED, and the next round must dial exactly them or refuse and say
-   * why. Without the pin, Start opened a 200-wide claim window at this lead and
-   * dialed the first ELIGIBLE lead in it, which is how "I searched for one
-   * person and it called a completely different person" happened.
-   */
   const selectLead = useCallback(
     (leadId: string) => {
       const idx = queue.findIndex((l) => l.id === leadId);
       if (idx >= 0) {
-        pinnedLeadIdRef.current = leadId;
         queueIndexRef.current = idx;
-        patch({ queueIndex: idx, pinnedLeadId: leadId });
+        patch({ queueIndex: idx });
       }
     },
     [patch, queue],
@@ -2103,54 +2003,7 @@ export function useDialer(
         };
         let claimed: Lead[] = [];
         let refilled = false;
-
-        // ── PINNED PICK (the search-then-call mis-dial fix) ────────────────
-        // The rep searched the queue and picked a person by name. The window
-        // opens AT them, but the server returns the first ELIGIBLE lead in it
-        // — so a pick that was held, cooling down, capped, DNC'd or out of
-        // hours used to be silently skipped and the NEXT candidate rang. The
-        // rep watched the panel name the lead they chose while a complete
-        // stranger picked up. claimPinnedRound dials the pick or refuses.
-        const pinned = pinnedLeadIdRef.current
-          ? (queue.find((l) => l.id === pinnedLeadIdRef.current) ?? null)
-          : null;
-        if (pinned) {
-          const round = await claimPinnedRound({
-            pinned,
-            candidates: candidates.length
-              ? candidates
-              : orderedCandidateIds(queue, queueIndexRef.current, WINDOW),
-            parallel: parallelRef.current,
-            claim: ({ count, leadIds }) =>
-              postClaim({
-                count,
-                statuses: ctx.statuses,
-                campaignId: ctx.campaignId,
-                packId: ctx.packId,
-                leadIds,
-                preserveOrder: true,
-              }),
-            describe: (l) =>
-              leadDisplayName(`${l.firstName} ${l.lastName}`, l.phone),
-          });
-          if (round.status === "refuse") {
-            for (const id of round.release) claimedIdsRef.current.add(id);
-            if (round.release.length) releaseClaimedLeads("skip");
-            // The pin SURVIVES a refusal — the rep asked for this person, and
-            // pressing Start again should retry them, not walk on to someone
-            // else. (Browsing, skipping or dispositioning clears it.)
-            dialInFlightRef.current = false;
-            patch({ error: round.message, status: "idle", lines: [] });
-            return;
-          }
-          claimed = round.leads;
-          candidates = round.candidates;
-          // Consumed: this round IS the pick, and the next Start walks on.
-          pinnedLeadIdRef.current = null;
-          patch({ pinnedLeadId: null });
-        }
-
-        if (!claimed.length && (!strict || candidates.length)) {
+        if (!strict || candidates.length) {
           claimed = await postClaim({
             count: parallelRef.current,
             statuses: ctx.statuses,
@@ -2234,14 +2087,7 @@ export function useDialer(
         if (refilled) reservations.onQueueRefilled?.(claimed);
         leads = claimed;
       } else {
-        // No reservations (demo, or the org has them off): the local cursor IS
-        // the round, and selectLead already parked it on the pick — so the pick
-        // leads the round by construction. Just consume the pin.
         leads = override ?? nextLeads(parallelRef.current);
-        if (!override && pinnedLeadIdRef.current) {
-          pinnedLeadIdRef.current = null;
-          patch({ pinnedLeadId: null });
-        }
       }
 
       // ── Phone-duplicate guard ────────────────────────────────────────────
@@ -2302,9 +2148,6 @@ export function useDialer(
         status: "dialing",
         lines,
         connectedLead: null,
-        // A new round is a new beat: clear it here so the one that fires on
-        // pickup is unambiguously about THIS call.
-        connectedAt: null,
         durationSec: 0,
         muted: false,
         // The rep leg joins the conference when connect() resolves (below) —
@@ -2413,26 +2256,12 @@ export function useDialer(
           calls?: { leadId: string; sid: string | null; error?: string | null }[];
           errors?: (string | null)[];
           error?: string;
-          callerIdInfo?: {
-            callerId: string;
-            pool: string[];
-            poolIndex: number;
-            rotateEvery: number;
-            localPresence?: boolean;
-          } | null;
+          callerIdInfo?: { callerId: string; pool: string[]; poolIndex: number; rotateEvery: number } | null;
         } = {};
         try {
           data = raw ? JSON.parse(raw) : {};
         } catch {
           /* unreadable — the recovery below decides what actually happened */
-        }
-
-        // Per-leg refusals, kept rather than discarded — see DialLine.refusal.
-        const refusals = new Map<string, string>();
-        for (const c of data.calls ?? []) {
-          if (c && !c.sid && typeof c.error === "string" && c.error) {
-            refusals.set(c.leadId, c.error);
-          }
         }
 
         let placed = (data.calls ?? [])
@@ -2507,13 +2336,7 @@ export function useDialer(
           setState((s) => ({
             ...s,
             lines: s.lines.map((ln) =>
-              droppedSet.has(ln.lead.id)
-                ? {
-                    ...ln,
-                    status: "canceled" as const,
-                    refusal: refusals.get(ln.lead.id),
-                  }
-                : ln,
+              droppedSet.has(ln.lead.id) ? { ...ln, status: "canceled" as const } : ln,
             ),
           }));
         }
@@ -2681,36 +2504,9 @@ export function useDialer(
    */
   const restartAutoDialLap = useCallback(() => {
     queueIndexRef.current = 0;
-    // The run is no longer ended — the lap handler found more work.
-    patch({ queueIndex: 0, runEnded: null });
+    patch({ queueIndex: 0 });
     startCall();
   }, [patch, startCall]);
-
-  /**
-   * Record that an auto-dial run has ENDED, and why.
-   *
-   * The engine sets this itself for a completed lap (see selectOutcome); the
-   * provider calls this for the two endings only it can see — a builder session
-   * whose refill is off, and a refetch that came back with nothing dialable.
-   */
-  const markRunEnded = useCallback(
-    (reason: RunEnd["reason"]) => {
-      setState((s) => ({
-        ...s,
-        runEnded: {
-          reason,
-          dialed: s.callsThisSession,
-          connected: s.connectsThisSession,
-        },
-      }));
-    },
-    [],
-  );
-
-  /** A new list, or a new run — whatever ended is no longer what's happening. */
-  const clearRunEnded = useCallback(() => {
-    setState((s) => (s.runEnded === null ? s : { ...s, runEnded: null }));
-  }, []);
 
   const dialNumber = useCallback(
     (raw: string, displayName?: string) => {
@@ -2736,22 +2532,10 @@ export function useDialer(
     queueIndexRef.current = 0;
     claimAdvancedRef.current = false;
     lapWrappedRef.current = false;
-    // A fresh list is a fresh intent — a pick made against the previous session
-    // must not survive into it.
-    pinnedLeadIdRef.current = null;
-    setState((s) =>
-      s.queueIndex === 0 && s.pinnedLeadId === null
-        ? s
-        : { ...s, queueIndex: 0, pinnedLeadId: null },
-    );
+    setState((s) => (s.queueIndex === 0 ? s : { ...s, queueIndex: 0 }));
   }, []);
 
   const advanceQueue = useCallback(() => {
-    // Skipping / dispositioning moves past whatever the rep picked.
-    if (pinnedLeadIdRef.current) {
-      pinnedLeadIdRef.current = null;
-      patch({ pinnedLeadId: null });
-    }
     if (!queue.length) return;
     // A strict claim already advanced the cursor past exactly the leads this
     // round consumed — bumping again here skipped ~parallel leads per round
@@ -2808,22 +2592,7 @@ export function useDialer(
           // and calls restartAutoDialLap() once it confirms there's still
           // something dialable.
           queueLapRef.current += 1;
-          // Terminal state in the SAME patch as the lap bump. The lap handler
-          // may or may not find more work — if it does, restartAutoDialLap()
-          // clears this; if it doesn't, the cockpit is already showing the
-          // right thing rather than cold-start copy for 2.5 seconds.
-          // Read through the updater rather than a ref: the session counters
-          // live in state, and this runs immediately after a patch that moved
-          // them.
-          setState((s) => ({
-            ...s,
-            queueLap: queueLapRef.current,
-            runEnded: {
-              reason: "lap",
-              dialed: s.callsThisSession,
-              connected: s.connectsThisSession,
-            },
-          }));
+          patch({ queueLap: queueLapRef.current });
         } else {
           setTimeout(() => startCall(), 900);
         }
@@ -2872,12 +2641,12 @@ export function useDialer(
     if (autoDialRef.current && queue.length) {
       if (completingLap) {
         queueLapRef.current += 1;
-        patch({ status: "idle", lines: [], connectedLead: null, connectedAt: null, durationSec: 0, muteCapability: "unsupported", queueLap: queueLapRef.current });
+        patch({ status: "idle", lines: [], connectedLead: null, durationSec: 0, muteCapability: "unsupported", queueLap: queueLapRef.current });
       } else {
         setTimeout(() => startCall(), 400);
       }
     } else {
-      patch({ status: "idle", lines: [], connectedLead: null, connectedAt: null, durationSec: 0, muteCapability: "unsupported" });
+      patch({ status: "idle", lines: [], connectedLead: null, durationSec: 0, muteCapability: "unsupported" });
     }
   }, [
     advanceQueue,
@@ -2931,7 +2700,7 @@ export function useDialer(
         /* noop */
       }
       const pinnedCallerId = state.callerIdInfo?.callerId || undefined;
-      patch({ status: "idle", lines: [], connectedLead: null, connectedAt: null, durationSec: 0 });
+      patch({ status: "idle", lines: [], connectedLead: null, durationSec: 0 });
       void startHumanCall([lead], { pinnedCallerId });
     },
     [
@@ -3184,8 +2953,6 @@ export function useDialer(
     toggleHold,
     sendDigit,
     setAutoDial,
-    markRunEnded,
-    clearRunEnded,
     setParallelCount,
     setAiMode,
     setSessionMode,

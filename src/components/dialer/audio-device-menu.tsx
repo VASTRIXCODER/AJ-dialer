@@ -4,7 +4,6 @@ import { Check, Headphones, Volume2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { DialerDevices } from "@/lib/dialer/use-dialer-devices";
 import { cn } from "@/lib/utils";
-import { Z } from "@/lib/z-layers";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Audio device menu (E3) — pick which microphone the Twilio device captures
@@ -63,8 +62,7 @@ export function AudioDeviceMenu({ devices }: { devices: DialerDevices }) {
         <div
           role="menu"
           aria-label="Audio devices"
-          className="absolute right-0 top-full mt-2 w-72 rounded-2xl border border-border bg-card p-3 shadow-lift"
-          style={{ zIndex: Z.popover }}
+          className="absolute right-0 top-full z-40 mt-2 w-72 rounded-2xl border border-border bg-card p-3 shadow-lift"
         >
           <p className="mb-1.5 flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide text-muted-foreground">
             <Headphones className="h-3.5 w-3.5" />

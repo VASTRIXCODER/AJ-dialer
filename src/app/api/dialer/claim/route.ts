@@ -70,17 +70,8 @@ export async function POST(req: Request) {
   // sent an explicit list (strict queue-fidelity mode — the DEFAULT for every
   // dial now), the bypass set is the INTERSECTION dueIds ∩ leadIds: the
   // callback promise survives the knobs, but the claim still never leaves the
-  // rep's loaded list.
-  //
-  // DNC is enforced inside the claim — app_claim_dial_leads carries a NOT
-  // EXISTS against dnc_numbers on the last ten digits. The CALLING WINDOW is
-  // not: that RPC has no hours or timezone term at all, deliberately (a
-  // per-lead-timezone predicate in SQL would need the area-code table in the
-  // database). The window is enforced at DIAL time instead — twilio/call and
-  // elevenlabs/call each split the legs and refuse the out-of-window ones with
-  // a per-leg reason. This comment used to claim both were handled here, which
-  // would have led the next reader to assume a claimed lead was already
-  // window-checked.
+  // rep's loaded list. DNC and the calling window are enforced inside the
+  // claim either way.
   const leads = [] as Awaited<ReturnType<typeof claimDialLeads>>;
   if (maxAttempts > 0 || cooldownMinutes > 0) {
     const dueIds = await dueCallbackLeadIds(scope.orgId);

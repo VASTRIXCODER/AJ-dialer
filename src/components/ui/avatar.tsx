@@ -97,20 +97,11 @@ export function Avatar({
   className?: string;
   ring?: boolean;
 }) {
-  // xs/sm/md resolve to 32 / 48 / 64px against this project's redefined spacing
-  // scale (see globals.css), which ascends correctly. `lg` did not: `h-12` is
-  // past the end of the scale, so it fell back to Tailwind's base and came out
-  // at 48px — SMALLER than md, and equal to sm. The leaderboard podium's first
-  // place was therefore the same size as second and third, and the Lead 360
-  // hero avatar was the size of a roster row's.
-  //
-  // Fixed by growing lg rather than shrinking md: only three call sites use lg,
-  // and every one of them wants the largest avatar on its screen.
   const sizes = {
-    xs: "h-7 w-7 text-[11px]",
+    xs: "h-7 w-7 text-[10px]",
     sm: "h-9 w-9 text-xs",
     md: "h-10 w-10 text-sm",
-    lg: "h-[72px] w-[72px] text-lg",
+    lg: "h-12 w-12 text-base",
   };
   const style = color
     ? legacyStyle(color)

@@ -61,51 +61,28 @@ const MODE_LABEL: Record<SessionMode, string> = {
  * There is deliberately no toggle: the old one flipped a boolean that
  * controlled nothing while the connect param stayed hardcoded.
  */
-export function RecordingIndicator({
-  recording,
-  /**
-   * Which channel is placing calls. This matters because `recording` is ONLY
-   * the Twilio conference record flag — the org's manual-dialing policy. The AI
-   * agent records every conversation it holds regardless of that flag; the
-   * product plays those recordings back in Reports and in Monitor
-   * (/api/elevenlabs/audio/[id]). So an AI-mode workspace with conference
-   * recording switched off used to show a confident "Not recording" chip above
-   * calls that were, in fact, all being recorded.
-   */
-  channel = "manual",
-}: {
-  recording: boolean;
-  channel?: "manual" | "ai";
-}) {
-  const on = channel === "ai" ? true : recording;
-  const content =
-    channel === "ai"
-      ? "The AI agent records every call it places, and those recordings are playable in Reports and Monitor. This is separate from your organization's conference-recording policy for manual calls."
-      : on
-        ? "Calls are recorded — your organization's policy (Admin → Dialing). Reps can't switch this off per call."
-        : "Calls are NOT recorded — your organization's policy (Admin → Dialing).";
-  const label =
-    channel === "ai"
-      ? "Recording on — the AI agent"
-      : on
-        ? "Recording on — org policy"
-        : "Not recording";
-
+export function RecordingIndicator({ recording }: { recording: boolean }) {
   return (
-    <Tooltip content={content}>
+    <Tooltip
+      content={
+        recording
+          ? "Calls are recorded — your organization's policy (Admin → Dialing). Reps can't switch this off per call."
+          : "Calls are NOT recorded — your organization's policy (Admin → Dialing)."
+      }
+    >
       <span
         className={cn(
           "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-semibold",
-          on
+          recording
             ? "border-danger/30 bg-danger/10 text-danger"
             : "border-border bg-surface text-muted-foreground",
         )}
       >
         <Circle
-          className={cn("h-2 w-2", on ? "fill-danger" : "fill-muted-foreground/40")}
+          className={cn("h-2 w-2", recording ? "fill-danger" : "fill-muted-foreground/40")}
           strokeWidth={0}
         />
-        {label}
+        {recording ? "Recording on — org policy" : "Not recording"}
       </span>
     </Tooltip>
   );
@@ -237,7 +214,7 @@ export function ShellHeader({
             ) : (
               <span
                 title="Manual dialing is a premium feature — locked on this plan."
-                className="flex cursor-not-allowed items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-semibold text-ink-3"
+                className="flex cursor-not-allowed items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-semibold text-muted-foreground/60"
               >
                 <Lock className="h-3.5 w-3.5" />
                 Manual
@@ -261,7 +238,7 @@ export function ShellHeader({
               !aiOffForWorkspace && (
                 <span
                   title={aiLockText}
-                  className="flex cursor-not-allowed items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-semibold text-ink-3"
+                  className="flex cursor-not-allowed items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-semibold text-muted-foreground/60"
                 >
                   <Lock className="h-3.5 w-3.5" />
                   AI
@@ -309,7 +286,7 @@ export function ShellHeader({
             <b className="font-bold text-foreground tabular">{state.connectsThisSession}</b> connects
           </span>
         )}
-        <span className="text-[11px] text-ink-3">this session</span>
+        <span className="text-[11px] text-muted-foreground/70">this session</span>
         {state.dialsToday > 0 && (
           <span title="All your dials today, across sessions and reloads.">
             <b className="font-bold text-foreground tabular">{state.dialsToday}</b> today
@@ -368,7 +345,7 @@ export function ShellHeader({
           />
         )}
         <AudioDeviceMenu devices={devices} />
-        <RecordingIndicator recording={state.recording} channel={state.aiMode ? "ai" : "manual"} />
+        <RecordingIndicator recording={state.recording} />
         <RealtimeHealth health={health} />
       </span>
 

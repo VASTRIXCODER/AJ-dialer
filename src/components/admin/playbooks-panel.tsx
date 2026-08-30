@@ -128,7 +128,7 @@ export function PlaybooksPanel() {
           checked={enabled}
           disabled={busy === "master" || !loaded}
           onChange={(e) => setMasterSwitch(e.target.checked)}
-          className="h-[22px] w-[22px] accent-[hsl(var(--primary))]"
+          className="h-5 w-5 accent-[hsl(var(--primary))]"
         />
       </label>
 

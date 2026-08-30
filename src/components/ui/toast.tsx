@@ -13,7 +13,6 @@ import {
 } from "react";
 import { cn } from "@/lib/utils";
 import { Portal } from "./portal";
-import { Z } from "@/lib/z-layers";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // App-wide toasts. Mounted once in the root layout so every surface (app shell,
@@ -77,12 +76,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
         <div
           aria-live="polite"
           aria-label="Notifications"
-          // Below `sm` the stack is centred, which is exactly where the call
-          // bar sits — a toast used to land on top of End call and Mute during
-          // a live call. `--callbar-h` is published by GlobalCallBar only while
-          // it is up, so this is a plain 1rem the rest of the time.
-          className="pointer-events-none fixed inset-x-0 flex flex-col items-center gap-2 px-4 sm:items-end sm:pr-6"
-          style={{ zIndex: Z.toast, bottom: "calc(1rem + var(--callbar-h, 0px))" }}
+          className="pointer-events-none fixed inset-x-0 bottom-4 z-[140] flex flex-col items-center gap-2 px-4 sm:items-end sm:pr-6"
         >
           <AnimatePresence>
             {items.map((t) => {
@@ -91,17 +85,13 @@ export function ToastProvider({ children }: { children: ReactNode }) {
               return (
                 <motion.div
                   key={t.id}
-                  // Opacity only. A toast reports the outcome of something the
-                  // rep just did on a working surface, often over a data grid;
-                  // it used to spring in on a translate and a scale, and stack
-                  // with framer's `layout` so the whole column re-flowed each
-                  // time one arrived or left.
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  exit={{ opacity: 0 }}
-                  transition={{ duration: reduce ? 0 : 0.12, ease: "linear" }}
+                  layout={!reduce}
+                  initial={reduce ? { opacity: 0 } : { opacity: 0, y: 12, scale: 0.97 }}
+                  animate={reduce ? { opacity: 1 } : { opacity: 1, y: 0, scale: 1 }}
+                  exit={reduce ? { opacity: 0 } : { opacity: 0, y: 8, scale: 0.97 }}
+                  transition={{ type: "spring", stiffness: 380, damping: 32 }}
                   className={cn(
-                    "pointer-events-auto flex w-full max-w-sm items-start gap-3 rounded-2xl border border-border/60 bg-surface-1 p-3.5 shadow-2 ring-1 ring-inset",
+                    "glass pointer-events-auto flex w-full max-w-sm items-start gap-3 rounded-2xl border border-border/60 p-3.5 shadow-lift ring-1 ring-inset",
                     tone.ring,
                   )}
                 >
@@ -116,7 +106,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
                     type="button"
                     onClick={() => dismiss(t.id)}
                     aria-label="Dismiss notification"
-                    className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition hover:bg-muted/70 hover:text-foreground"
+                    className="rounded-lg p-1 text-muted-foreground transition hover:bg-muted/70 hover:text-foreground"
                   >
                     <X className="h-3.5 w-3.5" aria-hidden />
                   </button>

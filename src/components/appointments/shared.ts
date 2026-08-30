@@ -83,27 +83,7 @@ export function isDead(a: AppointmentRow): boolean {
   return a.status === "cancelled" || a.status === "no_show";
 }
 
-/**
- * A GLYPH for the chip's state, and the word it stands for.
- *
- * chipTone below returns fill, border and text colour — nothing else. So on the
- * month and week calendars, completed and scheduled differed by hue alone, and
- * so did cancelled and no-show (line-through applies to both dead states, so it
- * separates them from the living ones but not from each other). Anyone who
- * cannot tell those hues apart was reading a grid with no state on it.
- *
- * Returns null for the ordinary scheduled case, which needs no mark.
- */
-export function chipGlyph(a: AppointmentRow): { glyph: string; label: string } | null {
-  if (a.status === "cancelled") return { glyph: "✕", label: "Cancelled" };
-  if (a.status === "no_show") return { glyph: "!", label: "No-show" };
-  if (a.status === "completed") return { glyph: "✓", label: "Completed" };
-  if (a.status === "rescheduled") return { glyph: "↻", label: "Rescheduled" };
-  if (isReview(a)) return { glyph: "?", label: "Awaiting approval" };
-  return null;
-}
-
-/** Chip colour on the grid. Colour ALONE never carries the state — see chipGlyph. */
+/** Chip colour on the grid — the state you need to read at a glance. */
 export function chipTone(a: AppointmentRow): string {
   if (a.status === "cancelled") return "border-border/60 bg-muted/60 text-muted-foreground";
   if (a.status === "no_show") return "border-danger/30 bg-danger/10 text-danger";

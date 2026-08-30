@@ -19,23 +19,13 @@ export const dynamic = "force-dynamic";
 export async function GET() {
   if (!(await isSuperadmin()))
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-  try {
-    const [settings, accounts, organizations, companies] = await Promise.all([
-      getAppSettings(),
-      listAccounts(),
-      listOrganizations(),
-      listAllCompanies(),
-    ]);
-    return NextResponse.json({ settings, accounts, organizations, companies });
-  } catch (e) {
-    // listAccounts and listOrganizations throw rather than returning [] — an
-    // empty console reads as "the platform has no accounts and no workspaces",
-    // which is a claim, and this is the screen someone opens to check it.
-    return NextResponse.json(
-      { error: e instanceof Error ? e.message : "Couldn't load the console." },
-      { status: 503 },
-    );
-  }
+  const [settings, accounts, organizations, companies] = await Promise.all([
+    getAppSettings(),
+    listAccounts(),
+    listOrganizations(),
+    listAllCompanies(),
+  ]);
+  return NextResponse.json({ settings, accounts, organizations, companies });
 }
 
 export async function POST(req: Request) {

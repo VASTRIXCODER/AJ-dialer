@@ -31,15 +31,12 @@ import {
   compareCallbacks,
   isClaimActive,
   laneOf,
-  orgNowMs,
   overdueTier,
   type CallbackLane,
 } from "@/lib/callbacks/lanes";
 import type { CallbackBoardRow } from "@/lib/db/callbacks";
 import { dialDeepLink } from "@/lib/dialer/deep-link";
-import { zonedFloatingNow } from "@/lib/dialer/schedule";
 import { cn, formatPhone, initials, relativeTime } from "@/lib/utils";
-import { SelectMenu } from "@/components/ui/select-menu";
 import {
   ScheduleCallbackDialog,
   type ScheduledCallback,
@@ -86,7 +83,7 @@ function DueLabel({ row, now }: { row: CallbackBoardRow; now: number }) {
   if (!d) {
     // Honest: a callback with no agreed time is not "due now", it just never
     // got one.
-    return <span className="text-xs font-medium text-ink-3">No time set</span>;
+    return <span className="text-xs font-medium text-muted-foreground/70">No time set</span>;
   }
   const tz = row.timezone ? timezoneLabel(row.timezone, d) : "";
   return (
@@ -95,7 +92,7 @@ function DueLabel({ row, now }: { row: CallbackBoardRow; now: number }) {
       title={`${formatDayLabel(d)} at ${formatTime(d)}${tz ? ` (${tz})` : ""}`}
     >
       {relativeTime(d.toISOString(), new Date(now))}
-      {tz ? <span className="text-ink-3"> · {tz}</span> : null}
+      {tz ? <span className="text-muted-foreground/70"> · {tz}</span> : null}
     </span>
   );
 }
@@ -222,7 +219,7 @@ function RowCard({
               "flex h-7 w-7 shrink-0 items-center justify-center rounded-lg transition-colors",
               row.priority > 0
                 ? "text-warning hover:bg-warning/10"
-                : "text-ink-3 hover:bg-muted hover:text-foreground",
+                : "text-muted-foreground/50 hover:bg-muted hover:text-foreground",
               !canManage && "cursor-default hover:bg-transparent",
             )}
           >
@@ -258,33 +255,26 @@ function RowCard({
       )}
 
       {canManage && members.length > 0 && (
-        <span className="mt-2 flex items-center gap-2 text-[11px] font-medium text-muted-foreground">
+        <label className="mt-2 flex items-center gap-2 text-[11px] font-medium text-muted-foreground">
           <span className="shrink-0">Assigned to</span>
-          <SelectMenu
-            label="Assigned to"
-            size="sm"
-            className="min-w-0 flex-1"
-            triggerClassName="h-7 w-full"
+          <select
             value={row.assignedTo ?? row.ownerId}
+            onChange={(e) => h.reassign(row, e.target.value)}
             disabled={rowBusy}
-            disabledReason="Saving…"
-            onChange={(v) => h.reassign(row, v)}
-            options={[
-              // The current assignee may not be in `members` — a rep who left,
-              // or one this viewer cannot see. Dropping them would silently
-              // reassign the callback on the next save.
-              ...(!members.some((m) => m.id === (row.assignedTo ?? row.ownerId))
-                ? [
-                    {
-                      value: row.assignedTo ?? row.ownerId,
-                      label: assigneeName || "Unassigned",
-                    },
-                  ]
-                : []),
-              ...members.map((m) => ({ value: m.id, label: m.name })),
-            ]}
-          />
-        </span>
+            className="h-7 min-w-0 flex-1 rounded-lg border border-border bg-background px-2 text-xs text-foreground disabled:opacity-50"
+          >
+            {!members.some((m) => m.id === (row.assignedTo ?? row.ownerId)) && (
+              <option value={row.assignedTo ?? row.ownerId}>
+                {assigneeName || "Unassigned"}
+              </option>
+            )}
+            {members.map((m) => (
+              <option key={m.id} value={m.id}>
+                {m.name}
+              </option>
+            ))}
+          </select>
+        </label>
       )}
 
       <div className="mt-2.5 flex items-center gap-1.5">
@@ -400,7 +390,6 @@ export function CallbackBoard({
   canManage,
   userId,
   initialNow,
-  orgTimezone,
 }: {
   open: CallbackBoardRow[];
   closed: CallbackBoardRow[];
@@ -412,10 +401,6 @@ export function CallbackBoard({
   /** Server render's clock — first client render uses the SAME value so lanes
    *  and relative labels hydrate identically; a 30s tick takes over after. */
   initialNow: number;
-  /** The ORG's IANA zone. The tick below has to advance on the same wall clock
-   *  the server rendered against, or the board disagrees with the tiles above
-   *  it the moment the first 30s interval fires — see orgNowMs. */
-  orgTimezone: string;
 }) {
   const router = useRouter();
   const { toast } = useToast();
@@ -424,11 +409,9 @@ export function CallbackBoard({
 
   const [now, setNow] = useState(initialNow);
   useEffect(() => {
-    const tick = () =>
-      setNow(orgNowMs(new Date(), zonedFloatingNow(new Date(), orgTimezone)));
-    const t = setInterval(tick, 30_000);
+    const t = setInterval(() => setNow(Date.now()), 30_000);
     return () => clearInterval(t);
-  }, [orgTimezone]);
+  }, []);
 
   const [busy, setBusy] = useState<string | null>(null);
   const [resched, setResched] = useState<CallbackBoardRow | null>(null);

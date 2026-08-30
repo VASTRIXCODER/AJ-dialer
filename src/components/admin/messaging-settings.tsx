@@ -94,7 +94,7 @@ export function MessagingSettingsPanel({
           checked={value.enabled}
           disabled={!canEdit}
           onChange={(e) => set("enabled", e.target.checked)}
-          className="mt-1 h-[22px] w-[22px] rounded border-input"
+          className="mt-1 h-4 w-4 rounded border-input"
         />
         <span>
           <span className="block text-sm font-medium">Allow messaging in this workspace</span>

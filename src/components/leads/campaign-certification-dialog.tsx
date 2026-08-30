@@ -76,7 +76,7 @@ export function CampaignCertificationDialog({
             type="checkbox"
             checked={checked}
             onChange={(e) => setChecked(e.target.checked)}
-            className="mt-0.5 h-[22px] w-[22px] shrink-0 rounded border-input accent-primary"
+            className="mt-0.5 h-4 w-4 shrink-0 rounded border-input accent-primary"
           />
           <span>{CAMPAIGN_CERT_TEXT}</span>
         </label>

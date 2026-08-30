@@ -7,7 +7,6 @@ import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { StatusPill, type PillState } from "@/components/ui/status-pill";
 import { cn, formatDuration, initials } from "@/lib/utils";
-import type { Density } from "@/lib/ui-density";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // FloorCard — one tile on the Live Floor: who, doing what, with whom, since
@@ -103,7 +102,7 @@ export function FloorCard({
   onEndAi: (conversationId: string) => void;
   endBusy: boolean;
   onOpen: (card: FloorCardModel) => void;
-  density?: Density;
+  density?: "compact" | "comfortable";
 }) {
   const isCall = card.kind === "call";
   const isAi = card.mode === "ai";
@@ -126,11 +125,7 @@ export function FloorCard({
       className={cn(
         "cursor-pointer overflow-hidden text-left transition-shadow hover:shadow-lift",
         "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-        // An all-sides ternary moves the horizontal padding too. Hold px-5.
-        "px-5",
-        // 14px vs 20px. It was py-3.5 vs py-4 — 14px vs 12px, so compact was
-        // TALLER, which made the setting read as a no-op on this card.
-        compact ? "py-3.5" : "py-5",
+        compact ? "p-3.5" : "p-5",
         isCall && card.state === "connected" && "ring-1 ring-success/25",
         isCall && card.state === "ringing" && "ring-1 ring-warning/30",
         card.stale && "ring-1 ring-warning/40",
@@ -140,18 +135,14 @@ export function FloorCard({
       <div className="flex items-start justify-between gap-2">
         <div className="flex min-w-0 items-center gap-3">
           {unattributed ? (
-            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-brand text-white">
+            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-brand text-white shadow-glow">
               <Bot className="h-5 w-5" />
             </span>
           ) : (
             <Avatar
               initials={initials(card.repName || "?")}
               seed={card.repUserId ?? card.repName}
-              // Density moves row height and vertical padding. It does NOT
-              // re-typeset a monogram from 14px to 12px, which is what the size
-              // ternary here did — and it left the unattributed-AI tile beside
-              // it at 64px while every rep tile shrank to 48.
-              size="md"
+              size={compact ? "sm" : "md"}
             />
           )}
           <div className="min-w-0">
@@ -160,7 +151,7 @@ export function FloorCard({
             </p>
             <p className="mt-0.5 flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
               {card.mode && (
-                <Badge tone={isAi ? "primary" : "accent"} className="px-1.5 py-0 text-[11px]">
+                <Badge tone={isAi ? "primary" : "accent"} className="px-1.5 py-0 text-[10px]">
                   {isAi ? (
                     <span className="inline-flex items-center gap-1">
                       <Bot className="h-3 w-3" /> AI
@@ -173,7 +164,7 @@ export function FloorCard({
                 </Badge>
               )}
               {card.campaignName && (
-                <Badge tone="outline" className="max-w-36 px-1.5 py-0 text-[11px]">
+                <Badge tone="outline" className="max-w-36 px-1.5 py-0 text-[10px]">
                   <Flag className="h-3 w-3 shrink-0" />
                   <span className="truncate">{card.campaignName}</span>
                 </Badge>
@@ -188,8 +179,7 @@ export function FloorCard({
       <div
         className={cn(
           "mt-3 flex items-center justify-between gap-2 rounded-xl bg-muted/60",
-          "px-3",
-          compact ? "py-2" : "py-3",
+          compact ? "px-2.5 py-2" : "p-3",
         )}
       >
         <span className="min-w-0 text-sm">
@@ -225,7 +215,7 @@ export function FloorCard({
         {card.lastEventAt != null && (
           <span className="inline-flex items-center gap-1.5">
             {card.stale && (
-              <span className="rounded-full bg-warning/15 px-1.5 py-0.5 text-[11px] font-bold uppercase tracking-wide text-warning">
+              <span className="rounded-full bg-warning/15 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-warning">
                 Stale
               </span>
             )}

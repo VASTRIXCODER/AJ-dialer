@@ -4,8 +4,10 @@ import {
   AlertTriangle,
   Ban,
   Building2,
+  Check,
   CheckCircle2,
   ChevronDown,
+  Copy,
   Lock,
   Loader2,
   Plus,
@@ -20,17 +22,14 @@ import { useCallback, useEffect, useState } from "react";
 import { SectionCard } from "@/components/shared/section-card";
 import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
-import { SecretValue } from "@/components/ui/secret-value";
 import { Button } from "@/components/ui/button";
 import { useConfirm } from "@/components/ui/confirm-dialog";
-import { Input, Label, Textarea } from "@/components/ui/input";
-import { SelectMenu } from "@/components/ui/select-menu";
+import { Input, Label, Select, Textarea } from "@/components/ui/input";
 import { Modal } from "@/components/ui/modal";
 import type { OrgBilling, OrgBlueprint, OrgFeatures } from "@/lib/org/settings";
 import { DIALER_TEMPLATES, templateLabel } from "@/lib/org/templates";
 import { ROLE_LABEL } from "@/lib/permissions";
 import { cn, initials } from "@/lib/utils";
-import { CardSkeleton } from "@/components/shared/skeletons";
 
 export type Org = {
   id: string;
@@ -39,12 +38,9 @@ export type Org = {
   industry: string;
   status: "active" | "suspended";
   createdAt: string;
-  // Null when the server could not take the count. LOCKSTEP with
-  // OrganizationRow in src/lib/db/org-control.ts — this crosses the wire as
-  // JSON, so tsc cannot connect the two declarations.
-  companyCount: number | null;
-  memberCount: number | null;
-  pendingCount: number | null;
+  companyCount: number;
+  memberCount: number;
+  pendingCount: number;
   joinCode: string;
   dialerTemplate: string;
   productName: string;
@@ -162,25 +158,19 @@ export function OrganizationsTab({
               <div className="min-w-0 flex-1">
                 <p className="truncate font-semibold">{o.name}</p>
                 <p className="truncate text-xs text-muted-foreground">
-                  {templateLabel(o.dialerTemplate)} ·{" "}
-                  {o.memberCount === null ? "members unknown" : `${o.memberCount} members`} ·{" "}
-                  {o.companyCount === null ? "companies unknown" : `${o.companyCount} companies`}
+                  {templateLabel(o.dialerTemplate)} · {o.memberCount} members ·{" "}
+                  {o.companyCount} companies
                 </p>
               </div>
-              {o.pendingCount === null ? (
-                <Badge tone="neutral">pending unknown</Badge>
-              ) : o.pendingCount > 0 ? (
+              {o.pendingCount > 0 && (
                 <Badge tone="warning">{o.pendingCount} pending</Badge>
-              ) : null}
+              )}
               <Badge tone={o.status === "active" ? "success" : "warning"} className="capitalize">
                 {o.status}
               </Badge>
-              <SecretValue
-                value={o.joinCode}
-                label="Join code"
-                className="rounded bg-muted px-2 py-1"
-                valueClassName="text-xs font-bold tracking-widest"
-              />
+              <code className="rounded bg-muted px-2 py-1 text-xs font-bold tracking-widest">
+                {o.joinCode}
+              </code>
               <Button
                 size="sm"
                 variant="outline"
@@ -302,8 +292,9 @@ function OrgDrawer({ orgId, onChanged }: { orgId: string; onChanged: () => void 
 
   if (loading)
     return (
-      <div className="border-t border-border/60 p-5">
-        <CardSkeleton />
+      <div className="flex items-center justify-center gap-2 border-t border-border/60 bg-muted/20 py-8 text-sm text-muted-foreground">
+        <Loader2 className="h-4 w-4 animate-spin" />
+        Loading organization…
       </div>
     );
 
@@ -369,19 +360,18 @@ function OrgDrawer({ orgId, onChanged }: { orgId: string; onChanged: () => void 
             <div key={m.id} className="flex flex-wrap items-center gap-2 rounded-lg border border-border p-2">
               <Avatar initials={initials(m.name || m.email)} tone="danger" size="xs" />
               <span className="min-w-0 flex-1 truncate text-sm">{m.name || m.email}</span>
-              <SelectMenu
-                label="Member role"
-                size="sm"
-                triggerClassName="h-8"
+              <select
                 value={m.role}
                 disabled={busy === m.id}
-                disabledReason="Saving…"
-                onChange={(v) => memberAction("memberRole", m.id, v)}
-                options={(["owner", "admin", "manager", "rep"] as const).map((r) => ({
-                  value: r as string,
-                  label: ROLE_LABEL[r],
-                }))}
-              />
+                onChange={(e) => memberAction("memberRole", m.id, e.target.value)}
+                className="h-8 rounded-lg border border-border bg-background px-2 text-xs font-semibold capitalize outline-none"
+              >
+                {(["owner", "admin", "manager", "rep"] as const).map((r) => (
+                  <option key={r} value={r}>
+                    {ROLE_LABEL[r]}
+                  </option>
+                ))}
+              </select>
               <button
                 type="button"
                 aria-label="Remove member"
@@ -420,6 +410,7 @@ function OrgEditor({ detail, onSaved }: { detail: OrgDetail; onSaved: () => void
   });
   const [busy, setBusy] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [copied, setCopied] = useState(false);
 
   async function save() {
     setBusy(true);
@@ -436,13 +427,18 @@ function OrgEditor({ detail, onSaved }: { detail: OrgDetail; onSaved: () => void
     <div className="rounded-xl border border-border bg-card p-4">
       <div className="mb-3 flex items-center justify-between">
         <p className="text-sm font-semibold">Settings</p>
-        <SecretValue
-          value={detail.joinCode}
-          label="Join code"
-          copyable
-          className="rounded-lg border border-border px-2 py-1"
-          valueClassName="text-xs font-semibold"
-        />
+        <button
+          type="button"
+          onClick={() => {
+            navigator.clipboard?.writeText(detail.joinCode);
+            setCopied(true);
+            setTimeout(() => setCopied(false), 1500);
+          }}
+          className="inline-flex items-center gap-1.5 rounded-lg border border-border px-2 py-1 text-xs font-semibold"
+        >
+          {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+          {detail.joinCode}
+        </button>
       </div>
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <Cell label="Name">
@@ -458,27 +454,22 @@ function OrgEditor({ detail, onSaved }: { detail: OrgDetail; onSaved: () => void
           <Input value={f.industry} onChange={(e) => setF({ ...f, industry: e.target.value })} />
         </Cell>
         <Cell label="Specialization">
-          <SelectMenu
-            label="Specialization"
-            className="w-full"
-            triggerClassName="w-full"
-            value={f.dialerTemplate}
-            onChange={(v) => setF({ ...f, dialerTemplate: v })}
-            options={DIALER_TEMPLATES.map((t) => ({ value: t.value, label: t.label }))}
-          />
+          <Select value={f.dialerTemplate} onChange={(e) => setF({ ...f, dialerTemplate: e.target.value })}>
+            {DIALER_TEMPLATES.map((t) => (
+              <option key={t.value} value={t.value}>
+                {t.label}
+              </option>
+            ))}
+          </Select>
         </Cell>
         <Cell label="Default role">
-          <SelectMenu
-            label="Default role"
-            className="w-full"
-            triggerClassName="w-full"
-            value={f.defaultRole}
-            onChange={(v) => setF({ ...f, defaultRole: v })}
-            options={(["rep", "manager", "admin"] as const).map((r) => ({
-              value: r as string,
-              label: ROLE_LABEL[r],
-            }))}
-          />
+          <Select value={f.defaultRole} onChange={(e) => setF({ ...f, defaultRole: e.target.value })}>
+            {(["rep", "manager", "admin"] as const).map((r) => (
+              <option key={r} value={r}>
+                {ROLE_LABEL[r]}
+              </option>
+            ))}
+          </Select>
         </Cell>
         <Cell label="Brand / accent">
           <div className="flex gap-2">
@@ -621,18 +612,14 @@ function OrgBillingEditor({ detail, onSaved }: { detail: OrgDetail; onSaved: () 
             />
           </Cell>
           <Cell label="Billing period">
-            <SelectMenu
-              label="Billing period"
-              className="w-full"
-              triggerClassName="w-full"
+            <Select
               value={f.interval}
-              onChange={(v) => setF({ ...f, interval: v as OrgBilling["interval"] })}
-              options={[
-                { value: "month", label: "Monthly" },
-                { value: "year", label: "Yearly" },
-                { value: "once", label: "One-time" },
-              ]}
-            />
+              onChange={(e) => setF({ ...f, interval: e.target.value as OrgBilling["interval"] })}
+            >
+              <option value="month">Monthly</option>
+              <option value="year">Yearly</option>
+              <option value="once">One-time</option>
+            </Select>
           </Cell>
         </div>
 
@@ -845,7 +832,7 @@ function AIWizard({ onClose, onCreated }: { onClose: () => void; onCreated: () =
     >
       <div className="flex items-center justify-between border-b border-border/60 p-5">
         <div className="flex items-center gap-3">
-          <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-brand text-white">
+          <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-brand text-white shadow-glow">
             <Wand2 className="h-5 w-5" />
           </span>
           <p className="text-base font-semibold">AI organization builder</p>

@@ -26,7 +26,6 @@ export default async function AdminPage() {
       <PageContainer>
         <PageHeader title="Admin" description="Organization administration." />
         <EmptyState
-          variant="page"
           icon={ShieldAlert}
           title="Admin access required"
           description="You don’t have permission to manage this organization. Ask an owner or admin if you need access."

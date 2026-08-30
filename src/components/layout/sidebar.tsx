@@ -3,79 +3,19 @@
 import { motion } from "framer-motion";
 import { ArrowLeftRight, Building2, LogOut, ShieldCheck } from "lucide-react";
 import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
-import { useId, type ReactNode } from "react";
-import { useDialerContextOptional } from "@/components/dialer/dialer-context";
+import { usePathname } from "next/navigation";
+import { useId } from "react";
 import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
-import { useConfirm } from "@/components/ui/confirm-dialog";
 import { Wordmark } from "@/components/brand/logo";
 import type { OrgFeatures } from "@/lib/org/settings";
 import { DEFAULT_VOCABULARY, type OrgVocabulary } from "@/lib/org/vocabulary";
 import { ROLE_LABEL, type OrgRole, isOrgRole } from "@/lib/permissions";
 import { cn } from "@/lib/utils";
-import { activeNavHref, navGroups, navLabel } from "./nav";
+import { navGroups, navLabel } from "./nav";
 import { ReviewCountBadge } from "./review-count-badge";
 
 type Account = { name: string; email: string; initials: string };
-
-/**
- * A link OUT of the authenticated app shell.
- *
- * `/hub` and `/console` live in their own route groups, which do not mount
- * DialerProvider — so following one unmounts `useDialer`, and its cleanup calls
- * `device.destroy()`. The homeowner is cut off mid-sentence, the un-filed
- * disposition goes with it, and nothing warns the rep or offers a way back.
- *
- * These two links are rendered during a call, so they ask first. Everything
- * else in the sidebar stays inside the shell and keeps the call alive.
- */
-function ExitLink({
-  href,
-  className,
-  onNavigate,
-  children,
-}: {
-  href: string;
-  className?: string;
-  onNavigate?: () => void;
-  children: ReactNode;
-}) {
-  const router = useRouter();
-  const confirm = useConfirm();
-  // Optional: the sidebar is only ever mounted inside the provider today, but
-  // a missing provider must not throw a whole navigation away.
-  const ctx = useDialerContextOptional();
-  const busy = Boolean(ctx && ctx.dialer.state.status !== "idle");
-
-  return (
-    <Link
-      href={href}
-      className={className}
-      onClick={(e) => {
-        if (!busy) {
-          onNavigate?.();
-          return;
-        }
-        e.preventDefault();
-        void (async () => {
-          const ok = await confirm({
-            title: "You're still on a call",
-            body: "This page is outside the calling workspace, so leaving hangs up and loses any outcome you haven't filed yet.",
-            confirmLabel: "Leave and hang up",
-            cancelLabel: "Stay on the call",
-            tone: "danger",
-          });
-          if (!ok) return;
-          onNavigate?.();
-          router.push(href);
-        })();
-      }}
-    >
-      {children}
-    </Link>
-  );
-}
 
 export function Sidebar({
   account,
@@ -125,12 +65,6 @@ export function Sidebar({
       ),
     }))
     .filter((g) => g.items.length > 0);
-
-  // Decided once across every visible item, not per item — see `activeNavHref`.
-  const activeHref = activeNavHref(
-    pathname,
-    groups.flatMap((g) => g.items.map((it) => it.href)),
-  );
 
   return (
     <div className="glass flex h-full flex-col gap-6 border-r border-border/60">
@@ -182,14 +116,14 @@ export function Sidebar({
                 </Badge>
               )}
             </div>
-            <ExitLink
+            <Link
               href="/hub"
-              onNavigate={onNavigate}
+              onClick={onNavigate}
               className="mt-2 flex items-center justify-center gap-1.5 rounded-lg border border-border/60 py-1.5 text-[11px] font-semibold text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
             >
               <ArrowLeftRight className="h-3.5 w-3.5" />
               Switch organization
-            </ExitLink>
+            </Link>
           </div>
         </div>
       )}
@@ -197,12 +131,13 @@ export function Sidebar({
       <nav className="flex-1 space-y-6 overflow-y-auto px-3">
         {groups.map((group) => (
           <div key={group.label}>
-            <p className="px-3 pb-2 text-[11px] font-bold uppercase tracking-[0.14em] text-ink-3">
+            <p className="px-3 pb-2 text-[10px] font-bold uppercase tracking-[0.14em] text-muted-foreground/60">
               {group.label}
             </p>
             <ul className="space-y-0.5">
               {group.items.map((item) => {
-                const active = item.href === activeHref;
+                const active =
+                  pathname === item.href || pathname.startsWith(`${item.href}/`);
                 const Icon = item.icon;
                 const delay = order++ * 0.035;
                 return (
@@ -232,26 +167,27 @@ export function Sidebar({
                           {/* Sliding active pill — glides between routes */}
                           <motion.span
                             layoutId={`nav-active-${uid}`}
-                            className="absolute inset-0 z-0 rounded-xl bg-primary-soft"
+                            className="absolute inset-0 z-0 rounded-xl bg-primary-soft shadow-[0_0_24px_-6px_hsl(var(--glow)/0.5)]"
                             transition={{ type: "spring", stiffness: 420, damping: 34 }}
                           />
                           <motion.span
                             layoutId={`nav-bar-${uid}`}
-                            className="absolute left-0 top-1/2 z-10 h-5 w-1 -translate-y-1/2 rounded-r-full bg-primary"
+                            className="absolute left-0 top-1/2 z-10 h-5 w-1 -translate-y-1/2 rounded-r-full bg-primary shadow-[0_0_10px_0_hsl(var(--glow)/0.8)]"
                             transition={{ type: "spring", stiffness: 420, damping: 34 }}
                           />
                         </>
                       )}
-                      {/* No glow on the active icon, and no hover scale. The
-                          nav is chrome a rep's eye passes over hundreds of
-                          times a shift; the active state is already carried by
-                          the pill, the bar and the accent colour. */}
-                      <Icon className="relative z-10 h-[18px] w-[18px] shrink-0" />
+                      <Icon
+                        className={cn(
+                          "relative z-10 h-[18px] w-[18px] shrink-0 transition-transform duration-200 group-hover:scale-110 group-active:scale-95",
+                          active && "drop-shadow-[0_0_6px_hsl(var(--glow)/0.7)]",
+                        )}
+                      />
                       <span className="relative z-10 flex-1">{navLabel(item, vocabulary)}</span>
                       {item.countBadge === "reviews" && <ReviewCountBadge />}
                       {item.badge &&
                         (item.badge === "Live" ? (
-                          <span className="relative z-10 flex items-center gap-1.5 text-[11px] font-bold text-success">
+                          <span className="relative z-10 flex items-center gap-1.5 text-[10px] font-bold text-success">
                             <span className="relative flex h-2 w-2">
                               <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-success opacity-60" />
                               <span className="relative inline-flex h-2 w-2 rounded-full bg-success" />
@@ -274,14 +210,14 @@ export function Sidebar({
 
       <div className="space-y-2 px-3 pb-5">
         {superadmin && (
-          <ExitLink
+          <Link
             href="/console"
-            onNavigate={onNavigate}
+            onClick={onNavigate}
             className="flex items-center justify-center gap-2 rounded-xl border border-border/60 px-3 py-2 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
           >
             <ShieldCheck className="h-3.5 w-3.5" />
             Control Center
-          </ExitLink>
+          </Link>
         )}
         <Link
           href="/settings"

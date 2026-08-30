@@ -9,8 +9,7 @@ import { Card } from "@/components/ui/card";
 import { useConfirm } from "@/components/ui/confirm-dialog";
 import { useToast } from "@/components/ui/toast";
 import { useVocabulary } from "@/components/layout/vocabulary";
-import { formatNumber, relativeTime, cn } from "@/lib/utils";
-import { CELL } from "@/lib/ui-density";
+import { formatNumber, relativeTime } from "@/lib/utils";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Recent import jobs — what happened lately, at a glance, with rollback where
@@ -134,37 +133,37 @@ export function RecentJobs() {
           <table className="w-full min-w-max text-left text-sm">
             <thead>
               <tr className="border-b border-border text-xs uppercase tracking-wide text-muted-foreground">
-                <th className={cn(CELL, "font-semibold")}>File</th>
-                <th className={cn(CELL, "font-semibold")}>Status</th>
-                <th className={cn(CELL, "font-semibold")}>Rows</th>
-                <th className={cn(CELL, "font-semibold")}>Created</th>
-                <th className={cn(CELL, "font-semibold")}>Updated</th>
-                <th className={cn(CELL, "font-semibold")}>Skipped</th>
-                <th className={cn(CELL, "font-semibold")}>When</th>
-                <th className={cn(CELL, "font-semibold")} aria-label="Actions" />
+                <th className="py-2 pr-4 font-semibold">File</th>
+                <th className="py-2 pr-4 font-semibold">Status</th>
+                <th className="py-2 pr-4 font-semibold">Rows</th>
+                <th className="py-2 pr-4 font-semibold">Created</th>
+                <th className="py-2 pr-4 font-semibold">Updated</th>
+                <th className="py-2 pr-4 font-semibold">Skipped</th>
+                <th className="py-2 pr-4 font-semibold">When</th>
+                <th className="py-2 font-semibold" aria-label="Actions" />
               </tr>
             </thead>
             <tbody>
               {jobs.map((j) => (
                 <tr key={j.id} className="border-b border-border/50 last:border-0">
-                  <td className={cn(CELL, "max-w-[220px] truncate font-medium")} title={j.fileName}>
+                  <td className="max-w-[220px] truncate py-2 pr-4 font-medium" title={j.fileName}>
                     {j.fileName || "Upload"}
                   </td>
-                  <td className={cn(CELL)}>
+                  <td className="py-2 pr-4">
                     <Badge tone={STATUS_TONE[j.status] ?? "neutral"} dot={j.status === "running"}>
                       {STATUS_LABEL[j.status] ?? j.status}
                     </Badge>
                   </td>
-                  <td className={cn(CELL, "tabular")}>{formatNumber(j.rowsTotal)}</td>
-                  <td className={cn(CELL, "tabular")}>{formatNumber(j.created)}</td>
-                  <td className={cn(CELL, "tabular")}>{formatNumber(j.updated)}</td>
-                  <td className={cn(CELL, "tabular")}>
+                  <td className="tabular py-2 pr-4">{formatNumber(j.rowsTotal)}</td>
+                  <td className="tabular py-2 pr-4">{formatNumber(j.created)}</td>
+                  <td className="tabular py-2 pr-4">{formatNumber(j.updated)}</td>
+                  <td className="tabular py-2 pr-4">
                     {formatNumber(j.duplicates + j.dnc + j.skipped)}
                   </td>
-                  <td className={cn(CELL, "text-muted-foreground")}>
+                  <td className="py-2 pr-4 text-muted-foreground">
                     {j.createdAt ? relativeTime(j.createdAt) : "—"}
                   </td>
-                  <td className={cn(CELL)}>
+                  <td className="py-2">
                     {(j.status === "completed" ||
                       j.status === "canceled" ||
                       j.status === "failed") &&

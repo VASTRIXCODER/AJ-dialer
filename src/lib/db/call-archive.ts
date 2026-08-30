@@ -5,7 +5,6 @@ import { createAdminClient, isAdminConfigured } from "../supabase/admin";
 import { isSupabaseConfigured } from "../supabase/config";
 import { createClient } from "../supabase/server";
 import type { CallOutcome } from "../types";
-import { readProfileScope } from "./scope";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The call archive — every recording and transcript the workspace has, findable.
@@ -65,21 +64,11 @@ export interface ArchiveQuery {
 
 export interface ArchivePage {
   calls: ArchiveCall[];
-  /**
-   * Exact total for the current filter, or null when the count could not be
-   * taken. It used to degrade to `rows.length`, which is the PAGE size — so
-   * `hasMore` evaluated `25 < 25`, the pager stopped at the first page, and the
-   * screen said "25 calls" to somebody with 34,079.
-   */
-  total: number | null;
+  /** Exact total for the current filter — drives the count and the pager. */
+  total: number;
   hasMore: boolean;
   scope: "org" | "own";
-  /**
-   * True when the archive could not be read — Supabase unconfigured, OR the
-   * query failed. Both branches used to return false, so the page rendered its
-   * first-run empty state, under a comment already noting that the message "is
-   * a lie when the archive simply can't be read".
-   */
+  /** True when the archive can't be read at all (Supabase unconfigured). */
   unavailable: boolean;
 }
 
@@ -153,11 +142,15 @@ export async function searchCallArchive(query: ArchiveQuery): Promise<ArchivePag
     } = await supabase.auth.getUser();
     if (!user) return EMPTY;
 
-    const prof = await readProfileScope(supabase, user.id);
-    const orgId = prof.org_id;
+    const { data: prof } = await supabase
+      .from("profiles")
+      .select("org_id,role")
+      .eq("id", user.id)
+      .maybeSingle();
+    const orgId = prof?.org_id ? String(prof.org_id) : null;
     const supervisor = Boolean(
       orgId &&
-        prof.supervisor &&
+        ["owner", "admin", "manager"].includes(String(prof?.role ?? "rep")) &&
         isAdminConfigured(),
     );
     const reader = supervisor ? createAdminClient() : supabase;
@@ -223,7 +216,7 @@ export async function searchCallArchive(query: ArchiveQuery): Promise<ArchivePag
       .range(offset, offset + limit - 1);
     if (error) {
       console.error("[call-archive] query failed:", error.message);
-      return { ...EMPTY, scope, unavailable: true };
+      return { ...EMPTY, scope, unavailable: false };
     }
 
     let nameById = new Map<string, string>();
@@ -242,15 +235,11 @@ export async function searchCallArchive(query: ArchiveQuery): Promise<ArchivePag
     }
 
     const rows = (data ?? []) as unknown as Row[];
-    // NOT `count ?? rows.length`. A page length is not a total, and here it was
-    // a self-fulfilling one: `hasMore` then compared the page against itself.
-    const total = count ?? null;
+    const total = count ?? rows.length;
     return {
       calls: rows.map((r) => mapArchiveRow(r, supervisor, nameById, term)),
       total,
-      // Unknown total ⇒ assume there is more, so the pager still moves. A full
-      // page that claims to be the end is the failure to avoid.
-      hasMore: total === null ? rows.length >= limit : offset + rows.length < total,
+      hasMore: offset + rows.length < total,
       scope,
       unavailable: false,
     };
@@ -259,7 +248,7 @@ export async function searchCallArchive(query: ArchiveQuery): Promise<ArchivePag
       "[call-archive] searchCallArchive failed:",
       e instanceof Error ? e.message : e,
     );
-    return { ...EMPTY, unavailable: true };
+    return { ...EMPTY, unavailable: false };
   }
 }
 
@@ -358,11 +347,15 @@ export async function getArchivedCall(
     } = await supabase.auth.getUser();
     if (!user) return null;
 
-    const prof = await readProfileScope(supabase, user.id);
-    const orgId = prof.org_id;
+    const { data: prof } = await supabase
+      .from("profiles")
+      .select("org_id,role")
+      .eq("id", user.id)
+      .maybeSingle();
+    const orgId = prof?.org_id ? String(prof.org_id) : null;
     const supervisor = Boolean(
       orgId &&
-        prof.supervisor &&
+        ["owner", "admin", "manager"].includes(String(prof?.role ?? "rep")) &&
         isAdminConfigured(),
     );
     const reader = supervisor ? createAdminClient() : supabase;

@@ -45,8 +45,6 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useConfirm } from "@/components/ui/confirm-dialog";
 import { Input } from "@/components/ui/input";
-import { SelectMenu } from "@/components/ui/select-menu";
-import { SecretValue } from "@/components/ui/secret-value";
 import { MAX_CALLER_IDS_PER_REP } from "@/lib/dialer/rotation";
 import type { Member, OrgCompany, OrgFull } from "@/lib/org/membership";
 import {
@@ -385,11 +383,9 @@ function MembersTab({
               <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
                 Join code
               </p>
-              <SecretValue
-                value={org.joinCode}
-                label="Join code"
-                valueClassName="text-sm font-bold tracking-widest"
-              />
+              <p className="truncate font-mono text-sm font-bold tracking-widest">
+                {org.joinCode}
+              </p>
             </div>
             <Button
               size="sm"
@@ -431,26 +427,26 @@ function MembersTab({
                   </div>
                   {canApprove ? (
                     <div className="flex flex-wrap items-center gap-2">
-                      {/* A <label> cannot wrap a button and associate with
-                          it, so the text is the control's own name. */}
-                      <span className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+                      <label className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
                         Role
-                        <SelectMenu
-                          label="Role"
-                          size="sm"
-                          triggerClassName="h-8"
+                        <select
                           value={chosen}
                           disabled={busy === m.id}
-                          disabledReason="Saving…"
-                          onChange={(v) =>
-                            setApproveRole((s) => ({ ...s, [m.id]: v as OrgRole }))
+                          onChange={(e) =>
+                            setApproveRole((s) => ({
+                              ...s,
+                              [m.id]: e.target.value as OrgRole,
+                            }))
                           }
-                          options={approveChoices.map((r) => ({
-                            value: r as string,
-                            label: ROLE_LABEL[r],
-                          }))}
-                        />
-                      </span>
+                          className="h-8 rounded-lg border border-border bg-background px-2 text-xs font-semibold capitalize outline-none focus-visible:border-primary/50"
+                        >
+                          {approveChoices.map((r) => (
+                            <option key={r} value={r}>
+                              {ROLE_LABEL[r]}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
                       <Button
                         size="sm"
                         variant="success"
@@ -639,16 +635,18 @@ function MemberRow({
           </Badge>
         )}
         {canRole && manageable ? (
-          <SelectMenu
-            label="Member role"
-            size="sm"
-            triggerClassName="h-8"
+          <select
             value={m.role}
             disabled={busy}
-            disabledReason="Saving…"
-            onChange={(v) => onRole(v as OrgRole)}
-            options={roleChoices.map((r) => ({ value: r as string, label: ROLE_LABEL[r] }))}
-          />
+            onChange={(e) => onRole(e.target.value as OrgRole)}
+            className="h-8 rounded-lg border border-border bg-background px-2 text-xs font-semibold capitalize outline-none focus-visible:border-primary/50"
+          >
+            {roleChoices.map((r) => (
+              <option key={r} value={r}>
+                {ROLE_LABEL[r]}
+              </option>
+            ))}
+          </select>
         ) : null}
         {showAiToggle && (
           <button
@@ -854,7 +852,7 @@ function PermissionsEditor({
                 {on && <Check className="h-3 w-3" />}
               </span>
               <span className="flex-1">{PERMISSION_LABEL[p]}</span>
-              {!isDefault && <span className="text-[11px] font-bold text-primary">●</span>}
+              {!isDefault && <span className="text-[10px] font-bold text-primary">●</span>}
             </button>
           );
         })}
@@ -1079,7 +1077,7 @@ function DataTab({
             href="/leads/import"
             className="flex w-full flex-col items-center justify-center rounded-2xl border-2 border-dashed border-border bg-muted/30 p-8 text-center transition-colors hover:border-primary/40 hover:bg-primary-soft/30"
           >
-            <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-brand text-white">
+            <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-brand text-white shadow-glow">
               <UploadCloud className="h-6 w-6" />
             </span>
             <span className="mt-3 font-semibold">Open the Import Studio</span>

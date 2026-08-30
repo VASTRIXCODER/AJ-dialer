@@ -152,7 +152,7 @@ export function NotificationsSettings({
               type="checkbox"
               checked={enabled}
               onChange={(e) => setEnabled(e.target.checked)}
-              className="mt-1 h-[22px] w-[22px] rounded border-border accent-primary"
+              className="mt-1 h-4 w-4 rounded border-border accent-primary"
             />
             <span className="min-w-0">
               <span className="block text-sm font-semibold">Send the appointment email</span>
@@ -218,7 +218,7 @@ export function NotificationsSettings({
               type="checkbox"
               checked={ccRep}
               onChange={(e) => setCcRep(e.target.checked)}
-              className="mt-1 h-[22px] w-[22px] rounded border-border accent-primary"
+              className="mt-1 h-4 w-4 rounded border-border accent-primary"
             />
             <span className="min-w-0">
               <span className="block text-sm font-semibold">Copy the rep who booked it</span>

@@ -541,7 +541,7 @@ export function CallDashboard({
       {/* Header */}
       <div className="flex items-start justify-between gap-3 border-b border-border/60 p-5">
         <div className="flex min-w-0 items-center gap-3">
-          <span className="relative flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-brand text-white">
+          <span className="relative flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-brand text-white shadow-glow">
             <Bot className="h-5 w-5" />
             {live && (
               <span className="absolute -bottom-0.5 -right-0.5 h-3.5 w-3.5 rounded-full border-2 border-card bg-success" />
@@ -623,7 +623,7 @@ export function CallDashboard({
               <MessageSquare className="h-3.5 w-3.5" />
               Transcript
               {live && (
-                <span className="ml-1 inline-flex items-center gap-1 rounded-full bg-success/12 px-1.5 py-0.5 text-[11px] font-bold text-success">
+                <span className="ml-1 inline-flex items-center gap-1 rounded-full bg-success/12 px-1.5 py-0.5 text-[10px] font-bold text-success">
                   <Radio className="h-3 w-3" />
                   LIVE
                 </span>
@@ -729,7 +729,7 @@ export function CallDashboard({
                     >
                       <p
                         className={cn(
-                          "mb-0.5 text-[11px] font-bold uppercase tracking-wide",
+                          "mb-0.5 text-[10px] font-bold uppercase tracking-wide",
                           isAgent ? "text-muted-foreground" : "text-white/70",
                         )}
                       >

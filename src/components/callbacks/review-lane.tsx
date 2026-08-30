@@ -21,7 +21,6 @@ import { resolveDispositionDefs, type DispositionDef } from "@/lib/dispositions/
 import type { ReviewQueueRow } from "@/lib/db/review-queue";
 import { canActOnReview, type ReviewAction } from "@/lib/reviews/actions";
 import { formatPhone, relativeTime } from "@/lib/utils";
-import { Z } from "@/lib/z-layers";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The "Needs review" lane (F1) — first section of the callbacks workspace.
@@ -269,9 +268,9 @@ function DispositionPicker({
         type="button"
         aria-label="Close"
         onClick={onClose}
-        className="fixed inset-0 cursor-default" style={{ zIndex: Z.rowMenu }}
+        className="fixed inset-0 z-40 cursor-default"
       />
-      <div style={{ zIndex: Z.rowMenu + 1 }} className="absolute right-0 mt-1 max-h-64 w-48 overflow-y-auto rounded-xl border border-border bg-card p-1 shadow-lift">
+      <div className="absolute right-0 z-50 mt-1 max-h-64 w-48 overflow-y-auto rounded-xl border border-border bg-card p-1 shadow-lift">
         {defs.map((d) => (
           <button
             key={d.key}

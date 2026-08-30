@@ -41,7 +41,6 @@ import {
   type InspectedColumn,
 } from "./plan";
 import { RecentJobs } from "./recent-jobs";
-import { SelectMenu } from "@/components/ui/select-menu";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The Import Studio — the guided, observable, rollbackable replacement for the
@@ -360,7 +359,7 @@ export function ImportStudio({
       <ol className="flex flex-wrap items-center gap-1.5 text-xs" aria-label="Import steps">
         {STEPS.map((s, i) => (
           <li key={s.id} className="flex items-center gap-1.5">
-            {i > 0 && <span className="text-ink-3">→</span>}
+            {i > 0 && <span className="text-muted-foreground/50">→</span>}
             <span
               aria-current={s.id === step ? "step" : undefined}
               className={cn(
@@ -427,7 +426,7 @@ export function ImportStudio({
                   : "border-border bg-muted/30 hover:border-primary/40 hover:bg-primary-soft/30",
               )}
             >
-              <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-brand text-white">
+              <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-brand text-white shadow-glow">
                 {reading ? (
                   <Loader2 className="h-7 w-7 animate-spin" />
                 ) : (
@@ -460,30 +459,28 @@ export function ImportStudio({
                       type="checkbox"
                       checked={hasHeader}
                       onChange={(e) => setHasHeader(e.target.checked)}
-                      className="h-[22px] w-[22px] rounded border-input accent-primary"
+                      className="h-4 w-4 rounded border-input accent-primary"
                     />
                     First row is column names
                     <span className="text-xs font-normal text-muted-foreground">
                       (preset by a guess — please check: broker lists often have none)
                     </span>
                   </label>
-                  <span className="flex items-center gap-2 text-sm font-medium">
+                  <label className="flex items-center gap-2 text-sm font-medium">
                     Delimiter
-                    <SelectMenu
-                      label="Delimiter"
-                      size="sm"
-                      triggerClassName="h-9"
+                    <select
                       value={delimiter}
-                      onChange={(v) => setDelimiter(v as DelimiterChoice)}
-                      options={[
-                        { value: "auto", label: "Auto-detect" },
-                        { value: ",", label: "Comma" },
-                        // A real tab, not the two characters backslash-t.
-                        { value: "\t", label: "Tab" },
-                        { value: ";", label: "Semicolon" },
-                      ]}
-                    />
-                  </span>
+                      onChange={(e) => setDelimiter(e.target.value as DelimiterChoice)}
+                      className="h-9 rounded-xl border border-border bg-background/60 px-2.5 text-sm text-foreground focus-visible:border-primary/50 focus-visible:outline-none"
+                    >
+                      <option value="auto">Auto-detect</option>
+                      <option value=",">Comma</option>
+                      {/* JSX attribute strings don't process escapes — the
+                          expression form is what makes this a real tab. */}
+                      <option value={"\t"}>Tab</option>
+                      <option value=";">Semicolon</option>
+                    </select>
+                  </label>
                 </div>
 
                 {/* First ~100 records, exactly as they'll be read */}

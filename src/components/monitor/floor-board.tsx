@@ -19,7 +19,7 @@ import { useLiveListen } from "@/components/monitor/use-live-listen";
 import { Avatar } from "@/components/ui/avatar";
 import { Card } from "@/components/ui/card";
 import { DataTable, type DataTableColumn } from "@/components/ui/data-table";
-import { useDensity } from "@/components/layout/density";
+import { useStoredDensity } from "@/components/ui/density-toggle";
 import { Menu, MenuItem, MenuTrigger } from "@/components/ui/dropdown-menu";
 import { StatusPill } from "@/components/ui/status-pill";
 import type { CallStatePayload, PresencePayload } from "@/lib/realtime/events";
@@ -36,7 +36,6 @@ import {
 import { useOrgChannel } from "@/lib/realtime/use-org-channel";
 import { useVisiblePoll } from "@/lib/use-visible-poll";
 import { cn, formatDuration, initials } from "@/lib/utils";
-import type { Density } from "@/lib/ui-density";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // FloorBoard — the Live Floor: one accurate, push-fed picture of every seat.
@@ -80,7 +79,7 @@ export function FloorBoard({
   const [now, setNow] = useState(() => Date.now());
   const [filters, setFilters] = useState<FloorFilterValue>(FLOOR_FILTER_DEFAULT);
   const [view, setView] = useState<FloorView>("grid");
-  const { density, setDensity } = useDensity();
+  const [density, setDensity] = useStoredDensity("floor:density");
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [endBusyId, setEndBusyId] = useState<string | null>(null);
   const [actionError, setActionError] = useState("");
@@ -438,7 +437,7 @@ function FloorList({
 }: {
   rows: FloorCardModel[];
   now: number;
-  density: Density;
+  density: "compact" | "comfortable";
   canListen: boolean;
   canIntervene: boolean;
   capabilities: FloorCapabilities;
@@ -503,7 +502,7 @@ function FloorList({
         <span className="inline-flex items-center gap-1.5">
           <StatusPill state={c.state} />
           {c.stale && (
-            <span className="rounded-full bg-warning/15 px-1.5 py-0.5 text-[11px] font-bold uppercase tracking-wide text-warning">
+            <span className="rounded-full bg-warning/15 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-warning">
               Stale
             </span>
           )}

@@ -7,7 +7,6 @@ import { isAIConfigured } from "@/lib/ai/claude";
 import { getAppSettings, isAccountDisabled } from "@/lib/db/app-control";
 import { listLeadGroups } from "@/lib/db/lead-groups";
 import { getUiPreferences } from "@/lib/db/team";
-import { parseDensityPreference } from "@/lib/ui-density";
 import { parseDialerSessionPrefs, parseDialerUserPrefs } from "@/lib/dialer/user-prefs";
 import { getPlatformPool } from "@/lib/dialer/rotation-server";
 import { restrictToAssignedNumbers } from "@/lib/dialer/rotation";
@@ -27,8 +26,6 @@ import { isSupabaseConfigured } from "@/lib/supabase/config";
 import { isVoiceConfigured } from "@/lib/twilio";
 import { MAX_PARALLEL_HUMAN } from "@/lib/use-dialer";
 import { initials } from "@/lib/utils";
-import { isSupervisorRole } from "@/lib/permissions";
-import { orgTimezone } from "@/lib/metrics/definitions";
 
 export default async function AppGroupLayout({
   children,
@@ -56,15 +53,6 @@ export default async function AppGroupLayout({
     ]);
     if (settings.maintenance) {
       return <MaintenanceScreen message={settings.message} />;
-    }
-    // The switch could not be read. Neither "on" nor "off" is known, and
-    // guessing "off" is what a kill switch must never do — an operator flips it
-    // during exactly the kind of incident that breaks this read. Superadmins
-    // are exempt from the switch and can always reach the console to clear it.
-    if (settings.unknown && !superadmin) {
-      return (
-        <MaintenanceScreen message="We can't reach the settings service, so we can't confirm whether the platform is available. Nothing is wrong with your account — try again shortly." />
-      );
     }
     if (disabled) {
       return <MaintenanceScreen suspended />;
@@ -99,7 +87,7 @@ export default async function AppGroupLayout({
   // Supervisors dial the whole org pool; reps dial only their own uploads
   // (mirrors getDialQueue's server-side scoping).
   const dialScope: "org" | "own" =
-    isSupervisorRole(viewer.role) ? "org" : "own";
+    viewer.role && ["owner", "admin", "manager"].includes(viewer.role) ? "org" : "own";
   // The effective caller-ID pool (org settings, or the platform-locked env pool
   // when TWILIO_CALLER_IDS is set) — lets the dialer's caller-ID picker offer
   // exactly the numbers nextCallerId*() will actually validate an override against.
@@ -227,7 +215,7 @@ export default async function AppGroupLayout({
     // Admin → Calling hours: the dialer's outside-hours banner (advisory) and,
     // when `enforced`, mirrored by the server-side refusal in the call routes.
     callingHours: viewer.org?.settings.hours ?? null,
-    orgTimezone: orgTimezone(viewer.org),
+    orgTimezone: viewer.org?.timezone ?? "America/Chicago",
     // The viewer's own dialer prefs (Settings → Dialer preferences).
     userPrefs: parseDialerUserPrefs(uiPreferences),
     // The session builder's remembered choices, so it reopens as it was left.
@@ -269,9 +257,6 @@ export default async function AppGroupLayout({
       // the shell — so no screen has to hardcode "homeowner" or re-derive the
       // vertical's nouns for itself.
       vocabulary={orgVocabulary(viewer.org)}
-      // One display density for the whole workspace, read from the viewer's own
-      // profile so the first paint is already at the density they chose.
-      density={parseDensityPreference(uiPreferences)}
       role={viewer.role}
       superadmin={superadmin}
       dialerConfig={dialerConfig}

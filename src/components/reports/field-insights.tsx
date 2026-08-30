@@ -100,7 +100,7 @@ export function FieldInsights({
           {money.map((i) => (
             <div key={i.key} className="rounded-xl bg-muted p-3">
               <p className="text-lg font-bold tabular">{formatCurrency(i.value)}</p>
-              <p className="text-[11px] text-muted-foreground">{bare(i.label)}</p>
+              <p className="text-[10px] text-muted-foreground">{bare(i.label)}</p>
             </div>
           ))}
           {total != null && (
@@ -108,7 +108,7 @@ export function FieldInsights({
               <p className="text-lg font-bold tabular text-primary">
                 {formatCurrency(total)}
               </p>
-              <p className="text-[11px] text-muted-foreground">
+              <p className="text-[10px] text-muted-foreground">
                 {combinedLabel ?? "Combined"}
               </p>
             </div>

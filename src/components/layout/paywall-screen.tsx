@@ -57,18 +57,9 @@ export function PaywallScreen({
         )}
 
         {billing.note && (
-          // Attributed, deliberately. This is free text an owner typed into
-          // billing settings, and unattributed in the middle of a lock screen
-          // it reads as the platform's own support instruction — one workspace
-          // had a personal Gmail address here, which the product then presented
-          // as its official support channel. Saying where the message comes
-          // from costs one line and stops the product vouching for it.
-          <div className="mt-4 rounded-xl border border-border/60 bg-muted/40 px-4 py-3 text-left">
-            <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-              Note from this workspace
-            </p>
-            <p className="mt-1 text-sm text-muted-foreground">{billing.note}</p>
-          </div>
+          <p className="mt-4 rounded-xl border border-border/60 bg-muted/40 px-4 py-3 text-sm text-muted-foreground">
+            {billing.note}
+          </p>
         )}
 
         <div className="mt-7 flex flex-col gap-2.5 sm:flex-row sm:justify-center">

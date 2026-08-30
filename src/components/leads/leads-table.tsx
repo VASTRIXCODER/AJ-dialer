@@ -40,10 +40,6 @@ import { Button, buttonVariants } from "@/components/ui/button";
 import { useConfirm } from "@/components/ui/confirm-dialog";
 import { Drawer } from "@/components/ui/drawer";
 import { Input, Label } from "@/components/ui/input";
-import { SelectMenu } from "@/components/ui/select-menu";
-import { DensityToggle } from "@/components/ui/density-toggle";
-import { useDensity } from "@/components/layout/density";
-import { CELL, ROW_MIN } from "@/lib/ui-density";
 import { Modal } from "@/components/ui/modal";
 import { useToast } from "@/components/ui/toast";
 import type { Lead, LeadStatus } from "@/lib/types";
@@ -182,11 +178,10 @@ function SortableTh({
   onToggle: (key: string, defaultDir: "asc" | "desc") => void;
 }) {
   const dir = sort?.key === sortKey ? sort.dir : null;
-  const { density } = useDensity();
   return (
     <th
       aria-sort={dir ? (dir === "asc" ? "ascending" : "descending") : undefined}
-      className={cn(CELL, numeric && "text-right")}
+      className={cn("px-4 py-3", numeric && "text-right")}
     >
       <button
         type="button"
@@ -274,10 +269,6 @@ export function LeadsTable({
   const lead360 = useLead360();
   const confirm = useConfirm();
   const [isPending, startTransition] = useTransition();
-  // The biggest grid in the product had no density support at all — the one
-  // table where a manager most wants to see more rows at once was the one
-  // table the setting could not reach.
-  const { density, setDensity } = useDensity();
 
   // Every filter lives in the URL — the server does the actual filtering, so
   // changing one is a navigation, not a state update. replace() keeps the
@@ -998,7 +989,7 @@ export function LeadsTable({
                       "py-1 pl-0.5 pr-2 transition-colors",
                       active
                         ? "text-white/80 hover:text-white"
-                        : "text-ink-3 hover:text-warning",
+                        : "text-muted-foreground/60 hover:text-warning",
                     )}
                   >
                     {favBusy === sl.id ? (
@@ -1078,91 +1069,123 @@ export function LeadsTable({
             </button>
           )}
           {(uploaders.length > 1 || filters.uploaderId) && (
-            <SelectMenu
-              label="Filter by uploader"
-              size="sm"
-              triggerClassName="h-9"
-              disabled={Boolean(filters.mine)}
-              disabledReason="Showing only your own leads — clear that filter first."
+            <select
               value={filters.uploaderId ?? "all"}
-              onChange={(v) => applyFilters({ uploaderId: v === "all" ? undefined : v })}
-              options={[
-                { value: "all", label: "All uploaders" },
-                ...uploaders.map((u) => ({ value: u.id, label: u.name })),
-              ]}
-            />
+              onChange={(e) =>
+                applyFilters({
+                  uploaderId: e.target.value === "all" ? undefined : e.target.value,
+                })
+              }
+              aria-label="Filter by uploader"
+              disabled={Boolean(filters.mine)}
+              className="h-9 rounded-lg border border-border bg-background/60 px-2.5 text-sm font-medium focus-visible:border-primary/50 focus-visible:outline-none"
+            >
+              <option value="all">All uploaders</option>
+              {uploaders.map((u) => (
+                <option key={u.id} value={u.id}>
+                  {u.name}
+                </option>
+              ))}
+            </select>
           )}
           {campaigns.length > 0 && (
-            <SelectMenu
-              label="Filter by campaign"
-              size="sm"
-              triggerClassName="h-9"
+            <select
               value={filters.campaignId === "__none__" ? "none" : (filters.campaignId ?? "all")}
-              onChange={(v) =>
+              onChange={(e) =>
                 applyFilters({
-                  campaignId: v === "all" ? undefined : v === "none" ? "__none__" : v,
+                  campaignId:
+                    e.target.value === "all"
+                      ? undefined
+                      : e.target.value === "none"
+                        ? "__none__"
+                        : e.target.value,
                 })
               }
-              options={[
-                { value: "all", label: "All campaigns" },
-                { value: "none", label: "Unassigned" },
-                ...campaigns.map((c) => ({ value: c.id, label: c.name })),
-              ]}
-            />
+              className="h-9 rounded-lg border border-border bg-background/60 px-2.5 text-sm font-medium focus-visible:border-primary/50 focus-visible:outline-none"
+            >
+              <option value="all">All campaigns</option>
+              <option value="none">Unassigned</option>
+              {campaigns.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
+            </select>
           )}
           {(orgGroups.length > 0 || leads.some((l) => l.leadGroup) || filters.group) && (
-            <SelectMenu
-              label="Filter by group"
-              size="sm"
-              triggerClassName="h-9"
+            <select
               value={filters.group === "__misc__" ? "unsorted" : (filters.group ?? "all")}
-              onChange={(v) =>
+              onChange={(e) =>
                 applyFilters({
-                  group: v === "all" ? undefined : v === "unsorted" ? "__misc__" : v,
+                  group:
+                    e.target.value === "all"
+                      ? undefined
+                      : e.target.value === "unsorted"
+                        ? "__misc__"
+                        : e.target.value,
                 })
               }
-              options={[
-                { value: "all", label: "All groups" },
-                { value: "unsorted", label: "Miscellaneous" },
-                ...groupOptions.map((g) => ({ value: g.key, label: g.label })),
-              ]}
-            />
+              aria-label="Filter by group"
+              className="h-9 rounded-lg border border-border bg-background/60 px-2.5 text-sm font-medium focus-visible:border-primary/50 focus-visible:outline-none"
+            >
+              <option value="all">All groups</option>
+              <option value="unsorted">Miscellaneous</option>
+              {groupOptions.map((g) => (
+                <option key={g.key} value={g.key}>
+                  {g.label}
+                </option>
+              ))}
+            </select>
           )}
           {(countyOptions.length > 0 || filters.county) && (
-            <SelectMenu
-              label="Filter by county"
-              size="sm"
-              triggerClassName="h-9"
+            <select
               value={filters.county === "__none__" ? "unsorted" : (filters.county ?? "all")}
-              onChange={(v) =>
+              onChange={(e) =>
                 applyFilters({
-                  county: v === "all" ? undefined : v === "unsorted" ? "__none__" : v,
+                  county:
+                    e.target.value === "all"
+                      ? undefined
+                      : e.target.value === "unsorted"
+                        ? "__none__"
+                        : e.target.value,
                 })
               }
-              options={[
-                { value: "all", label: "All counties" },
-                { value: "unsorted", label: "No county on file" },
-                ...countyOptions.map((c) => ({ value: c.key, label: c.label })),
-              ]}
-            />
+              aria-label="Filter by county"
+              className="h-9 rounded-lg border border-border bg-background/60 px-2.5 text-sm font-medium focus-visible:border-primary/50 focus-visible:outline-none"
+            >
+              <option value="all">All counties</option>
+              <option value="unsorted">No county on file</option>
+              {countyOptions.map((c) => (
+                <option key={c.key} value={c.key}>
+                  {c.label}
+                </option>
+              ))}
+            </select>
           )}
           {(cityOptions.length > 0 || filters.city) && (
-            <SelectMenu
-              label="Filter by city"
-              size="sm"
-              triggerClassName="h-9"
+            <select
               value={filters.city === "__none__" ? "unsorted" : (filters.city ?? "all")}
-              onChange={(v) =>
+              onChange={(e) =>
                 applyFilters({
-                  city: v === "all" ? undefined : v === "unsorted" ? "__none__" : v,
+                  city:
+                    e.target.value === "all"
+                      ? undefined
+                      : e.target.value === "unsorted"
+                        ? "__none__"
+                        : e.target.value,
                 })
               }
-              options={[
-                { value: "all", label: "All cities" },
-                { value: "unsorted", label: "No city on file" },
-                ...cityOptions.map((c) => ({ value: c.key, label: c.label })),
-              ]}
-            />
+              aria-label="Filter by city"
+              className="h-9 rounded-lg border border-border bg-background/60 px-2.5 text-sm font-medium focus-visible:border-primary/50 focus-visible:outline-none"
+            >
+              <option value="all">All cities</option>
+              <option value="unsorted">No city on file</option>
+              {cityOptions.map((c) => (
+                <option key={c.key} value={c.key}>
+                  {c.label}
+                </option>
+              ))}
+            </select>
           )}
           {FILTERS.map((f) => {
             const active = (filters.status ?? "all") === f.value;
@@ -1174,7 +1197,7 @@ export function LeadsTable({
                   applyFilters({ status: f.value === "all" ? undefined : f.value })
                 }
                 className={cn(
-                  "relative rounded-lg px-3 py-1.5 text-sm font-medium transition-colors duration-[var(--dur-state)]",
+                  "relative rounded-lg px-3 py-1.5 text-sm font-medium transition-colors duration-200",
                   active ? "text-background" : "bg-muted text-muted-foreground hover:bg-secondary",
                 )}
               >
@@ -1189,9 +1212,6 @@ export function LeadsTable({
               </button>
             );
           })}
-          {/* The control, on the grid that needed it most. It is the workspace
-              setting, so flipping it here tightens every other table too. */}
-          <DensityToggle value={density} onChange={setDensity} className="ml-auto" />
         </div>
       </div>
 
@@ -1271,18 +1291,19 @@ export function LeadsTable({
           {campaigns.length > 0 && (
             <>
               <span className="text-sm text-muted-foreground">Assign to</span>
-              <SelectMenu
-                label="Assign to campaign"
-                placeholder="Choose…"
-                size="sm"
-                triggerClassName="h-8"
-                value={assignTo || null}
-                onChange={(v) => setAssignTo(v)}
-                options={[
-                  ...campaigns.map((c) => ({ value: c.id, label: c.name })),
-                  { value: "none", label: "Remove from campaign" },
-                ]}
-              />
+              <select
+                value={assignTo}
+                onChange={(e) => setAssignTo(e.target.value)}
+                className="h-8 rounded-lg border border-border bg-background px-2 text-sm focus-visible:border-primary/50 focus-visible:outline-none"
+              >
+                <option value="">Choose…</option>
+                {campaigns.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
+                ))}
+                <option value="none">— Remove from campaign —</option>
+              </select>
               <Button size="sm" className="gap-1.5" disabled={!assignTo || busy} onClick={assign}>
                 {busy && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
                 Apply
@@ -1292,18 +1313,19 @@ export function LeadsTable({
           {canManage && members.length > 0 && (
             <>
               <span className="text-sm text-muted-foreground">Reassign to</span>
-              <SelectMenu
-                label="Reassign selected leads to"
-                placeholder="Choose teammate…"
-                size="sm"
-                triggerClassName="h-8"
-                value={reassignTo || null}
-                onChange={(v) => setReassignTo(v)}
-                options={members.map((m) => ({
-                  value: m.id,
-                  label: m.id === meId ? "Me" : m.name || "Member",
-                }))}
-              />
+              <select
+                value={reassignTo}
+                onChange={(e) => setReassignTo(e.target.value)}
+                aria-label="Reassign selected leads to"
+                className="h-8 rounded-lg border border-border bg-background px-2 text-sm focus-visible:border-primary/50 focus-visible:outline-none"
+              >
+                <option value="">Choose teammate…</option>
+                {members.map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.id === meId ? "Me" : m.name || "Member"}
+                  </option>
+                ))}
+              </select>
               <Button
                 size="sm"
                 variant="outline"
@@ -1336,18 +1358,19 @@ export function LeadsTable({
                   ownership). This is how a rep dials "only my leads" when a
                   manager imported the list under their own account. */}
               <span className="text-sm text-muted-foreground">Assign to rep</span>
-              <SelectMenu
-                label="Assign selected leads to a rep (keeps the uploader)"
-                placeholder="Choose teammate…"
-                size="sm"
-                triggerClassName="h-8"
-                value={assignRepTo || null}
-                onChange={(v) => setAssignRepTo(v)}
-                options={members.map((m) => ({
-                  value: m.id,
-                  label: m.id === meId ? "Me" : m.name || "Member",
-                }))}
-              />
+              <select
+                value={assignRepTo}
+                onChange={(e) => setAssignRepTo(e.target.value)}
+                aria-label="Assign selected leads to a rep (keeps the uploader)"
+                className="h-8 rounded-lg border border-border bg-background px-2 text-sm focus-visible:border-primary/50 focus-visible:outline-none"
+              >
+                <option value="">Choose teammate…</option>
+                {members.map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.id === meId ? "Me" : m.name || "Member"}
+                  </option>
+                ))}
+              </select>
               <Button
                 size="sm"
                 variant="outline"
@@ -1431,19 +1454,19 @@ export function LeadsTable({
             <thead>
               <tr className="border-b border-border/70 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                 {selectable && (
-                  <th className={CELL}>
+                  <th className="px-4 py-3">
                     <input
                       type="checkbox"
                       checked={allSelected}
                       onChange={toggleAll}
                       aria-label="Select all"
-                      className="h-[22px] w-[22px] cursor-pointer rounded border-border"
+                      className="h-4 w-4 cursor-pointer rounded border-border"
                     />
                   </th>
                 )}
                 <SortableTh label={vocab.LeadNoun} sortKey="name" sort={activeSort} onToggle={toggleSort} />
                 <SortableTh label="Location" sortKey="city" sort={activeSort} onToggle={toggleSort} />
-                <th className={CELL}>Campaign</th>
+                <th className="px-4 py-3">Campaign</th>
                 {valueColumns.map((f) => {
                   const sortKey = f.source === "core" ? CORE_FIELD_SORTS[f.key] : undefined;
                   const numeric = f.type === "currency" || f.type === "number";
@@ -1457,15 +1480,15 @@ export function LeadsTable({
                       onToggle={toggleSort}
                     />
                   ) : (
-                    <th key={f.key} className={cn(CELL, numeric && "text-right")}>
+                    <th key={f.key} className={cn("px-4 py-3", numeric && "text-right")}>
                       {f.label}
                     </th>
                   );
                 })}
-                {flagFields.length > 0 && <th className={CELL}>Profile</th>}
+                {flagFields.length > 0 && <th className="px-4 py-3">Profile</th>}
                 <SortableTh label="Status" sortKey="status" sort={activeSort} onToggle={toggleSort} />
                 <SortableTh label="AI" sortKey="ai_score" numeric sort={activeSort} onToggle={toggleSort} />
-                <th className={CELL} />
+                <th className="px-4 py-3" />
               </tr>
             </thead>
             <tbody className="divide-y divide-border">
@@ -1476,7 +1499,7 @@ export function LeadsTable({
                 <Fragment key={group.key}>
                   {sectioned && (
                     <tr className="border-t border-border bg-muted/40">
-                      <td colSpan={colSpan} className={CELL}>
+                      <td colSpan={colSpan} className="px-4 py-2.5">
                         <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wide text-muted-foreground">
                           <UploadCloud className="h-3.5 w-3.5" />
                           {group.label}
@@ -1487,16 +1510,16 @@ export function LeadsTable({
                       </td>
                     </tr>
                   )}
-                  {group.leads.map((l) => {
+                  {group.leads.map((l, i) => {
                     const name = `${l.firstName} ${l.lastName}`;
                     const cfg = leadStatusConfig[l.status];
                     const isSel = selected.has(l.id);
-                    // A plain row. It used to enter with a 6px rise, staggered
-                    // up to 350ms down the page, on every filter change and
-                    // every page of results — over the densest grid in the app.
                     return (
-                  <tr
+                  <motion.tr
                     key={l.id}
+                    initial={{ opacity: 0, y: 6 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: Math.min(i, 14) * 0.025, duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
                     // Anywhere on the row opens Lead 360 — except clicks that
                     // land on a real control (checkbox, Call, Edit, Delete),
                     // which keep their own behavior.
@@ -1509,40 +1532,20 @@ export function LeadsTable({
                         return;
                       lead360.open(l.id);
                     }}
-                    // The row was mouse-only: nothing focusable, and the cells
-                    // carry no other route to Lead 360. Enter/Space open it,
-                    // and only when the row ITSELF has focus — a key aimed at
-                    // the checkbox or the Call button inside it passes through.
-                    tabIndex={0}
-                    onKeyDown={(e) => {
-                      if (e.target !== e.currentTarget) return;
-                      if (e.key === "Enter" || e.key === " ") {
-                        e.preventDefault();
-                        lead360.open(l.id);
-                      }
-                    }}
-                    className={cn(
-                      "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
-                      // A minimum, not a fixed height — a wrapped address may
-                      // still make its row taller; it just cannot be the only
-                      // 90px row in a column of 40px ones.
-                      ROW_MIN,
-                      "group cursor-pointer align-middle transition-colors hover:bg-muted/50",
-                      isSel && "bg-primary-soft/30",
-                    )}
+                    className={cn("group cursor-pointer transition-colors hover:bg-muted/50", isSel && "bg-primary-soft/30")}
                   >
                     {selectable && (
-                      <td className={CELL}>
+                      <td className="px-4 py-3">
                         <input
                           type="checkbox"
                           checked={isSel}
                           onChange={() => toggleOne(l.id)}
                           aria-label={`Select ${name}`}
-                          className="h-[22px] w-[22px] cursor-pointer rounded border-border"
+                          className="h-4 w-4 cursor-pointer rounded border-border"
                         />
                       </td>
                     )}
-                    <td className={CELL}>
+                    <td className="px-4 py-3">
                       <div className="flex items-center gap-2.5">
                         <Avatar initials={initials(name)} tone="chart-1" size="sm" />
                         <div className="min-w-0">
@@ -1564,7 +1567,7 @@ export function LeadsTable({
                         </div>
                       </div>
                     </td>
-                    <td className={cn(CELL, "text-muted-foreground")}>
+                    <td className="px-4 py-3 text-muted-foreground">
                       <div className="min-w-0 max-w-[280px]">
                         {formatAddress(l) ? (
                           <p className="break-words" title={formatAddress(l)}>
@@ -1583,7 +1586,7 @@ export function LeadsTable({
                         )}
                       </div>
                     </td>
-                    <td className={CELL}>
+                    <td className="px-4 py-3">
                       <div className="flex flex-wrap items-center gap-1">
                         {l.campaignId && campaignName.get(l.campaignId) ? (
                           <Badge tone="accent">{campaignName.get(l.campaignId)}</Badge>
@@ -1608,7 +1611,7 @@ export function LeadsTable({
                         <td
                           key={f.key}
                           className={cn(
-                            CELL,
+                            "px-4 py-3",
                             numeric
                               ? "text-right font-semibold tabular"
                               : "text-muted-foreground",
@@ -1625,7 +1628,7 @@ export function LeadsTable({
                       );
                     })}
                     {flagFields.length > 0 && (
-                      <td className={CELL}>
+                      <td className="px-4 py-3">
                         <div className="flex flex-wrap items-center gap-1 text-muted-foreground">
                           {flagFields
                             .filter((f) => leadFieldValue(l, f) === true)
@@ -1647,10 +1650,10 @@ export function LeadsTable({
                         </div>
                       </td>
                     )}
-                    <td className={CELL}>
-                      <Badge tone={cfg.tone} icon={cfg.icon}>{cfg.label}</Badge>
+                    <td className="px-4 py-3">
+                      <Badge tone={cfg.tone}>{cfg.label}</Badge>
                     </td>
-                    <td className={cn(CELL, "text-right")}>
+                    <td className="px-4 py-3 text-right">
                       <span
                         className={cn(
                           "font-bold tabular",
@@ -1664,7 +1667,7 @@ export function LeadsTable({
                         {l.aiScore ?? "—"}
                       </span>
                     </td>
-                    <td className={CELL}>
+                    <td className="px-4 py-3">
                       <div className="flex items-center justify-end gap-1">
                         {/* Deep-link into the dialer aimed at THIS number —
                             same ?dial=&name= contract the callbacks and
@@ -1703,7 +1706,7 @@ export function LeadsTable({
                         )}
                       </div>
                     </td>
-                  </tr>
+                  </motion.tr>
                     );
                   })}
                 </Fragment>
@@ -1819,7 +1822,7 @@ export function LeadsTable({
                 type="checkbox"
                 checked={saveShared}
                 onChange={(e) => setSaveShared(e.target.checked)}
-                className="h-[22px] w-[22px] rounded border-border"
+                className="h-4 w-4 rounded border-border"
               />
               Share with the whole workspace
             </label>

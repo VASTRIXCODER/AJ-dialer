@@ -1,10 +1,4 @@
 import type { CallOutcome } from "./types";
-import { CONNECTED_OUTCOMES, isConnectedRecord } from "./metrics/definitions";
-
-// The set moved to the canonical metric module (see the note there); it is
-// re-exported from its old home so the seven files that import it from here
-// keep working.
-export { CONNECTED_OUTCOMES };
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Pure call-analytics helpers shared by the reports + dashboard data layer.
@@ -13,6 +7,15 @@ export { CONNECTED_OUTCOMES };
 // ─────────────────────────────────────────────────────────────────────────────
 
 type Row = Record<string, unknown>;
+
+/** Outcomes that mean a real conversation happened. */
+export const CONNECTED_OUTCOMES = new Set<CallOutcome>([
+  "appointment_booked",
+  "callback_scheduled",
+  "qualified",
+  "not_interested",
+  "do_not_call",
+]);
 
 /** Every disposition, in funnel-ish order, with a label + chart color. */
 export const OUTCOME_META: Record<CallOutcome, { label: string; color: string }> = {
@@ -35,72 +38,37 @@ const avg = (a: number[]) =>
   a.length ? Math.round(a.reduce((x, y) => x + y, 0) / a.length) : 0;
 
 const outcomeOf = (r: Row): CallOutcome | null => (r.outcome as CallOutcome) ?? null;
-/**
- * Did a human answer? Delegates to the one predicate rather than re-deciding.
- *
- * This used to test the OUTCOME ALONE, ignoring `human_connected` — the
- * verified flag the answer pipeline writes. The visible consequence was on
- * /reports: the "Connections" tile and the conversion funnel about sixty pixels
- * below it are computed from the SAME array over the SAME window, and printed
- * different numbers, because the tile used isConnectedRecord and the funnel
- * used this. It also counted a row the pipeline had positively marked
- * human_connected=false, and it had no voicemail veto of its own — it only
- * avoided voicemail by accident, because voicemail is not a connected outcome.
- */
-export const isConnectedRow = (r: Row): boolean =>
-  isConnectedRecord({
-    humanConnected: typeof r.human_connected === "boolean" ? r.human_connected : null,
-    outcome: outcomeOf(r),
-  });
+export const isConnectedRow = (r: Row): boolean => {
+  const o = outcomeOf(r);
+  return o != null && CONNECTED_OUTCOMES.has(o);
+};
 
 export interface DispositionRow {
   key: CallOutcome;
   label: string;
   color: string;
   count: number;
-  /** % of attempts that HAVE an outcome — see dispositionBreakdown. */
+  /** % of all calls */
   rate: number;
   connected: boolean;
 }
 
-/**
- * Counts + rates for EVERY disposition (zeros included), busiest first.
- *
- * The denominator is attempts WITH an outcome, not all attempts. It used to be
- * `calls.length` while rows with no outcome were skipped by the counting loop
- * (`if (o) counts[o]…`) — so a fifth of the book sat in the denominator and in
- * none of the buckets, the percentages could never reach 100%, and the mix
- * silently understated every disposition in proportion to how much work was
- * still unfiled. Measured against production on 2026-08-30: 6,955 of 34,079
- * call records carry no outcome, 20.4%.
- *
- * Rows without an outcome are not folded into another bucket and not hidden —
- * `withoutOutcome` reports them, and the registry's `outcome_mix` definition
- * says so.
- */
+/** Counts + rates for EVERY disposition (zeros included), busiest first. */
 export function dispositionBreakdown(calls: Row[]): DispositionRow[] {
+  const total = calls.length;
   const counts = {} as Record<CallOutcome, number>;
-  let filed = 0;
   for (const c of calls) {
     const o = outcomeOf(c);
-    if (o) {
-      counts[o] = (counts[o] ?? 0) + 1;
-      filed += 1;
-    }
+    if (o) counts[o] = (counts[o] ?? 0) + 1;
   }
   return ALL_OUTCOMES.map((key) => ({
     key,
     label: OUTCOME_META[key].label,
     color: OUTCOME_META[key].color,
     count: counts[key] ?? 0,
-    rate: pct(counts[key] ?? 0, filed),
+    rate: pct(counts[key] ?? 0, total),
     connected: CONNECTED_OUTCOMES.has(key),
   })).sort((a, b) => b.count - a.count || ORDER.get(a.key)! - ORDER.get(b.key)!);
-}
-
-/** How many of these attempts have no outcome recorded at all. */
-export function withoutOutcome(calls: Row[]): number {
-  return calls.filter((c) => !outcomeOf(c)).length;
 }
 
 export interface ChannelRow {

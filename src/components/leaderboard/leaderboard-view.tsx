@@ -328,7 +328,7 @@ export function LeaderboardView({
                     "flex w-full items-start justify-center rounded-t-xl pt-2 text-lg font-black",
                     heights[i],
                     isFirst
-                      ? "bg-brand text-white"
+                      ? "bg-brand text-white shadow-[0_-8px_30px_-10px_hsl(var(--glow)/0.7)]"
                       : "bg-muted text-muted-foreground",
                   )}
                 >
@@ -394,7 +394,7 @@ export function LeaderboardView({
                   <p className="flex items-center gap-1.5 truncate font-semibold">
                     {rep.name}
                     {me && (
-                      <span className="rounded bg-primary-soft px-1.5 py-0.5 text-[11px] font-bold text-primary">
+                      <span className="rounded bg-primary-soft px-1.5 py-0.5 text-[10px] font-bold text-primary">
                         YOU
                       </span>
                     )}
@@ -405,7 +405,7 @@ export function LeaderboardView({
                     </Badge>
                     {rep.streakDays >= 2 && (
                       <Tooltip content={`${rep.streakDays} consecutive days with a connect`}>
-                        <span className="inline-flex cursor-help items-center gap-0.5 rounded-full bg-warning/15 px-1.5 py-0.5 text-[11px] font-bold text-warning tabular">
+                        <span className="inline-flex cursor-help items-center gap-0.5 rounded-full bg-warning/15 px-1.5 py-0.5 text-[10px] font-bold text-warning tabular">
                           <Flame className="h-3 w-3" />
                           {rep.streakDays}
                         </span>
@@ -413,7 +413,7 @@ export function LeaderboardView({
                     )}
                     {rep.personalBestPoints > 0 && (
                       <Tooltip content={`Personal best: ${rep.personalBestPoints} points in one day (last 90 days)`}>
-                        <span className="inline-flex cursor-help items-center gap-0.5 rounded-full bg-accent-soft px-1.5 py-0.5 text-[11px] font-bold text-accent tabular">
+                        <span className="inline-flex cursor-help items-center gap-0.5 rounded-full bg-accent-soft px-1.5 py-0.5 text-[10px] font-bold text-accent tabular">
                           <Award className="h-3 w-3" />
                           PB {rep.personalBestPoints}
                         </span>
@@ -451,7 +451,7 @@ export function LeaderboardView({
         </div>
         {ranked.length === 0 && (
           <div className="flex flex-col items-center gap-2 p-10 text-center">
-            <Trophy className="h-8 w-8 text-ink-3" />
+            <Trophy className="h-8 w-8 text-muted-foreground/50" />
             <p className="text-sm font-medium">No one on the floor yet</p>
             <p className="text-sm text-muted-foreground">
               Rankings appear as your team logs calls and books appointments.

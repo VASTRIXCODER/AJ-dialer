@@ -45,13 +45,6 @@ export interface DrainReport {
   paused: boolean;
   /** Reasons that blocked something this tick, for the operator's readout. */
   blockedReasons: string[];
-  /**
-   * Set when the tick could not run to completion. Without it every counter
-   * above reads as a truthful zero — "claimed 0, sent 0" is exactly what a
-   * healthy empty queue looks like, so a database outage was indistinguishable
-   * from an idle minute in the one readout that would have shown it.
-   */
-  error?: string;
 }
 
 export async function drainMessages(now = new Date()): Promise<DrainReport> {
@@ -77,13 +70,7 @@ export async function drainMessages(now = new Date()): Promise<DrainReport> {
       return report;
     }
 
-    const { data: claimed, error: claimErr } = await admin.rpc("app_claim_messages", {
-      p_limit: BATCH,
-    });
-    if (claimErr) {
-      report.error = `Couldn't claim a batch: ${claimErr.message}`;
-      return report;
-    }
+    const { data: claimed } = await admin.rpc("app_claim_messages", { p_limit: BATCH });
     const rows = (claimed ?? []) as Row[];
     report.claimed = rows.length;
     if (!rows.length) return report;
@@ -245,9 +232,8 @@ export async function drainMessages(now = new Date()): Promise<DrainReport> {
     }
 
     return report;
-  } catch (err) {
+  } catch {
     count("messaging.drain_fail", 1);
-    report.error = err instanceof Error ? err.message : "The send drain threw.";
     return report;
   } finally {
     // In a finally, for the same reason the orchestration heartbeat is: the
@@ -292,19 +278,13 @@ async function blockMessage(
  * what happened using the provider_sid — which is why the sid is written before
  * anything else — and until someone does, the row sits in `needs_review` where
  * it is visible rather than silently pretending to be in flight.
- *
- * Returns null when the sweep could not run, which is NOT the same as "nothing
- * was stuck" — and the difference is the whole point of the sweep. A zero here
- * is read by an operator as "the queue is healthy"; if the update failed, the
- * rows are still sitting in `sending`, invisible, and reporting 0 is how they
- * stay that way.
  */
-export async function flagStuckMessages(olderThanMinutes = 15): Promise<number | null> {
+export async function flagStuckMessages(olderThanMinutes = 15): Promise<number> {
   if (!isAdminConfigured()) return 0;
   try {
     const admin = createAdminClient();
     const cutoff = new Date(Date.now() - olderThanMinutes * 60_000).toISOString();
-    const { data, error } = await admin
+    const { data } = await admin
       .from("messages")
       .update({
         status: "needs_review",
@@ -315,12 +295,11 @@ export async function flagStuckMessages(olderThanMinutes = 15): Promise<number |
       .eq("status", "sending")
       .lt("updated_at", cutoff)
       .select("id");
-    if (error) return null;
     const n = (data ?? []).length;
     if (n) count("messaging.stuck_flagged", n);
     return n;
   } catch {
-    return null;
+    return 0;
   }
 }
 

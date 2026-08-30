@@ -20,12 +20,7 @@ import {
   type Funnel,
 } from "../call-analytics";
 import { zonedDayHour, zonedDayKey } from "../dialer/schedule";
-import {
-  DEFAULT_TIMEZONE,
-  isCancelledAppointment,
-  isConnectedRecord,
-  orgTimezone,
-} from "../metrics/definitions";
+import { isConnectedRecord, orgTimezone } from "../metrics/definitions";
 import {
   composeLeaderboard,
   type ComposedBoard,
@@ -47,7 +42,6 @@ import type {
   KpiPoint,
   MetricSummary,
 } from "../types";
-import { readProfileScope } from "./scope";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // DB-computed reporting. Every dashboard / report / leaderboard number is
@@ -166,11 +160,15 @@ export async function getCallHistory(opts: {
     } = await supabase.auth.getUser();
     if (!user) return { calls: [], hasMore: false, scope: "own" };
 
-    const prof = await readProfileScope(supabase, user.id);
-    const orgId = prof.org_id;
+    const { data: prof } = await supabase
+      .from("profiles")
+      .select("org_id,role")
+      .eq("id", user.id)
+      .maybeSingle();
+    const orgId = prof?.org_id ? String(prof.org_id) : null;
     const supervisor = Boolean(
       orgId &&
-        prof.supervisor &&
+        ["owner", "admin", "manager"].includes(String(prof?.role ?? "rep")) &&
         isAdminConfigured(),
     );
     const reader = supervisor ? createAdminClient() : supabase;
@@ -377,11 +375,15 @@ export async function getReportingData(
     // Scope: supervisors (manager/admin/owner) see the whole org; reps see their
     // own. Org-wide reads use the service-role client (RLS would otherwise hide
     // other reps' rows), scoped to the org in app code.
-    const prof = await readProfileScope(supabase, user.id, "full_name,avatar_color,org_id,role");
-    const orgId = prof.org_id;
+    const { data: prof } = await supabase
+      .from("profiles")
+      .select("full_name,avatar_color,org_id,role")
+      .eq("id", user.id)
+      .maybeSingle();
+    const orgId = prof?.org_id ? String(prof.org_id) : null;
     const supervisor = Boolean(
       orgId &&
-        prof.supervisor &&
+        ["owner", "admin", "manager"].includes(String(prof?.role ?? "rep")) &&
         isAdminConfigured(),
     );
     const reader = supervisor ? createAdminClient() : supabase;
@@ -412,12 +414,7 @@ export async function getReportingData(
         let q = reader
           .from("call_records")
           .select(
-            // `failure_kind` is here because the published connect_rate
-            // definition promises to exclude system failures from its
-            // denominator, and the column was never selected — so the shipped
-            // rate was structurally incapable of matching its own tooltip, on
-            // four tiles that carry it.
-            "id,owner_id,outcome,duration_sec,human_connected,talk_sec,failure_kind,channel,started_at,lead_name,phone,conversation_id,recording_url,summary",
+            "id,owner_id,outcome,duration_sec,human_connected,talk_sec,channel,started_at,lead_name,phone,conversation_id,recording_url,summary",
           )
           .eq(scopeCol, scopeVal);
         if (ownScoped) q = q.eq("org_id", orgId as string);
@@ -452,26 +449,27 @@ export async function getReportingData(
           const { count } = await q;
           return count ?? 0;
         };
-        // Averaged in SQL. This was a `.limit(5000)` row fetch with no
-        // `.range()`, so it was an average over the newest ~1,000 leads —
-        // rendered in the same panel, in the same typography, as the EV / pool
-        // / battery shares beside it, which are exact head counts. Nothing
-        // distinguished the sample from the census.
-        const [total, ev, pool, battery, averages] = await Promise.all([
+        const sampleQ = (() => {
+          let q = reader
+            .from("leads")
+            .select("utility_bill,solar_payment")
+            .eq(scopeCol, scopeVal);
+          if (ownScoped) q = q.eq("org_id", orgId as string);
+          return q.order("created_at", { ascending: false }).limit(5000);
+        })();
+        const [total, ev, pool, battery, sample] = await Promise.all([
           countWhere(),
           countWhere((q) => q.eq("has_ev", true)),
           countWhere((q) => q.eq("has_pool", true)),
           countWhere((q) => q.eq("has_battery", true)),
-          reader.rpc("app_lead_field_averages", {
-            p_column: scopeCol,
-            p_value: scopeVal,
-            p_org: ownScoped ? orgId : null,
-          }),
+          sampleQ,
         ]);
-        const agg = ((averages.data ?? [])[0] ?? {}) as Row;
+        const rows = ((sample as { data?: Row[] }).data ?? []) as Row[];
+        const bills = rows.map((r) => Number(r.utility_bill ?? 0)).filter((n) => n > 0);
+        const solars = rows.map((r) => Number(r.solar_payment ?? 0)).filter((n) => n > 0);
         return {
-          avgUtilityBill: Number(agg.avg_utility_bill ?? 0) || 0,
-          avgSolarPayment: Number(agg.avg_solar_payment ?? 0) || 0,
+          avgUtilityBill: avg(bills),
+          avgSolarPayment: avg(solars),
           evOwnership: pct(ev, total),
           poolOwnership: pct(pool, total),
           batteryOwnership: pct(battery, total),
@@ -562,19 +560,6 @@ export async function getReportingData(
     // ── Counts (period-scoped) ──────────────────────────────────────────────
     const totalCalls = periodCalls.length;
     const connections = periodCalls.filter(isConnected).length;
-    /**
-     * The connect-rate denominator the glossary has always described:
-     * completed attempts, minus system failures — a row the provider never
-     * got onto the network is not an attempt somebody declined to answer.
-     *
-     * `failure_kind` set with NO outcome is the shape of one: something broke
-     * before a disposition could exist. A failure that a rep later
-     * dispositioned anyway stays in, because they judged it a real attempt.
-     */
-    const systemFailures = periodCalls.filter(
-      (c) => c.failure_kind != null && String(c.failure_kind) !== "" && !outcomeOf(c),
-    ).length;
-    const eligibleAttempts = Math.max(0, totalCalls - systemFailures);
     const byOutcome = {} as Record<CallOutcome, number>;
     for (const c of periodCalls) {
       const o = outcomeOf(c);
@@ -619,7 +604,7 @@ export async function getReportingData(
       connections,
       conversations: connections,
       avgCallLenSec: avg(talkSecs),
-      connectRate: pct(connections, eligibleAttempts),
+      connectRate: pct(connections, totalCalls),
       appointmentRate: pct(apptOutcome, totalCalls),
       callbackRate: pct(callbackOutcome, totalCalls),
       noAnswerRate: pct(noAnswerOutcome, totalCalls),
@@ -628,8 +613,7 @@ export async function getReportingData(
       // keeps its history — but a review the rep re-dispositioned away was never a
       // booking, and counting it here would quietly inflate every report the day
       // that change shipped. Excluding cancelled reproduces the old count exactly.
-      appointmentsBooked: periodAppts.filter((a) => !isCancelledAppointment(a.status == null ? null : String(a.status)))
-        .length,
+      appointmentsBooked: periodAppts.filter((a) => a.status !== "cancelled").length,
       appointmentsCompleted: periodAppts.filter((a) => a.status === "completed").length,
       noShows: periodAppts.filter((a) => a.status === "no_show").length,
       reschedules: periodAppts.filter((a) => a.status === "rescheduled").length,
@@ -667,23 +651,9 @@ export async function getReportingData(
     const kpiSeries = buildSeries(7);
     const trend30 = buildSeries(30);
 
-    // ── Hourly (org-local hour) ────────────────────────────────────────────────
-    // The loop was a fixed `h = 8; h <= 18`, so every call placed before 8am or
-    // after 6pm simply did not appear — measured against production on
-    // 2026-08-30, 10,728 of 34,079 records, 31.5%, i.e. about a third of the
-    // calling day. A rep working evenings saw an empty chart.
-    //
-    // The business window is still the FLOOR, so a normal day looks exactly as
-    // it did; it just widens to include any hour that actually has calls.
-    const hoursWithCalls = todays
-      .map((c) =>
-        c.started_at ? zonedDayHour(new Date(String(c.started_at)), timezone).hour : null,
-      )
-      .filter((h): h is number => h !== null);
-    const firstHour = Math.min(8, ...hoursWithCalls);
-    const lastHour = Math.max(18, ...hoursWithCalls);
+    // ── Hourly (today, business window, org-local hour) ─────────────────────────
     const hourlyCalls: { hour: string; calls: number; connects: number }[] = [];
-    for (let h = firstHour; h <= lastHour; h++) {
+    for (let h = 8; h <= 18; h++) {
       const inHour = todays.filter(
         (c) =>
           c.started_at && zonedDayHour(new Date(String(c.started_at)), timezone).hour === h,
@@ -712,7 +682,7 @@ export async function getReportingData(
     // Cancelled reviews are dead weight in the dashboard's upcoming list — and
     // they'd eat the 30 slots the live ones need.
     const appointments: ApptLite[] = appts
-      .filter((a) => !isCancelledAppointment(a.status == null ? null : String(a.status)))
+      .filter((a) => a.status !== "cancelled")
       .slice(0, 30)
       .map((a, i) => ({
         id: String(a.id ?? i),
@@ -1061,7 +1031,7 @@ export async function getTeamLeaderboard(): Promise<TeamLeaderboard> {
       .eq("id", user.id)
       .maybeSingle();
     const orgId = prof?.org_id ? String(prof.org_id) : null;
-    if (!orgId) return emptyTeamLeaderboard(DEFAULT_LEADERBOARD, DEFAULT_TIMEZONE, user.id);
+    if (!orgId) return emptyTeamLeaderboard(DEFAULT_LEADERBOARD, "America/Chicago", user.id);
     const { data: org } = await supabase
       .from("organizations")
       .select("timezone,settings")
@@ -1079,7 +1049,7 @@ export async function getTeamLeaderboard(): Promise<TeamLeaderboard> {
     console.error("[metrics] getTeamLeaderboard failed:", e instanceof Error ? e.message : e);
     // Supabase is configured (checked above) — a thrown query is a real failure,
     // so return an empty board rather than the demo team over live data.
-    return emptyTeamLeaderboard(DEFAULT_LEADERBOARD, DEFAULT_TIMEZONE, null);
+    return emptyTeamLeaderboard(DEFAULT_LEADERBOARD, "America/Chicago", null);
   }
 }
 
@@ -1090,7 +1060,7 @@ export async function getTeamLeaderboard(): Promise<TeamLeaderboard> {
  * calendar windows, streaks all come from composeLeaderboard itself).
  */
 function fallbackLeaderboard(): TeamLeaderboard {
-  const timezone = DEFAULT_TIMEZONE;
+  const timezone = "America/Chicago";
   const now = Date.now();
   const rows: Row[] = [];
   const members: LeaderboardMember[] = sampleLeaderboard.map((r) => ({

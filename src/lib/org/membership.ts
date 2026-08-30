@@ -132,11 +132,7 @@ function mapOrg(o: Row): OrgFull {
     logoUrl: String(o.logo_url ?? ""),
     brandColor: String(o.brand_color ?? ""),
     accentColor: String(o.accent_color ?? ""),
-    // NOT `?? "America/Los_Angeles"`. The column defaulted to that string, so
-    // re-applying it here made "nobody chose a zone" and "somebody chose Los
-    // Angeles" the same value — and defeated orgTimezone()'s documented
-    // fallback, which therefore never once fired. See storedOrgTimezone.
-    timezone: o.timezone ? String(o.timezone) : "",
+    timezone: String(o.timezone ?? "America/Los_Angeles"),
     dialerTemplate: String(o.dialer_template ?? "general"),
     defaultRole: isOrgRole(role) ? role : "rep",
     ownerId: o.owner_id ? String(o.owner_id) : null,
@@ -296,7 +292,7 @@ export const getActiveMembership = cache(async (userId: string): Promise<Member 
     const activeOrgId = prof?.org_id ? String(prof.org_id) : null;
     if (!activeOrgId) return null; // no org entered → the Hub will prompt them
 
-    const { data, error } = await supabase
+    const { data } = await supabase
       .from("organization_members")
       .select("*")
       .eq("user_id", userId)
@@ -304,13 +300,6 @@ export const getActiveMembership = cache(async (userId: string): Promise<Member 
       .eq("status", "active")
       .maybeSingle();
     if (data) return mapMember(data as Row);
-    // The bridge below is for "no membership row exists" — NOT for "could not
-    // ask". An unchecked read fell through to it on failure and synthesized an
-    // ACTIVE membership from the denormalized profiles.role, which drops the
-    // member's `permissions` overrides entirely: a permission an admin
-    // deliberately REVOKED came back, and one deliberately GRANTED disappeared.
-    // Failing to the Hub is the recoverable direction.
-    if (error) return null;
 
     // Resilience bridge: a profile assigned to an org (by the superadmin console,
     // or by the schema backfill before the members table existed) still counts.
@@ -1153,30 +1142,24 @@ const COLUMN_MAP: Record<string, string> = {
  */
 async function otherOrgsCallerIds(excludeOrgId: string): Promise<Set<string>> {
   if (!isAdminConfigured()) return new Set();
-  const admin = createAdminClient();
-  const { data, error } = await admin
-    .from("organizations")
-    .select("id, settings")
-    .neq("id", excludeOrgId);
-    // THROWS rather than returning an empty set. An empty set means "no other
-    // workspace is using any of these numbers", which is the answer that
-    // APPROVES the save — so an unchecked read turned a cross-tenant conflict
-    // check into a rubber stamp. The comment above this function calls sharing
-    // a caller ID across orgs "exactly the kind of cross-tenant mixing this
-    // platform has to prevent"; a guard that cannot read its data must not
-    // decide there is nothing to prevent.
-  if (error) {
-    throw new Error(`Could not check caller-ID conflicts: ${error.message}`);
-  }
-  const out = new Set<string>();
-  for (const row of (data ?? []) as Row[]) {
-    const s = mergeSettings((row as Row).settings);
-    for (const n of [s.dialing.callerId, ...(s.dialing.callerIds ?? [])]) {
-      const norm = normalizePhone(String(n ?? ""));
-      if (norm) out.add(norm);
+  try {
+    const admin = createAdminClient();
+    const { data } = await admin
+      .from("organizations")
+      .select("id, settings")
+      .neq("id", excludeOrgId);
+    const out = new Set<string>();
+    for (const row of (data ?? []) as Row[]) {
+      const s = mergeSettings((row as Row).settings);
+      for (const n of [s.dialing.callerId, ...(s.dialing.callerIds ?? [])]) {
+        const norm = normalizePhone(String(n ?? ""));
+        if (norm) out.add(norm);
+      }
     }
+    return out;
+  } catch {
+    return new Set();
   }
-  return out;
 }
 
 /**
@@ -1188,24 +1171,20 @@ export async function orgIdForCallerId(number: string): Promise<string | null> {
   if (!isAdminConfigured()) return null;
   const target = normalizePhone(number);
   if (!target) return null;
-  const admin = createAdminClient();
-  // THROWS on a failed read rather than returning null. Null means "no
-  // workspace owns this number"; a resolved error meant the same thing, and
-  // the inbound-SMS route uses this to decide whether a STOP can be honoured.
-  // So a database blip turned an opt-out into a no-op that still replied "You
-  // have been unsubscribed".
-  const { data, error } = await admin.from("organizations").select("id, settings");
-  if (error) {
-    throw new Error(`Could not resolve the workspace for ${target}: ${error.message}`);
-  }
-  for (const row of (data ?? []) as Row[]) {
-    const s = mergeSettings((row as Row).settings);
-    const pool = [s.dialing.callerId, ...(s.dialing.callerIds ?? [])];
-    if (pool.some((n) => normalizePhone(String(n ?? "")) === target)) {
-      return String((row as Row).id);
+  try {
+    const admin = createAdminClient();
+    const { data } = await admin.from("organizations").select("id, settings");
+    for (const row of (data ?? []) as Row[]) {
+      const s = mergeSettings((row as Row).settings);
+      const pool = [s.dialing.callerId, ...(s.dialing.callerIds ?? [])];
+      if (pool.some((n) => normalizePhone(String(n ?? "")) === target)) {
+        return String((row as Row).id);
+      }
     }
+    return null;
+  } catch {
+    return null;
   }
-  return null;
 }
 
 export async function updateOrganizationSettings(patch: OrgUpdate): Promise<Result> {
@@ -1222,16 +1201,7 @@ export async function updateOrganizationSettings(patch: OrgUpdate): Promise<Resu
       .map((n) => normalizePhone(String(n ?? "")))
       .filter((n): n is string => Boolean(n));
     if (candidates.length) {
-      let taken: Set<string>;
-      try {
-        taken = await otherOrgsCallerIds(auth.actor.orgId);
-      } catch {
-        return {
-          ok: false,
-          error:
-            "Couldn't verify that these numbers aren't in use by another workspace, so nothing was saved. Try again in a moment.",
-        };
-      }
+      const taken = await otherOrgsCallerIds(auth.actor.orgId);
       const conflict = candidates.find((n) => taken.has(n));
       if (conflict) {
         return {
@@ -1263,21 +1233,11 @@ export async function updateOrganizationSettings(patch: OrgUpdate): Promise<Resu
     if (value !== undefined) fields[column] = value;
   }
   if (patch.settings) {
-    // Settings is a JSONB blob and this is a read-modify-write, so the read
-    // failing is not a small thing: `current` was null on a failed read and the
-    // spread fell back to DEFAULT_ORG_SETTINGS, which then OVERWROTE the row.
-    // Saving one toggle during a transient failure reset the workspace's
-    // dialing rules, calling hours, dispositions, vocabulary and branding to
-    // factory defaults, and reported success.
     const current = await getOrgById(auth.actor.orgId);
-    if (!current) {
-      return {
-        ok: false,
-        error:
-          "Couldn't read this workspace's current settings, so nothing was saved. Saving now would have replaced everything else with defaults. Try again in a moment.",
-      };
-    }
-    fields.settings = { ...current.settings, ...patch.settings };
+    fields.settings = {
+      ...(current?.settings ?? DEFAULT_ORG_SETTINGS),
+      ...patch.settings,
+    };
   }
   if (Object.keys(fields).length === 0) return { ok: true };
   const { error } = await admin

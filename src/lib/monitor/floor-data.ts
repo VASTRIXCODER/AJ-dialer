@@ -266,14 +266,13 @@ export async function getFloorPace(
         .select("user_id, name")
         .eq("org_id", orgId)
         .eq("status", "active"),
-      // See db/floor.ts — same query, same truncation, same fix. `.limit(20000)`
-      // with no `.range()` was capped at the PostgREST response ceiling, and
-      // the DESC order meant the calls it dropped were the morning's.
-      admin.rpc("app_floor_calls_by_day", {
-        p_org: orgId,
-        p_since: since,
-        p_tz: timezone,
-      }),
+      admin
+        .from("call_records")
+        .select("owner_id, started_at")
+        .eq("org_id", orgId)
+        .gte("started_at", since)
+        .order("started_at", { ascending: false })
+        .limit(20000),
     ]);
 
     const roster = ((membersRes.data ?? []) as Row[]).map((m) => ({
@@ -281,19 +280,14 @@ export async function getFloorPace(
       name: String(m.name ?? ""),
     }));
 
-    // `error` was never inspected here either, so a failed query rendered as a
-    // floor that had placed no calls today.
-    if (callsRes.error) {
-      throw new Error(`Couldn't count today's calls: ${callsRes.error.message}`);
-    }
     const callsToday: Record<string, number> = {};
     let total = 0;
     for (const c of (callsRes.data ?? []) as Row[]) {
-      if (!c.owner_id || String(c.day_key ?? "") !== todayKey) continue;
+      if (!c.started_at || !c.owner_id) continue;
+      if (zonedDayKey(new Date(String(c.started_at)), timezone) !== todayKey) continue;
       const k = String(c.owner_id);
-      const n = Number(c.n ?? 0);
-      callsToday[k] = (callsToday[k] ?? 0) + n;
-      total += n;
+      callsToday[k] = (callsToday[k] ?? 0) + 1;
+      total += 1;
     }
     return { roster, callsToday, totalCallsToday: total };
   } catch {

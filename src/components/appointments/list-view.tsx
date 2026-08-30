@@ -108,11 +108,7 @@ function ApptRow({ a, api }: { a: AppointmentRow; api: ListApi }) {
       }}
       className={cn(
         "group flex cursor-pointer items-center gap-3 transition-colors hover:bg-muted/40 focus-visible:bg-muted/40 focus-visible:outline-none",
-        // Vertical only. Horizontal padding held at px-5 and the type held at
-        // its own size: Compact used to re-typeset the appointment's name and
-        // move the whole row sideways.
-        "px-5",
-        compact ? "py-2.5" : "py-3.5",
+        compact ? "px-4 py-2.5" : "px-5 py-3.5",
       )}
     >
       {selectable && (
@@ -137,18 +133,12 @@ function ApptRow({ a, api }: { a: AppointmentRow; api: ListApi }) {
       <div
         className={cn(
           "flex shrink-0 items-center justify-center rounded-xl font-semibold",
-          // The avatar box may shrink — it is a box, not text. Its monogram
-          // does not: text-[11px] is below the legibility floor anyway.
-          "text-xs",
-          compact ? "h-8 w-8" : "h-10 w-10",
+          compact ? "h-8 w-8 text-[11px]" : "h-10 w-10 text-xs",
           review ? "bg-warning/15 text-warning" : "bg-accent-soft text-accent",
         )}
       >
-        {/* Held constant. `h-3.5` is 14px and `h-4` is 12px on this project's
-            spacing scale, so the compact branch made the icon BIGGER — the one
-            thing density is not allowed to touch, in the wrong direction. */}
         {a.source === "ai" ? (
-          <Sparkles className="h-4 w-4" />
+          <Sparkles className={compact ? "h-3.5 w-3.5" : "h-4 w-4"} />
         ) : (
           initials(a.leadName)
         )}
@@ -156,7 +146,7 @@ function ApptRow({ a, api }: { a: AppointmentRow; api: ListApi }) {
 
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
-          <p className="truncate font-semibold">{a.leadName}</p>
+          <p className={cn("truncate font-semibold", compact && "text-sm")}>{a.leadName}</p>
           {a.source === "ai" && (
             <Badge tone="accent" className="hidden gap-1 sm:inline-flex">
               <Sparkles className="h-3 w-3" />
@@ -179,14 +169,11 @@ function ApptRow({ a, api }: { a: AppointmentRow; api: ListApi }) {
 
       {review && api.access.canManage ? (
         <div className="flex shrink-0 items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
-          {/* "Approve" is `hidden sm:inline`, so on a phone these are two
-              unlabelled icons — on the control that books somebody's time. */}
           <Button
             size="sm"
             variant="success"
             onClick={() => api.onApprove(a.id)}
             disabled={busy}
-            aria-label={`Approve the appointment for ${a.leadName}`}
             className="gap-1.5"
           >
             {busy ? (
@@ -196,13 +183,7 @@ function ApptRow({ a, api }: { a: AppointmentRow; api: ListApi }) {
             )}
             <span className="hidden sm:inline">Approve</span>
           </Button>
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() => api.onOpen(a)}
-            aria-label={`Open the appointment for ${a.leadName}`}
-            className="gap-1.5"
-          >
+          <Button size="sm" variant="outline" onClick={() => api.onOpen(a)} className="gap-1.5">
             <Pencil className="h-3.5 w-3.5" />
             <span className="hidden sm:inline">Edit</span>
           </Button>

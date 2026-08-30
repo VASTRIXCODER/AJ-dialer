@@ -1,6 +1,5 @@
 import {
   AlarmClock,
-  AlertTriangle,
   CalendarCheck,
   Compass,
   Droplets,
@@ -24,9 +23,8 @@ import { getCommandCenter } from "@/lib/db/command-center";
 import { orgTimezone } from "@/lib/metrics/definitions";
 import { getViewer } from "@/lib/org/membership";
 import { orgVocabulary } from "@/lib/org/vocabulary";
-import { cn, relativeTime } from "@/lib/utils";
+import { relativeTime } from "@/lib/utils";
 import { STAGE_LABELS } from "@/lib/opportunities/why-now";
-import { CELL } from "@/lib/ui-density";
 
 export const metadata = { title: "Command Center" };
 export const dynamic = "force-dynamic";
@@ -46,7 +44,6 @@ export default async function CommandCenterPage() {
       <PageContainer>
         <PageHeader title="Command Center" description="The org-wide floor view." />
         <EmptyState
-          variant="page"
           icon={Compass}
           title="Reports access required"
           description="Ask an admin for the reports permission to see the floor view."
@@ -64,7 +61,6 @@ export default async function CommandCenterPage() {
       <PageContainer>
         <PageHeader title="Command Center" description="The org-wide floor view." />
         <EmptyState
-          variant="page"
           icon={Compass}
           title="No data yet"
           description="The command center lights up once the floor starts dialing."
@@ -81,50 +77,11 @@ export default async function CommandCenterPage() {
   const ApptPlural =
     vocab.appointmentNounPlural.charAt(0).toUpperCase() +
     vocab.appointmentNounPlural.slice(1);
-  // Each queue is `number | null`, and null means the read failed rather than
-  // "none waiting". The doors below used to be gated on `count > 0`, which is
-  // false for null — so a failed query removed the door silently and a broken
-  // board looked like a clear one. Unknown queues now announce themselves.
-  const attentionDoors = [
-    {
-      key: "overdue",
-      count: queues.overdueCallbacks,
-      href: "/callbacks",
-      icon: AlarmClock,
-      label: "overdue callbacks",
-      tone: "danger" as const,
-    },
-    {
-      key: "unscheduled",
-      count: queues.unscheduledCallbacks,
-      href: "/callbacks",
-      icon: PhoneIncoming,
-      label: "callbacks with no time set",
-      tone: "neutral" as const,
-    },
-    {
-      key: "untouched",
-      count: queues.untouchedNew,
-      href: "/leads",
-      icon: Users,
-      label: `untouched new ${vocab.leadNounPlural}`,
-      tone: "warning" as const,
-    },
-    {
-      key: "hot",
-      count: queues.hotSignals,
-      href: "/dashboard",
-      icon: Flame,
-      label: "hot signals open",
-      tone: "danger" as const,
-    },
-  ];
-  const openDoors = attentionDoors.filter((d) => d.count !== null && d.count > 0);
-  const unknownDoors = attentionDoors.filter((d) => d.count === null);
-
-  /** A count the tile can render, or null so it shows an em dash. */
-  const n = (v: number | null) => (v === null ? null : String(v));
-  const UNREAD = "Couldn't read this count — it is not necessarily zero.";
+  const attentionTotal =
+    queues.overdueCallbacks +
+    queues.unscheduledCallbacks +
+    queues.untouchedNew +
+    queues.hotSignals;
 
   return (
     <PageContainer>
@@ -135,149 +92,121 @@ export default async function CommandCenterPage() {
 
       {/* Today strip — org scope, org-time today. */}
       <div>
-        {/* The window and the scope were stated once, here, so every tile
-            below had an empty caption line. Each one says it for itself now. */}
         <p className="mb-3 text-xs font-bold uppercase tracking-wide text-muted-foreground">
-          Today so far
+          Today · whole org · org time
         </p>
         <div className="grid grid-cols-2 gap-4 lg:grid-cols-3 xl:grid-cols-6">
-          <MetricCard
-            label="Dials"
-            value={n(today.dials)}
-            unavailable={UNREAD}
-            definitionKey="calls_today"
-            window="today"
-            scope="org"
-            icon={Phone}
-            accent="accent"
-          />
+          <MetricCard label="Dials" value={String(today.dials)} icon={Phone} accent="accent" />
           <MetricCard
             label="Conversations"
-            value={n(today.conversations)}
-            unavailable={UNREAD}
-            definitionKey="human_connects"
-            window="today"
-            scope="org"
+            value={String(today.conversations)}
             icon={PhoneCall}
             accent="success"
           />
           <MetricCard
-            // Counts call dispositions, not rows in the appointments table.
-            // The dashboard's tile of the same name counts the other thing;
-            // they are different numbers and now carry different definitions.
-            label={`${ApptPlural} booked`}
-            value={n(today.appointments)}
-            unavailable={UNREAD}
-            definitionKey="appointment_outcomes"
-            window="today"
-            scope="org"
+            label={ApptPlural}
+            value={String(today.appointments)}
             icon={CalendarCheck}
             accent="warning"
           />
           <MetricCard
             label={`${vocab.LeadNounPlural} worked`}
             value={`${scanCapped ? "≥" : ""}${today.leadsWorked}`}
-            definitionKey="leads_worked"
-            window="today"
-            scope="org"
-            windowDetail={scanCapped ? "at least — capped scan" : undefined}
+            sub={scanCapped ? "at least — very high call volume today" : undefined}
             icon={Users}
             accent="accent"
           />
           <MetricCard
             label={`New ${vocab.leadNounPlural}`}
-            value={n(today.newLeads)}
-            unavailable={UNREAD}
-            // Unkeyed on purpose: a single-screen operational count. "New"
-            // here means every lead row created today, however it arrived —
-            // an import of 5,000 counts as 5,000 — which is not what the
-            // phrase suggests, so the caption says it rather than a glossary
-            // entry implying it was reconciled with anything.
-            windowDetail="every lead row created today"
-            window="today"
-            scope="org"
+            value={String(today.newLeads)}
             icon={Sparkles}
             accent="accent"
           />
           <MetricCard
             label="Speed to first call"
-            // null, not a dash. A dash keeps `value` truthy, so the card takes
-            // its has-a-number path and `unavailable` — the line that says WHY
-            // there is nothing to show — can never render.
-            value={today.speedToLeadMin != null ? `${today.speedToLeadMin}m` : null}
-            unavailable="Not enough first attempts today to take a median"
-            definitionKey="speed_to_first_call"
-            window="today"
-            scope="org"
-            windowDetail={speedSampled ? "median of the first 1,000" : "median"}
+            value={today.speedToLeadMin != null ? `${today.speedToLeadMin}m` : "—"}
+            sub={
+              today.speedToLeadMin != null
+                ? speedSampled
+                  ? "median · first 1,000 attempts today"
+                  : "median · first attempts today"
+                : "not enough data today"
+            }
             icon={Timer}
             accent={today.speedToLeadMin != null && today.speedToLeadMin > 60 ? "danger" : "success"}
           />
         </div>
       </div>
 
-      {/* Attention queues — each count is a door, not a decoration. A queue
-          that could not be READ announces itself instead of disappearing:
-          these used to be gated on `count > 0`, which is false for null, so a
-          failed query silently removed the door and a broken board looked
-          like a clear one. */}
-      {(openDoors.length > 0 || unknownDoors.length > 0) && (
+      {/* Attention queues — each count is a door, not a decoration. */}
+      {attentionTotal > 0 && (
         <SectionCard
           title="Needs attention now"
           description="Open queues across the whole org · live"
         >
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-            {openDoors.map((d) => {
-              const Icon = d.icon;
-              return (
-                <Link
-                  key={d.key}
-                  href={d.href}
-                  className={cn(
-                    "flex items-center gap-3 rounded-xl border p-3 transition-colors",
-                    d.tone === "danger" && "border-danger/30 bg-danger/5 hover:bg-danger/10",
-                    d.tone === "warning" && "border-warning/30 bg-warning/5 hover:bg-warning/10",
-                    d.tone === "neutral" && "border-border/70 bg-muted/30 hover:bg-muted/60",
-                  )}
-                >
-                  <Icon
-                    className={cn(
-                      "h-5 w-5 shrink-0",
-                      d.tone === "danger" && "text-danger",
-                      d.tone === "warning" && "text-warning",
-                      d.tone === "neutral" && "text-muted-foreground",
-                    )}
-                  />
-                  <span>
-                    <span
-                      className={cn(
-                        "block text-lg font-bold tabular",
-                        d.tone === "danger" && "text-danger",
-                        d.tone === "warning" && "text-warning",
-                      )}
-                    >
-                      {d.count}
-                    </span>
-                    <span className="block text-xs text-muted-foreground">{d.label}</span>
-                  </span>
-                </Link>
-              );
-            })}
-            {unknownDoors.map((d) => (
-              <div
-                key={d.key}
-                className="flex items-center gap-3 rounded-xl border border-signal-ring/30 bg-signal-ring-bg p-3"
-                title="This count could not be read. It is not necessarily zero."
+            {queues.overdueCallbacks > 0 && (
+              <Link
+                href="/callbacks"
+                className="flex items-center gap-3 rounded-xl border border-danger/30 bg-danger/5 p-3 transition-colors hover:bg-danger/10"
               >
-                <AlertTriangle className="h-5 w-5 shrink-0 text-signal-ring" />
+                <AlarmClock className="h-5 w-5 shrink-0 text-danger" />
                 <span>
-                  <span className="block text-lg font-bold tabular text-ink-3">—</span>
+                  <span className="block text-lg font-bold tabular text-danger">
+                    {queues.overdueCallbacks}
+                  </span>
                   <span className="block text-xs text-muted-foreground">
-                    couldn&apos;t read {d.label}
+                    overdue callbacks
                   </span>
                 </span>
-              </div>
-            ))}
+              </Link>
+            )}
+            {queues.unscheduledCallbacks > 0 && (
+              <Link
+                href="/callbacks"
+                className="flex items-center gap-3 rounded-xl border border-border/70 bg-muted/30 p-3 transition-colors hover:bg-muted/60"
+              >
+                <PhoneIncoming className="h-5 w-5 shrink-0 text-muted-foreground" />
+                <span>
+                  <span className="block text-lg font-bold tabular">
+                    {queues.unscheduledCallbacks}
+                  </span>
+                  <span className="block text-xs text-muted-foreground">
+                    callbacks with no time set
+                  </span>
+                </span>
+              </Link>
+            )}
+            {queues.untouchedNew > 0 && (
+              <Link
+                href="/leads"
+                className="flex items-center gap-3 rounded-xl border border-warning/30 bg-warning/5 p-3 transition-colors hover:bg-warning/10"
+              >
+                <Users className="h-5 w-5 shrink-0 text-warning" />
+                <span>
+                  <span className="block text-lg font-bold tabular text-warning">
+                    {queues.untouchedNew}
+                  </span>
+                  <span className="block text-xs text-muted-foreground">
+                    untouched new {vocab.leadNounPlural}
+                  </span>
+                </span>
+              </Link>
+            )}
+            {queues.hotSignals > 0 && (
+              <Link
+                href="/dashboard"
+                className="flex items-center gap-3 rounded-xl border border-danger/30 bg-danger/5 p-3 transition-colors hover:bg-danger/10"
+              >
+                <Flame className="h-5 w-5 shrink-0 text-danger" />
+                <span>
+                  <span className="block text-lg font-bold tabular text-danger">
+                    {queues.hotSignals}
+                  </span>
+                  <span className="block text-xs text-muted-foreground">hot signals open</span>
+                </span>
+              </Link>
+            )}
           </div>
         </SectionCard>
       )}
@@ -329,10 +258,10 @@ export default async function CommandCenterPage() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-border text-left text-xs font-bold uppercase tracking-wide text-muted-foreground">
-                  <th className={cn(CELL, "font-bold")}>Rep</th>
-                  <th className={cn(CELL, "text-right font-bold")}>Dials</th>
-                  <th className={cn(CELL, "text-right font-bold")}>Conversations</th>
-                  <th className={cn(CELL, "text-right font-bold")}>
+                  <th className="py-2 pr-3 font-bold">Rep</th>
+                  <th className="py-2 pr-3 text-right font-bold">Dials</th>
+                  <th className="py-2 pr-3 text-right font-bold">Conversations</th>
+                  <th className="py-2 text-right font-bold">
                     {ApptPlural}
                   </th>
                 </tr>
@@ -340,10 +269,10 @@ export default async function CommandCenterPage() {
               <tbody>
                 {reps.map((rep) => (
                   <tr key={rep.id} className="border-b border-border/50 last:border-0">
-                    <td className={cn(CELL, "font-medium")}>{rep.name}</td>
-                    <td className={cn(CELL, "text-right tabular")}>{rep.dials}</td>
-                    <td className={cn(CELL, "text-right tabular")}>{rep.conversations}</td>
-                    <td className={cn(CELL, "text-right tabular")}>{rep.appointments}</td>
+                    <td className="py-2 pr-3 font-medium">{rep.name}</td>
+                    <td className="py-2 pr-3 text-right tabular">{rep.dials}</td>
+                    <td className="py-2 pr-3 text-right tabular">{rep.conversations}</td>
+                    <td className="py-2 text-right tabular">{rep.appointments}</td>
                   </tr>
                 ))}
               </tbody>

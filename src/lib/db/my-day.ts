@@ -1,7 +1,6 @@
 import "server-only";
 
-import { resolveLeadTimezone } from "../dialer/lead-timezone";
-import { connectedRecordFilter } from "../metrics/definitions";
+import { CONNECTED_OUTCOMES } from "../call-analytics";
 import {
   isWithinOrgHours,
   zonedDayKey,
@@ -13,7 +12,6 @@ import { createAdminClient, isAdminConfigured } from "../supabase/admin";
 import { getMyAssignments } from "./assignments";
 import { getDncDigits, dncKey } from "./dnc";
 import type { Scope } from "./scope";
-import { askedCount } from "./counts";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // My Day (P2.6): one read that answers "what should I do right now" for the
@@ -29,15 +27,6 @@ import { askedCount } from "./counts";
 type Row = Record<string, unknown>;
 const s = (v: unknown) => (v == null ? "" : String(v));
 const n = (v: unknown) => Number(v ?? 0) || 0;
-
-/**
- * Row bound on the one query here that is a SUM rather than a COUNT.
- *
- * Set to the PostgREST response ceiling, deliberately: a larger number would be
- * silently clamped to it anyway, and a bound that lies about itself is how
- * "2,000+ calls" ended up written above a query that stopped at 1,000.
- */
-const TALK_SCAN = 1000;
 
 export interface MyDayCallback {
   id: string;
@@ -92,27 +81,16 @@ export interface WhoNext {
 
 export interface MyDayData {
   callbacks: {
-    overdue: number | null;
-    dueToday: number | null;
-    unscheduled: number | null;
+    overdue: number;
+    dueToday: number;
+    unscheduled: number;
     items: MyDayCallback[];
   };
-  /** `open` is null when the count could not be taken — never a page length. */
-  workItems: { open: number | null; items: MyDayWorkItem[] };
+  workItems: { open: number; items: MyDayWorkItem[] };
   signals: MyDaySignal[];
-  /** Same: null means the count failed, not that nothing is booked. */
-  appointmentsToday: { count: number | null; items: MyDayAppointment[] };
-  /**
-   * Self scope, org-timezone "today". Counts are `number | null`, and the null
-   * is load-bearing: it means the read FAILED, not that the answer is zero.
-   * See `askedCount` in ./counts.
-   */
-  today: {
-    dials: number | null;
-    conversations: number | null;
-    appointments: number | null;
-    talkSec: number | null;
-  };
+  appointmentsToday: { count: number; items: MyDayAppointment[] };
+  /** Self scope, org-timezone "today". */
+  today: { dials: number; conversations: number; appointments: number; talkSec: number };
   assignments: { id: string; label: string; worked: number; total: number }[];
   whoNext: WhoNext | null;
   /**
@@ -197,11 +175,9 @@ async function readMyDay(input: {
       openMine().gt("due_at", floatingNow).lt("due_at", dayEnd),
       openMine().is("due_at", null),
       myCallsToday(),
-      // The canonical connect predicate — this used to be a hand-rolled `.or()`
-      // that counted voicemails flagged human_connected=true and rows the
-      // answer pipeline had positively marked human_connected=false. Both
-      // errors inflated the rep's own "Conversations" tile.
-      myCallsToday().or(connectedRecordFilter()),
+      myCallsToday().or(
+        `human_connected.is.true,outcome.in.(${[...CONNECTED_OUTCOMES].join(",")})`,
+      ),
       myCallsToday().eq("outcome", "appointment_booked"),
     ]);
 
@@ -267,42 +243,22 @@ async function readMyDay(input: {
       .lt("scheduled_at", dayEnd)
       .order("scheduled_at", { ascending: true })
       .limit(50),
-    // Talk time is a SUM, which PostgREST cannot express, so it rides a row
-    // fetch. Two things were wrong with the old one:
-    //
-    //   · it selected `talk_sec` alone. Nothing in the product writes that
-    //     column — 0 of 34,079 rows — so this tile was structurally 0:00, and
-    //     rendered as a confident one, beside three siblings that correctly say
-    //     when they can't be computed.
-    //   · it took every row today, connected or not, where Reports sums only
-    //     connected ones. Two tiles carrying the SAME definitionKey computed
-    //     different things.
-    //
-    // Both now match db/metrics.ts: connected rows (through the one shared
-    // predicate), `talk_sec ?? duration_sec`. The glossary entry already states
-    // that this is a proxy and why.
-    //
-    // RANGED, not `.limit(2000)`: that was above the PostgREST response
-    // ceiling, so the real bound was the ceiling and the comment below claimed
-    // a headroom that did not exist.
     admin
       .from("call_records")
-      .select("talk_sec,duration_sec")
+      .select("talk_sec")
       .eq("org_id", scope.orgId)
       .eq("owner_id", scope.userId)
       .gte("started_at", todayStartIso)
-      .or(connectedRecordFilter())
-      .order("started_at", { ascending: false })
-      .range(0, TALK_SCAN - 1),
+      .limit(2000),
     getMyAssignments(scope.userId, scope.orgId),
   ]);
 
   const cbRows = (cbRes.data ?? []) as Row[];
   const callbacks = {
-    overdue: askedCount(cbOverdueRes),
-    dueToday: askedCount(cbTodayRes),
+    overdue: cbOverdueRes.count ?? 0,
+    dueToday: cbTodayRes.count ?? 0,
     // The spec's rule: an item with no time is UNSCHEDULED, never "due now".
-    unscheduled: askedCount(cbUnschedRes),
+    unscheduled: cbUnschedRes.count ?? 0,
     items: cbRows.slice(0, 5).map(
       (r): MyDayCallback => ({
         id: s(r.id),
@@ -317,7 +273,7 @@ async function readMyDay(input: {
 
   const wiRows = (wiRes.data ?? []) as Row[];
   const workItems = {
-    open: askedCount(openWorkRes),
+    open: openWorkRes.count ?? wiRows.length,
     items: wiRows.slice(0, 5).map(
       (r): MyDayWorkItem => ({
         id: s(r.id),
@@ -376,7 +332,7 @@ async function readMyDay(input: {
 
   const apptRows = (apptRes.data ?? []) as Row[];
   const appointmentsToday = {
-    count: askedCount(apptTodayRes),
+    count: apptTodayRes.count ?? apptRows.length,
     items: apptRows.slice(0, 5).map(
       (r): MyDayAppointment => ({
         id: s(r.id),
@@ -391,17 +347,13 @@ async function readMyDay(input: {
 
   // Counts are exact (COUNT queries above); talk time is a SUM that PostgREST
   // can't express, so it rides the row fetch — under-reporting only in the
-  // physically implausible case of one rep CONNECTING with 1,000 people in a
-  // single day. Null when the fetch failed: 0:00 is a real reading, and a rep who has
-  // been on the phone all morning must not be shown one.
+  // physically implausible case of one rep placing 2,000+ calls in a day.
   const callRows = (callsRes.data ?? []) as Row[];
   const today = {
-    dials: askedCount(dialsRes),
-    conversations: askedCount(convosRes),
-    appointments: askedCount(apptDoneRes),
-    talkSec: callsRes.error
-      ? null
-      : callRows.reduce((sum, r) => sum + n(r.talk_sec ?? r.duration_sec), 0),
+    dials: dialsRes.count ?? 0,
+    conversations: convosRes.count ?? 0,
+    appointments: apptDoneRes.count ?? 0,
+    talkSec: callRows.reduce((sum, r) => sum + n(r.talk_sec), 0),
   };
 
   const myAssignments = assignments
@@ -499,26 +451,8 @@ async function readMyDay(input: {
         continue;
       }
       // Never recommend a call the calling-hours policy would flag — judged in
-      // the CONTACT's own timezone.
-      //
-      // This was `s(lead.timezone) || orgTz`, a third resolution of the same
-      // question that never consulted the number's area code. Combined with the
-      // leads.timezone column default it evaluated the entire book in one zone,
-      // so the pick was judged against the wrong clock for almost everybody.
-      // `resolveLeadTimezone` is the one the dial routes use.
-      //
-      // Deliberately unconditional, where the dialer only blocks when
-      // `hours.enforced`: a RECOMMENDATION should be the safe one even in a
-      // workspace whose policy is advisory. The copy on /today says so.
-      if (
-        !isWithinOrgHours(
-          now,
-          hours,
-          resolveLeadTimezone(phone, s(lead.timezone), orgTz),
-        )
-      ) {
-        continue;
-      }
+      // the LEAD's timezone when it has one.
+      if (!isWithinOrgHours(now, hours, s(lead.timezone) || orgTz)) continue;
       whoNext = {
         leadId: c.leadId,
         name:
