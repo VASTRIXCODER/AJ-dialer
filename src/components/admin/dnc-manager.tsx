@@ -6,7 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { formatPhone } from "@/lib/utils";
+import { formatPhone, relativeTime } from "@/lib/utils";
 
 interface DncEntry {
   id: string;
@@ -40,6 +40,7 @@ export function DncManager({ canManage }: { canManage: boolean }) {
   const [phone, setPhone] = useState("");
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
   const load = useCallback(async () => {
@@ -47,8 +48,21 @@ export function DncManager({ canManage }: { canManage: boolean }) {
     try {
       const res = await fetch("/api/dnc");
       const data = await res.json();
+      if (!res.ok) {
+        // An empty table on this screen reads as "nobody has asked us to stop
+        // calling them". That is the one thing it must never say by accident.
+        setLoadError(
+          typeof data?.error === "string"
+            ? data.error
+            : "Couldn't read the Do-Not-Call list just now.",
+        );
+        setEntries([]);
+        return;
+      }
+      setLoadError(null);
       setEntries(Array.isArray(data.entries) ? data.entries : []);
     } catch {
+      setLoadError("Couldn't reach the server to read the Do-Not-Call list.");
       setEntries([]);
     } finally {
       setLoading(false);
@@ -157,10 +171,18 @@ export function DncManager({ canManage }: { canManage: boolean }) {
             </p>
           </div>
         </div>
-        <Badge tone="neutral" className="tabular">
-          {entries.length} suppressed
+        {/* "0 suppressed" and "we could not ask" are the two answers this
+            badge most needs to keep apart. */}
+        <Badge tone={loadError ? "warning" : "neutral"} className="tabular">
+          {loadError ? "Count unavailable" : `${entries.length} suppressed`}
         </Badge>
       </div>
+
+      {loadError && (
+        <p className="rounded-xl border border-warning/40 bg-warning/10 px-3 py-2 text-sm font-medium text-warning">
+          {loadError}
+        </p>
+      )}
 
       {canManage && (
         <div className="flex flex-wrap items-end gap-2">
@@ -209,6 +231,10 @@ export function DncManager({ canManage }: { canManage: boolean }) {
                 <th className="px-3 py-2 font-medium">Number</th>
                 <th className="px-3 py-2 font-medium">Source</th>
                 <th className="px-3 py-2 font-medium">Reason</th>
+                {/* The table is already ORDERED by this and never showed it —
+                    the one screen that lists suppressions was the only place
+                    that hid when they happened. */}
+                <th className="px-3 py-2 font-medium">Added</th>
                 {canManage && <th className="px-3 py-2" />}
               </tr>
             </thead>
@@ -220,6 +246,12 @@ export function DncManager({ canManage }: { canManage: boolean }) {
                     {SOURCE_LABEL[e.source] ?? (e.source || "—")}
                   </td>
                   <td className="px-3 py-2 text-muted-foreground">{e.reason || "—"}</td>
+                  <td
+                    className="whitespace-nowrap px-3 py-2 text-muted-foreground"
+                    title={e.createdAt || undefined}
+                  >
+                    {e.createdAt ? relativeTime(e.createdAt) : "—"}
+                  </td>
                   {canManage && (
                     <td className="px-3 py-2 text-right">
                       <button

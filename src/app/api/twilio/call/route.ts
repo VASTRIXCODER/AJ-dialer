@@ -74,7 +74,24 @@ export async function POST(req: Request) {
     .filter((l) => l.to && l.leadId);
 
   // Scrub the org's Do-Not-Call list before dialing anything.
-  const dncSet = viewer.org?.id ? await getDncDigits(viewer.org.id) : new Set<string>();
+  //
+  // If the list cannot be READ, nothing is dialed. getDncDigits used to return
+  // an empty set on a failed read — supabase-js resolves rather than throws —
+  // so a transient database error meant this route cheerfully called everybody
+  // who had asked it not to. It throws now, and this is where that becomes a
+  // sentence instead of a stack trace.
+  let dncSet: Set<string>;
+  try {
+    dncSet = viewer.org?.id ? await getDncDigits(viewer.org.id) : new Set<string>();
+  } catch {
+    return NextResponse.json(
+      {
+        error:
+          "Couldn't check the Do-Not-Call list just now, so nothing was dialed. Try again in a moment — this is a database read, not a problem with these contacts.",
+      },
+      { status: 503 },
+    );
+  }
   const leads = withNumbers.filter((l) => !dncSet.has(dncKey(l.to)));
 
   if (!room) {
