@@ -1,4 +1,5 @@
 import type { AutomationSettings } from "../org/settings";
+import { DEFAULT_TIMEZONE } from "../metrics/definitions";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Pure schedule matching for unattended AI calling — client- & server-safe.
@@ -25,7 +26,7 @@ const dayKeyFmts = new Map<string, Intl.DateTimeFormat>();
 const floatingFmts = new Map<string, Intl.DateTimeFormat>();
 
 function floatingFmt(timezone: string): Intl.DateTimeFormat {
-  const tz = timezone || "America/Chicago";
+  const tz = timezone || DEFAULT_TIMEZONE;
   let f = floatingFmts.get(tz);
   if (!f) {
     // sv-SE renders "YYYY-MM-DD HH:mm:ss" — one space away from the floating
@@ -64,7 +65,7 @@ export function zonedFloatingNow(at: Date, timezone: string): string {
 }
 
 function dayHourFmt(timezone: string): Intl.DateTimeFormat {
-  const tz = timezone || "America/Chicago";
+  const tz = timezone || DEFAULT_TIMEZONE;
   let f = dayHourFmts.get(tz);
   if (!f) {
     const opts: Intl.DateTimeFormatOptions = {
@@ -85,7 +86,7 @@ function dayHourFmt(timezone: string): Intl.DateTimeFormat {
 }
 
 function dayKeyFmt(timezone: string): Intl.DateTimeFormat {
-  const tz = timezone || "America/Chicago";
+  const tz = timezone || DEFAULT_TIMEZONE;
   let f = dayKeyFmts.get(tz);
   if (!f) {
     // en-CA renders as YYYY-MM-DD.
@@ -199,7 +200,7 @@ export function isAutoDialActive(
   now: Date,
   a: AutomationSettings | null | undefined,
 ): boolean {
-  return isWithinCallingWindow(now, a, a?.timezone ?? "America/Chicago");
+  return isWithinCallingWindow(now, a, a?.timezone ?? DEFAULT_TIMEZONE);
 }
 
 const fmtHour = (h: number): string => {

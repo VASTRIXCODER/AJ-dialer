@@ -13,6 +13,8 @@ import {
   TRIGGER_EVENTS,
   type PlaybookDefinition,
 } from "./definition";
+import { orgTimezone } from "../metrics/definitions";
+import { DEFAULT_TIMEZONE } from "../metrics/definitions";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Orchestration event emitters (P2.2) — the activation path the engine v0
@@ -84,10 +86,10 @@ async function orgOrchestrationConfig(
     const s = (data?.settings ?? {}) as { orchestration?: { enabled?: boolean } };
     return {
       enabled: s.orchestration?.enabled === true,
-      timezone: String(data?.timezone ?? "") || "America/Chicago",
+      timezone: orgTimezone(data as { timezone?: string | null } | null),
     };
   } catch {
-    return { enabled: false, timezone: "America/Chicago" };
+    return { enabled: false, timezone: DEFAULT_TIMEZONE };
   }
 }
 

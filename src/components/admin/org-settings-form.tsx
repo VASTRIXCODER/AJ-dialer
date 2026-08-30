@@ -46,6 +46,7 @@ import { BEHAVIOR_DESCRIPTIONS } from "@/lib/status";
 import { DIALER_TEMPLATES, templateProfile } from "@/lib/org/templates";
 import { ROLE_LABEL } from "@/lib/permissions";
 import { cn } from "@/lib/utils";
+import { DEFAULT_TIMEZONE } from "@/lib/metrics/definitions";
 
 const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
@@ -881,8 +882,25 @@ export function OrgSettingsForm({
         description="Your floor's calling window. Advisory by default (the dialer shows an outside-hours banner); turn on enforcement to actually block dialing."
       >
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-          <Field label="Timezone" className="sm:col-span-3">
-            <Input value={timezone} onChange={(e) => setTimezone(e.target.value)} />
+          <Field
+            label="Timezone"
+            className="sm:col-span-3"
+            // Unset is now VISIBLE. The column used to default to
+            // America/Los_Angeles, so this field arrived pre-filled with a zone
+            // nobody had chosen — ten of eleven workspaces — and there was no
+            // way for an admin to tell. The window it drives is a TCPA
+            // constraint, so a fabricated value is worse than a blank one.
+            hint={
+              timezone.trim()
+                ? undefined
+                : `Not set — calling windows fall back to ${DEFAULT_TIMEZONE} until you pick one.`
+            }
+          >
+            <Input
+              value={timezone}
+              placeholder={`e.g. ${DEFAULT_TIMEZONE}`}
+              onChange={(e) => setTimezone(e.target.value)}
+            />
           </Field>
           <NumberField
             label="Start hour (0–23)"
@@ -1798,16 +1816,20 @@ export function OrgSettingsForm({
 function Field({
   label,
   className,
+  hint,
   children,
 }: {
   label: string;
   className?: string;
+  /** Rendered under the control — same treatment NumberField already gives it. */
+  hint?: string;
   children: React.ReactNode;
 }) {
   return (
     <div className={className}>
       <Label>{label}</Label>
       {children}
+      {hint && <p className="mt-1 text-xs text-muted-foreground">{hint}</p>}
     </div>
   );
 }

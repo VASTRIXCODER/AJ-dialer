@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import { describeLeadClock, leadLocalTime } from "@/lib/dialer/lead-timezone";
 import { cn } from "@/lib/utils";
 import { useDialerContextOptional } from "./dialer-context";
+import { DEFAULT_TIMEZONE } from "@/lib/metrics/definitions";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // What time it is where the contact is.
@@ -48,7 +49,7 @@ export function LeadClock({
   const clock = leadLocalTime(
     phone,
     timezone,
-    ctx.config.orgTimezone || "America/Chicago",
+    ctx.config.orgTimezone || DEFAULT_TIMEZONE,
     now,
     ctx.config.callingHours,
   );

@@ -17,6 +17,7 @@ import {
   type AgentOrgLike,
   resolveAgentConfig,
 } from "./agent-prompt";
+import { resolveLeadTimezone } from "../dialer/lead-timezone";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Resolve the live agent configuration + personalization variables for an
@@ -66,7 +67,14 @@ function rowToLead(r: Row): Lead {
     hasBattery: Boolean(r.has_battery),
     multipleSystems: Boolean(r.multiple_systems),
     createdAt: String(r.created_at ?? new Date().toISOString()),
-    timezone: String(r.timezone ?? ""),
+    // NOT the raw column. It defaults to America/Los_Angeles and every one of
+    // the 37,987 rows still carries that default, so passing it straight
+    // through told the voice agent it was Pacific time on every call — two
+    // hours off for a Central-time book, on a live call, in its greeting.
+    // resolveLeadTimezone falls back to the number's area code, which is the
+    // same inference the dial path's TCPA check already uses. Empty means
+    // "unknown", and currentDateVariables then uses the server zone.
+    timezone: resolveLeadTimezone(String(r.phone ?? ""), r.timezone as string | null, ""),
     // Typed CSV spillover — without this, custom fields would silently never
     // reach the voice agent's {{custom_*}} dynamic variables.
     customFields:

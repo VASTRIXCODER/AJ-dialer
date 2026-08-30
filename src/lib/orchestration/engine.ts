@@ -12,6 +12,7 @@ import {
   type Step,
 } from "./definition";
 import { firstTrippedStopRule, idempotencyKeyFor, waitUntil, type StopSnapshot } from "./plan";
+import { orgTimezone } from "../metrics/definitions";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Orchestration engine v0 — the deterministic tick behind /api/cron/orchestrate.
@@ -406,7 +407,7 @@ export async function orchestrationTick(now = new Date()): Promise<TickResult> {
       ]),
     );
     const orgTz = new Map(
-      (orgs ?? []).map((o) => [String(o.id), String(o.timezone ?? "") || "America/Chicago"]),
+      (orgs ?? []).map((o) => [String(o.id), orgTimezone(o as { timezone?: string | null })]),
     );
     // Suppression, batched. `dnc_or_opt_out` is ALWAYS enforced, so this is
     // needed for every instance — but it resolves to two reads per tick rather
@@ -546,7 +547,7 @@ export async function orchestrationTick(now = new Date()): Promise<TickResult> {
           // nobody works.
           const wantsOrg =
             (step.for as { timezone?: string } | undefined)?.timezone === "org";
-          const fallback = orgTz.get(String(inst.org_id)) ?? "America/Chicago";
+          const fallback = orgTz.get(String(inst.org_id)) ?? orgTimezone(null);
           let tz = fallback;
           if (!wantsOrg) {
             const { data: lead } = await admin

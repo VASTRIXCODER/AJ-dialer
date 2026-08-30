@@ -9,6 +9,7 @@ import { resolveDialerAccess } from "@/lib/org/settings";
 import type { Lead } from "@/lib/types";
 import { getPublicBaseUrl } from "@/lib/twilio";
 import { toE164 } from "@/lib/utils";
+import { orgTimezone } from "@/lib/metrics/definitions";
 
 export const dynamic = "force-dynamic";
 
@@ -130,7 +131,7 @@ export async function POST(req: Request) {
     const tz = resolveLeadTimezone(
       lead.phone,
       lead.timezone,
-      viewer.org?.timezone || "America/Chicago",
+      orgTimezone(viewer.org),
     );
     if (!isWithinOrgHours(new Date(), hours, tz)) {
       return NextResponse.json(

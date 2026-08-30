@@ -132,7 +132,11 @@ function mapOrg(o: Row): OrgFull {
     logoUrl: String(o.logo_url ?? ""),
     brandColor: String(o.brand_color ?? ""),
     accentColor: String(o.accent_color ?? ""),
-    timezone: String(o.timezone ?? "America/Los_Angeles"),
+    // NOT `?? "America/Los_Angeles"`. The column defaulted to that string, so
+    // re-applying it here made "nobody chose a zone" and "somebody chose Los
+    // Angeles" the same value — and defeated orgTimezone()'s documented
+    // fallback, which therefore never once fired. See storedOrgTimezone.
+    timezone: o.timezone ? String(o.timezone) : "",
     dialerTemplate: String(o.dialer_template ?? "general"),
     defaultRole: isOrgRole(role) ? role : "rep",
     ownerId: o.owner_id ? String(o.owner_id) : null,

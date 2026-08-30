@@ -13,6 +13,7 @@ import {
   twilioConfig,
 } from "@/lib/twilio";
 import { toE164 } from "@/lib/utils";
+import { orgTimezone } from "@/lib/metrics/definitions";
 
 export const dynamic = "force-dynamic";
 
@@ -144,7 +145,7 @@ export async function POST(req: Request) {
   const hours = orgSettings?.hours;
   const hourBlocked: { leadId: string; to: string }[] = [];
   if (hours?.enforced) {
-    const orgTz = viewer.org?.timezone || "America/Chicago";
+    const orgTz = orgTimezone(viewer.org);
     const now = new Date();
     const inHours: typeof dialLeads = [];
     for (const leg of dialLeads) {

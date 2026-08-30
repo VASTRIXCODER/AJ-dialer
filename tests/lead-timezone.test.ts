@@ -7,6 +7,12 @@ import {
   storedLeadTimezone,
   timezoneForAreaCode,
 } from "@/lib/dialer/lead-timezone";
+import {
+  DEFAULT_TIMEZONE,
+  ORG_TIMEZONE_COLUMN_DEFAULT,
+  orgTimezone,
+  storedOrgTimezone,
+} from "@/lib/metrics/definitions";
 
 describe("timezoneForAreaCode", () => {
   it("maps the app's target states correctly", () => {
@@ -198,5 +204,90 @@ describe("a schema default is not a stored timezone", () => {
     const source = readFileSync(resolve(__dirname, "..", "src/lib/db/leads.ts"), "utf8");
     expect(source).not.toMatch(/r\.timezone as string\) \?\? "America\/Los_Angeles"/);
     expect(source).toMatch(/storedLeadTimezone\(/);
+  });
+
+  it("nor does any other consumer of the column", () => {
+    // Two more paths read `leads.timezone` raw. One of them WROTE it onward:
+    // records.ts copied it to `callbacks.timezone`, a column with no default,
+    // where a fabricated zone is indistinguishable from a chosen one — three
+    // rows were laundered that way before this test existed, and a backfill
+    // cannot tell them apart now. The other handed it to the voice agent,
+    // which used it to work out what time it was for the person it had just
+    // called.
+    const readFileSync = require("node:fs").readFileSync as typeof import("node:fs").readFileSync;
+    const resolve = require("node:path").resolve as typeof import("node:path").resolve;
+    const src = (p: string) => readFileSync(resolve(__dirname, "..", p), "utf8");
+
+    const records = src("src/lib/db/records.ts");
+    expect(records, "callbacks.timezone must not be copied raw").not.toMatch(
+      /cbTimezone = l\?\.timezone/,
+    );
+    expect(records).toMatch(/storedLeadTimezone\(l\?\.timezone/);
+
+    const agent = src("src/lib/ai/agent-context.ts");
+    expect(agent, "the voice agent must not be told the default").not.toMatch(
+      /timezone: String\(r\.timezone \?\? ""\)/,
+    );
+    expect(agent).toMatch(/resolveLeadTimezone\(String\(r\.phone/);
+  });
+});
+
+describe("an organization's timezone is a choice, not a column default", () => {
+  it("the default string reads as unset", () => {
+    // Measured: ten of eleven workspaces carried America/Los_Angeles without
+    // anyone choosing it. The eleventh chose Europe/Stockholm, which is what a
+    // real choice looks like.
+    expect(storedOrgTimezone(ORG_TIMEZONE_COLUMN_DEFAULT)).toBeNull();
+    expect(storedOrgTimezone(null)).toBeNull();
+    expect(storedOrgTimezone("  ")).toBeNull();
+    expect(storedOrgTimezone("Europe/Stockholm")).toBe("Europe/Stockholm");
+  });
+
+  it("so orgTimezone's documented fallback can actually fire", () => {
+    // It never had. mapOrg coalesced the column to the same default string, so
+    // `org.timezone` was always truthy and America/Chicago was unreachable.
+    expect(orgTimezone({ timezone: ORG_TIMEZONE_COLUMN_DEFAULT })).toBe(DEFAULT_TIMEZONE);
+    expect(orgTimezone({ timezone: "" })).toBe(DEFAULT_TIMEZONE);
+    expect(orgTimezone(null)).toBe(DEFAULT_TIMEZONE);
+    expect(orgTimezone({ timezone: "Europe/Stockholm" })).toBe("Europe/Stockholm");
+  });
+
+  it("the read boundary does not re-apply it either", () => {
+    const readFileSync = require("node:fs").readFileSync as typeof import("node:fs").readFileSync;
+    const resolve = require("node:path").resolve as typeof import("node:path").resolve;
+    const membership = readFileSync(
+      resolve(__dirname, "..", "src/lib/org/membership.ts"),
+      "utf8",
+    );
+    expect(membership).not.toMatch(/timezone: String\(o\.timezone \?\? "America\/Los_Angeles"\)/);
+  });
+
+  it("and the fallback zone is spelled in exactly one place", () => {
+    // It was inline in fifteen. A fallback that disagrees with itself is how
+    // the dashboard and reports drifted apart at midnight.
+    const { execFileSync } = require("node:child_process") as typeof import("node:child_process");
+    const readFileSync = require("node:fs").readFileSync as typeof import("node:fs").readFileSync;
+    const resolve = require("node:path").resolve as typeof import("node:path").resolve;
+    const ROOT = resolve(__dirname, "..");
+    const files = execFileSync(
+      "git",
+      ["ls-files", "--cached", "--others", "--exclude-standard", "src"],
+      { cwd: ROOT, encoding: "utf8", maxBuffer: 32 * 1024 * 1024 },
+    )
+      .split("\n")
+      .map((l) => l.trim())
+      .filter((l) => /\.tsx?$/.test(l));
+
+    const offenders: string[] = [];
+    for (const file of files) {
+      if (file === "src/lib/metrics/definitions.ts") continue;
+      const code = readFileSync(resolve(ROOT, file), "utf8")
+        .replace(/\/\*[\s\S]*?\*\//g, "")
+        .replace(/(?<!:)\/\/.*$/gm, "");
+      // A placeholder or an example in a lookup table is fine; a FALLBACK is
+      // not. `||` and `??` are how every one of the fifteen was written.
+      if (/(?:\|\||\?\?)\s*"America\/Chicago"/.test(code)) offenders.push(file);
+    }
+    expect(offenders, `Use DEFAULT_TIMEZONE:\n${offenders.join("\n")}`).toEqual([]);
   });
 });

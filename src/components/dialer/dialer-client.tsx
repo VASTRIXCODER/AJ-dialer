@@ -52,6 +52,7 @@ import { groupLabel, LoadLeadsDialog } from "./load-leads-dialog";
 import { QualifyPanel } from "./qualify-panel";
 import { SessionBuilder } from "./session-builder";
 import { Teleprompter } from "./teleprompter";
+import { DEFAULT_TIMEZONE } from "@/lib/metrics/definitions";
 
 export function DialerClient({
   queue: initialQueue,
@@ -135,7 +136,7 @@ export function DialerClient({
     if (!hours) return;
     const evaluate = () =>
       setOutsideOrgHours(
-        !isWithinOrgHours(new Date(), hours, config.orgTimezone || "America/Chicago"),
+        !isWithinOrgHours(new Date(), hours, config.orgTimezone || DEFAULT_TIMEZONE),
       );
     evaluate();
     const t = setInterval(evaluate, 60_000);

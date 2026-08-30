@@ -21,6 +21,7 @@ import {
 } from "../call-analytics";
 import { zonedDayHour, zonedDayKey } from "../dialer/schedule";
 import {
+  DEFAULT_TIMEZONE,
   isCancelledAppointment,
   isConnectedRecord,
   orgTimezone,
@@ -1061,7 +1062,7 @@ export async function getTeamLeaderboard(): Promise<TeamLeaderboard> {
       .eq("id", user.id)
       .maybeSingle();
     const orgId = prof?.org_id ? String(prof.org_id) : null;
-    if (!orgId) return emptyTeamLeaderboard(DEFAULT_LEADERBOARD, "America/Chicago", user.id);
+    if (!orgId) return emptyTeamLeaderboard(DEFAULT_LEADERBOARD, DEFAULT_TIMEZONE, user.id);
     const { data: org } = await supabase
       .from("organizations")
       .select("timezone,settings")
@@ -1079,7 +1080,7 @@ export async function getTeamLeaderboard(): Promise<TeamLeaderboard> {
     console.error("[metrics] getTeamLeaderboard failed:", e instanceof Error ? e.message : e);
     // Supabase is configured (checked above) — a thrown query is a real failure,
     // so return an empty board rather than the demo team over live data.
-    return emptyTeamLeaderboard(DEFAULT_LEADERBOARD, "America/Chicago", null);
+    return emptyTeamLeaderboard(DEFAULT_LEADERBOARD, DEFAULT_TIMEZONE, null);
   }
 }
 
@@ -1090,7 +1091,7 @@ export async function getTeamLeaderboard(): Promise<TeamLeaderboard> {
  * calendar windows, streaks all come from composeLeaderboard itself).
  */
 function fallbackLeaderboard(): TeamLeaderboard {
-  const timezone = "America/Chicago";
+  const timezone = DEFAULT_TIMEZONE;
   const now = Date.now();
   const rows: Row[] = [];
   const members: LeaderboardMember[] = sampleLeaderboard.map((r) => ({

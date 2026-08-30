@@ -28,6 +28,7 @@ import { isVoiceConfigured } from "@/lib/twilio";
 import { MAX_PARALLEL_HUMAN } from "@/lib/use-dialer";
 import { initials } from "@/lib/utils";
 import { isSupervisorRole } from "@/lib/permissions";
+import { orgTimezone } from "@/lib/metrics/definitions";
 
 export default async function AppGroupLayout({
   children,
@@ -226,7 +227,7 @@ export default async function AppGroupLayout({
     // Admin → Calling hours: the dialer's outside-hours banner (advisory) and,
     // when `enforced`, mirrored by the server-side refusal in the call routes.
     callingHours: viewer.org?.settings.hours ?? null,
-    orgTimezone: viewer.org?.timezone ?? "America/Chicago",
+    orgTimezone: orgTimezone(viewer.org),
     // The viewer's own dialer prefs (Settings → Dialer preferences).
     userPrefs: parseDialerUserPrefs(uiPreferences),
     // The session builder's remembered choices, so it reopens as it was left.

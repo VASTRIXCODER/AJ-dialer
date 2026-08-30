@@ -4587,4 +4587,24 @@ alter table public.profiles alter column role drop default;
 alter table public.profiles alter column team drop default;
 alter table public.profiles alter column avatar_color drop default;
 
+-- ── …and the org timezone default, which was a TCPA input ───────────────────
+--
+-- `organizations.timezone` defaulted to America/Los_Angeles and nothing in
+-- createOrganization or onboarding ever set the column, so it was
+-- indistinguishable from a zone an admin had chosen. Measured: ten of eleven
+-- workspaces carried it; the eleventh chose Europe/Stockholm, which is what a
+-- real choice looks like.
+--
+-- It is the LAST-RESORT zone for the calling-window check (the contact's own
+-- zone, inferred from their area code, is tried first), and it is the zone every
+-- "today" boundary rolls on. For a Central-time workspace that means the window
+-- ran two hours behind and the day rolled at 2am local — and orgTimezone()'s
+-- documented America/Chicago fallback could never fire, because the column was
+-- never empty.
+--
+-- Existing rows keep their value; the application treats the exact default
+-- string as unset (storedOrgTimezone) and the settings form now says so rather
+-- than showing a pre-filled zone nobody picked.
+alter table public.organizations alter column timezone drop default;
+
 notify pgrst, 'reload schema';

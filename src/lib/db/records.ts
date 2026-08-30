@@ -22,6 +22,8 @@ import { logLeadEvent } from "./lead-events";
 import { markLeadAttempted } from "./reservations";
 import { askedCount } from "./counts";
 import { readProfileScope } from "./scope";
+import { storedLeadTimezone, timezoneForAreaCode } from "../dialer/lead-timezone";
+import { areaCodeOf } from "../dialer/rotation";
 
 const UUID =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -202,7 +204,17 @@ async function routeDisposition(
         .eq("id", leadId)
         .maybeSingle();
       cbCampaignId = l?.campaign_id ? String(l.campaign_id) : null;
-      cbTimezone = l?.timezone ? String(l.timezone) : null;
+      // The raw column defaults to America/Los_Angeles and every lead row still
+      // carries it, so copying it straight across stamped a fabricated zone
+      // onto a callback — a column that has NO default, where it is
+      // indistinguishable from one somebody chose, and where the board then
+      // labels the due time with it. Three rows were written this way before
+      // this line changed; a backfill cannot tell them apart afterwards.
+      // storedLeadTimezone treats the default as absent; the area code is the
+      // same inference the dial path already trusts. Null stays null.
+      cbTimezone =
+        storedLeadTimezone(l?.timezone as string | null) ??
+        timezoneForAreaCode(areaCodeOf(input.phone));
     }
     await client.from("callbacks").insert({
       owner_id: ownerId,

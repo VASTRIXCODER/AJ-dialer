@@ -16,6 +16,7 @@ import type { ConsentScope } from "../consent/state";
 import type { OrgFull } from "../org/membership";
 import { createAdminClient, isAdminConfigured } from "../supabase/admin";
 import { count } from "../telemetry";
+import { orgTimezone } from "../metrics/definitions";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Messages, threads, and the context the send gate needs to judge one.
@@ -188,7 +189,7 @@ export async function buildSendContext(input: {
 }): Promise<SendContext> {
   const now = input.now ?? new Date();
   const messaging = input.org?.settings.messaging;
-  const orgTz = input.org?.timezone || "America/Chicago";
+  const orgTz = orgTimezone(input.org);
 
   // BOTH candidate zones, not a choice between them. See the gate: when they
   // disagree the message must be inside the window in each.

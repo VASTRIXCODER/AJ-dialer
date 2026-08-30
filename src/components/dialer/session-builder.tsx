@@ -28,6 +28,7 @@ import { useDialerContext } from "./dialer-context";
 import { resolveLeadTimezone } from "@/lib/dialer/lead-timezone";
 import { isWithinOrgHours } from "@/lib/dialer/schedule";
 import { SelectMenu } from "@/components/ui/select-menu";
+import { DEFAULT_TIMEZONE } from "@/lib/metrics/definitions";
 
 interface Segment {
   key: string;
@@ -95,7 +96,7 @@ export function SessionBuilder({
   // The workspace's own calling window and zone, for the pre-flight count.
   const { config } = useDialerContext();
   const hours = config.callingHours;
-  const orgTz = config.orgTimezone || "America/Chicago";
+  const orgTz = config.orgTimezone || DEFAULT_TIMEZONE;
 
   const knownKeys = new Set<string>(SEGMENTS.map((s) => s.key));
   const savedStatuses = (initial?.statuses ?? []).filter((s) => knownKeys.has(s));

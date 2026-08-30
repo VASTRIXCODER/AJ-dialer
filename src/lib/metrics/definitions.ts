@@ -428,11 +428,49 @@ export function connectedRecordFilter(): string {
 }
 
 /**
+ * `organizations.timezone` carried a column default of America/Los_Angeles, and
+ * nothing in createOrganization or onboarding ever set the column — so ten of
+ * the eleven workspaces in production carried it, and it was indistinguishable
+ * from a zone an admin had chosen. (The eleventh chose Europe/Stockholm, which
+ * is how we know a real choice looks different.)
+ *
+ * The default is dropped now, but the ten rows written under it remain, so this
+ * treats the exact default string as absent — the same rule storedLeadTimezone
+ * applies to `leads.timezone`, for the same reason.
+ *
+ * The cost is a workspace that genuinely IS in Los Angeles and never re-saved
+ * its settings: it resolves to the fallback until an admin picks a zone, which
+ * the settings form now prompts for. That is the honest direction — a zone
+ * nobody chose should not silently drive a TCPA window.
+ */
+export const ORG_TIMEZONE_COLUMN_DEFAULT = "America/Los_Angeles";
+
+/**
+ * The zone every window falls back to when nothing better is known. One
+ * constant, because it was spelled inline in fifteen places and a fallback that
+ * disagrees with itself is how the dashboard and reports drifted apart at
+ * midnight in the first place.
+ */
+export const DEFAULT_TIMEZONE = "America/Chicago";
+
+/** An org's chosen zone, or null when the value is not evidence of a choice. */
+export function storedOrgTimezone(
+  raw: string | null | undefined,
+): string | null {
+  const v = (raw ?? "").trim();
+  if (!v || v === ORG_TIMEZONE_COLUMN_DEFAULT) return null;
+  return v.includes("/") ? v : null;
+}
+
+/**
  * The one timezone fallback. Before Phase 1, "today" was computed against UTC on
  * some surfaces and America/Chicago on others, so the dashboard and reports could
  * disagree near midnight. Every window now resolves through this: the org's own
  * timezone when set, America/Chicago otherwise.
+ *
+ * Note this is the LAST resort for a calling window — the lead's own zone,
+ * inferred from their area code, is tried first (see resolveLeadTimezone).
  */
 export function orgTimezone(org: { timezone?: string | null } | null | undefined): string {
-  return org?.timezone || "America/Chicago";
+  return storedOrgTimezone(org?.timezone) ?? DEFAULT_TIMEZONE;
 }
