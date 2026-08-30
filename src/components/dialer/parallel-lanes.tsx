@@ -100,7 +100,10 @@ function LaneRow({
   const name = `${line.lead.firstName} ${line.lead.lastName}`.trim();
   const loc = inferNumberLocation(line.lead.phone);
   const ended = isLaneEnded(line.status);
-  const reason = laneTerminationReason(line.status, { anotherAnswered });
+  const reason = laneTerminationReason(line.status, {
+    anotherAnswered,
+    refusal: line.refusal,
+  });
   const elapsedSec = Math.max(0, Math.floor((now - (meta?.since ?? now)) / 1000));
   const pulsing = Boolean(meta && now - meta.changedAt < PULSE_MS);
 

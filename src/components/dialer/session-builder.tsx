@@ -24,6 +24,9 @@ import {
 import type { Lead, LeadStatus } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { groupLabel } from "./load-leads-dialog";
+import { useDialerContext } from "./dialer-context";
+import { resolveLeadTimezone } from "@/lib/dialer/lead-timezone";
+import { isWithinOrgHours } from "@/lib/dialer/schedule";
 import { SelectMenu } from "@/components/ui/select-menu";
 
 interface Segment {
@@ -89,6 +92,11 @@ export function SessionBuilder({
   // Saved statuses are validated against the REAL segment keys — a stale
   // stored key would render no checked card while the server silently counted
   // its default fallback instead.
+  // The workspace's own calling window and zone, for the pre-flight count.
+  const { config } = useDialerContext();
+  const hours = config.callingHours;
+  const orgTz = config.orgTimezone || "America/Chicago";
+
   const knownKeys = new Set<string>(SEGMENTS.map((s) => s.key));
   const savedStatuses = (initial?.statuses ?? []).filter((s) => knownKeys.has(s));
   const [statuses, setStatuses] = useState<string[]>(
@@ -190,6 +198,23 @@ export function SessionBuilder({
         body: JSON.stringify(spec()),
       });
       const json = (await res.json()) as { leads: Lead[]; count: number };
+      // How many of this session cannot be dialed RIGHT NOW because it is the
+      // wrong time where the contact is. The dial route already refuses these
+      // one lane at a time, in the contact's own zone — but only after the rep
+      // has pressed Start, so a session that is 40% Eastern at 8:45pm looked
+      // like a full session and then cancelled its way through it.
+      //
+      // Same expression the dial route uses, so the two cannot disagree.
+      const outOfWindow = hours
+        ? json.leads.filter(
+            (l) =>
+              !isWithinOrgHours(
+                new Date(),
+                hours,
+                resolveLeadTimezone(l.phone ?? "", l.timezone, orgTz),
+              ),
+          ).length
+        : 0;
       const picked = report?.segments.filter((s) => statuses.includes(s.key)) ?? [];
       const parts = picked.map(
         (s) => `${Math.min(s.count, json.count)} ${segLabel(s.key, s.label).toLowerCase()}`,
@@ -200,7 +225,10 @@ export function SessionBuilder({
         ` · ${ORDER_LABELS[order].toLowerCase()}` +
         (canOrgWide && orgWide ? " · whole org" : "") +
         (strictOrder ? " · strict list order" : " · pool order") +
-        (refill ? " · auto-refill on" : "");
+        (refill ? " · auto-refill on" : "") +
+        (outOfWindow
+          ? ` · ${outOfWindow} outside their calling hours right now`
+          : "");
       onLoad(json.leads, {
         statuses: statuses as LeadStatus[],
         strictOrder,

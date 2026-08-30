@@ -141,7 +141,7 @@ export default async function TodayPage() {
       {whoNext && (
         <SectionCard
           title="Who should I call next?"
-          description="Picked from your promises and signals — never anyone on the Do-Not-Call list, outside calling hours, or held by another rep."
+          description="Picked from your promises and signals — never anyone on the Do-Not-Call list, outside their OWN local calling hours, or held by another rep."
         >
           <div className="flex flex-wrap items-center gap-3">
             <div className="min-w-0 flex-1">

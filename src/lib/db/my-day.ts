@@ -1,5 +1,6 @@
 import "server-only";
 
+import { resolveLeadTimezone } from "../dialer/lead-timezone";
 import { connectedRecordFilter } from "../metrics/definitions";
 import {
   isWithinOrgHours,
@@ -463,8 +464,26 @@ async function readMyDay(input: {
         continue;
       }
       // Never recommend a call the calling-hours policy would flag — judged in
-      // the LEAD's timezone when it has one.
-      if (!isWithinOrgHours(now, hours, s(lead.timezone) || orgTz)) continue;
+      // the CONTACT's own timezone.
+      //
+      // This was `s(lead.timezone) || orgTz`, a third resolution of the same
+      // question that never consulted the number's area code. Combined with the
+      // leads.timezone column default it evaluated the entire book in one zone,
+      // so the pick was judged against the wrong clock for almost everybody.
+      // `resolveLeadTimezone` is the one the dial routes use.
+      //
+      // Deliberately unconditional, where the dialer only blocks when
+      // `hours.enforced`: a RECOMMENDATION should be the safe one even in a
+      // workspace whose policy is advisory. The copy on /today says so.
+      if (
+        !isWithinOrgHours(
+          now,
+          hours,
+          resolveLeadTimezone(phone, s(lead.timezone), orgTz),
+        )
+      ) {
+        continue;
+      }
       whoNext = {
         leadId: c.leadId,
         name:

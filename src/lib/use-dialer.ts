@@ -94,6 +94,16 @@ export interface DialLine {
   id: string;
   lead: Lead;
   status: "ringing" | "connected" | "canceled" | "no_answer";
+  /**
+   * Why the server refused this leg, when it did — verbatim from the dial
+   * route, which composes a real sentence per leg ("Outside this contact's
+   * calling hours (Mon–Fri, 8am–8pm, their local time)").
+   *
+   * The route has always sent it and the client always dropped it on the
+   * floor, so a lane refused by policy was indistinguishable from one released
+   * because another line answered.
+   */
+  refusal?: string;
 }
 
 /** One AI call launched in the current dialer session. */
@@ -2388,6 +2398,14 @@ export function useDialer(
           /* unreadable — the recovery below decides what actually happened */
         }
 
+        // Per-leg refusals, kept rather than discarded — see DialLine.refusal.
+        const refusals = new Map<string, string>();
+        for (const c of data.calls ?? []) {
+          if (c && !c.sid && typeof c.error === "string" && c.error) {
+            refusals.set(c.leadId, c.error);
+          }
+        }
+
         let placed = (data.calls ?? [])
           .filter((c): c is { leadId: string; sid: string } => Boolean(c?.sid))
           .map((c) => ({ leadId: c.leadId, sid: c.sid }));
@@ -2460,7 +2478,13 @@ export function useDialer(
           setState((s) => ({
             ...s,
             lines: s.lines.map((ln) =>
-              droppedSet.has(ln.lead.id) ? { ...ln, status: "canceled" as const } : ln,
+              droppedSet.has(ln.lead.id)
+                ? {
+                    ...ln,
+                    status: "canceled" as const,
+                    refusal: refusals.get(ln.lead.id),
+                  }
+                : ln,
             ),
           }));
         }

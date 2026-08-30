@@ -52,6 +52,23 @@ export interface ClaimOptions {
    * ITS OWN timezone (area-code inference — TS-only, which is why this check
    * can't live in the SQL). Out-of-window leads are released immediately and
    * dropped from the result.
+   *
+   * DELIBERATELY NOT PASSED by the rep-facing claim route today, and that is a
+   * choice rather than an oversight. Two reasons:
+   *
+   *  1. The shape is `AutomationSettings` — the unattended dialer's window
+   *     (windows[] / days / timezone / enabled) — not the `OrgHours` shape
+   *     (startHour / endHour / days / ENFORCED) that governs a rep's dialing.
+   *     Feeding org hours through here without adapting the shape would apply
+   *     the wrong rule.
+   *  2. `OrgHours.enforced` is the whole question. A workspace whose window is
+   *     advisory must keep dialing; wiring this in without honouring that flag
+   *     would silently stop a rep's session with no message anywhere.
+   *
+   * The window IS enforced, per leg, at dial time — twilio/call and
+   * elevenlabs/call both split the legs and refuse the out-of-window ones with
+   * a reason the lane now displays. Claiming first and refusing at dial costs
+   * a reservation TTL that is released immediately, which is the trade.
    */
   window?: AutomationSettings | null;
   now?: Date;
