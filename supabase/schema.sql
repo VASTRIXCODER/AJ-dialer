@@ -4559,4 +4559,32 @@ alter table public.app_settings
 alter table public.app_settings
   add column if not exists messaging_last_tick_at timestamptz;
 
+-- ── Three profile column defaults that fabricate answers ────────────────────
+--
+-- `handle_new_user` inserts only (id, full_name), so every one of these fires
+-- on every signup and the value is indistinguishable from a chosen one.
+--
+--   role         default 'manager' — the worst of the three. getScope() and six
+--                db modules read profiles.role to decide whether somebody sees
+--                their own uploads or the whole organization's book, so a row
+--                nobody ever set read as a supervisor. Measured before the fix:
+--                eight profiles whose profiles.role and organization_members.role
+--                disagree, one of them a `rep` in the members table reading as
+--                `admin` here. The application no longer trusts this column for
+--                that decision (see resolveSupervisor in src/lib/db/scope.ts) —
+--                dropping the default stops it seeding the drift in the first
+--                place.
+--   team         default 'AIATWORK' — the product is multi-tenant; a workspace
+--                in another industry got this company's name on every new user.
+--   avatar_color default '#3B82F6' — nothing in the application has ever written
+--                this column (all 50 rows carry the default), so the `seed`-based
+--                tone that tracks light and dark was permanently unreachable
+--                behind a fixed hex that does not.
+--
+-- Existing rows are NOT rewritten: the honest fix for a value nobody chose is to
+-- stop fabricating new ones, not to fabricate a different one over the top.
+alter table public.profiles alter column role drop default;
+alter table public.profiles alter column team drop default;
+alter table public.profiles alter column avatar_color drop default;
+
 notify pgrst, 'reload schema';

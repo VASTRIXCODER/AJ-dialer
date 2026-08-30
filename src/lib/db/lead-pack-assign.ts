@@ -4,6 +4,7 @@ import { createAdminClient, isAdminConfigured } from "../supabase/admin";
 import { isSupabaseConfigured } from "../supabase/config";
 import { createClient } from "../supabase/server";
 import { logLeadEventBulk } from "./lead-events";
+import { readProfileScope } from "./scope";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Handing a lead pack to a rep.
@@ -56,15 +57,19 @@ async function supervisorScope(): Promise<
     data: { user },
   } = await supabase.auth.getUser();
   if (!user) return { ok: false, error: "You must be signed in." };
-  const { data: prof } = await supabase
-    .from("profiles")
-    .select("org_id, role")
-    .eq("id", user.id)
-    .maybeSingle();
-  const orgId = prof?.org_id ? String(prof.org_id) : null;
-  const role = String(prof?.role ?? "rep");
+  // Role comes from the membership row for the ACTIVE org, not from the
+  // denormalized profiles.role — see resolveSupervisor. A read failure throws
+  // rather than answering "not a supervisor", which would tell an admin they
+  // lack a permission they hold.
+  let prof;
+  try {
+    prof = await readProfileScope(supabase, user.id);
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Couldn't confirm your role." };
+  }
+  const orgId = prof.org_id;
   if (!orgId || !UUID.test(orgId)) return { ok: false, error: "Join an organization first." };
-  if (!["owner", "admin", "manager"].includes(role))
+  if (!prof.supervisor)
     return { ok: false, error: "Only admins and managers can assign lead packs." };
   return { ok: true, userId: user.id, orgId };
 }

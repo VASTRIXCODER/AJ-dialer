@@ -21,6 +21,7 @@ import { addToDnc } from "./dnc";
 import { logLeadEvent } from "./lead-events";
 import { markLeadAttempted } from "./reservations";
 import { askedCount } from "./counts";
+import { readProfileScope } from "./scope";
 
 const UUID =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -1526,14 +1527,9 @@ export async function getAITodayStats(): Promise<AITodayStats> {
     } = await supabase.auth.getUser();
     if (!user) return EMPTY_AI_TODAY;
 
-    const { data: prof } = await supabase
-      .from("profiles")
-      .select("org_id, role")
-      .eq("id", user.id)
-      .maybeSingle();
-    const orgId = prof?.org_id ? String(prof.org_id) : null;
-    const supervisor =
-      Boolean(orgId) && ["owner", "admin", "manager"].includes(String(prof?.role ?? "rep"));
+    const prof = await readProfileScope(supabase, user.id);
+    const orgId = prof.org_id;
+    const supervisor = prof.supervisor;
 
     const { data: org } = orgId
       ? await supabase.from("organizations").select("timezone").eq("id", orgId).maybeSingle()
@@ -1610,14 +1606,9 @@ export async function getAIConversationsForMonitor(): Promise<{
     // org supervisor to read org-wide rows via the session client (see the
     // "ai_conversations read" policy in schema.sql), so no service role
     // is required here.
-    const { data: prof } = await supabase
-      .from("profiles")
-      .select("org_id, role")
-      .eq("id", user.id)
-      .maybeSingle();
-    const orgId = prof?.org_id ? String(prof.org_id) : null;
-    const supervisor =
-      Boolean(orgId) && ["owner", "admin", "manager"].includes(String(prof?.role ?? "rep"));
+    const prof = await readProfileScope(supabase, user.id);
+    const orgId = prof.org_id;
+    const supervisor = prof.supervisor;
 
     let base = supabase.from("ai_conversations").select("*");
     // A rep's "own" scope must stay within their CURRENT org — never surface

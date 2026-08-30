@@ -3,6 +3,7 @@ import { CallArchive } from "@/components/calls/call-archive";
 import { PageContainer, PageHeader } from "@/components/shared/page-header";
 import { Badge } from "@/components/ui/badge";
 import { getViewer, listMembers } from "@/lib/org/membership";
+import { isSupervisorRole } from "@/lib/permissions";
 
 export const metadata = { title: "Recordings & transcripts" };
 export const dynamic = "force-dynamic";
@@ -26,7 +27,7 @@ export default async function RecordingsPage({
   // Supervisors can narrow the archive to one rep; a rep only ever sees their
   // own calls, so the picker would be a control with one option.
   const supervisor = Boolean(
-    viewer.role && ["owner", "admin", "manager"].includes(viewer.role),
+    isSupervisorRole(viewer.role),
   );
   const members =
     supervisor && viewer.org?.id ? await listMembers(viewer.org.id) : [];
