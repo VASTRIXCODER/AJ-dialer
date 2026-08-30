@@ -126,6 +126,11 @@ export interface CallerIdInfo {
   pool: string[];
   poolIndex: number;
   rotateEvery: number;
+  /** True when the server picked this number to MATCH the contact's area code
+   *  rather than by ordinary rotation. The server has always computed this and
+   *  the client type dropped it on the floor, so "Dialing from (415) 555-0100"
+   *  could never say why that number and not another. */
+  localPresence?: boolean;
 }
 
 export interface DialerState {
@@ -2369,7 +2374,13 @@ export function useDialer(
           calls?: { leadId: string; sid: string | null; error?: string | null }[];
           errors?: (string | null)[];
           error?: string;
-          callerIdInfo?: { callerId: string; pool: string[]; poolIndex: number; rotateEvery: number } | null;
+          callerIdInfo?: {
+            callerId: string;
+            pool: string[];
+            poolIndex: number;
+            rotateEvery: number;
+            localPresence?: boolean;
+          } | null;
         } = {};
         try {
           data = raw ? JSON.parse(raw) : {};

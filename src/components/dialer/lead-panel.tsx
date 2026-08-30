@@ -31,6 +31,7 @@ import {
 import { useEffect, useMemo, useRef, useState } from "react";
 import { CallDetailModal } from "@/components/calls/call-detail-modal";
 import { WhyNowCard } from "@/components/dialer/why-now";
+import { LeadClock } from "@/components/dialer/lead-clock";
 import { useVocabulary } from "@/components/layout/vocabulary";
 import { useLead360 } from "@/components/leads/lead-360/lead-360-provider";
 import { truePeopleSearchUrl } from "@/lib/leads/people-search-url";
@@ -855,7 +856,9 @@ function LeadDetail({
               <Badge tone="primary" className="capitalize">
                 {lead.status.replace("_", " ")}
               </Badge>
-              {lead.timezone && <Badge tone="neutral">{lead.timezone}</Badge>}
+              {/* This used to render the raw IANA string — "America/New_York"
+                  — which tells a rep nothing they can act on. The clock does. */}
+              <LeadClock phone={lead.phone ?? ""} timezone={lead.timezone} />
               {/* Lead 360 slides OVER the dialer — nothing here remounts, so
                   it's safe to open mid-call. */}
               <button
@@ -990,8 +993,11 @@ function LeadDetail({
                 <p className="truncate text-sm font-medium">
                   {l.firstName} {l.lastName}
                 </p>
-                <p className="truncate text-xs text-muted-foreground">
-                  {[l.city, l.state].filter(Boolean).join(", ") || "—"}
+                <p className="flex items-center gap-1.5 truncate text-xs text-muted-foreground">
+                  <span className="truncate">
+                    {[l.city, l.state].filter(Boolean).join(", ") || "—"}
+                  </span>
+                  <LeadClock phone={l.phone ?? ""} timezone={l.timezone} compact />
                 </p>
               </div>
               {l.aiScore != null && (

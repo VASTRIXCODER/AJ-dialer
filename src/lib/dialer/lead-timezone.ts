@@ -107,3 +107,95 @@ export function resolveLeadTimezone(
   if (stored.includes("/")) return stored; // looks like an IANA zone — trust it
   return timezoneForAreaCode(areaCodeOf(phone)) || fallback;
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// …and what a rep can actually read.
+//
+// The resolver above has driven server-side TCPA enforcement for a long time,
+// and no surface in the product ever showed a rep the number it produces. So a
+// rep in Phoenix worked down a list of New Jersey contacts at what was, to
+// them, a reasonable hour — and watched lanes cancel one after another with no
+// idea why until they read the refusal. The clock has to be on the row.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface LeadClock {
+  /** "4:12 PM" in the contact's own zone. */
+  time: string;
+  /** The zone it was computed in — the resolver's answer, not a guess. */
+  timezone: string;
+  /** True when this contact is OUTSIDE the window right now. */
+  outsideWindow: boolean;
+  /** Whether the zone came from a stored value or the number's area code. */
+  source: "stored" | "areaCode" | "fallback";
+}
+
+/**
+ * What time it is where this contact is, and whether that is a problem.
+ *
+ * `hours` is the ORG's configured calling window, evaluated in the CONTACT's
+ * zone — which is the rule TCPA actually states and the rule the dial routes
+ * already enforce. Pass null to skip the window check entirely.
+ *
+ * Returns null when the time cannot be formatted at all (an unusable zone
+ * string), because a made-up clock is worse than no clock.
+ */
+export function leadLocalTime(
+  phone: string,
+  storedTz: string | null | undefined,
+  fallback: string,
+  now: Date,
+  hours?: { startHour: number; endHour: number; days?: number[] } | null,
+): LeadClock | null {
+  const stored = (storedTz ?? "").trim();
+  const areaZone = timezoneForAreaCode(areaCodeOf(phone));
+  const timezone = resolveLeadTimezone(phone, storedTz, fallback);
+  const source: LeadClock["source"] = stored.includes("/")
+    ? "stored"
+    : areaZone
+      ? "areaCode"
+      : "fallback";
+
+  let time: string;
+  try {
+    time = new Intl.DateTimeFormat("en-US", {
+      hour: "numeric",
+      minute: "2-digit",
+      timeZone: timezone,
+    }).format(now);
+  } catch {
+    // An unusable stored zone. Say nothing rather than show the rep's own clock
+    // and let them believe it is the contact's.
+    return null;
+  }
+
+  let outsideWindow = false;
+  if (hours) {
+    const start = Number(hours.startHour);
+    const end = Number(hours.endHour);
+    if (Number.isFinite(start) && Number.isFinite(end) && start !== end) {
+      const parts = new Intl.DateTimeFormat("en-US", {
+        hour: "numeric",
+        hour12: false,
+        weekday: "short",
+        timeZone: timezone,
+      }).formatToParts(now);
+      const hour = Number(parts.find((p) => p.type === "hour")?.value ?? "0") % 24;
+      const dayName = parts.find((p) => p.type === "weekday")?.value ?? "";
+      const day = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].indexOf(dayName);
+      const inDays =
+        !Array.isArray(hours.days) || !hours.days.length || hours.days.includes(day);
+      // Overnight windows wrap: 20 → 6 means 8pm through 5:59am.
+      const inHours = start < end ? hour >= start && hour < end : hour >= start || hour < end;
+      outsideWindow = !(inDays && inHours);
+    }
+  }
+
+  return { time, timezone, outsideWindow, source };
+}
+
+/** "4:12 PM their time" / "8:50 PM their time — outside calling hours". */
+export function describeLeadClock(clock: LeadClock): string {
+  return clock.outsideWindow
+    ? `${clock.time} their time — outside calling hours`
+    : `${clock.time} their time`;
+}

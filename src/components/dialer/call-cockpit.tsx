@@ -737,6 +737,7 @@ export function CallCockpit({
                   <p className="mt-0.5 flex items-center justify-center gap-1 text-xs font-medium text-muted-foreground">
                     <Phone className="h-3 w-3" />
                     Dialing from {formatPhone(state.callerIdInfo.callerId)}
+                    {state.callerIdInfo.localPresence ? " — local to them" : ""}
                   </p>
                 )}
                 <div className="mt-2 inline-flex items-center gap-2 rounded-full bg-success/10 px-3 py-1 text-sm font-bold text-success tabular">

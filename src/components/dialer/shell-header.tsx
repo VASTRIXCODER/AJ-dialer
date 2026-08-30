@@ -61,28 +61,51 @@ const MODE_LABEL: Record<SessionMode, string> = {
  * There is deliberately no toggle: the old one flipped a boolean that
  * controlled nothing while the connect param stayed hardcoded.
  */
-export function RecordingIndicator({ recording }: { recording: boolean }) {
+export function RecordingIndicator({
+  recording,
+  /**
+   * Which channel is placing calls. This matters because `recording` is ONLY
+   * the Twilio conference record flag — the org's manual-dialing policy. The AI
+   * agent records every conversation it holds regardless of that flag; the
+   * product plays those recordings back in Reports and in Monitor
+   * (/api/elevenlabs/audio/[id]). So an AI-mode workspace with conference
+   * recording switched off used to show a confident "Not recording" chip above
+   * calls that were, in fact, all being recorded.
+   */
+  channel = "manual",
+}: {
+  recording: boolean;
+  channel?: "manual" | "ai";
+}) {
+  const on = channel === "ai" ? true : recording;
+  const content =
+    channel === "ai"
+      ? "The AI agent records every call it places, and those recordings are playable in Reports and Monitor. This is separate from your organization's conference-recording policy for manual calls."
+      : on
+        ? "Calls are recorded — your organization's policy (Admin → Dialing). Reps can't switch this off per call."
+        : "Calls are NOT recorded — your organization's policy (Admin → Dialing).";
+  const label =
+    channel === "ai"
+      ? "Recording on — the AI agent"
+      : on
+        ? "Recording on — org policy"
+        : "Not recording";
+
   return (
-    <Tooltip
-      content={
-        recording
-          ? "Calls are recorded — your organization's policy (Admin → Dialing). Reps can't switch this off per call."
-          : "Calls are NOT recorded — your organization's policy (Admin → Dialing)."
-      }
-    >
+    <Tooltip content={content}>
       <span
         className={cn(
           "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-semibold",
-          recording
+          on
             ? "border-danger/30 bg-danger/10 text-danger"
             : "border-border bg-surface text-muted-foreground",
         )}
       >
         <Circle
-          className={cn("h-2 w-2", recording ? "fill-danger" : "fill-muted-foreground/40")}
+          className={cn("h-2 w-2", on ? "fill-danger" : "fill-muted-foreground/40")}
           strokeWidth={0}
         />
-        {recording ? "Recording on — org policy" : "Not recording"}
+        {label}
       </span>
     </Tooltip>
   );
@@ -345,7 +368,7 @@ export function ShellHeader({
           />
         )}
         <AudioDeviceMenu devices={devices} />
-        <RecordingIndicator recording={state.recording} />
+        <RecordingIndicator recording={state.recording} channel={state.aiMode ? "ai" : "manual"} />
         <RealtimeHealth health={health} />
       </span>
 

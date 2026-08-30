@@ -26,7 +26,10 @@ export function CallerIdPicker({
   rotateEvery: number;
   /** Numbers the rep has toggled off. */
   excludedCallerIds: string[];
-  /** What the last placed call actually used — marks the active pill. */
+  /** What the LAST placed call used. Not a prediction of the next one: with
+   *  the default rotateEvery of 1 the next call is a different number every
+   *  time, and an unlabelled marker sitting on the previous number read as
+   *  "this is the one you are about to dial from". */
   active: CallerIdInfo | null;
   /** True while a call is in flight — toggling mid-call is a no-op. */
   disabled: boolean;
@@ -69,7 +72,20 @@ export function CallerIdPicker({
           >
             <Phone className="h-3 w-3" />
             {formatPhone(num)}
-            {active?.callerId === num && <RotateCcw className="h-3 w-3" />}
+            {active?.callerId === num && (
+              <span
+                className="inline-flex items-center gap-0.5"
+                title={
+                  active.localPresence
+                    ? "Last call used this number — chosen to match their area code"
+                    : "Last call used this number"
+                }
+              >
+                <RotateCcw className="h-3 w-3" aria-hidden />
+                <span className="sr-only">Used by the last call</span>
+                <span aria-hidden>last</span>
+              </span>
+            )}
           </button>
         );
       })}
