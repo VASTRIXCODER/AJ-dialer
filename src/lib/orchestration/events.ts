@@ -103,7 +103,7 @@ async function reentryAllows(
   opportunityId: string,
   def: PlaybookDefinition,
 ): Promise<boolean> {
-  const { data } = await admin
+  const { data, error } = await admin
     .from("playbook_instances")
     .select("status, ended_at")
     .eq("playbook_id", playbookId)
@@ -111,6 +111,12 @@ async function reentryAllows(
     .order("started_at", { ascending: false })
     .limit(1)
     .maybeSingle();
+  // Fails CLOSED. `!data` means "no prior instance, go ahead" — and an
+  // unchecked read produced exactly that on failure, so a database blip could
+  // re-activate a playbook for an opportunity that had already completed its
+  // run and send the customer the whole sequence again. Refusing to start on
+  // doubt is recoverable; a duplicate outreach sequence is not.
+  if (error) return false;
   if (!data) return true;
   if (data.status === "active" || data.status === "waiting") return false;
   if (!def.reentry?.allow) return false;

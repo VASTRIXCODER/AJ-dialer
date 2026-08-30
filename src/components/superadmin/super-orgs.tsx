@@ -39,9 +39,12 @@ export type Org = {
   industry: string;
   status: "active" | "suspended";
   createdAt: string;
-  companyCount: number;
-  memberCount: number;
-  pendingCount: number;
+  // Null when the server could not take the count. LOCKSTEP with
+  // OrganizationRow in src/lib/db/org-control.ts — this crosses the wire as
+  // JSON, so tsc cannot connect the two declarations.
+  companyCount: number | null;
+  memberCount: number | null;
+  pendingCount: number | null;
   joinCode: string;
   dialerTemplate: string;
   productName: string;
@@ -159,13 +162,16 @@ export function OrganizationsTab({
               <div className="min-w-0 flex-1">
                 <p className="truncate font-semibold">{o.name}</p>
                 <p className="truncate text-xs text-muted-foreground">
-                  {templateLabel(o.dialerTemplate)} · {o.memberCount} members ·{" "}
-                  {o.companyCount} companies
+                  {templateLabel(o.dialerTemplate)} ·{" "}
+                  {o.memberCount === null ? "members unknown" : `${o.memberCount} members`} ·{" "}
+                  {o.companyCount === null ? "companies unknown" : `${o.companyCount} companies`}
                 </p>
               </div>
-              {o.pendingCount > 0 && (
+              {o.pendingCount === null ? (
+                <Badge tone="neutral">pending unknown</Badge>
+              ) : o.pendingCount > 0 ? (
                 <Badge tone="warning">{o.pendingCount} pending</Badge>
-              )}
+              ) : null}
               <Badge tone={o.status === "active" ? "success" : "warning"} className="capitalize">
                 {o.status}
               </Badge>

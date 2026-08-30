@@ -61,8 +61,27 @@ const PAGE = 1000;
 const MAX_PAGED_ROWS = 100_000;
 
 /**
+ * Raised when a lead read could not establish WHO is asking, or could not
+ * finish. Both are conditions where the honest answer is "we don't know" and
+ * the tempting one — an empty or partial list — is indistinguishable from a
+ * real result. Callers that already surface `e.message` need no change; the
+ * read paths rethrow this past their `return []` so the app's error boundary
+ * gets it instead of the user getting a plausible lie.
+ */
+export class LeadScopeError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "LeadScopeError";
+  }
+}
+
+/**
  * Read EVERY row a query matches, paging past the 1,000-row cap.
  * `build()` must return a FRESH query builder each call (they aren't reusable).
+ *
+ * A failed page THROWS. It used to `break`, which returned every row gathered
+ * so far as if that were the whole table — so a book of 37,987 could export as
+ * 12,000 with no error anywhere, and the count beside it would agree.
  */
 async function fetchAllPaged(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -71,12 +90,53 @@ async function fetchAllPaged(
   const out: Row[] = [];
   for (let from = 0; from < MAX_PAGED_ROWS; from += PAGE) {
     const { data, error } = await build().range(from, from + PAGE - 1);
-    if (error) break;
+    if (error) {
+      throw new LeadScopeError(
+        `Couldn't finish reading the list (stopped after ${out.length.toLocaleString()} rows): ${error.message}`,
+      );
+    }
     const rows = (data ?? []) as Row[];
     out.push(...rows);
     if (rows.length < PAGE) break; // short page ⇒ end of the table
   }
   return out;
+}
+
+/** The shape every scope decision in this file is made from. */
+type LeadScope = { org_id: string | null; role: unknown; disabled: boolean };
+
+/**
+ * Who is asking, and how much are they allowed to see.
+ *
+ * Every read and write below branches on this one row: `org_id` picks the
+ * workspace, `role` picks between "your own uploads" and "the whole book".
+ * Read unchecked — which all twelve call sites did — a failure resolves to
+ * `null`, which is silently the REP answer. A supervisor was then shown the
+ * handful of leads they had personally uploaded, correctly formatted, with a
+ * total that agreed, and nothing anywhere said the workspace filter had been
+ * dropped. Refusing is the only answer that can't be mistaken for a book.
+ */
+async function readLeadScope(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  userId: string,
+  columns = "org_id, role",
+): Promise<LeadScope> {
+  const { data, error } = await supabase
+    .from("profiles")
+    .select(columns)
+    .eq("id", userId)
+    .maybeSingle();
+  if (error) {
+    throw new LeadScopeError(
+      "Couldn't work out which workspace you're in, so we can't show the right leads.",
+    );
+  }
+  const row = (data ?? {}) as Row;
+  return {
+    org_id: row.org_id ? String(row.org_id) : null,
+    role: row.role,
+    disabled: Boolean(row.disabled),
+  };
 }
 
 export function rowToLead(r: Row): Lead {
@@ -150,11 +210,7 @@ export async function getLeads(): Promise<Lead[]> {
       data: { user },
     } = await supabase.auth.getUser();
     if (!user) return [];
-    const { data: prof } = await supabase
-      .from("profiles")
-      .select("org_id, role")
-      .eq("id", user.id)
-      .maybeSingle();
+    const prof = await readLeadScope(supabase, user.id);
     const orgId = prof?.org_id ? String(prof.org_id) : null;
     const supervisor =
       Boolean(orgId) && isSupervisorRole(prof?.role) && isAdminConfigured();
@@ -234,7 +290,7 @@ export async function getLeads(): Promise<Lead[]> {
             ? -1
             : 1,
       );
-  } catch {
+  } catch (e) {    // A scope or paging failure is NOT an empty result — rethrow past    // this fallback so the caller can say so. See LeadScopeError.    if (e instanceof LeadScopeError) throw e;
     return [];
   }
 }
@@ -292,11 +348,7 @@ export async function searchLeadCandidates(query: string, limit = 80): Promise<L
       data: { user },
     } = await supabase.auth.getUser();
     if (!user) return [];
-    const { data: prof } = await supabase
-      .from("profiles")
-      .select("org_id, role")
-      .eq("id", user.id)
-      .maybeSingle();
+    const prof = await readLeadScope(supabase, user.id);
     const orgId = prof?.org_id ? String(prof.org_id) : null;
     const supervisor = Boolean(orgId) && isSupervisorRole(prof?.role);
 
@@ -372,7 +424,7 @@ export async function searchLeadCandidates(query: string, limit = 80): Promise<L
       }
     }
     return [...byId.values()].map(rowToLead);
-  } catch {
+  } catch (e) {    // A scope or paging failure is NOT an empty result — rethrow past    // this fallback so the caller can say so. See LeadScopeError.    if (e instanceof LeadScopeError) throw e;
     return [];
   }
 }
@@ -419,11 +471,7 @@ export async function deleteLeads(
     // teammate's uploads out of the shared pool. Reps now get the session client
     // (whose RLS delete policy is already owner-or-supervisor) AND an explicit
     // owner_id filter below, so neither layer is load-bearing on its own.
-    const { data: prof } = await supabase
-      .from("profiles")
-      .select("org_id, role")
-      .eq("id", user.id)
-      .maybeSingle();
+    const prof = await readLeadScope(supabase, user.id);
     const orgId = prof?.org_id ? String(prof.org_id) : null;
     const supervisor =
       Boolean(orgId && UUID.test(orgId)) &&
@@ -491,11 +539,7 @@ export async function reassignLeads(
     if (!UUID.test(toUserId))
       return { updated: 0, error: "Pick a teammate to reassign to." };
 
-    const { data: prof } = await supabase
-      .from("profiles")
-      .select("org_id, role")
-      .eq("id", user.id)
-      .maybeSingle();
+    const prof = await readLeadScope(supabase, user.id);
     const orgId = prof?.org_id ? String(prof.org_id) : null;
     if (!orgId || !isSupervisorRole(prof?.role) || !isAdminConfigured())
       return { updated: 0, error: "Only supervisors can reassign leads." };
@@ -560,11 +604,7 @@ export async function assignLeadsToRep(
     if (toUserId !== null && !UUID.test(toUserId))
       return { updated: 0, error: "Pick a teammate to assign to." };
 
-    const { data: prof } = await supabase
-      .from("profiles")
-      .select("org_id, role")
-      .eq("id", user.id)
-      .maybeSingle();
+    const prof = await readLeadScope(supabase, user.id);
     const orgId = prof?.org_id ? String(prof.org_id) : null;
     if (!orgId || !isSupervisorRole(prof?.role) || !isAdminConfigured())
       return { updated: 0, error: "Only supervisors can assign leads." };
@@ -633,11 +673,7 @@ export async function distributeLeads(
     const targets = [...new Set(toUserIds.filter((id) => UUID.test(id)))];
     if (!targets.length) return { updated: 0, perUser: {}, error: "Pick at least one teammate." };
 
-    const { data: prof } = await supabase
-      .from("profiles")
-      .select("org_id, role")
-      .eq("id", user.id)
-      .maybeSingle();
+    const prof = await readLeadScope(supabase, user.id);
     const orgId = prof?.org_id ? String(prof.org_id) : null;
     if (!orgId || !isSupervisorRole(prof?.role) || !isAdminConfigured())
       return { updated: 0, perUser: {}, error: "Only supervisors can distribute leads." };
@@ -1044,11 +1080,7 @@ export async function getDialQueue(opts?: { assignmentId?: string }): Promise<Le
     } = await supabase.auth.getUser();
     if (!user) return [];
 
-    const { data: prof } = await supabase
-      .from("profiles")
-      .select("org_id, role, disabled")
-      .eq("id", user.id)
-      .maybeSingle();
+    const prof = await readLeadScope(supabase, user.id, "org_id, role, disabled");
     // Suspended accounts get nothing — the supervisor branch below reads via
     // the service-role client, which would bypass the RLS suspension backstop.
     if (prof?.disabled) return [];
@@ -1115,7 +1147,7 @@ export async function getDialQueue(opts?: { assignmentId?: string }): Promise<Le
       return q.order("created_at", { ascending: true }).order("id", { ascending: true });
     });
     return scrubDnc(dialable(rows.map((r) => rowToLead(r as Row))), dnc);
-  } catch {
+  } catch (e) {    // A scope or paging failure is NOT an empty result — rethrow past    // this fallback so the caller can say so. See LeadScopeError.    if (e instanceof LeadScopeError) throw e;
     return [];
   }
 }
@@ -1192,11 +1224,7 @@ export async function getBookedLeads(): Promise<BookedLead[]> {
     } = await supabase.auth.getUser();
     if (!user) return [];
 
-    const { data: prof } = await supabase
-      .from("profiles")
-      .select("org_id, role")
-      .eq("id", user.id)
-      .maybeSingle();
+    const prof = await readLeadScope(supabase, user.id);
     const orgId = prof?.org_id ? String(prof.org_id) : null;
     const supervisor =
       Boolean(orgId) && isSupervisorRole(prof?.role) && isAdminConfigured();
@@ -1224,7 +1252,7 @@ export async function getBookedLeads(): Promise<BookedLead[]> {
       return q.order("id", { ascending: true });
     });
     return sort(await withAppointmentInfo(rows.map((r) => rowToLead(r as Row))));
-  } catch {
+  } catch (e) {    // A scope or paging failure is NOT an empty result — rethrow past    // this fallback so the caller can say so. See LeadScopeError.    if (e instanceof LeadScopeError) throw e;
     return [];
   }
 }
@@ -1291,8 +1319,12 @@ export async function touchLeadContacted(
  * Count the leads in the viewer's dial scope (every status) — the denominator
  * for the dialer's "you have N leads but none are ready to dial" hint. Matches
  * getDialQueue's scope: a supervisor's org-wide pool, a rep's own leads.
+ *
+ * Null means the count could not be taken. It is the denominator of the hint
+ * "you have N leads but none are ready" — and 0 makes that hint say the book is
+ * empty, which is the one thing a rep with 37,000 leads must not be told.
  */
-export async function getMyLeadsCount(): Promise<number> {
+export async function getMyLeadsCount(): Promise<number | null> {
   if (!isSupabaseConfigured()) return fallbackLeads.length;
   try {
     const supabase = await createClient();
@@ -1300,11 +1332,7 @@ export async function getMyLeadsCount(): Promise<number> {
       data: { user },
     } = await supabase.auth.getUser();
     if (!user) return 0;
-    const { data: prof } = await supabase
-      .from("profiles")
-      .select("org_id, role")
-      .eq("id", user.id)
-      .maybeSingle();
+    const prof = await readLeadScope(supabase, user.id);
     const orgId = prof?.org_id ? String(prof.org_id) : null;
     const supervisor =
       Boolean(orgId) && isSupervisorRole(prof?.role) && isAdminConfigured();
@@ -1313,14 +1341,14 @@ export async function getMyLeadsCount(): Promise<number> {
         .from("leads")
         .select("id", { count: "exact", head: true })
         .eq("org_id", orgId as string);
-      return count ?? 0;
+      return count ?? null;
     }
     let q = supabase.from("leads").select("id", { count: "exact", head: true }).eq("owner_id", user.id);
     if (orgId) q = q.eq("org_id", orgId);
     const { count } = await q;
-    return count ?? 0;
+    return count ?? null;
   } catch {
-    return 0;
+    return null;
   }
 }
 
@@ -1587,11 +1615,7 @@ export async function getLeadsPage(params: LeadsPageParams): Promise<LeadsPageRe
       return filterLeadsPage(await getLeads(), params, user.id);
     }
 
-    const { data: prof } = await supabase
-      .from("profiles")
-      .select("org_id, role")
-      .eq("id", user.id)
-      .maybeSingle();
+    const prof = await readLeadScope(supabase, user.id);
     const orgId = prof?.org_id ? String(prof.org_id) : null;
     const supervisor = Boolean(orgId) && isSupervisorRole(prof?.role);
 
@@ -1649,7 +1673,7 @@ export async function getLeadsPage(params: LeadsPageParams): Promise<LeadsPageRe
       page,
       pageSize,
     };
-  } catch {
+  } catch (e) {    // A scope or paging failure is NOT an empty result — rethrow past    // this fallback so the caller can say so. See LeadScopeError.    if (e instanceof LeadScopeError) throw e;
     return emptyLeadsPage(params);
   }
 }
@@ -1716,11 +1740,7 @@ export async function listPlaces(): Promise<PlaceOptions> {
       data: { user },
     } = await supabase.auth.getUser();
     if (!user) return empty;
-    const { data: prof } = await supabase
-      .from("profiles")
-      .select("org_id, role")
-      .eq("id", user.id)
-      .maybeSingle();
+    const prof = await readLeadScope(supabase, user.id);
     const orgId = prof?.org_id ? String(prof.org_id) : null;
     const supervisor =
       Boolean(orgId) && isSupervisorRole(prof?.role) && isAdminConfigured();
@@ -1780,7 +1800,7 @@ export async function listPlaces(): Promise<PlaceOptions> {
     }
 
     return { counties: [...counties.values()], cities: [...cities.values()] };
-  } catch {
+  } catch (e) {    // A scope or paging failure is NOT an empty result — rethrow past    // this fallback so the caller can say so. See LeadScopeError.    if (e instanceof LeadScopeError) throw e;
     return empty;
   }
 }
@@ -1816,8 +1836,11 @@ export async function getMissingCountyCount(orgId: string | null): Promise<numbe
  * the entire queue into the RSC payload just to render a number. Slightly
  * generous — the 10-digit-phone check and DNC scrub happen at load time in the
  * client, which refetches the real queue anyway.
+ *
+ * Null means the count could not be taken — the header badge falls back to
+ * "ready" rather than claiming an empty queue.
  */
-export async function getDialQueueCount(): Promise<number> {
+export async function getDialQueueCount(): Promise<number | null> {
   if (!isSupabaseConfigured())
     return fallbackLeads.filter((l) => DIALABLE.includes(l.status)).length;
   try {
@@ -1826,11 +1849,7 @@ export async function getDialQueueCount(): Promise<number> {
       data: { user },
     } = await supabase.auth.getUser();
     if (!user) return 0;
-    const { data: prof } = await supabase
-      .from("profiles")
-      .select("org_id, role")
-      .eq("id", user.id)
-      .maybeSingle();
+    const prof = await readLeadScope(supabase, user.id);
     const orgId = prof?.org_id ? String(prof.org_id) : null;
     const supervisor =
       Boolean(orgId) && isSupervisorRole(prof?.role) && isAdminConfigured();
@@ -1840,7 +1859,7 @@ export async function getDialQueueCount(): Promise<number> {
         .select("id", { count: "exact", head: true })
         .eq("org_id", orgId as string)
         .in("status", DIALABLE);
-      return count ?? 0;
+      return count ?? null;
     }
     let q = supabase
       .from("leads")
@@ -1849,9 +1868,9 @@ export async function getDialQueueCount(): Promise<number> {
       .in("status", DIALABLE);
     if (orgId) q = q.eq("org_id", orgId);
     const { count } = await q;
-    return count ?? 0;
+    return count ?? null;
   } catch {
-    return 0;
+    return null;
   }
 }
 

@@ -146,23 +146,35 @@ export async function setPlatformAdmin(
 export interface AppSettings {
   maintenance: boolean;
   message: string;
+  /** True when the read failed — neither "on" nor "off" is known. */
+  unknown?: boolean;
 }
 
 export async function getAppSettings(): Promise<AppSettings> {
   if (!isAdminConfigured()) return { maintenance: false, message: "" };
   try {
     const admin = createAdminClient();
-    const { data } = await admin
+    const { data, error } = await admin
       .from("app_settings")
       .select("maintenance,message")
       .eq("id", "global")
       .maybeSingle();
+    // A kill switch that cannot read its own state must not report "off". This
+    // returned `Boolean(data?.maintenance)` from an unchecked destructure, so a
+    // database incident — the exact situation an operator flips this switch
+    // during — read as "the app is Live".
+    //
+    // `unknown` is carried rather than guessed at, so the shell can say it
+    // cannot verify instead of asserting either answer. Superadmins are exempt
+    // from the switch regardless and can always reach the console to fix it.
+    if (error) return { maintenance: false, message: "", unknown: true };
     return {
       maintenance: Boolean(data?.maintenance),
       message: (data?.message as string) ?? "",
+      unknown: false,
     };
   } catch {
-    return { maintenance: false, message: "" };
+    return { maintenance: false, message: "", unknown: true };
   }
 }
 
@@ -210,10 +222,20 @@ export async function listAccounts(): Promise<AccountRow[]> {
     const admin = createAdminClient();
     const { data: usersData } = await admin.auth.admin.listUsers({ perPage: ACCOUNT_PAGE });
     const users = usersData?.users ?? [];
-    const [{ data: profiles }, { data: platform }] = await Promise.all([
+    // Both reads checked: an unchecked pair built an empty profile map and an
+    // empty platform-admin set, so EVERY account rendered with the `|| "manager"`
+    // fallback role, nobody suspended and nobody a platform admin — a plausible,
+    // fully-populated roster that was entirely fiction.
+    const [{ data: profiles, error: profErr }, { data: platform, error: platErr }] =
+      await Promise.all([
       admin.from("profiles").select("id, full_name, role, disabled, org_id, company_id"),
       admin.from("platform_admins").select("user_id"),
     ]);
+    if (profErr || platErr) {
+      throw new Error(
+        `Could not read the account roster: ${profErr?.message ?? platErr?.message}`,
+      );
+    }
     const pmap = new Map(
       (profiles ?? []).map((p: Record<string, unknown>) => [String(p.id), p]),
     );
@@ -293,13 +315,18 @@ export async function isAccountDisabled(id: string): Promise<boolean> {
   if (!isAdminConfigured()) return false;
   try {
     const admin = createAdminClient();
-    const { data } = await admin
+    const { data, error } = await admin
       .from("profiles")
       .select("disabled")
       .eq("id", id)
       .maybeSingle();
+    // Fails CLOSED. A suspension check that cannot read the profile was
+    // answering "not suspended" — the one answer that lets a suspended account
+    // straight into the app. Being locked out during a database blip is
+    // recoverable in a way the opposite is not.
+    if (error) return true;
     return Boolean(data?.disabled);
   } catch {
-    return false;
+    return true;
   }
 }

@@ -427,7 +427,8 @@ export function DialerProvider({
       const res = await fetch(`/api/leads/queue${scoped}`, { cache: "no-store" });
       const json = (await res.json().catch(() => ({}))) as {
         leads?: Lead[];
-        total?: number;
+        // Null when the book could not be counted — see getMyLeadsCount.
+        total?: number | null;
         error?: string;
       };
 
@@ -452,16 +453,26 @@ export function DialerProvider({
       // total counts EVERY lead in scope, leads.length only the dialable subset
       // (dialable status + a 10+ digit phone). Silently loading fewer than the
       // rep's book size — with no explanation — read as "some leads vanished."
-      const skipped = Math.max(0, (json.total ?? 0) - leads.length);
+      //
+      // A NULL total means the count failed. Folding that to 0 sent a rep with
+      // a full book the message "No leads found — import a CSV on the Leads tab
+      // first", which is both false and an instruction to do the one thing that
+      // would make it worse.
+      const total = typeof json.total === "number" ? json.total : null;
+      const skipped = total === null ? 0 : Math.max(0, total - leads.length);
       if (leads.length) {
         setLoadMsg(
           skipped > 0
-            ? `Loaded ${leads.length} of ${json.total} leads into the dialer — ${skipped} skipped (no valid phone number, already dispositioned, or on the do-not-call list).`
+            ? `Loaded ${leads.length} of ${total} leads into the dialer — ${skipped} skipped (no valid phone number, already dispositioned, or on the do-not-call list).`
             : `Loaded ${leads.length} lead${leads.length === 1 ? "" : "s"} into the dialer.`,
         );
-      } else if ((json.total ?? 0) > 0) {
+      } else if (total === null) {
         setLoadMsg(
-          `Found ${json.total} leads, but none are ready to dial yet — they need a New / No-answer / Callback status and a valid phone number.`,
+          "Nothing is ready to dial right now, and we couldn’t check how many leads are in your book. Try again in a moment.",
+        );
+      } else if (total > 0) {
+        setLoadMsg(
+          `Found ${total} leads, but none are ready to dial yet — they need a New / No-answer / Callback status and a valid phone number.`,
         );
       } else {
         setLoadMsg("No leads found — import a CSV on the Leads tab first.");

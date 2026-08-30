@@ -18,9 +18,10 @@ export interface OrganizationRow {
   industry: string;
   status: "active" | "suspended";
   createdAt: string;
-  companyCount: number;
-  memberCount: number;
-  pendingCount: number;
+  /** Null when the count could not be taken — never 0. See listOrganizations. */
+  companyCount: number | null;
+  memberCount: number | null;
+  pendingCount: number | null;
   joinCode: string;
   dialerTemplate: string;
   productName: string;
@@ -76,6 +77,19 @@ export async function listOrganizations(): Promise<OrganizationRow[]> {
       admin.from("organization_members").select("org_id,status"),
       admin.from("profiles").select("id,org_id"),
     ]);
+    // The org list itself is the page. Reading it as [] tells a superadmin the
+    // platform has no workspaces — the single most alarming thing this screen
+    // can say, and it said it for a failed query.
+    if (orgsRes.error) {
+      throw new Error(`Couldn't read the workspace list: ${orgsRes.error.message}`);
+    }
+    // The counts beside each name are a different matter: a failure there is
+    // survivable, but it must not print 0. Null travels to the UI, which says
+    // so. `membersRes` doubles as the branch selector below — an unchecked
+    // failure there silently switched every count to the profiles definition.
+    const membersFailed = Boolean(membersRes.error);
+    const companiesFailed = Boolean(companiesRes.error);
+    const profilesFailed = Boolean(profilesRes.error);
     const companyCount = new Map<string, number>();
     for (const c of (companiesRes.data ?? []) as Row[]) {
       const k = String(c.org_id);
@@ -101,19 +115,25 @@ export async function listOrganizations(): Promise<OrganizationRow[]> {
         }
       }
     }
+    // Which read the member counts came from decides whether a failure is
+    // knowable: the profiles fallback has no pending concept at all, so a
+    // members failure makes "pending" unknown rather than zero.
+    const membersUnknown = membersFailed && (profilesFailed || !membersRows.length);
     return ((orgsRes.data ?? []) as Row[]).map((o) => mapOrgRow(o, {
-      companyCount: companyCount.get(String(o.id)) ?? 0,
-      memberCount: memberCount.get(String(o.id)) ?? 0,
-      pendingCount: pendingCount.get(String(o.id)) ?? 0,
+      companyCount: companiesFailed ? null : companyCount.get(String(o.id)) ?? 0,
+      memberCount: membersUnknown ? null : memberCount.get(String(o.id)) ?? 0,
+      pendingCount: membersFailed ? null : pendingCount.get(String(o.id)) ?? 0,
     }));
-  } catch {
-    return [];
+  } catch (e) {
+    // An empty list here is a claim — "this platform has no workspaces" — and
+    // it is the only screen a superadmin would check to disprove it.
+    throw e instanceof Error ? e : new Error("Couldn't read the workspace list.");
   }
 }
 
 function mapOrgRow(
   o: Row,
-  counts: { companyCount: number; memberCount: number; pendingCount: number },
+  counts: { companyCount: number | null; memberCount: number | null; pendingCount: number | null },
 ): OrganizationRow {
   return {
     id: String(o.id),
@@ -192,11 +212,21 @@ export async function updateOrganization(
       if (patch[key] !== undefined) fields[column] = patch[key];
     }
     if (patch.settings) {
-      const { data: cur } = await admin
+      const { data: cur, error: readErr } = await admin
         .from("organizations")
         .select("settings")
         .eq("id", id)
         .maybeSingle();
+      // Same read-modify-write clobber as updateOrganizationSettings, but
+      // reached from the superadmin console — so it can reset ANY tenant's
+      // settings to `{}` on a failed read, and report success.
+      if (readErr) {
+        return {
+          ok: false,
+          error:
+            "Couldn't read this workspace's current settings, so nothing was saved — saving would have replaced them.",
+        };
+      }
       fields.settings = {
         ...((cur?.settings as Record<string, unknown>) ?? {}),
         ...patch.settings,

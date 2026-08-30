@@ -202,31 +202,49 @@ export async function getMessagingReadiness(
   });
 
   // ── 5. Somebody has to be able to approve ─────────────────────────────────
+  // Null means the member read failed — which is NOT the same as nobody having
+  // the permission, and the difference matters because "nobody can approve" is
+  // an actionable claim that sends an operator to fix a non-problem.
   const approvers = await countApprovers(org?.id ?? null);
   checks.push({
     id: "approvers",
     label: "People who can approve",
-    state: approvers >= 2 ? "ok" : approvers === 1 ? "warn" : "fail",
+    state:
+      approvers === null ? "warn" : approvers >= 2 ? "ok" : approvers === 1 ? "warn" : "fail",
     detail:
-      approvers === 0
-        ? "Nobody in this workspace can approve a message, so every proposal would sit forever."
-        : approvers === 1
-          ? "Only one person can approve messages. Nothing goes out while they're away."
-          : `${approvers} people can approve messages.`,
-    action: approvers >= 2 ? undefined : "Grant the approval permission in Admin → Members.",
+      approvers === null
+        ? "Couldn't read this workspace's members, so we can't tell who is able to approve."
+        : approvers === 0
+          ? "Nobody in this workspace can approve a message, so every proposal would sit forever."
+          : approvers === 1
+            ? "Only one person can approve messages. Nothing goes out while they're away."
+            : `${approvers} people can approve messages.`,
+    action:
+      approvers === null || approvers >= 2
+        ? undefined
+        : "Grant the approval permission in Admin → Members.",
   });
 
   // ── 6. Something to send ──────────────────────────────────────────────────
+  // Every readout on this page is something an operator will act on. "No
+  // published templates" sends them to write one they may already have.
   const templates = await countPublishedTemplates(org?.id ?? null);
   checks.push({
     id: "templates",
     label: "Published templates",
-    state: templates > 0 ? "ok" : "warn",
+    state: templates === null ? "warn" : templates > 0 ? "ok" : "warn",
     detail:
-      templates > 0
-        ? `${templates} published.`
-        : "No published templates, so a playbook's send_message step has no wording to propose.",
-    action: templates > 0 ? undefined : "Publish a template before enabling a messaging playbook.",
+      templates === null
+        ? "Couldn't count this workspace's templates, so we can't tell whether a playbook has wording to propose."
+        : templates > 0
+          ? `${templates} published.`
+          : "No published templates, so a playbook's send_message step has no wording to propose.",
+    action:
+      templates === null
+        ? "Try again in a moment."
+        : templates > 0
+          ? undefined
+          : "Publish a template before enabling a messaging playbook.",
   });
 
   // ── 7. The drain ──────────────────────────────────────────────────────────
@@ -381,15 +399,19 @@ function describeAgo(iso: string): string {
   return `${Math.round(hours / 24)} days ago`;
 }
 
-async function countApprovers(orgId: string | null): Promise<number> {
+async function countApprovers(orgId: string | null): Promise<number | null> {
   if (!orgId || !isAdminConfigured()) return 0;
   try {
     const admin = createAdminClient();
-    const { data } = await admin
+    const { data, error } = await admin
       .from("organization_members")
       .select("role, permissions")
       .eq("org_id", orgId)
       .eq("status", "active");
+    // Null, not 0. Returning a count of zero told an operator their workspace
+    // has NOBODY who can approve messages — a specific, actionable falsehood
+    // that sends them off to fix a problem they do not have.
+    if (error) return null;
     // Mirrors ROLE_PERMISSIONS without importing it: owner/admin/manager hold
     // messaging.approve by default, and a per-member override wins either way.
     return ((data ?? []) as Record<string, unknown>[]).filter((m) => {
@@ -402,18 +424,20 @@ async function countApprovers(orgId: string | null): Promise<number> {
   }
 }
 
-async function countPublishedTemplates(orgId: string | null): Promise<number> {
+/** Null when the count could not be taken — which is not "none published". */
+async function countPublishedTemplates(orgId: string | null): Promise<number | null> {
   if (!orgId || !isAdminConfigured()) return 0;
   try {
     const admin = createAdminClient();
-    const { count } = await admin
+    const { count, error } = await admin
       .from("message_templates")
       .select("id", { count: "exact", head: true })
       .eq("org_id", orgId)
       .eq("status", "published");
-    return count ?? 0;
+    if (error) return null;
+    return count ?? null;
   } catch {
-    return 0;
+    return null;
   }
 }
 

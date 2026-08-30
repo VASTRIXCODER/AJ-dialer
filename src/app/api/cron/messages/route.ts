@@ -37,12 +37,22 @@ async function runDrain(req: Request) {
   // the drain so a row that just moved is not caught by its own tick.
   const stuck = await flagStuckMessages();
 
-  return NextResponse.json({
-    ok: true,
-    ranAt: new Date().toISOString(),
-    ...report,
-    flaggedStuck: stuck,
-  });
+  // `ok` is what a monitor watches. A tick that could not read the queue has
+  // not succeeded, and the counters that would show it are all legitimately
+  // zero on a healthy idle minute — so the failure has to be said out loud.
+  const failed = Boolean(report.error) || stuck === null;
+  return NextResponse.json(
+    {
+      ok: !failed,
+      ranAt: new Date().toISOString(),
+      ...report,
+      flaggedStuck: stuck,
+      ...(stuck === null
+        ? { stuckSweep: "Couldn't sweep for stuck messages — any that exist are still hidden." }
+        : null),
+    },
+    { status: failed ? 500 : 200 },
+  );
 }
 
 export const GET = runDrain;

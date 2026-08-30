@@ -75,9 +75,18 @@ export function SuperConsole() {
   const [err, setErr] = useState("");
 
   const load = useCallback(() => {
+    setErr("");
     fetch("/api/superadmin/control")
-      .then((r) => r.json())
-      .then((j) => {
+      .then(async (r) => ({ ok: r.ok, body: await r.json().catch(() => ({})) }))
+      .then(({ ok, body: j }) => {
+        // res.ok was unchecked, so a 503 whose body is `{ error }` emptied every
+        // list — and an empty superadmin console does not look like an error, it
+        // looks like a platform with no accounts and no workspaces. Leave what
+        // is on screen alone and say what happened.
+        if (!ok) {
+          setErr(j.error ?? "Could not load console data.");
+          return;
+        }
         if (j.settings) setSettings(j.settings);
         setAccounts(j.accounts ?? []);
         setOrgs(j.organizations ?? []);
@@ -117,7 +126,12 @@ export function SuperConsole() {
   }
 
   const suspended = accounts.filter((a) => a.disabled).length;
-  const pending = orgs.reduce((n, o) => n + o.pendingCount, 0);
+  // A sum over counts that may individually be unknown is itself unknown —
+  // adding the knowable ones and printing the subtotal as "Pending" is the
+  // quietest kind of wrong number, because it always looks plausible.
+  const pending = orgs.some((o) => o.pendingCount === null)
+    ? null
+    : orgs.reduce((n, o) => n + (o.pendingCount ?? 0), 0);
 
   return (
     <div className="superadmin-theme relative min-h-screen bg-background text-foreground">
@@ -247,7 +261,8 @@ function Overview({
   companies: Company[];
   accounts: Account[];
   suspended: number;
-  pending: number;
+  /** Null when any workspace's pending count could not be read. */
+  pending: number | null;
   settings: Settings;
   busy: string | null;
   onMaintenance: (on: boolean) => void;
@@ -288,7 +303,8 @@ function Overview({
         />
         <MetricCard
           label="Pending"
-          value={String(pending)}
+          value={pending === null ? null : String(pending)}
+          unavailable="A workspace's pending count couldn't be read"
           window="current"
           scope="platform"
           icon={UserCheck}
@@ -364,8 +380,12 @@ function Overview({
                   <p className="truncate font-semibold">{o.name}</p>
                   <p className="truncate text-xs text-muted-foreground">{templateLabel(o.dialerTemplate)}</p>
                 </div>
-                <span className="text-xs text-muted-foreground">{o.memberCount} members</span>
-                {o.pendingCount > 0 && <Badge tone="warning">{o.pendingCount} pending</Badge>}
+                <span className="text-xs text-muted-foreground">
+                  {o.memberCount === null ? "members unknown" : `${o.memberCount} members`}
+                </span>
+                {o.pendingCount !== null && o.pendingCount > 0 && (
+                  <Badge tone="warning">{o.pendingCount} pending</Badge>
+                )}
                 <Badge tone={o.status === "active" ? "success" : "warning"} className="capitalize">
                   {o.status}
                 </Badge>

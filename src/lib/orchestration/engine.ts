@@ -327,15 +327,20 @@ async function attemptsSinceActivation(
 ): Promise<number> {
   if (!leadId) return 0;
   try {
-    const { count: n } = await admin
+    const { count: n, error } = await admin
       .from("call_records")
       .select("id", { count: "exact", head: true })
       .eq("org_id", inst.org_id)
       .eq("lead_id", leadId)
       .gte("started_at", inst.started_at);
+    // Fails CLOSED, like the messaging caps. This is a per-playbook attempt
+    // ceiling, and returning 0 on a failed count read as "no attempts spent" —
+    // so the playbook would keep dialing straight past the maximum an operator
+    // configured. Reporting the cap as spent pauses it instead.
+    if (error) return Number.MAX_SAFE_INTEGER;
     return n ?? 0;
   } catch {
-    return 0;
+    return Number.MAX_SAFE_INTEGER;
   }
 }
 

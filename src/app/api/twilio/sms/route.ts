@@ -81,13 +81,28 @@ export async function POST(req: Request) {
 
   // Route to the org that owns the receiving number. If none claims it (a shared
   // platform number), still send a compliant acknowledgement.
-  const orgId = await orgIdForCallerId(to);
+  // A failed lookup is not "no workspace owns this number" — orgIdForCallerId
+  // throws now, and for a STOP that difference is the whole message.
+  let orgId: string | null = null;
+  let attributionFailed = false;
+  try {
+    orgId = await orgIdForCallerId(to);
+  } catch {
+    attributionFailed = true;
+  }
 
   // ── 4. Compliance first, before anything optional. ────────────────────────
+  /** Did the suppression actually land? Only then may we say it did. */
+  let suppressed = false;
   if (isStop && orgId) {
     // Suppression FIRST and on its own — the legally required half must not be
     // able to fail because of anything that follows it.
-    await addToDnc({ orgId, phone: from, reason: "Inbound SMS STOP", source: "sms_stop" });
+    suppressed = await addToDnc({
+      orgId,
+      phone: from,
+      reason: "Inbound SMS STOP",
+      source: "sms_stop",
+    });
 
     // Cancel anything already approved and waiting. This is the ONLY mechanism
     // that catches a message a human already approved: stop rules run on the
@@ -200,6 +215,22 @@ export async function POST(req: Request) {
   }
 
   if (isStop) {
+    // Only confirm what actually happened. This reply used to be unconditional
+    // — it was not even gated on `orgId` — so a STOP that could not be
+    // attributed to a workspace, or whose suppression write failed, was
+    // answered "You have been unsubscribed and will no longer be contacted."
+    // by a system that had suppressed nothing.
+    //
+    // A 500 is deliberate: it puts the failure in Twilio's error log, where an
+    // operator can see an opt-out that needs honouring by hand, instead of
+    // closing the loop with a promise nobody kept.
+    if (!suppressed) {
+      console.error(
+        `[sms] STOP from ${from} to ${to} was NOT suppressed`,
+        attributionFailed ? "(workspace lookup failed)" : "(no workspace owns this number)",
+      );
+      return new Response(null, { status: 500 });
+    }
     return twiml(
       "You have been unsubscribed and will no longer be contacted. Reply START to opt back in.",
     );

@@ -55,6 +55,15 @@ export default async function AppGroupLayout({
     if (settings.maintenance) {
       return <MaintenanceScreen message={settings.message} />;
     }
+    // The switch could not be read. Neither "on" nor "off" is known, and
+    // guessing "off" is what a kill switch must never do — an operator flips it
+    // during exactly the kind of incident that breaks this read. Superadmins
+    // are exempt from the switch and can always reach the console to clear it.
+    if (settings.unknown && !superadmin) {
+      return (
+        <MaintenanceScreen message="We can't reach the settings service, so we can't confirm whether the platform is available. Nothing is wrong with your account — try again shortly." />
+      );
+    }
     if (disabled) {
       return <MaintenanceScreen suspended />;
     }

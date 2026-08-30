@@ -31,11 +31,19 @@ export const getScope = cache(async (): Promise<Scope | null> => {
     data: { user },
   } = await supabase.auth.getUser();
   if (!user) return null;
-  const { data: prof } = await supabase
+  const { data: prof, error } = await supabase
     .from("profiles")
     .select("org_id, role, disabled")
     .eq("id", user.id)
     .maybeSingle();
+  // A read that FAILED cannot clear anybody. This destructured `data` alone, so
+  // a resolved error left `prof` undefined, `prof?.disabled` was falsy, and the
+  // suspension backstop below simply did not fire — while the function went on
+  // to return a usable scope built from the same undefined row.
+  //
+  // Null is the handled path for every caller, so refusing here is recoverable;
+  // handing a suspended account a scope is not.
+  if (error) return null;
   // Suspension backstop, CENTRAL: most scope consumers go on to read through
   // the service-role client, which bypasses the RLS `app_is_active()` gate a
   // suspended account otherwise hits. A disabled profile gets no scope at all.

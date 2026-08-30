@@ -3,40 +3,6 @@ import "server-only";
 import { isSupabaseConfigured } from "../supabase/config";
 import { createClient } from "../supabase/server";
 
-export interface TeamMember {
-  id: string;
-  name: string;
-  email: string;
-  role: string;
-  team: string;
-  avatarColor: string;
-}
-
-/** Team members visible to the account (RLS-scoped; just you on the per-account model). */
-export async function getTeam(): Promise<TeamMember[]> {
-  if (!isSupabaseConfigured()) return [];
-  try {
-    const supabase = await createClient();
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-    if (!user) return [];
-    const { data } = await supabase.from("profiles").select("*");
-    return (data ?? []).map((p: Record<string, unknown>) => ({
-      id: String(p.id),
-      name: (p.full_name as string) || "Teammate",
-      email: p.id === user.id ? (user.email ?? "") : "",
-      role: (p.role as string) || "manager",
-      team: (p.team as string) || "AIATWORK",
-      // Empty when unset — Avatar's seed prop then hash-picks a chart tone,
-      // which tracks light/dark instead of a flat hardcoded blue.
-      avatarColor: (p.avatar_color as string) || "",
-    }));
-  } catch {
-    return [];
-  }
-}
-
 // ── User management (team roster, roles, access & permissions) ───────────────
 export const PERMISSION_KEYS = [
   "dial",
@@ -201,11 +167,23 @@ export async function updateProfile(input: {
     if (input.fullName != null) patch.full_name = input.fullName;
     if (input.team != null) patch.team = input.team;
     if (input.preferences) {
-      const { data: cur } = await supabase
+      const { data: cur, error: readErr } = await supabase
         .from("profiles")
         .select("preferences")
         .eq("id", user.id)
         .maybeSingle();
+      // A read-modify-write on a JSONB blob: an unchecked read meant a failure
+      // spread `{}` and the write then REPLACED every other preference this
+      // person had — saved views, density, dialer prefs, the session builder's
+      // remembered choices — while reporting success. Changing one toggle
+      // during a blip wiped the rest.
+      if (readErr) {
+        return {
+          ok: false,
+          error:
+            "Couldn't load your current settings, so nothing was saved. Saving now would have cleared the rest of them.",
+        };
+      }
       patch.preferences = {
         ...((cur?.preferences as Record<string, unknown>) ?? {}),
         ...input.preferences,
@@ -249,7 +227,15 @@ export async function getMyProfileSettings(): Promise<{
   }
 }
 
-/** Read the signed-in user's UI preferences (saved views, density, …). */
+/**
+ * Read the signed-in user's UI preferences (saved views, density, …).
+ *
+ * This one read is DELIBERATELY permissive. It runs in the app shell layout, so
+ * refusing takes the whole application down over a density setting — and unlike
+ * the write path, which now refuses (see updateMyProfile), a failure here only
+ * renders defaults for one paint and corrects itself on the next load. Nothing
+ * is decided from it and nothing is written back through it.
+ */
 export async function getUiPreferences(): Promise<Record<string, unknown>> {
   if (!isSupabaseConfigured()) return {};
   try {
