@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { approveMessage, rejectMessage } from "@/lib/db/messages";
+import { approveMessage, getMessageAuthors, rejectMessage } from "@/lib/db/messages";
 import { getScope } from "@/lib/db/scope";
 import { getViewer } from "@/lib/org/membership";
 import { rateLimit } from "@/lib/rate-limit";
@@ -71,9 +71,12 @@ export async function POST(req: Request) {
   // Rejecting needs only the ability to look at the queue — refusing to send
   // something is never the risky direction, and putting a permission wall in
   // front of "no" is how a bad message goes out because nobody could stop it.
+  const canApproveAutomation = viewer.permissions.includes("messaging.approve");
+  const canApproveOwn = viewer.permissions.includes("messaging.approve.own");
+  let allowedIds = ids;
+  const forbidden: string[] = [];
+
   if (action === "approve") {
-    const canApproveAutomation = viewer.permissions.includes("messaging.approve");
-    const canApproveOwn = viewer.permissions.includes("messaging.approve.own");
     if (!canApproveAutomation && !canApproveOwn) {
       return NextResponse.json(
         { error: "You don't have permission to approve messages." },
@@ -86,13 +89,42 @@ export async function POST(req: Request) {
         { status: 403 },
       );
     }
+
+    // THE SPLIT, enforced per message rather than per caller.
+    //
+    // `messaging.approve.own` lets a rep send the 1:1 they wrote themselves —
+    // one person, one decision, author == approver. It does NOT let them wave
+    // through what the automation proposed: a batch of messages nobody wrote,
+    // to people they have not spoken to. Checking only that the caller holds
+    // one of the two permissions collapsed that distinction entirely and let
+    // any rep approve anything.
+    if (!canApproveAutomation) {
+      const authors = await getMessageAuthors(scope.orgId, ids);
+      allowedIds = [];
+      for (const id of ids) {
+        // An unknown author is treated as not-yours, which is the safe way to
+        // be wrong.
+        if (authors.get(id) === scope.userId) allowedIds.push(id);
+        else forbidden.push(id);
+      }
+      if (!allowedIds.length) {
+        return NextResponse.json(
+          {
+            error:
+              "These were proposed by the automation, so they need someone with approval permission to read them. You can approve messages you wrote yourself.",
+            forbidden,
+          },
+          { status: 403 },
+        );
+      }
+    }
   } else if (!viewer.permissions.includes("crm.view")) {
     return NextResponse.json({ error: "Not permitted." }, { status: 403 });
   }
 
   const decided: string[] = [];
   const missed: string[] = [];
-  for (const id of ids) {
+  for (const id of allowedIds) {
     const row =
       action === "approve"
         ? await approveMessage({ id, orgId: scope.orgId, approverId: scope.userId })
@@ -113,7 +145,10 @@ export async function POST(req: Request) {
     ok: true,
     action,
     decided: decided.length,
+    // The full ask, so the surface can say "3 of 5" rather than implying the
+    // whole batch landed when some were refused or already decided.
     requested: ids.length,
     missed,
+    ...(forbidden.length ? { forbidden } : {}),
   });
 }

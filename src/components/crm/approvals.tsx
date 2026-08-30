@@ -41,6 +41,13 @@ export interface ApprovalCard {
   body: string;
   templateKey: string | null;
   authorName: string;
+  /**
+   * True when the viewer wrote this themselves. A rep may self-approve their
+   * own 1:1 but not what the automation proposed, so the two need telling
+   * apart on screen — offering a button that 403s teaches people to distrust
+   * every button.
+   */
+  isOwn: boolean;
   scope: string;
   segments: number | null;
   createdAt: string;
@@ -50,6 +57,7 @@ export function Approvals({
   approvals,
   total,
   canApprove,
+  canApproveAutomation,
   canBulk,
   messagingReady,
   messagingReason,
@@ -57,6 +65,8 @@ export function Approvals({
   approvals: ApprovalCard[];
   total: number;
   canApprove: boolean;
+  /** False for a rep: they may only approve what they wrote themselves. */
+  canApproveAutomation: boolean;
   canBulk: boolean;
   /** False when the channel isn't wired. The queue then explains itself. */
   messagingReady: boolean;
@@ -74,6 +84,8 @@ export function Approvals({
   // in one click means approving wording nobody looked at.
   const templateKeys = [...new Set(approvals.map((a) => a.templateKey ?? ""))];
   const homogeneous = templateKeys.length === 1;
+  // What a bulk approve would actually be allowed to touch.
+  const bulkable = canApproveAutomation ? approvals : approvals.filter((a) => a.isOwn);
 
   async function decide(ids: string[], action: "approve" | "reject") {
     setBusy(true);
@@ -147,24 +159,26 @@ export function Approvals({
       <div className="mb-3 flex flex-wrap items-center gap-2">
         <Button
           size="sm"
-          disabled={!canApprove || !canBulk || !homogeneous || busy}
+          disabled={!canApprove || !canBulk || !homogeneous || busy || bulkable.length === 0}
           title={
             !canApprove
               ? "You don't have permission to approve messages."
               : !canBulk
                 ? "Approving a batch at once needs the bulk permission."
-                : !homogeneous
-                  ? "These use different templates. Approve them individually so each wording is actually read."
-                  : undefined
+                : bulkable.length === 0
+                  ? "These were all proposed by the automation, so they need a manager to read them."
+                  : !homogeneous
+                    ? "These use different templates. Approve them individually so each wording is actually read."
+                    : undefined
           }
-          onClick={() => void decide(approvals.map((a) => a.id), "approve")}
+          onClick={() => void decide(bulkable.map((a) => a.id), "approve")}
         >
           {busy ? (
             <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
           ) : (
             <Check className="mr-1.5 h-4 w-4" />
           )}
-          Approve all {approvals.length}
+          Approve all {bulkable.length}
         </Button>
         {!homogeneous && (
           <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
@@ -253,8 +267,14 @@ export function Approvals({
             <div className="mt-3">
               <Button
                 size="sm"
-                disabled={!canApprove || busy}
-                title={canApprove ? undefined : "You don't have permission to approve messages."}
+                disabled={!canApprove || busy || (!canApproveAutomation && !selected.isOwn)}
+                title={
+                  !canApprove
+                    ? "You don't have permission to approve messages."
+                    : !canApproveAutomation && !selected.isOwn
+                      ? "The automation proposed this one, so it needs a manager to read it. You can approve messages you wrote yourself."
+                      : undefined
+                }
                 onClick={() => void decide([selected.id], "approve")}
               >
                 <Check className="mr-1.5 h-4 w-4" />

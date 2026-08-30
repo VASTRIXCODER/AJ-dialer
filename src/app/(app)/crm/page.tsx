@@ -153,12 +153,16 @@ export default async function CrmPage({
             body: m.body,
             templateKey: m.templateKey,
             authorName: m.authorName,
+            // Automation proposals carry created_by = null, so this is false
+            // for them — which is exactly the line the permission split draws.
+            isOwn: m.createdBy != null && m.createdBy === viewer.user?.id,
             scope: m.scope,
             segments: m.segments,
             createdAt: m.createdAt,
           }))}
           approvalsTotal={approvals.total}
           canApproveMessages={canApproveMessages}
+          canApproveAutomation={viewer.permissions.includes("messaging.approve")}
           canApproveBulk={viewer.permissions.includes("messaging.approve.bulk")}
           messagingReady={messagingConfigured && orgMessagingOn}
           messagingReason={messagingReason}

@@ -424,6 +424,38 @@ export async function proposeMessage(
 }
 
 /**
+ * Who wrote each of these messages, for the approval permission split.
+ *
+ * `created_by` is null for anything the automation proposed and set to the
+ * author for a rep's own 1:1. It is written once at insert and never updated,
+ * so reading it before the compare-and-set is not a time-of-check problem —
+ * there is no window in which it can change.
+ */
+export async function getMessageAuthors(
+  orgId: string,
+  ids: string[],
+): Promise<Map<string, string | null>> {
+  const out = new Map<string, string | null>();
+  if (!isAdminConfigured() || !orgId || !ids.length) return out;
+  try {
+    const admin = createAdminClient();
+    const { data } = await admin
+      .from("messages")
+      .select("id, created_by")
+      .eq("org_id", orgId)
+      .in("id", ids.slice(0, 200));
+    for (const r of ((data ?? []) as Row[])) {
+      out.set(s(r.id), r.created_by ? s(r.created_by) : null);
+    }
+    return out;
+  } catch {
+    // An empty map means nothing is authorised — the caller treats an unknown
+    // author as "not yours", which is the safe direction.
+    return new Map();
+  }
+}
+
+/**
  * Approve a proposed message. CAS on `needs_approval`, so two approvers racing
  * produce one approval and one honest "someone got there first" — and an
  * already-sent message can never be approved a second time.

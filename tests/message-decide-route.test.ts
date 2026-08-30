@@ -15,9 +15,11 @@ vi.mock("@/lib/db/scope", () => ({ getScope: () => getScope() }));
 
 const approveMessage = vi.fn();
 const rejectMessage = vi.fn();
+const getMessageAuthors = vi.fn();
 vi.mock("@/lib/db/messages", () => ({
   approveMessage: (i: unknown) => approveMessage(i),
   rejectMessage: (i: unknown) => rejectMessage(i),
+  getMessageAuthors: (o: string, ids: string[]) => getMessageAuthors(o, ids),
 }));
 
 vi.mock("@/lib/rate-limit", () => ({ rateLimit: () => ({ ok: true, retryAfter: 0 }) }));
@@ -56,6 +58,14 @@ beforeEach(() => {
   getScope.mockResolvedValue({ userId: "user-a", orgId: "org-a", supervisor: true });
   approveMessage.mockResolvedValue({ id: "m1", status: "approved" });
   rejectMessage.mockResolvedValue({ id: "m1", status: "rejected" });
+  // m1 was written by the caller; m2 is an automation proposal (author null).
+  getMessageAuthors.mockResolvedValue(
+    new Map<string, string | null>([
+      ["m1", "user-a"],
+      ["m2", null],
+      ["m3", "someone-else"],
+    ]),
+  );
 });
 
 describe("approving", () => {
@@ -133,6 +143,77 @@ describe("approving in bulk", () => {
       .mockResolvedValueOnce({ id: "m3" });
     const res = await POST(post({ ids: ["m1", "m2", "m3"], action: "approve" }));
     await expect(res.json()).resolves.toMatchObject({ decided: 2, requested: 3 });
+  });
+});
+
+describe("the two approval permissions are actually different", () => {
+  // The route used to compute `canApproveAutomation` and never use it, so a rep
+  // holding only `approve.own` could wave through anything — including a batch
+  // of messages nobody wrote, to people they had never spoken to.
+
+  it("lets a rep approve the 1:1 they wrote themselves", async () => {
+    viewerWith(REP);
+    const res = await POST(post({ id: "m1", action: "approve" }));
+    expect(res.status).toBe(200);
+    expect(approveMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it("REFUSES a rep the automation's proposal, and never reaches the write", async () => {
+    viewerWith(REP);
+    const res = await POST(post({ id: "m2", action: "approve" }));
+    expect(res.status).toBe(403);
+    expect(approveMessage).not.toHaveBeenCalled();
+  });
+
+  it("refuses a rep another person's draft too", async () => {
+    viewerWith(REP);
+    const res = await POST(post({ id: "m3", action: "approve" }));
+    expect(res.status).toBe(403);
+    expect(approveMessage).not.toHaveBeenCalled();
+  });
+
+  it("explains WHY rather than a bare denial", async () => {
+    viewerWith(REP);
+    const res = await POST(post({ id: "m2", action: "approve" }));
+    const j = await res.json();
+    expect(j.error).toContain("proposed by the automation");
+    expect(j.forbidden).toEqual(["m2"]);
+  });
+
+  it("a manager approves the automation's proposal without an author lookup", async () => {
+    viewerWith(MANAGER);
+    const res = await POST(post({ id: "m2", action: "approve" }));
+    expect(res.status).toBe(200);
+    // Holding messaging.approve means ownership is irrelevant — no extra read.
+    expect(getMessageAuthors).not.toHaveBeenCalled();
+  });
+
+  it("in a mixed batch a rep's own land and the rest are refused, honestly counted", async () => {
+    viewerWith([...REP, "messaging.approve.bulk"]);
+    const res = await POST(post({ ids: ["m1", "m2", "m3"], action: "approve" }));
+    expect(res.status).toBe(200);
+    const j = await res.json();
+    // Only m1 was theirs.
+    expect(approveMessage).toHaveBeenCalledTimes(1);
+    expect(j.decided).toBe(1);
+    expect(j.requested).toBe(3);
+    expect(j.forbidden.sort()).toEqual(["m2", "m3"]);
+  });
+
+  it("treats an unknown author as not-yours — the safe way to be wrong", async () => {
+    viewerWith(REP);
+    getMessageAuthors.mockResolvedValue(new Map());
+    const res = await POST(post({ id: "m1", action: "approve" }));
+    expect(res.status).toBe(403);
+    expect(approveMessage).not.toHaveBeenCalled();
+  });
+
+  it("still lets a rep REJECT the automation's proposal", async () => {
+    // Refusing to send is never the risky direction.
+    viewerWith(REP);
+    const res = await POST(post({ id: "m2", action: "reject" }));
+    expect(res.status).toBe(200);
+    expect(rejectMessage).toHaveBeenCalledTimes(1);
   });
 });
 

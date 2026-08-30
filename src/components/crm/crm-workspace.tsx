@@ -72,6 +72,7 @@ export function CrmWorkspace({
   approvals,
   approvalsTotal,
   canApproveMessages,
+  canApproveAutomation,
   canApproveBulk,
   messagingReady,
   messagingReason,
@@ -90,6 +91,8 @@ export function CrmWorkspace({
   approvals: ApprovalCard[];
   approvalsTotal: number;
   canApproveMessages: boolean;
+  /** False for a rep: they may only approve what they wrote themselves. */
+  canApproveAutomation: boolean;
   canApproveBulk: boolean;
   messagingReady: boolean;
   messagingReason: string;
@@ -273,6 +276,7 @@ export function CrmWorkspace({
           approvals={approvals}
           total={approvalsTotal}
           canApprove={canApproveMessages}
+          canApproveAutomation={canApproveAutomation}
           canBulk={canApproveBulk}
           messagingReady={messagingReady}
           messagingReason={messagingReason}
