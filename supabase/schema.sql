@@ -3522,6 +3522,31 @@ alter table public.callbacks add column if not exists claimed_by     uuid;
 alter table public.callbacks add column if not exists claimed_at     timestamptz;
 alter table public.callbacks add column if not exists timezone       text;
 
+-- ═════════════════════════════════════════════════════════════════════════════
+-- leads.timezone: a default that pretended to be data
+-- ═════════════════════════════════════════════════════════════════════════════
+-- The column was declared `text default 'America/Los_Angeles'` (see the leads
+-- table above), so every row carried a zone nobody had chosen — and the app
+-- could not tell "somebody set Los Angeles" apart from "nobody set anything".
+--
+-- Measured 2026-08-30 against production: 37,987 lead rows, zero nulls, exactly
+-- ONE distinct value. Meanwhile the book's largest area codes are 334 (Alabama),
+-- 817/214/469 (Texas) and 870/479/501 (Arkansas) — Central. Every contact's
+-- local time was being computed two hours behind the truth, in the direction
+-- that makes an out-of-hours call look fine.
+--
+-- Dropping the default makes future rows honest. The application already treats
+-- the legacy value as absent (storedLeadTimezone in
+-- src/lib/dialer/lead-timezone.ts) and infers from the area code instead, so
+-- this is safe to run at any time and nothing depends on it having run.
+--
+-- OPTIONAL, and deliberately NOT included: backfilling the existing rows with
+--     update public.leads set timezone = null
+--      where timezone = 'America/Los_Angeles';
+-- The measurement above shows that would destroy nothing, but it is a write
+-- over the whole book and belongs to whoever owns the data, not to this file.
+alter table public.leads alter column timezone drop default;
+
 create or replace function public.app_claim_callback(p_id uuid, p_user uuid)
 returns boolean language sql volatile security definer set search_path = public as $$
   with c as (

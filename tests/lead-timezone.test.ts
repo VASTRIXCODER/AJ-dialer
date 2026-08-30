@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
+  LEAD_TIMEZONE_COLUMN_DEFAULT,
   describeLeadClock,
   leadLocalTime,
   resolveLeadTimezone,
+  storedLeadTimezone,
   timezoneForAreaCode,
 } from "@/lib/dialer/lead-timezone";
 
@@ -121,5 +123,80 @@ describe("leadLocalTime", () => {
     const outside = leadLocalTime("+12125551234", null, "UTC", at, HOURS)!;
     expect(describeLeadClock(inside)).toBe("7:30 PM their time");
     expect(describeLeadClock(outside)).toBe("10:30 PM their time — outside calling hours");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The column that looked like data.
+//
+// `leads.timezone` was declared `text default 'America/Los_Angeles'`, and
+// src/lib/db/leads.ts re-applied the same default a second time on read. So
+// "somebody chose Los Angeles" and "nobody has ever set a zone" were the same
+// value at every call site, and every caller trusted it.
+//
+// Measured against production on 2026-08-30: 37,987 lead rows, zero nulls,
+// exactly ONE distinct value. And the book is not Pacific — its largest area
+// codes are 334 (Alabama), 817/214/469/972/832/682 (Texas) and 870/479/501
+// (Arkansas). Central. So a contact in Dallas at 8:00 PM their time was shown,
+// and reasoned about, as 6:00 PM: two hours wrong, in the direction that makes
+// an out-of-hours call look fine.
+//
+// This bit the freshly-shipped lead clock, the Lead 360 "why can't I dial this"
+// explanation, and the AI dialer's own calling-hours gate.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("a schema default is not a stored timezone", () => {
+  it("treats the column default as absent", () => {
+    expect(storedLeadTimezone(LEAD_TIMEZONE_COLUMN_DEFAULT)).toBeNull();
+    expect(storedLeadTimezone(null)).toBeNull();
+    expect(storedLeadTimezone(undefined)).toBeNull();
+    expect(storedLeadTimezone("")).toBeNull();
+    expect(storedLeadTimezone("   ")).toBeNull();
+    // Not a zone at all — a stray string is not evidence either.
+    expect(storedLeadTimezone("Pacific")).toBeNull();
+  });
+
+  it("keeps a zone somebody actually chose", () => {
+    expect(storedLeadTimezone("America/New_York")).toBe("America/New_York");
+    expect(storedLeadTimezone("  America/Chicago  ")).toBe("America/Chicago");
+  });
+
+  it("infers from the area code instead of believing the default", () => {
+    // The exact shape of every row in the book: a Texas number carrying the
+    // Los Angeles default. Before, this resolved Pacific.
+    expect(resolveLeadTimezone("+12145551234", LEAD_TIMEZONE_COLUMN_DEFAULT, "UTC")).toBe(
+      "America/Chicago",
+    );
+    expect(resolveLeadTimezone("+13345551234", LEAD_TIMEZONE_COLUMN_DEFAULT, "UTC")).toBe(
+      "America/Chicago",
+    );
+    // …and an explicitly chosen zone still wins over the area code, which is
+    // the whole point of keeping the stored field.
+    expect(resolveLeadTimezone("+12145551234", "America/New_York", "UTC")).toBe(
+      "America/New_York",
+    );
+  });
+
+  it("the clock a rep reads is two hours different because of it", () => {
+    // 2026-08-30T02:30:00Z. Dallas is 9:30 PM the previous evening; the
+    // default would have said 7:30 PM — inside a 8am–9pm window rather than
+    // outside it.
+    const at = new Date("2026-08-30T02:30:00.000Z");
+    const HOURS = { startHour: 8, endHour: 21, days: [0, 1, 2, 3, 4, 5, 6] };
+    const clock = leadLocalTime("+12145551234", LEAD_TIMEZONE_COLUMN_DEFAULT, "UTC", at, HOURS)!;
+    expect(clock.time).toBe("9:30 PM");
+    expect(clock.timezone).toBe("America/Chicago");
+    expect(clock.source).toBe("areaCode");
+    expect(clock.outsideWindow, "9:30 PM is outside an 8am–9pm window").toBe(true);
+  });
+
+  it("the read boundary does not re-apply the default", () => {
+    // src/lib/db/leads.ts mapped `r.timezone ?? "America/Los_Angeles"`, so even
+    // a NULL column arrived at the UI looking like a chosen zone.
+    const readFileSync = require("node:fs").readFileSync as typeof import("node:fs").readFileSync;
+    const resolve = require("node:path").resolve as typeof import("node:path").resolve;
+    const source = readFileSync(resolve(__dirname, "..", "src/lib/db/leads.ts"), "utf8");
+    expect(source).not.toMatch(/r\.timezone as string\) \?\? "America\/Los_Angeles"/);
+    expect(source).toMatch(/storedLeadTimezone\(/);
   });
 });

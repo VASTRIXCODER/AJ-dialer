@@ -94,6 +94,43 @@ export function timezoneForAreaCode(areaCode: string | null): string | null {
 }
 
 /**
+ * The value `leads.timezone` carries when nobody has actually set one.
+ *
+ * supabase/schema.sql:63 declares the column `text default
+ * 'America/Los_Angeles'`, and src/lib/db/leads.ts re-applied the same default a
+ * second time on read. So the column looks like a stored zone and is not one.
+ *
+ * Measured against the production database on 2026-08-30: 37,987 lead rows,
+ * ZERO nulls, and exactly ONE distinct value — this string. Not one row in the
+ * book has ever carried a zone anybody chose.
+ *
+ * That mattered because the book is not Pacific. Its largest area codes are
+ * 334 (Alabama), 817 / 214 / 469 / 972 / 832 / 682 (Texas) and 870 / 479 / 501
+ * (Arkansas) — Central, two hours ahead of the default. A contact in Dallas at
+ * 8:00 PM their time was being shown, and reasoned about, as 6:00 PM: two hours
+ * wrong, in the direction that makes an out-of-hours call look fine.
+ *
+ * Treated as absent until the default is dropped and the rows are backfilled
+ * (see the note in schema.sql). The cost is a lead genuinely in Los Angeles
+ * whose number has a non-Californian area code — which is the ported-number
+ * case, and is not distinguishable today whatever we do.
+ */
+export const LEAD_TIMEZONE_COLUMN_DEFAULT = "America/Los_Angeles";
+
+/**
+ * A lead's stored zone, or null when the value is not evidence of anything.
+ *
+ * Every read of `leads.timezone` goes through here. It is deliberately NOT a
+ * general "is this a valid zone" check: it is the one place that knows the
+ * column has a default, so nothing downstream has to.
+ */
+export function storedLeadTimezone(raw: string | null | undefined): string | null {
+  const v = (raw ?? "").trim();
+  if (!v || v === LEAD_TIMEZONE_COLUMN_DEFAULT) return null;
+  return v.includes("/") ? v : null;
+}
+
+/**
  * Best available timezone for a lead: a stored IANA zone, then the number's area
  * code, then the org fallback. Note: schedule.ts's zonedDayHour tolerates an
  * invalid zone (it falls back to UTC), so a slightly-off stored value never throws.
@@ -103,8 +140,8 @@ export function resolveLeadTimezone(
   storedTz: string | null | undefined,
   fallback: string,
 ): string {
-  const stored = (storedTz ?? "").trim();
-  if (stored.includes("/")) return stored; // looks like an IANA zone — trust it
+  const stored = storedLeadTimezone(storedTz);
+  if (stored) return stored; // a zone somebody actually chose — trust it
   return timezoneForAreaCode(areaCodeOf(phone)) || fallback;
 }
 
@@ -146,14 +183,13 @@ export function leadLocalTime(
   now: Date,
   hours?: { startHour: number; endHour: number; days?: number[] } | null,
 ): LeadClock | null {
-  const stored = (storedTz ?? "").trim();
+  // Through the same helper `resolveLeadTimezone` uses, or the tooltip would
+  // report "stored" for a zone it actually inferred — which is exactly what it
+  // did for all 37,987 rows carrying the column default.
+  const stored = storedLeadTimezone(storedTz);
   const areaZone = timezoneForAreaCode(areaCodeOf(phone));
   const timezone = resolveLeadTimezone(phone, storedTz, fallback);
-  const source: LeadClock["source"] = stored.includes("/")
-    ? "stored"
-    : areaZone
-      ? "areaCode"
-      : "fallback";
+  const source: LeadClock["source"] = stored ? "stored" : areaZone ? "areaCode" : "fallback";
 
   let time: string;
   try {

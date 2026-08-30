@@ -2,6 +2,7 @@ import "server-only";
 
 import { leads as fallbackLeads, getLeadById as fallbackById } from "../data";
 import { DIALABLE_STATUSES } from "../leads/dialable";
+import { storedLeadTimezone } from "../dialer/lead-timezone";
 import {
   hasStructuredPredicates,
   leadMatchesParsedQuery,
@@ -106,7 +107,11 @@ export function rowToLead(r: Row): Lead {
     multipleSystems: Boolean(r.multiple_systems),
     notes: (r.notes as string) ?? undefined,
     aiScore: r.ai_score == null ? undefined : Number(r.ai_score),
-    timezone: (r.timezone as string) ?? "America/Los_Angeles",
+    // NOT `?? "America/Los_Angeles"`. The column already defaults to that
+    // string, so re-applying it here made "nobody set a zone" and "somebody
+    // chose Los Angeles" the same value at every call site. See
+    // storedLeadTimezone — measured: all 37,987 rows carry the default.
+    timezone: storedLeadTimezone(r.timezone as string | null) ?? undefined,
     lastContactedAt: (r.last_contacted_at as string) ?? undefined,
     createdAt: (r.created_at as string) ?? new Date().toISOString(),
     ownerId: (r.owner_id as string) ?? undefined,
