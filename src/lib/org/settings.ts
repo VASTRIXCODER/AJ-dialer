@@ -213,6 +213,18 @@ export interface OrgSettings {
     ringTimeoutSec: number;
     recording: boolean;
     /**
+     * Run speech-to-text over recorded MANUAL calls, so the archive can search
+     * what was actually said instead of only the name, number and rep's notes.
+     * Requires a provider key (ELEVENLABS_API_KEY or DEEPGRAM_API_KEY) and
+     * `recording` on — there is nothing to transcribe otherwise.
+     *
+     * OFF by default on purpose: an org that set ELEVENLABS_API_KEY for the AI
+     * dialer must not silently start paying per-minute for speech-to-text on
+     * every human call the moment this ships. AI calls are unaffected — their
+     * transcript already arrives from ElevenLabs at no extra cost.
+     */
+    transcribeCalls: boolean;
+    /**
      * Async answering-machine detection on manual/parallel outbound legs.
      * Twilio's AsyncAmd never delays connecting a live human; when the verdict
      * says machine, the leg is auto-dropped (or gets the voicemail drop below).
@@ -569,6 +581,8 @@ export const DEFAULT_ORG_SETTINGS: OrgSettings = {
     maxLines: 3,
     ringTimeoutSec: 25,
     recording: true,
+    // Opt-in: speech-to-text bills per minute, so an admin turns it on.
+    transcribeCalls: false,
     amd: false,
     voicemailDrop: true,
     voicemailMessage: "",

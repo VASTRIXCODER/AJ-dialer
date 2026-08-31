@@ -672,6 +672,14 @@ export function OrgSettingsForm({
             checked={dialing.recording}
             onChange={(v) => setDialing({ ...dialing, recording: v })}
           />
+          {dialing.recording && (
+            <Toggle
+              label="Transcribe manual calls"
+              hint="Run speech-to-text over each recorded manual call so the archive can search what was actually said — not just the name, number and notes. Needs a provider key on the server (ElevenLabs or Deepgram) and bills per minute of audio. AI calls already come with a transcript and are unaffected."
+              checked={dialing.transcribeCalls ?? false}
+              onChange={(v) => setDialing({ ...dialing, transcribeCalls: v })}
+            />
+          )}
           <Toggle
             label="Answering-machine detection"
             hint="Auto-drop machine pickups so reps never sit through a greeting. Adds Twilio's per-call AMD fee."

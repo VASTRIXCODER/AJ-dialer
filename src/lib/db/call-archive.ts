@@ -190,7 +190,10 @@ export async function searchCallArchive(query: ArchiveQuery): Promise<ArchivePag
         `recording_url.not.is.null,and(conversation_id.not.is.null,outcome.in.(${connected}))`,
       );
     } else if (query.media === "transcript") {
-      q = q.not("transcript_text", "is", null);
+      // Non-null AND non-empty: a manual call whose audio held no speech is
+      // stored as "" (so the transcription sweep stops re-paying for the same
+      // silence), and an empty transcript is not a transcript to filter on.
+      q = q.not("transcript_text", "is", null).neq("transcript_text", "");
     }
 
     if (term) {

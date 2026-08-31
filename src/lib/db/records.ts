@@ -388,6 +388,15 @@ export async function insertCallRecord(input: {
             .update({ recording_url: pendingUrl })
             .eq("id", recordId);
           await admin.from("pending_recordings").delete().eq("room", input.room);
+          // The webhook fired before this row existed, so it couldn't start
+          // transcription — this is the other half of that push path. Imported
+          // dynamically because transcribe-call imports flattenTranscript from
+          // this module; a static import here would close the cycle.
+          void import("./transcribe-call")
+            .then((m) => m.kickTranscription(recordId))
+            .catch(() => {
+              /* best-effort — the sweep still catches it */
+            });
         }
       } catch {
         /* best-effort */

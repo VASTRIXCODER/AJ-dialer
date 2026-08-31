@@ -6,6 +6,7 @@ import {
 import { losingLegs, markAnswered } from "@/lib/call-registry";
 import { applyCallEvent, twilioEventTypeForStatus } from "@/lib/calls/apply-event";
 import { providerEventFingerprint } from "@/lib/calls/state-machine";
+import { kickTranscription } from "@/lib/db/transcribe-call";
 import {
   type AICallRef,
   getAICallRef,
@@ -109,6 +110,11 @@ export async function POST(req: Request) {
           await admin
             .from("pending_recordings")
             .upsert({ room, recording_url: recordingUrl }, { onConflict: "room" });
+        } else {
+          // The audio just became available and the row exists — turn it into
+          // words now. Fire-and-forget: Twilio gets its 204 immediately, and
+          // the sweep retries anything this drops.
+          kickTranscription((updated[0] as { id?: string } | undefined)?.id);
         }
       } else if (callSid) {
         await admin

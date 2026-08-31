@@ -353,10 +353,13 @@ export function CallDetailModal({
           <InlineEmpty size="tight">
             {isAI
               ? "No transcript — this call didn't reach a conversation."
-              : // Say the true reason rather than leaving an empty panel that
-                // reads as a bug: Twilio records manual calls, it doesn't
-                // transcribe them.
-                "Manual calls are recorded, not transcribed. Play the recording below."}
+              : // Manual calls ARE transcribable now (speech-to-text over the
+                // recording), but it's an opt-in per workspace and runs a few
+                // seconds after the call. Say which of those it is rather than
+                // leaving an empty panel that reads as a bug.
+                call?.hasRecording
+                ? "No transcript yet. Transcription runs shortly after a call once it's switched on in Admin → Dialing — until then, play the recording below."
+                : "No transcript — this call wasn't recorded."}
           </InlineEmpty>
         )}
 

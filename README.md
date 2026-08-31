@@ -279,6 +279,43 @@ rather than silently shrinking the list.
 
 ---
 
+## 📝 Call transcripts
+
+AI calls have always carried a transcript (ElevenLabs posts it back). **Manual
+calls are now transcribed too** — speech-to-text runs over the Twilio conference
+recording that manual dialing already produces, so the archive can search what
+was actually *said* on a rep's call instead of only the name, number and notes.
+
+Turn it on per workspace in **Admin → Dialing → "Transcribe manual calls"**
+(requires "Record calls"). It is **off by default on purpose**: an org that set
+`ELEVENLABS_API_KEY` for the AI dialer must not silently start paying
+per-minute for speech-to-text on every human call.
+
+| Variable | Purpose |
+| --- | --- |
+| `ELEVENLABS_API_KEY` | Default provider (Scribe). Already set if you run the AI dialer — no new credential needed. |
+| `DEEPGRAM_API_KEY` | Alternative provider; cheaper per minute at volume. |
+| `TRANSCRIPTION_PROVIDER` | Force one: `elevenlabs`, `deepgram`, or `off`. Unset = whichever key is present (ElevenLabs wins). |
+| `TRANSCRIPTION_MODEL` | Scribe model (default `scribe_v2`). |
+| `DEEPGRAM_MODEL` | Deepgram model (default `nova-3`). |
+
+ElevenLabs is the default because its `detect_speaker_roles` labels the two
+voices *agent* / *customer*, which maps exactly onto the `Agent:` / `Contact:`
+format the transcript panel renders. Without role detection the fallback is
+speaker order — on an outbound call the first voice is the person picking up.
+
+**How it runs.** Transcription starts on the push path, from the two places a
+recording URL can reach a call record: the Twilio recording webhook, and
+`insertCallRecord`'s parked-recording claim (for when the recording finished
+before the rep saved their disposition). A call is normally transcribed within
+seconds of the audio being ready. `/api/cron/transcribe` is an **optional**
+backstop for a dropped webhook or a backlog recorded before the setting was
+switched on — same `Authorization: Bearer $CRON_SECRET` contract as the sibling
+crons. Recordings under 5 seconds are never sent to a provider, and a call with
+no speech is marked so the sweep stops re-paying for the same silence.
+
+---
+
 ## 🗂️ Project structure
 
 ```
