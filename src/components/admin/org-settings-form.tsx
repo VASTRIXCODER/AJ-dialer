@@ -1057,6 +1057,12 @@ export function OrgSettingsForm({
                   setAi({ ...ai, maxConcurrentCalls: Math.max(1, Math.min(30, n)) })
                 }
               />
+              <NumberField
+                label="Give the AI dialer to your top reps (0 = off)"
+                hint="A standing rule, not a one-off grant: the top N reps by appointments booked in the last 7 days get the AI dialer, and it re-evaluates as the ranking changes — climb in and you gain it, drop out and you lose it. Admins and managers already have AI access and are never ranked, so they can't take a rep's slot. Setting a rep's AI toggle by hand on the Members tab still overrides this either way."
+                value={ai.topRepAccess ?? 0}
+                onChange={(n) => setAi({ ...ai, topRepAccess: Math.max(0, Math.min(25, n)) })}
+              />
               <Field label="Voice speed (0.7 slow – 1.2 fast)">
                 <Input
                   type="number"

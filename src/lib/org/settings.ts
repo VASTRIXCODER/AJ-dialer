@@ -367,6 +367,19 @@ export interface OrgSettings {
      */
     maxConcurrentCalls: number;
     /**
+     * Auto-grant the AI dialer to the workspace's top N reps (0 = off).
+     *
+     * A standing rule rather than a one-off grant: the ranking is recomputed
+     * from live numbers — appointments booked over a rolling 7 days — so a rep
+     * who climbs into the top N gains access and one who drops out loses it,
+     * with nobody editing a permission. Only members whose ROLE doesn't already
+     * include `dialer.ai` are ranked, so a manager can't consume a rep's slot.
+     *
+     * An admin's explicit per-member override still wins in BOTH directions:
+     * this is folded in underneath the stored overrides (see getViewer).
+     */
+    topRepAccess: number;
+    /**
      * What an AI-PROPOSED disposition may do to a call record (F1): silent
      * auto-apply only above `autoApplyMin` confidence, with a transcript, and
      * never for an `alwaysReview` outcome — everything else lands in the
@@ -643,6 +656,9 @@ export const DEFAULT_ORG_SETTINGS: OrgSettings = {
     language: "en",
     // Matches the common ElevenLabs plan allowance. Raise if the plan does.
     maxConcurrentCalls: 10,
+    // Off until an admin opts in — this hands a paid capability to reps who
+    // don't have it by role, so it must be a deliberate choice.
+    topRepAccess: 0,
     dispositionPolicy: {
       ...DEFAULT_AI_DISPOSITION_POLICY,
       alwaysReview: [...DEFAULT_AI_DISPOSITION_POLICY.alwaysReview],

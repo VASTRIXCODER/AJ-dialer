@@ -9,6 +9,7 @@ import { getLeadStats } from "@/lib/db/leads";
 import { getPlatformPool } from "@/lib/dialer/rotation-server";
 import { isElevenLabsConfigured } from "@/lib/elevenlabs";
 import { listMembers, listOrgCompanies, getViewer } from "@/lib/org/membership";
+import { topRepsForOrg } from "@/lib/org/top-reps";
 import { isAdminConfigured } from "@/lib/supabase/admin";
 import { isSupabaseConfigured } from "@/lib/supabase/config";
 import { isSuperadmin } from "@/lib/superadmin";
@@ -49,6 +50,17 @@ export default async function AdminPage() {
     isSuperadmin(),
   ]);
 
+  // Who currently holds the AI dialer through the top-rep rule rather than a
+  // stored override. The Members tab needs this to report the TRUE state — its
+  // per-rep AI toggle reads the permissions blob, which says nothing about a
+  // rep the rule is granting, so without this it would show "off" for someone
+  // who demonstrably has AI access.
+  const topRepAccess = viewer.org.settings.ai.topRepAccess ?? 0;
+  const autoAiUserIds =
+    topRepAccess > 0 && viewer.permissions.includes("members.view")
+      ? (await topRepsForOrg(viewer.org.id, topRepAccess)).map((t) => t.userId)
+      : [];
+
   const platformPool = getPlatformPool(viewer.org.settings);
 
   const integrations = [
@@ -71,6 +83,7 @@ export default async function AdminPage() {
         role={viewer.role ?? "rep"}
         permissions={viewer.permissions}
         members={members}
+        autoAiUserIds={autoAiUserIds}
         companies={companies}
         leadStats={leadStats}
         integrations={integrations}

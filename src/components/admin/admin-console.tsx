@@ -106,11 +106,17 @@ export function AdminConsole({
   platformPoolLocked = false,
   emailConfigured = false,
   emailProblem = null,
+  autoAiUserIds = [],
 }: {
   org: OrgFull;
   role: OrgRole;
   permissions: string[];
   members: Member[];
+  /** Reps currently granted the AI dialer by the top-rep rule (settings.ai
+   *  .topRepAccess), so the Members tab can show the real state rather than
+   *  reading the stored overrides alone and reporting "off" for someone who
+   *  demonstrably has it. */
+  autoAiUserIds?: string[];
   companies: OrgCompany[];
   leadStats: { total: number; qualified: number; appointments: number; neverDialed: number };
   integrations: Integration[];
@@ -187,7 +193,13 @@ export function AdminConsole({
       )}
       {tab === "dnc" && <DncManager canManage={has("org.edit")} />}
       {tab === "members" && (
-        <MembersTab org={org} role={role} permissions={permissions} members={members} />
+        <MembersTab
+          org={org}
+          role={role}
+          permissions={permissions}
+          members={members}
+          autoAiUserIds={autoAiUserIds}
+        />
       )}
       {tab === "organization" && (
         <OrgSettingsForm
@@ -224,11 +236,14 @@ function MembersTab({
   role,
   permissions,
   members,
+  autoAiUserIds = [],
 }: {
   org: OrgFull;
   role: OrgRole;
   permissions: string[];
   members: Member[];
+  /** User ids currently holding the AI dialer through the top-rep rule. */
+  autoAiUserIds?: string[];
 }) {
   const router = useRouter();
   const confirmDialog = useConfirm();
@@ -534,6 +549,7 @@ function MembersTab({
               canTransfer={role === "owner"}
               busy={busy === m.id}
               orgPool={orgPool}
+              autoAi={autoAiUserIds.includes(m.userId)}
               onRole={(r) => act({ id: m.id, action: "role", role: r }, m.id)}
               onPerms={(perms) => act({ id: m.id, action: "permissions", permissions: perms }, m.id)}
               onCallerIds={(ids) => act({ id: m.id, action: "callerIds", callerIds: ids }, m.id)}
@@ -574,6 +590,7 @@ function MemberRow({
   canTransfer,
   busy,
   orgPool,
+  autoAi = false,
   onRole,
   onPerms,
   onCallerIds,
@@ -588,6 +605,10 @@ function MemberRow({
   busy: boolean;
   /** The org's rotation pool — options for this rep's caller-ID picker. */
   orgPool: string[];
+  /** This rep currently holds the AI dialer through the top-rep rule rather
+   *  than a stored override — so the toggle must read ON even though their
+   *  permissions blob says nothing. */
+  autoAi?: boolean;
   onRole: (role: OrgRole) => void;
   onPerms: (perms: Record<string, boolean>) => void;
   onCallerIds: (callerIds: string[]) => void;
@@ -607,12 +628,24 @@ function MemberRow({
   // per-member override the shield editor writes, surfaced as its own toggle so
   // granting AI doesn't require knowing which of 23 permissions to flip.
   const showAiToggle = canRole && manageable && m.role === "rep";
-  const aiGranted = can(m.role, "dialer.ai", m.permissions);
+  // Three inputs decide the truth here: the role default, an explicit override,
+  // and the top-rep rule. An explicit override always wins (getViewer folds the
+  // automatic grant in UNDERNEATH it); otherwise the rule can grant it.
+  const explicitAi = Object.prototype.hasOwnProperty.call(m.permissions, "dialer.ai");
+  const storedAi = can(m.role, "dialer.ai", m.permissions);
+  const aiGranted = explicitAi ? storedAi : storedAi || autoAi;
+  /** Granted by the rule, not by a person — worth labelling, since it can be
+   *  lost again by dropping down the board rather than by an admin's decision. */
+  const aiFromRule = !explicitAi && !storedAi && autoAi;
   const toggleAi = () => {
     const next: Record<string, boolean> = { ...m.permissions };
     const wanted = !aiGranted;
-    if (rolePermissions(m.role).includes("dialer.ai") === wanted) {
-      delete next["dialer.ai"]; // back to the role default — drop the override
+    // Dropping the override returns this rep to "whatever the role and the rule
+    // say". That's only the right move when it actually produces what was
+    // clicked — switching OFF someone the rule is granting must be PINNED off,
+    // or the click would silently do nothing.
+    if (rolePermissions(m.role).includes("dialer.ai") === wanted && !(autoAi && !wanted)) {
+      delete next["dialer.ai"];
     } else {
       next["dialer.ai"] = wanted;
     }
@@ -656,17 +689,23 @@ function MemberRow({
             aria-checked={aiGranted}
             aria-label={aiGranted ? "Revoke AI dialer access" : "Grant AI dialer access"}
             title={
-              aiGranted
-                ? "AI dialer: granted — click to revoke"
-                : "AI dialer: off — click to let this rep place AI calls"
+              aiFromRule
+                ? "AI dialer: earned — this rep is currently a top rep. They keep it while they stay there; click to switch it off for them regardless."
+                : aiGranted
+                  ? "AI dialer: granted — click to revoke"
+                  : "AI dialer: off — click to let this rep place AI calls"
             }
             onClick={toggleAi}
             disabled={busy}
             className={cn(
-              "flex h-8 w-8 items-center justify-center rounded-lg border border-border transition-colors",
-              aiGranted
-                ? "bg-primary-soft text-primary"
-                : "text-muted-foreground hover:bg-muted hover:text-foreground",
+              "flex h-8 w-8 items-center justify-center rounded-lg border transition-colors",
+              // Dashed border distinguishes "earned by the rule, can change on
+              // its own" from a solid, deliberate grant by a person.
+              aiFromRule
+                ? "border-dashed border-primary/60 bg-primary-soft/60 text-primary"
+                : aiGranted
+                  ? "border-border bg-primary-soft text-primary"
+                  : "border-border text-muted-foreground hover:bg-muted hover:text-foreground",
             )}
           >
             <Bot className="h-4 w-4" />

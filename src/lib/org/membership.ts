@@ -18,6 +18,7 @@ import { isSupabaseConfigured } from "../supabase/config";
 import { createClient } from "../supabase/server";
 import { isRestConfigured, verifyNumbersOwnedByTwilio } from "../twilio";
 import { normalizePhone } from "../utils";
+import { topRepsForOrg } from "./top-reps";
 import {
   type OrgBlueprint,
   type OrgSettings,
@@ -244,6 +245,26 @@ export const getViewer = cache(async (): Promise<Viewer> => {
   }
 
   const org = await getOrgById(membership.orgId);
+
+  // ── Top-rep AI access ──────────────────────────────────────────────────────
+  // A standing rule the workspace can switch on (Admin → AI agent): the top N
+  // reps by appointments booked over the last 7 days get the AI dialer,
+  // re-evaluated from live numbers rather than granted once by hand.
+  //
+  // Folded in UNDERNEATH the stored overrides on purpose. `can()` lets any key
+  // present in the override map win over the role default, so spreading the
+  // member's own overrides last keeps an admin's explicit decision — in either
+  // direction — authoritative over the automatic grant.
+  //
+  // Costs nothing on the common path: topRepsForOrg memoizes per process for
+  // ten minutes and returns immediately when the setting is 0 (the default).
+  const topRepAccess = org?.settings.ai.topRepAccess ?? 0;
+  let autoGrants: Record<string, boolean> = {};
+  if (topRepAccess > 0) {
+    const top = await topRepsForOrg(membership.orgId, topRepAccess);
+    if (top.some((t) => t.userId === user.id)) autoGrants = { "dialer.ai": true };
+  }
+
   return {
     user,
     isDemo: false,
@@ -251,7 +272,10 @@ export const getViewer = cache(async (): Promise<Viewer> => {
     email: user.email ?? "",
     org,
     role: membership.role,
-    permissions: effectivePermissions(membership.role, membership.permissions),
+    permissions: effectivePermissions(membership.role, {
+      ...autoGrants,
+      ...membership.permissions,
+    }),
     membershipStatus: "active",
     callerIds: membership.callerIds,
   };
