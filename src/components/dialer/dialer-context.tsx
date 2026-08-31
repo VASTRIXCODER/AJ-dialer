@@ -68,6 +68,15 @@ export interface DialerConfig {
   /** AI double-dial: re-ring a no-answer once after `doubleDialGapSec` before moving on. */
   doubleDial?: boolean;
   doubleDialGapSec?: number;
+  /** Power mode default: a finished MANUAL call no longer stops on the wrap-up
+   *  screen — the AI classifies the outcome in the background and it stacks in a
+   *  review widget while the dialer keeps going. This is the org's default; the
+   *  rep can flip it live on the dialer. */
+  autoDispose?: boolean;
+  /** Auto-confirm default (power mode): auto-APPLY the AI's suggested outcome
+   *  instead of waiting for the rep. Never applies to appointment/callback,
+   *  which need a human to set a time. The org default; rep can flip it live. */
+  autoConfirmDisposition?: boolean;
   /** Which mode the dialer boots into (`settings.dialing.defaultMode`). "ai"
    *  falls back to manual for viewers who can't use the AI dialer; "parallel"
    *  falls back when the org's line ceiling is 1. */

@@ -210,6 +210,10 @@ export default async function AppGroupLayout({
     // Double-dial (double-tap): AI bot re-rings a no-answer once after a short gap.
     doubleDial: viewer.org?.settings.dialing.doubleDial ?? false,
     doubleDialGapSec: viewer.org?.settings.dialing.doubleDialGapSec ?? 15,
+    // Power mode: finished manual calls auto-classify + keep dialing instead of
+    // stopping on the wrap-up screen. Both are org defaults the rep can flip live.
+    autoDispose: viewer.org?.settings.dialing.autoDispose ?? false,
+    autoConfirmDisposition: viewer.org?.settings.dialing.autoConfirmDisposition ?? false,
     // Which mode the dialer boots into (Admin → Dialing → Default mode). The
     // engine falls back to manual when the chosen mode isn't usable.
     defaultDialMode: viewer.org?.settings.dialing.defaultMode ?? "ai",

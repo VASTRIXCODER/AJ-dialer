@@ -168,6 +168,7 @@ export function CallCockpit({
   state,
   focusLead,
   hasQueue,
+  powerMode = false,
   aiConfigured,
   manualEnabled = true,
   aiEnabled = true,
@@ -203,6 +204,9 @@ export function CallCockpit({
   state: DialerState;
   focusLead: Lead | null;
   hasQueue: boolean;
+  /** Power mode is on for a MANUAL call — the wrap-up screen doesn't ask for a
+   *  disposition, it hands off to the review widget and keeps dialing. */
+  powerMode?: boolean;
   /** The rep's in-call notes at wrap-up — evidence for the AI summary. */
   wrapupNotes?: string;
   /** Edit those notes from the wrap-up screen — same note the qualify panel shows. */
@@ -767,10 +771,38 @@ export function CallCockpit({
             </motion.div>
           )}
 
+          {/* ── WRAP-UP · POWER MODE ─────────────────────────────── */}
+          {/* The dialer doesn't stop here in power mode — the AI is reading the
+              call in the widget and the next dial is already firing. A momentary
+              hand-off card, not a place the rep has to act. */}
+          {state.status === "wrapup" && powerMode && (
+            <motion.div
+              key="wrapup-power"
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -8 }}
+              className="flex w-full max-w-md flex-col items-center gap-3 text-center"
+            >
+              <span className="flex h-14 w-14 items-center justify-center rounded-2xl bg-primary-soft text-primary">
+                <Sparkles className="h-7 w-7" />
+              </span>
+              <div>
+                <h2 className="text-lg font-bold">Auto-dispositioning</h2>
+                <p className="text-sm text-muted-foreground">
+                  {name} · {formatDuration(state.durationSec)} — the AI is filing this call.
+                </p>
+              </div>
+              <p className="flex items-center gap-1.5 text-sm font-medium text-primary">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Dialing the next lead…
+              </p>
+            </motion.div>
+          )}
+
           {/* ── WRAP-UP ──────────────────────────────────────────── */}
           {/* Consolidated into WrapupPanel (E3): taxonomy grid, notes, AI
               summary, crash-safe draft, flag-for-review — one surface. */}
-          {state.status === "wrapup" && (
+          {state.status === "wrapup" && !powerMode && (
             <motion.div
               key="wrapup"
               initial={{ opacity: 0, y: 10 }}

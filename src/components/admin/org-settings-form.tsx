@@ -654,6 +654,20 @@ export function OrgSettingsForm({
             />
           )}
           <Toggle
+            label="Power mode (auto-disposition)"
+            hint="A finished call doesn't stop for a disposition — the AI reads it in the background and it stacks in a review widget while the dialer keeps dialing. This is the workspace default; each rep can flip it on the dialer."
+            checked={dialing.autoDispose ?? false}
+            onChange={(v) => setDialing({ ...dialing, autoDispose: v })}
+          />
+          {(dialing.autoDispose ?? false) && (
+            <Toggle
+              label="Auto-confirm dispositions"
+              hint="Apply the AI's disposition automatically instead of waiting for a tap. Appointments and callbacks always wait for a rep to set a time — no guess writes a booking onto the calendar."
+              checked={dialing.autoConfirmDisposition ?? false}
+              onChange={(v) => setDialing({ ...dialing, autoConfirmDisposition: v })}
+            />
+          )}
+          <Toggle
             label="Record calls"
             checked={dialing.recording}
             onChange={(v) => setDialing({ ...dialing, recording: v })}

@@ -29,6 +29,8 @@ import {
   persistDisposition,
   replayQueuedDispositions,
 } from "@/lib/dialer/disposition-queue";
+import type { PendingDisposition } from "@/lib/dialer/pending-dispositions";
+import { usePendingDispositions } from "@/lib/dialer/use-pending-dispositions";
 import { describeOrgHours, isWithinOrgHours } from "@/lib/dialer/schedule";
 import { browserWrapupStore, clearWrapupDraft } from "@/lib/dialer/wrapup-draft";
 import { filterOutcomeOptionsByKeys, resolveOutcomeOptions } from "@/lib/status";
@@ -43,6 +45,7 @@ import {
 } from "./schedule-callback-dialog";
 import { BookedLeadsPanel } from "./booked-leads-panel";
 import { CallCockpit } from "./call-cockpit";
+import { PendingDispositionsWidget } from "./pending-dispositions-widget";
 import { useDialerContext, type DialerCampaign } from "./dialer-context";
 import { DialerFloor } from "./dialer-floor";
 import { DialerShell } from "./dialer-shell";
@@ -374,15 +377,20 @@ export function DialerClient({
   // The dialogs carry the pressed disposition KEY as well as the lead — a
   // custom "Left with spouse → callback" button must file with ITS key, not
   // the generic callback_scheduled it collapses to.
+  // In POWER MODE both dialogs are also reachable from the review widget, so the
+  // dialog state can carry the pending row it belongs to: when present, confirming
+  // files THAT row (the queue already moved on) instead of the live call.
   const [booking, setBooking] = useState<{
     lead: Lead;
     notes: string;
     dispositionKey?: string;
+    pendingRow?: PendingDisposition;
   } | null>(null);
   const [callback, setCallback] = useState<{
     lead: Lead;
     notes: string;
     dispositionKey?: string;
+    pendingRow?: PendingDisposition;
   } | null>(null);
 
   const fileOutcome = useCallback(
@@ -450,6 +458,162 @@ export function DialerClient({
     },
     [focusLead, fileOutcome],
   );
+
+  // ── Power mode ──────────────────────────────────────────────────────────────
+  // The true power-dialer loop: a finished MANUAL call doesn't stop on the
+  // wrap-up screen. The AI reads it in the background and it stacks in the review
+  // widget while the dialer keeps dialing. Both toggles default from the org
+  // setting and are then remembered per rep — the rep is in control of the pace.
+  const [powerMode, setPowerMode] = useState<boolean>(config.autoDispose ?? false);
+  const [autoConfirm, setAutoConfirm] = useState<boolean>(
+    config.autoConfirmDisposition ?? false,
+  );
+  const powerKey = config.userId ? `aj:powerMode:${config.userId}` : null;
+  const autoConfirmKey = config.userId ? `aj:autoConfirm:${config.userId}` : null;
+  useEffect(() => {
+    try {
+      if (powerKey) {
+        const v = window.localStorage.getItem(powerKey);
+        if (v != null) setPowerMode(v === "1");
+      }
+      if (autoConfirmKey) {
+        const v = window.localStorage.getItem(autoConfirmKey);
+        if (v != null) setAutoConfirm(v === "1");
+      }
+    } catch {
+      /* storage disabled — the toggles just won't persist */
+    }
+  }, [powerKey, autoConfirmKey]);
+
+  const toggleAutoConfirm = useCallback(
+    (next: boolean) => {
+      setAutoConfirm(next);
+      try {
+        if (autoConfirmKey) window.localStorage.setItem(autoConfirmKey, next ? "1" : "0");
+      } catch {
+        /* best-effort */
+      }
+    },
+    [autoConfirmKey],
+  );
+
+  // Resolve a full lead for the time dialogs when confirming an appointment/
+  // callback from the widget — the call is long over, so pull it from the queue
+  // (falling back to a minimal record built from the pending row).
+  const leadForRow = useCallback(
+    (row: PendingDisposition): Lead => {
+      const found = queueForDialer.find((l) => l.id === row.leadId);
+      if (found) return found;
+      // The lead may have cycled out of the loaded queue — the dialogs only
+      // display name/city, so a minimal record is enough.
+      const [firstName, ...rest] = (row.leadName || "").split(" ");
+      return {
+        id: row.leadId,
+        firstName: firstName ?? "",
+        lastName: rest.join(" "),
+        phone: row.phone,
+        address: "",
+        city: "",
+        state: "",
+        zip: "",
+        utilityProvider: "",
+        solarProvider: "",
+        status: "contacted",
+        campaignId: "",
+        hasEV: false,
+        hasPool: false,
+        hasBattery: false,
+        multipleSystems: false,
+        createdAt: "",
+        timezone: "",
+      };
+    },
+    [queueForDialer],
+  );
+
+  // A widget confirmation of an appointment/callback needs a time — open the
+  // right dialog, tagged with the pending row so confirming files THAT row.
+  const onNeedsTime = useCallback(
+    (row: PendingDisposition, outcome: CallOutcome) => {
+      const lead = leadForRow(row);
+      if (outcome === "appointment_booked") setBooking({ lead, notes: row.notes, pendingRow: row });
+      else setCallback({ lead, notes: row.notes, pendingRow: row });
+    },
+    [leadForRow],
+  );
+
+  const powerDispositions = usePendingDispositions({
+    userId: config.userId,
+    autoConfirm,
+    onNeedsTime,
+  });
+  const { enqueue: enqueuePending } = powerDispositions;
+
+  const togglePowerMode = useCallback(
+    (next: boolean) => {
+      setPowerMode(next);
+      try {
+        if (powerKey) window.localStorage.setItem(powerKey, next ? "1" : "0");
+      } catch {
+        /* best-effort */
+      }
+      // Power mode is nothing without continuous dialing — turning it on turns
+      // auto-dial on too, so a finished call actually flows into the next one.
+      if (next && !state.autoDial) dialer.setAutoDial(true);
+    },
+    [powerKey, dialer, state.autoDial],
+  );
+
+  // The wrap-up watcher. When a MANUAL call ends in power mode we don't wait for
+  // a disposition: snapshot the call into the widget's classify pipeline and
+  // skip() straight on to keep the dialer moving. Edge-detected with a ref so it
+  // fires exactly once per wrap-up. (AI calls disposition themselves server-side
+  // and never reach this screen.)
+  const wrapupHandledRef = useRef(false);
+  useEffect(() => {
+    if (state.status !== "wrapup") {
+      wrapupHandledRef.current = false;
+      return;
+    }
+    if (!powerMode || state.aiMode) return;
+    if (wrapupHandledRef.current) return;
+    wrapupHandledRef.current = true;
+    const lead = state.connectedLead;
+    if (lead) {
+      // Consume the claimed callback here (once) so the auto-disposition
+      // completes it — the same consume-once fileOutcome does for a live call.
+      const callbackIdForThis = pendingCallbackIdRef.current;
+      pendingCallbackIdRef.current = null;
+      enqueuePending({
+        leadId: lead.id,
+        leadName: `${lead.firstName} ${lead.lastName}`.trim(),
+        phone: lead.phone,
+        durationSec: state.durationSec,
+        connected: state.durationSec > 0,
+        callSid: state.callSid,
+        room: state.room,
+        notes: notesRef.current || "",
+        scriptVariant: scriptVariantRef.current,
+        clientAttemptId: state.attemptIds[lead.id] ?? state.callSid,
+        callbackId: callbackIdForThis,
+      });
+    }
+    // Keep dialing. skip() advances the queue and, with auto-dial on, launches
+    // the next call — filing nothing itself, which is exactly right: the widget
+    // owns this call's disposition now.
+    dialer.skip();
+  }, [
+    state.status,
+    state.aiMode,
+    state.connectedLead,
+    state.durationSec,
+    state.callSid,
+    state.room,
+    state.attemptIds,
+    powerMode,
+    enqueuePending,
+    dialer,
+  ]);
 
   // ── Keyboard shortcuts (registered by DialerShell while this page lives) ──
   // The SAME resolution the OutcomeGrid renders, so 1..9 press exactly the
@@ -734,6 +898,7 @@ export function DialerClient({
             state={state}
             focusLead={focusLead}
             hasQueue={queueForDialer.length > 0}
+            powerMode={powerMode && !state.aiMode}
             wrapupNotes={notes}
             onNotesChange={(n) => updateNotes(n, focusLead?.id ?? null)}
             aiConfigured={config.aiAgentConfigured}
@@ -850,22 +1015,30 @@ export function DialerClient({
           lead={booking.lead}
           defaultNotes={booking.notes}
           onConfirm={(appt) => {
+            const row = booking.pendingRow;
             setBooking(null);
-            fileOutcome(
-              "appointment_booked",
-              booking.lead,
-              { appointment: appt },
-              booking.dispositionKey,
-            );
+            // From the widget the queue already advanced — file the pending row.
+            // From the live call, file + advance as before.
+            if (row)
+              powerDispositions.applyWithTime(row, "appointment_booked", { appointment: appt });
+            else
+              fileOutcome(
+                "appointment_booked",
+                booking.lead,
+                { appointment: appt },
+                booking.dispositionKey,
+              );
           }}
           onSkip={() => {
             // Books it with no time — the pre-existing behavior. It lands in the
             // calendar's "Needs a time" rail rather than being silently lost.
+            const row = booking.pendingRow;
             setBooking(null);
-            fileOutcome("appointment_booked", booking.lead, undefined, booking.dispositionKey);
+            if (row) powerDispositions.applyWithTime(row, "appointment_booked", {});
+            else fileOutcome("appointment_booked", booking.lead, undefined, booking.dispositionKey);
           }}
           // Backing out files nothing at all: the rep mis-clicked, and the call
-          // stays open on the same lead.
+          // stays open on the same lead (or the widget row stays for review).
           onCancel={() => setBooking(null)}
         />
       )}
@@ -875,25 +1048,46 @@ export function DialerClient({
           lead={callback.lead}
           defaultReason={callback.notes}
           onConfirm={(cb) => {
+            const row = callback.pendingRow;
             setCallback(null);
-            fileOutcome(
-              "callback_scheduled",
-              callback.lead,
-              { callback: cb },
-              callback.dispositionKey,
-            );
+            if (row) powerDispositions.applyWithTime(row, "callback_scheduled", { callback: cb });
+            else
+              fileOutcome(
+                "callback_scheduled",
+                callback.lead,
+                { callback: cb },
+                callback.dispositionKey,
+              );
           }}
           onSkip={() => {
             // Files the callback with no time — the pre-existing behavior. It
             // lands in "Due now" rather than being lost.
+            const row = callback.pendingRow;
             setCallback(null);
-            fileOutcome("callback_scheduled", callback.lead, undefined, callback.dispositionKey);
+            if (row) powerDispositions.applyWithTime(row, "callback_scheduled", {});
+            else fileOutcome("callback_scheduled", callback.lead, undefined, callback.dispositionKey);
           }}
           // Backing out files nothing at all: the rep mis-clicked, and the call
-          // stays open on the same lead.
+          // stays open on the same lead (or the widget row stays for review).
           onCancel={() => setCallback(null)}
         />
       )}
+
+      {/* Power-mode review stack — floats in the corner while the dialer keeps
+          going. Rendered at the shell root so it stays put no matter which tab
+          is showing. */}
+      <PendingDispositionsWidget
+        pending={powerDispositions.pending}
+        available={config.manualEnabled}
+        powerMode={powerMode}
+        autoConfirm={autoConfirm}
+        onTogglePowerMode={togglePowerMode}
+        onToggleAutoConfirm={toggleAutoConfirm}
+        onConfirm={powerDispositions.confirm}
+        onDismiss={powerDispositions.dismiss}
+        onRetry={powerDispositions.retry}
+        onClearApplied={powerDispositions.clearApplied}
+      />
 
       {showLoadDialog && (
         <LoadLeadsDialog

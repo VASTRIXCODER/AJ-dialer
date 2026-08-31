@@ -263,6 +263,20 @@ export interface OrgSettings {
     /** Seconds to wait after a no-answer before the second (double-tap) dial. */
     doubleDialGapSec: number;
     /**
+     * Power mode (auto-dispose): a finished MANUAL call no longer stops on the
+     * wrap-up screen. The AI classifies the outcome in the background, it stacks
+     * in a review widget, and the dialer immediately moves to the next lead and
+     * keeps going. The workspace DEFAULT; each rep can flip it in the dialer.
+     */
+    autoDispose: boolean;
+    /**
+     * When power mode is on: auto-APPLY the AI's suggested disposition instead
+     * of leaving it for the rep to confirm. Appointments and callbacks are
+     * never auto-applied (they need a time), whatever this is set to. The
+     * workspace default; each rep can flip it in the dialer.
+     */
+    autoConfirmDisposition: boolean;
+    /**
      * Lease-based dial reservations (claim/heartbeat/release — see
      * src/lib/db/reservations.ts): two reps can never pull the same lead into
      * their queues at once. ON by default; this is the org-level kill switch
@@ -573,6 +587,9 @@ export const DEFAULT_ORG_SETTINGS: OrgSettings = {
     localPresence: true,
     doubleDial: false,
     doubleDialGapSec: 15,
+    // Power mode + auto-confirm are opt-in per workspace (and per rep on top).
+    autoDispose: false,
+    autoConfirmDisposition: false,
     // The reservation engine is the default; orgs saved before it existed pick
     // it up here via mergeSettings (absent key → this default → ON).
     reservations: true,
