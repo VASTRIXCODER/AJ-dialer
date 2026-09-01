@@ -3893,8 +3893,33 @@ create table if not exists public.opportunity_events (
 );
 create index if not exists opportunity_events_opp_idx
   on public.opportunity_events (opportunity_id, created_at);
+-- Append-only, with ONE exception: the cascade that destroys the parent.
+--
+-- This used to raise on every DELETE, full stop. But opportunity_events
+-- cascades from opportunities, which cascades from leads — so the trigger fired
+-- on the RI cascade and aborted the transaction, which made any lead that had
+-- ever produced an opportunity IMPOSSIBLE TO DELETE. Reps deleting a batch saw
+-- the raw "opportunity_events is append-only" and lost the whole selection,
+-- because one undeletable lead fails the batch it's in.
+--
+-- The guarantee this trigger exists for is "history is never rewritten or
+-- quietly erased", not "leads are permanent". Both hold now: an UPDATE is
+-- always refused, and a DELETE is refused while the parent opportunity is still
+-- there. During a cascade the parent row is already gone by the time this
+-- fires, and that absence is exactly what distinguishes "the opportunity is
+-- being destroyed, take its log with it" from "someone is erasing an audit
+-- trail out from under a live record".
 create or replace function public.app_opportunity_events_immutable() returns trigger
-language plpgsql as $fn$ begin raise exception 'opportunity_events is append-only'; end $fn$;
+language plpgsql as $fn$
+begin
+  if (tg_op = 'UPDATE') then
+    raise exception 'opportunity_events is append-only';
+  end if;
+  if exists (select 1 from public.opportunities o where o.id = old.opportunity_id) then
+    raise exception 'opportunity_events is append-only';
+  end if;
+  return old;
+end $fn$;
 drop trigger if exists opportunity_events_immutable on public.opportunity_events;
 create trigger opportunity_events_immutable
   before update or delete on public.opportunity_events
