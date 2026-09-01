@@ -3,6 +3,8 @@ import { registerRoom } from "@/lib/call-registry";
 import { recordDialRequested } from "@/lib/calls/apply-event";
 import { dncKey, getDncDigits } from "@/lib/db/dnc";
 import { resolveLeadTimezone } from "@/lib/dialer/lead-timezone";
+import { placeLegWithRetry } from "@/lib/dialer/place-call";
+import { findRecentLegs, orgCallerIdSet } from "@/lib/dialer/recover-legs";
 import { type CallerIdInfo, nextCallerIdWithInfo } from "@/lib/dialer/rotation-server";
 import { describeOrgHours, isWithinOrgHours } from "@/lib/dialer/schedule";
 import { getViewer } from "@/lib/org/membership";
@@ -216,28 +218,57 @@ export async function POST(req: Request) {
         );
         if (i === 0) poolInfo = info;
         const from = info.callerId || twilioConfig.callerId;
-        const call = await client.calls.create({
-          to: leg.to,
-          from,
-          twiml: conferenceTwiml,
-          timeout: ringTimeout,
-          ...(base
-            ? {
-                statusCallback: `${base}/api/twilio/status?room=${encodeURIComponent(room)}&leadId=${encodeURIComponent(leg.leadId)}`,
-                statusCallbackEvent: ["initiated", "ringing", "answered", "completed"],
-              }
-            : {}),
-          ...(amdEnabled
-            ? {
-                ...amdParams,
-                asyncAmdStatusCallback: `${base}/api/twilio/amd?room=${encodeURIComponent(room)}&leadId=${encodeURIComponent(leg.leadId)}&org=${encodeURIComponent(orgId)}`,
-              }
-            : {}),
+        // A transient Twilio failure (a 502, a request that never completed)
+        // used to end the dial outright. Retry it — but only after proving the
+        // "failed" attempt didn't actually place the call, so a lost response
+        // can never become a homeowner rung twice. See place-call.ts.
+        const result = await placeLegWithRetry({
+          createCall: () =>
+            client.calls.create({
+              to: leg.to,
+              from,
+              twiml: conferenceTwiml,
+              timeout: ringTimeout,
+              ...(base
+                ? {
+                    statusCallback: `${base}/api/twilio/status?room=${encodeURIComponent(room)}&leadId=${encodeURIComponent(leg.leadId)}`,
+                    statusCallbackEvent: ["initiated", "ringing", "answered", "completed"],
+                  }
+                : {}),
+              ...(amdEnabled
+                ? {
+                    ...amdParams,
+                    asyncAmdStatusCallback: `${base}/api/twilio/amd?room=${encodeURIComponent(room)}&leadId=${encodeURIComponent(leg.leadId)}&org=${encodeURIComponent(orgId)}`,
+                  }
+                : {}),
+            }),
+          findExisting: async () => {
+            // Narrow window: we only care about a leg created moments ago by
+            // the attempt that just threw, not one from an earlier dial.
+            const found = await findRecentLegs(
+              [{ leadId: leg.leadId, phone: leg.to }],
+              15_000,
+              orgCallerIdSet(orgSettings?.dialing),
+            );
+            return found[0] ? { sid: found[0].sid } : null;
+          },
         });
-        return { leadId: leg.leadId, to: leg.to, sid: call.sid, from, error: null };
+        if (!result.sid) {
+          console.error(
+            `[twilio/call] calls.create failed for ${leg.to} after ${result.attempts} attempt(s):`,
+            result.error,
+          );
+          return { leadId: leg.leadId, to: leg.to, sid: null, from: null, error: result.error };
+        }
+        if (result.adopted) {
+          console.warn(
+            `[twilio/call] ${leg.to}: provider error masked a successful create — adopted ${result.sid} instead of re-dialing.`,
+          );
+        }
+        return { leadId: leg.leadId, to: leg.to, sid: result.sid, from, error: null };
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
-        console.error(`[twilio/call] calls.create failed for ${leg.to}:`, msg);
+        console.error(`[twilio/call] leg setup failed for ${leg.to}:`, msg);
         return { leadId: leg.leadId, to: leg.to, sid: null, from: null, error: msg };
       }
     }),
