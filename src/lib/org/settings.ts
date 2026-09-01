@@ -380,6 +380,22 @@ export interface OrgSettings {
      */
     topRepAccess: number;
     /**
+     * Give EVERY member the AI dialer, reps included.
+     *
+     * `dialer.ai` is a manager-and-above permission by role, so a workspace that
+     * wants its whole floor on the AI dialer would otherwise have to flip each
+     * rep by hand on the Members tab — and remember to do it again for every
+     * new hire. This is the workspace-wide switch for that.
+     *
+     * Supersedes `topRepAccess`: "everyone" already includes the top N, so when
+     * this is on the ranking isn't consulted at all. An admin's explicit
+     * per-member override still wins, so a single rep can still be switched off.
+     *
+     * Independent of `features.aiDialer`, which is the org-level paywall/kill
+     * switch — that must also be on for anyone to place an AI call.
+     */
+    allRepAccess: boolean;
+    /**
      * What an AI-PROPOSED disposition may do to a call record (F1): silent
      * auto-apply only above `autoApplyMin` confidence, with a transcript, and
      * never for an `alwaysReview` outcome — everything else lands in the
@@ -656,9 +672,10 @@ export const DEFAULT_ORG_SETTINGS: OrgSettings = {
     language: "en",
     // Matches the common ElevenLabs plan allowance. Raise if the plan does.
     maxConcurrentCalls: 10,
-    // Off until an admin opts in — this hands a paid capability to reps who
-    // don't have it by role, so it must be a deliberate choice.
+    // Both off until an admin opts in — each hands a paid capability to reps
+    // who don't have it by role, so it must be a deliberate choice.
     topRepAccess: 0,
+    allRepAccess: false,
     dispositionPolicy: {
       ...DEFAULT_AI_DISPOSITION_POLICY,
       alwaysReview: [...DEFAULT_AI_DISPOSITION_POLICY.alwaysReview],

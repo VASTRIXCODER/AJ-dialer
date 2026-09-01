@@ -112,3 +112,43 @@ describe("how the grant composes with stored overrides", () => {
     expect(can("manager", "dialer.ai", {})).toBe(true);
   });
 });
+
+describe("whole-org AI access (ai.allRepAccess)", () => {
+  // getViewer resolves the grant the same way for either rule, so the only
+  // thing that differs is which reps land in `autoGrants`.
+  const resolve = (opts: {
+    allRepAccess?: boolean;
+    topRepUserIds?: string[];
+    userId: string;
+    stored?: Record<string, boolean>;
+  }) => {
+    const auto: Record<string, boolean> = opts.allRepAccess
+      ? { "dialer.ai": true }
+      : (opts.topRepUserIds ?? []).includes(opts.userId)
+        ? { "dialer.ai": true }
+        : {};
+    return can("rep", "dialer.ai", { ...auto, ...(opts.stored ?? {}) });
+  };
+
+  it("gives every rep the AI dialer, not just the ranked ones", () => {
+    expect(resolve({ allRepAccess: true, userId: "u-nobody" })).toBe(true);
+    expect(resolve({ allRepAccess: true, userId: "u-anyone-else" })).toBe(true);
+  });
+
+  it("supersedes the top-N rule rather than competing with it", () => {
+    // Off the leaderboard entirely, but the floor-wide switch is on.
+    expect(
+      resolve({ allRepAccess: true, topRepUserIds: ["u-ana"], userId: "u-zed" }),
+    ).toBe(true);
+  });
+
+  it("still lets an admin switch one rep off", () => {
+    expect(
+      resolve({ allRepAccess: true, userId: "u-ana", stored: { "dialer.ai": false } }),
+    ).toBe(false);
+  });
+
+  it("takes access away from everyone again when switched off", () => {
+    expect(resolve({ allRepAccess: false, userId: "u-ana" })).toBe(false);
+  });
+});

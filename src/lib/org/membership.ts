@@ -258,9 +258,14 @@ export const getViewer = cache(async (): Promise<Viewer> => {
   //
   // Costs nothing on the common path: topRepsForOrg memoizes per process for
   // ten minutes and returns immediately when the setting is 0 (the default).
+  // `allRepAccess` is the whole-floor switch and supersedes the ranking —
+  // "everyone" already contains the top N, so when it's on we don't spend a
+  // ranking query proving it.
   const topRepAccess = org?.settings.ai.topRepAccess ?? 0;
   let autoGrants: Record<string, boolean> = {};
-  if (topRepAccess > 0) {
+  if (org?.settings.ai.allRepAccess) {
+    autoGrants = { "dialer.ai": true };
+  } else if (topRepAccess > 0) {
     const top = await topRepsForOrg(membership.orgId, topRepAccess);
     if (top.some((t) => t.userId === user.id)) autoGrants = { "dialer.ai": true };
   }

@@ -56,10 +56,15 @@ export default async function AdminPage() {
   // rep the rule is granting, so without this it would show "off" for someone
   // who demonstrably has AI access.
   const topRepAccess = viewer.org.settings.ai.topRepAccess ?? 0;
-  const autoAiUserIds =
-    topRepAccess > 0 && viewer.permissions.includes("members.view")
-      ? (await topRepsForOrg(viewer.org.id, topRepAccess)).map((t) => t.userId)
-      : [];
+  const canSeeMembers = viewer.permissions.includes("members.view");
+  const autoAiUserIds = !canSeeMembers
+    ? []
+    : viewer.org.settings.ai.allRepAccess
+      ? // Whole-floor switch: everyone holds it, so every row is auto-granted.
+        members.map((m) => m.userId)
+      : topRepAccess > 0
+        ? (await topRepsForOrg(viewer.org.id, topRepAccess)).map((t) => t.userId)
+        : [];
 
   const platformPool = getPlatformPool(viewer.org.settings);
 
