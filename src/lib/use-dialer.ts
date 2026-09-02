@@ -166,9 +166,14 @@ export interface DialerState {
    */
   micBlocked: boolean;
   callsThisSession: number;
+  /** The subset of `callsThisSession` the AI agent placed. Manual dials are
+   *  therefore `callsThisSession - aiCallsThisSession`. */
+  aiCallsThisSession: number;
   connectsThisSession: number;
   /** Running dial total for the whole local day — persists across refresh/logout. */
   dialsToday: number;
+  /** The subset of `dialsToday` the AI agent placed (persisted per rep/day). */
+  aiDialsToday: number;
   queueIndex: number;
   /** Bumped every time auto-dial completes a full pass through the queue (either
    *  mode). The parent (dialer-client) watches this to refetch the dial queue
@@ -208,6 +213,11 @@ export interface DialerState {
 // localStorage keyed by user + local calendar day, so it carries through the
 // whole day on the same device and naturally resets at midnight.
 const DIAL_KEY_PREFIX = "aj:dials:";
+// AI dials are counted separately, not carved out of the total: the dialer
+// places both kinds in one session and "how many did the agent make" is a
+// different question from "how many did I make". Same per-user, per-local-day
+// keying as the total, so both roll over together and both get swept.
+const AI_DIAL_KEY_PREFIX = "aj:aiDials:";
 
 function localDayStr(): string {
   const d = new Date();
@@ -218,6 +228,28 @@ function localDayStr(): string {
 
 function dialStorageKey(userId?: string): string {
   return `${DIAL_KEY_PREFIX}${userId || "anon"}:${localDayStr()}`;
+}
+
+function aiDialStorageKey(userId?: string): string {
+  return `${AI_DIAL_KEY_PREFIX}${userId || "anon"}:${localDayStr()}`;
+}
+
+function readAiDialsToday(userId?: string): number {
+  if (typeof window === "undefined") return 0;
+  try {
+    return Number(window.localStorage.getItem(aiDialStorageKey(userId))) || 0;
+  } catch {
+    return 0;
+  }
+}
+
+function writeAiDialsToday(userId: string | undefined, value: number): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(aiDialStorageKey(userId), String(value));
+  } catch {
+    /* storage full / disabled — counter just won't persist */
+  }
 }
 
 function readDialsToday(userId?: string): number {
@@ -241,6 +273,18 @@ function writeDialsToday(userId: string | undefined, value: number): void {
 /** Drop dial-counter keys from previous days so storage doesn't grow. Only
  *  prunes keys whose day suffix isn't today, so a different user's same-day
  *  count on a shared device is left intact. */
+/**
+ * Is this a dial-counter key from a day that isn't `today`?
+ *
+ * Pure and exported so the sweep's rule is testable: it has to prune BOTH the
+ * total and the AI-only prefix, and it must never prune the current day —
+ * getting that backwards would quietly reset a rep's counters on every mount.
+ */
+export function isStaleDialKey(key: string, today: string): boolean {
+  const isDialKey = key.startsWith(DIAL_KEY_PREFIX) || key.startsWith(AI_DIAL_KEY_PREFIX);
+  return isDialKey && !key.endsWith(`:${today}`);
+}
+
 function sweepOldDialKeys(): void {
   if (typeof window === "undefined") return;
   try {
@@ -248,7 +292,7 @@ function sweepOldDialKeys(): void {
     const toRemove: string[] = [];
     for (let i = 0; i < window.localStorage.length; i++) {
       const k = window.localStorage.key(i);
-      if (k && k.startsWith(DIAL_KEY_PREFIX) && !k.endsWith(`:${today}`)) {
+      if (k && isStaleDialKey(k, today)) {
         toRemove.push(k);
       }
     }
@@ -429,8 +473,10 @@ export function useDialer(
     reconnecting: false,
     micBlocked: false,
     callsThisSession: 0,
+    aiCallsThisSession: 0,
     connectsThisSession: 0,
     dialsToday: 0,
+    aiDialsToday: 0,
     queueIndex: 0,
     queueLap: 0,
     error: null,
@@ -670,6 +716,7 @@ export function useDialer(
   // Daily dial counter — ref is the source of truth (seeded from localStorage),
   // mirrored to state.dialsToday for display. userIdRef keys the storage per rep.
   const dialsTodayRef = useRef(0);
+  const aiDialsTodayRef = useRef(0);
   const userIdRef = useRef(userId);
   // Bumped on every device (re-)setup so async callbacks from a torn-down or
   // superseded Device can detect they're stale and bail instead of fighting.
@@ -686,9 +733,15 @@ export function useDialer(
 
   // Increment the persisted daily dial total by n. Updates the ref + localStorage
   // synchronously; callers mirror dialsTodayRef.current into state for display.
-  const recordDials = useCallback((n: number) => {
+  // `channel` also credits the AI-only total, so the two never drift apart —
+  // there is exactly one place that knows a dial happened.
+  const recordDials = useCallback((n: number, channel: "human" | "ai" = "human") => {
     dialsTodayRef.current += n;
     writeDialsToday(userIdRef.current, dialsTodayRef.current);
+    if (channel === "ai") {
+      aiDialsTodayRef.current += n;
+      writeAiDialsToday(userIdRef.current, aiDialsTodayRef.current);
+    }
   }, []);
 
   // ── Human-call live presence (Live Monitor) ───────────────────────────────
@@ -1213,7 +1266,9 @@ export function useDialer(
     userIdRef.current = userId;
     const n = readDialsToday(userId);
     dialsTodayRef.current = n;
-    setState((s) => ({ ...s, dialsToday: n }));
+    const ai = readAiDialsToday(userId);
+    aiDialsTodayRef.current = ai;
+    setState((s) => ({ ...s, dialsToday: n, aiDialsToday: ai }));
     sweepOldDialKeys();
   }, [userId]);
 
@@ -1583,7 +1638,7 @@ export function useDialer(
       inflightRef.current.add(slotKey);
       slotAgeRef.current.set(slotKey, Date.now());
       attemptsRef.current.set(l.id, (attemptsRef.current.get(l.id) ?? 0) + 1);
-      recordDials(1);
+      recordDials(1, "ai");
       const leadName = `${l.firstName} ${l.lastName}`.trim() || formatPhone(l.phone);
       setState((s) =>
         sessionGenRef.current !== gen
@@ -1593,7 +1648,9 @@ export function useDialer(
               status: "ai",
               error: null,
               callsThisSession: s.callsThisSession + 1,
+              aiCallsThisSession: s.aiCallsThisSession + 1,
               dialsToday: dialsTodayRef.current,
+              aiDialsToday: aiDialsTodayRef.current,
               aiCampaign: autoDialRef.current ? "running" : s.aiCampaign,
               aiCalls: [
                 { conversationId: null, leadId: l.id, leadName },
@@ -1901,14 +1958,16 @@ export function useDialer(
       const name =
         `${known.firstName ?? ""} ${known.lastName ?? ""}`.trim() ||
         formatPhone(e164);
-      recordDials(1);
+      recordDials(1, "ai");
       setState((s) => ({
         ...s,
         status: "ai",
         error: null,
         aiCampaign: "idle",
         callsThisSession: s.callsThisSession + 1,
+        aiCallsThisSession: s.aiCallsThisSession + 1,
         dialsToday: dialsTodayRef.current,
+        aiDialsToday: aiDialsTodayRef.current,
         aiCalls: [{ conversationId: null, leadId: tempId, leadName: name }],
       }));
       try {

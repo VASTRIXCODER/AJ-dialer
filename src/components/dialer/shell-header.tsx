@@ -276,10 +276,28 @@ export function ShellHeader({
 
       <span className="flex-1" />
 
-      {/* Session stats — client-side facts, honestly labeled */}
+      {/* Session stats — client-side facts, honestly labeled.
+          A session can mix both channels, so the totals break down by who
+          placed the call: the agent's dials are the rep's own work only in the
+          sense that they started the campaign. Shown only once each side is
+          non-zero, so a purely manual (or purely AI) session stays a single
+          uncluttered number. */}
       <span className="flex items-center gap-3 text-xs text-muted-foreground">
-        <span>
+        <span
+          title={
+            state.aiCallsThisSession > 0
+              ? `${state.callsThisSession - state.aiCallsThisSession} dialed by you, ${state.aiCallsThisSession} by the AI agent.`
+              : "Dials placed this session."
+          }
+        >
           <b className="font-bold text-foreground tabular">{state.callsThisSession}</b> dials
+          {state.aiCallsThisSession > 0 && (
+            <span className="text-[11px] text-muted-foreground/70">
+              {" "}
+              ({state.callsThisSession - state.aiCallsThisSession} you ·{" "}
+              <b className="font-semibold text-accent tabular">{state.aiCallsThisSession}</b> AI)
+            </span>
+          )}
         </span>
         {!ai && (
           <span>
@@ -288,8 +306,20 @@ export function ShellHeader({
         )}
         <span className="text-[11px] text-muted-foreground/70">this session</span>
         {state.dialsToday > 0 && (
-          <span title="All your dials today, across sessions and reloads.">
+          <span
+            title={
+              state.aiDialsToday > 0
+                ? `All dials today across sessions and reloads: ${state.dialsToday - state.aiDialsToday} by you, ${state.aiDialsToday} by the AI agent.`
+                : "All your dials today, across sessions and reloads."
+            }
+          >
             <b className="font-bold text-foreground tabular">{state.dialsToday}</b> today
+            {state.aiDialsToday > 0 && (
+              <span className="text-[11px] text-muted-foreground/70">
+                {" "}
+                (<b className="font-semibold text-accent tabular">{state.aiDialsToday}</b> AI)
+              </span>
+            )}
           </span>
         )}
       </span>
