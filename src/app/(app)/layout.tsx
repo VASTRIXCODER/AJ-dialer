@@ -207,6 +207,9 @@ export default async function AppGroupLayout({
     maxHumanLines: viewer.org?.settings.dialing.maxLines ?? MAX_PARALLEL_HUMAN,
     callerIdPool,
     callerIdRotateEvery,
+    // Local presence default: dial from a pool number in the lead's own area
+    // code when one exists. The rep can flip it per-session on the dialer.
+    localPresence: viewer.org?.settings.dialing.localPresence ?? true,
     // Double-dial (double-tap): AI bot re-rings a no-answer once after a short gap.
     doubleDial: viewer.org?.settings.dialing.doubleDial ?? false,
     doubleDialGapSec: viewer.org?.settings.dialing.doubleDialGapSec ?? 15,

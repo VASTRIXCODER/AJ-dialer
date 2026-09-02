@@ -41,6 +41,9 @@ export interface DialerConfig {
   /** Org policy `settings.dialing.recording` — what the rep leg passes to the
    *  conference record flag, and what the RecordingIndicator reports. */
   recordingEnabled?: boolean;
+  /** Org default for `settings.dialing.localPresence` — dial from a pool number
+   *  sharing the lead's area code. The rep can override it on the dialer. */
+  localPresence?: boolean;
   /** Lease-based dial reservations (`settings.dialing.reservations`), already
    *  gated server-side on a configured database — false = legacy local queue. */
   reservationsEnabled?: boolean;
@@ -311,6 +314,7 @@ export function DialerProvider({
   const engineOptions = useMemo<DialerEngineOptions>(
     () => ({
       recordingEnabled: config.recordingEnabled ?? true,
+      localPresenceDefault: config.localPresence ?? true,
       // The org's chosen boot mode. The engine resolves fallbacks itself (AI
       // unusable → manual; parallel with a 1-line ceiling → manual).
       initialMode: config.defaultDialMode ?? "ai",

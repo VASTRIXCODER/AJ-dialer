@@ -911,6 +911,7 @@ export function DialerClient({
             callerIdPool={config.callerIdPool ?? []}
             callerIdRotateEvery={config.callerIdRotateEvery ?? 1}
             onToggleExcludedCallerId={dialer.toggleExcludedCallerId}
+            onSetLocalPresence={dialer.setLocalPresence}
             onStart={() => dialer.startCall()}
             onManualDial={dialer.dialNumber}
             onAiDialNumber={dialer.aiDialNumber}

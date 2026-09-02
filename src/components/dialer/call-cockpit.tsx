@@ -179,6 +179,7 @@ export function CallCockpit({
   callerIdPool = [],
   callerIdRotateEvery = 1,
   onToggleExcludedCallerId,
+  onSetLocalPresence,
   onStart,
   onManualDial,
   onAiDialNumber,
@@ -224,6 +225,8 @@ export function CallCockpit({
   callerIdPool?: string[];
   callerIdRotateEvery?: number;
   onToggleExcludedCallerId: (callerId: string) => void;
+  /** Flip area-code matching for this rep. Absent = hide the control. */
+  onSetLocalPresence?: (value: boolean) => void;
   onStart: () => void;
   onManualDial: (number: string, name?: string) => void;
   onAiDialNumber: (phone: string, known: KnownInfo) => void;
@@ -305,6 +308,10 @@ export function CallCockpit({
             active={state.callerIdInfo}
             disabled={state.status !== "idle"}
             onToggle={onToggleExcludedCallerId}
+            localPresence={state.localPresence}
+            onSetLocalPresence={onSetLocalPresence}
+            // The lead queued up next is the one a match would aim at.
+            destPhone={focusLead?.phone ?? null}
           />
         </div>
         <div className="flex items-center gap-2">

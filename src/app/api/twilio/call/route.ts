@@ -58,6 +58,13 @@ export async function POST(req: Request) {
     agentIdentity?: string;
     /** Numbers the rep toggled off in the dialer's caller-ID picker (optional). */
     excludedCallerIds?: string[];
+    /**
+     * The rep's local-presence choice for THIS dial: pick a caller ID sharing
+     * the lead's area code when the pool has one. Absent = follow the org
+     * setting. It only ever narrows which pool number is chosen — a rep can't
+     * reach a number outside the pool they're already allowed to dial from.
+     */
+    localPresence?: boolean;
     /** A manual "Dial again" redial: reuse this exact caller ID instead of
      *  rotating, so a repeat call is recognizably the same number. Ignored
      *  (falls back to normal rotation) if it isn't an eligible pool member. */
@@ -111,7 +118,18 @@ export async function POST(req: Request) {
   // pool on THIS rep's own counter (per-rep), same as AI calls. (viewer resolved
   // above for the auth gate.)
   const repKey = viewer.user?.id ?? null;
-  const orgSettings = viewer.org?.settings ?? null;
+  const rawOrgSettings = viewer.org?.settings ?? null;
+  // The rep's local-presence toggle overrides the org default for this dial.
+  // Applied by handing rotation an adjusted copy of the settings rather than a
+  // new parameter, so every caller-ID rule (pool, exclusions, per-rep
+  // assignment) keeps resolving through exactly the one code path it did before.
+  const orgSettings =
+    rawOrgSettings && typeof body.localPresence === "boolean"
+      ? {
+          ...rawOrgSettings,
+          dialing: { ...rawOrgSettings.dialing, localPresence: body.localPresence },
+        }
+      : rawOrgSettings;
 
   // Cap parallel legs server-side. The browser enforces this, but the route must
   // too — otherwise one crafted request could ring hundreds of homeowners into a

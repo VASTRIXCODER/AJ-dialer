@@ -1,6 +1,7 @@
 "use client";
 
-import { Phone, RotateCcw } from "lucide-react";
+import { MapPin, Phone, RotateCcw } from "lucide-react";
+import { areaCodeOf } from "@/lib/dialer/rotation";
 import type { CallerIdInfo } from "@/lib/use-dialer";
 import { cn, formatPhone } from "@/lib/utils";
 
@@ -19,6 +20,10 @@ export function CallerIdPicker({
   active,
   disabled,
   onToggle,
+  localPresence,
+  onSetLocalPresence,
+  /** The lead about to be dialed — its area code is what a match aims at. */
+  destPhone,
 }: {
   /** The org's effective caller-ID pool (resolved server-side). */
   pool: string[];
@@ -31,11 +36,26 @@ export function CallerIdPicker({
   /** True while a call is in flight — toggling mid-call is a no-op. */
   disabled: boolean;
   onToggle: (callerId: string) => void;
+  /** Area-code matching on for this rep (org default, overridden per rep). */
+  localPresence?: boolean;
+  /** Omit to hide the control entirely (e.g. nothing to match against). */
+  onSetLocalPresence?: (value: boolean) => void;
+  destPhone?: string | null;
 }) {
-  // Nothing to choose between — a 0-or-1-number pool has no decision to make.
+  // Nothing to choose between — a 0-or-1-number pool has no decision to make,
+  // and with one number there is no area code to match either.
   if (pool.length <= 1) return null;
 
   const enabledCount = pool.length - excludedCallerIds.filter((n) => pool.includes(n)).length;
+
+  // What a match would actually aim at, and whether this rep's ENABLED numbers
+  // can hit it. Saying "no local number for 214" up front is far better than
+  // silently falling back to rotation and leaving the rep wondering.
+  const destAreaCode = areaCodeOf(destPhone ?? null);
+  const enabledPool = pool.filter((n) => !excludedCallerIds.includes(n));
+  const hasMatch = destAreaCode
+    ? enabledPool.some((n) => areaCodeOf(n) === destAreaCode)
+    : false;
 
   return (
     <div className="flex flex-wrap items-center gap-1">
@@ -73,10 +93,48 @@ export function CallerIdPicker({
           </button>
         );
       })}
-      {enabledCount > 1 && (
+      {enabledCount > 1 && !localPresence && (
         <span className="text-[11px] text-muted-foreground/70">
           · every {rotateEvery} call{rotateEvery === 1 ? "" : "s"}
         </span>
+      )}
+
+      {/* Local presence: dial from a number in the lead's own area code when
+          the pool has one. Sits with the caller-ID pills because it decides
+          the same thing they do — which number the homeowner sees. */}
+      {onSetLocalPresence && (
+        <button
+          type="button"
+          disabled={disabled}
+          aria-pressed={Boolean(localPresence)}
+          onClick={() => onSetLocalPresence(!localPresence)}
+          title={
+            localPresence
+              ? destAreaCode
+                ? hasMatch
+                  ? `Matching the lead's area code (${destAreaCode}) — click to rotate normally instead`
+                  : `No enabled number in ${destAreaCode}, so this call rotates normally. Add a ${destAreaCode} number to match it.`
+                : "Dialing from a number in the lead's area code when the pool has one — click to rotate normally instead"
+              : "Off — numbers rotate regardless of where the lead is. Click to match the lead's area code."
+          }
+          className={cn(
+            "flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium transition-colors",
+            localPresence
+              ? hasMatch || !destAreaCode
+                ? "border-success/40 bg-success/10 text-success"
+                : // On, but nothing in the pool can match this lead.
+                  "border-warning/40 bg-warning/10 text-warning"
+              : "border-border/60 bg-muted/30 text-muted-foreground",
+            disabled ? "cursor-not-allowed opacity-70" : "hover:bg-muted/70",
+          )}
+        >
+          <MapPin className="h-3 w-3" />
+          {localPresence && destAreaCode
+            ? hasMatch
+              ? `Matching ${destAreaCode}`
+              : `No ${destAreaCode} number`
+            : "Match area code"}
+        </button>
       )}
     </div>
   );

@@ -55,6 +55,9 @@ export interface DialerEngineOptions {
   /** Org policy `settings.dialing.recording` — the conference record flag the
    *  rep leg passes to Twilio. There is deliberately NO client toggle. */
   recordingEnabled?: boolean;
+  /** Org default for local presence (`settings.dialing.localPresence`). The rep
+   *  can override it on the dialer; their choice is what actually gets sent. */
+  localPresenceDefault?: boolean;
   /** Lease-based dial reservations (`settings.dialing.reservations`). When on,
    *  startHumanCall claims leads server-side instead of slicing the local
    *  queue — the two-reps-same-lead fix. Off/absent = the legacy local path
@@ -187,6 +190,9 @@ export interface DialerState {
   /** Numbers the rep toggled off in the dialer's caller-ID picker; empty means
    *  every pool number is eligible (default — matches today's full rotation). */
   excludedCallerIds: string[];
+  /** Match the caller ID's area code to the lead's, when the pool allows it.
+   *  Seeded from the org default, then remembered per rep. */
+  localPresence: boolean;
   /** AI calling is the default; flip off for manual (human Twilio) dialing. */
   aiMode: boolean;
   /** Which AI persona AI calls dial as. Only meaningful when a second agent is
@@ -283,6 +289,35 @@ function writeExcludedCallerIds(userId: string | undefined, value: string[]): vo
   }
 }
 
+// ── Local presence (area-code matching) ──────────────────────────────────────
+// The org sets the default (Admin → Dialing → "Local presence"); the rep can
+// flip it for themselves on the dialer and that choice sticks per rep, exactly
+// like the caller-ID picker's exclusions. Absent from storage = follow the org.
+const LOCAL_PRESENCE_KEY_PREFIX = "aj:localPresence:";
+
+function localPresenceStorageKey(userId?: string): string {
+  return `${LOCAL_PRESENCE_KEY_PREFIX}${userId || "anon"}`;
+}
+
+function readLocalPresence(userId: string | undefined, fallback: boolean): boolean {
+  if (typeof window === "undefined") return fallback;
+  try {
+    const raw = window.localStorage.getItem(localPresenceStorageKey(userId));
+    return raw == null ? fallback : raw === "1";
+  } catch {
+    return fallback;
+  }
+}
+
+function writeLocalPresence(userId: string | undefined, value: boolean): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(localPresenceStorageKey(userId), value ? "1" : "0");
+  } catch {
+    /* storage full / disabled — the choice just won't persist */
+  }
+}
+
 /** Build a lightweight Lead for an ad-hoc manual dial (not a queued lead). */
 function manualLead(e164: string): Lead {
   return {
@@ -364,6 +399,7 @@ export function useDialer(
     Math.min(MAX_PARALLEL_HUMAN, Math.floor(maxHumanLines) || MAX_PARALLEL_HUMAN),
   );
   const recordingEnabled = options.recordingEnabled ?? true;
+  const localPresenceDefault = options.localPresenceDefault ?? true;
   // Resolve the org's chosen boot mode against what's actually usable. The old
   // behavior (AI whenever usable) is exactly initialMode:"ai", which is also
   // the absent-key default — so nothing changes until an admin picks otherwise.
@@ -404,6 +440,7 @@ export function useDialer(
     outboundSids: [],
     callerIdInfo: null,
     excludedCallerIds: [],
+    localPresence: true,
     aiMode: bootAiMode,
     activeAgent: "primary",
     aiCalls: [],
@@ -461,6 +498,7 @@ export function useDialer(
   const aiModeRef = useRef(bootAiMode);
   const activeAgentRef = useRef<AgentKey>("primary");
   const excludedCallerIdsRef = useRef<string[]>([]);
+  const localPresenceRef = useRef<boolean>(true);
   const aiConfiguredRef = useRef(aiConfigured);
   const aiCursorRef = useRef(0);
   /**
@@ -1186,6 +1224,13 @@ export function useDialer(
     setState((s) => ({ ...s, excludedCallerIds: excluded }));
   }, [userId]);
 
+  // ── Seed local presence: the rep's own choice, else the org default ────────
+  useEffect(() => {
+    const on = readLocalPresence(userId, localPresenceDefault);
+    localPresenceRef.current = on;
+    setState((s) => ({ ...s, localPresence: on }));
+  }, [userId, localPresenceDefault]);
+
   useEffect(
     () => () => {
       stopTick();
@@ -1563,6 +1608,7 @@ export function useDialer(
           body: JSON.stringify({
             leadId: l.id,
             agent: activeAgentRef.current,
+            localPresence: localPresenceRef.current,
             excludedCallerIds: excludedCallerIdsRef.current.length
               ? excludedCallerIdsRef.current
               : undefined,
@@ -1873,6 +1919,7 @@ export function useDialer(
             phone: e164,
             lead: known,
             agent: activeAgentRef.current,
+            localPresence: localPresenceRef.current,
             excludedCallerIds: excludedCallerIdsRef.current.length
               ? excludedCallerIdsRef.current
               : undefined,
@@ -2235,6 +2282,7 @@ export function useDialer(
             agentIdentity: identityRef.current,
             leads: dialed,
             attemptIds,
+            localPresence: localPresenceRef.current,
             excludedCallerIds: excludedCallerIdsRef.current.length
               ? excludedCallerIdsRef.current
               : undefined,
@@ -2938,6 +2986,17 @@ export function useDialer(
     [patch],
   );
 
+  /** Flip area-code matching for this rep. Takes effect on the NEXT dial —
+   *  the caller ID for a call already ringing is long since chosen. */
+  const setLocalPresence = useCallback(
+    (value: boolean) => {
+      localPresenceRef.current = value;
+      writeLocalPresence(userIdRef.current, value);
+      patch({ localPresence: value });
+    },
+    [patch],
+  );
+
   return {
     state,
     startCall,
@@ -2959,6 +3018,7 @@ export function useDialer(
     getDevice,
     setActiveAgent,
     toggleExcludedCallerId,
+    setLocalPresence,
     launchNextAI,
     stopAICampaign,
     endAISession,
