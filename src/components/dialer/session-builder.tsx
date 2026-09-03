@@ -21,6 +21,7 @@ import {
   type DialSessionMeta,
   type SessionOrder,
 } from "@/lib/dialer/segments";
+import { MAX_SESSION_LEADS } from "@/lib/dialer/session-limits";
 import type { Lead, LeadStatus } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { groupLabel } from "./load-leads-dialog";
@@ -466,13 +467,20 @@ export function SessionBuilder({
                   <Input
                     type="number"
                     min={1}
-                    max={10000}
+                    max={MAX_SESSION_LEADS}
                     value={limit}
-                    onChange={(e) => setLimit(Math.max(1, Number(e.target.value) || 1))}
+                    onChange={(e) =>
+                      setLimit(
+                        Math.max(1, Math.min(MAX_SESSION_LEADS, Number(e.target.value) || 1)),
+                      )
+                    }
                     className="tabular"
                   />
+                  {/* The presets used to stop at 1,000 while the box itself
+                      accepted 10,000, so the largest button a rep could click
+                      capped a session at a tenth of the real ceiling. */}
                   <div className="mt-2 flex flex-wrap gap-1.5">
-                    {[50, 100, 250, 500, 1000].map((n) => (
+                    {[50, 100, 250, 500, 1000, 2500, 5000, MAX_SESSION_LEADS].map((n) => (
                       <button
                         key={n}
                         type="button"
@@ -484,7 +492,7 @@ export function SessionBuilder({
                             : "bg-muted text-muted-foreground hover:text-foreground",
                         )}
                       >
-                        {n}
+                        {n.toLocaleString()}
                       </button>
                     ))}
                     {available != null && available > 0 && (

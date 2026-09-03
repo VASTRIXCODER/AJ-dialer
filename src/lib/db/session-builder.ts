@@ -1,5 +1,6 @@
 import "server-only";
 
+import { MAX_SESSION_LEADS } from "../dialer/session-limits";
 import {
   BLOCKED_SEGMENTS,
   sanitizeGroups,
@@ -80,8 +81,9 @@ function applyGroups<T>(q: T, groups?: string[]): T {
 
 /** PostgREST's per-response ceiling — pages are requested at exactly this size. */
 const PAGE = 1000;
-/** The most leads one session may hold. Guards the browser as much as the DB. */
-export const MAX_SESSION_LEADS = 10_000;
+/** Re-exported so server callers keep importing it from here; the constant
+ *  itself lives in a pure module the client session builder shares. */
+export { MAX_SESSION_LEADS };
 
 export interface Segment {
   key: string;
@@ -181,7 +183,22 @@ function applyContact<T>(q: T, contact: ContactFilter): T {
   return b;
 }
 
-/** How many leads a given spec would actually dial — the honest pre-flight number. */
+/**
+ * How many leads MATCH a spec's filters — the size of the population, not of
+ * the session.
+ *
+ * Deliberately ignores `spec.limit`. It used to return
+ * `Math.min(count, spec.limit)`, which made the number top out at whatever
+ * session size was selected: a book of 16,636 reported "1,000" because 1,000 was
+ * the largest size button. That is the same lie this file's header was written
+ * about — an array length capped at 1,000 — just arriving by a different route.
+ *
+ * The caller applies the limit, and the builder already does (`willCall`). Two
+ * affordances depend on this being uncapped and were dead until now: the
+ * "All N" button (it set the limit to the already-capped value, so it could
+ * never grow) and the "N of M matching" truncation hint (its `available >
+ * willCall` test could never be true).
+ */
 export async function countSession(spec: SessionSpec): Promise<number> {
   if (!isSupabaseConfigured()) return 0;
   try {
@@ -205,7 +222,7 @@ export async function countSession(spec: SessionSpec): Promise<number> {
     if (spec.campaignId) q = q.eq("campaign_id", spec.campaignId);
 
     const { count } = await q;
-    return Math.min(count ?? 0, spec.limit);
+    return count ?? 0;
   } catch {
     return 0;
   }
