@@ -36,6 +36,9 @@ yarn-error.log*
 
 .vercel
 .env*
+# …except the reference file, which holds only placeholders and is the thing
+# CLAUDE.md tells you to copy. It carries NO real values.
+!.env.example
 
 # unrelated project checked out inside this repo — not part of the dialer
 /tradingview-mcp
