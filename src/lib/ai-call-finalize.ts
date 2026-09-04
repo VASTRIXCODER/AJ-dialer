@@ -290,6 +290,10 @@ export async function finalizeAIConversation(input: {
         durationSec: input.durationSec,
         terminationReason: input.terminationReason,
         errorCode: input.errorCode,
+        // The one field that says WHY. Omitting it meant a floor-wide outage
+        // logged a bare code with no way to tell a dead agent id from bad Twilio
+        // credentials from a number the provider can't originate on.
+        errorReason: input.errorReason,
       });
 
       // Tell the breaker. This is what makes a RUNNING batch stop itself: the

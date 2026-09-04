@@ -6,74 +6,95 @@ import {
   isElevenLabsConfigured,
 } from "@/lib/elevenlabs";
 import { getViewer, viewerCan } from "@/lib/org/membership";
-import { getPlatformPool } from "@/lib/dialer/rotation-server";
+import { getPlatformPool, PLATFORM_POOL_LOCKED } from "@/lib/dialer/rotation-server";
+import { restrictToAssignedNumbers } from "@/lib/dialer/rotation";
+import { normalizePhone } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
 
 /**
- * Why is every AI call going out on the same number?
+ * "Why isn't my number showing / dialing?"
  *
- * Because the caller-ID pool and ElevenLabs are two different lists. Rotation
- * picks a number from the org's pool; in DIRECT mode ElevenLabs places the call
- * and can only originate from a number IMPORTED into its own account. Anything
- * else falls back to ELEVENLABS_AGENT_PHONE_NUMBER_ID — silently, until now.
+ * A number has to clear FOUR independent gates before an AI call leaves on it,
+ * and nothing in the UI showed which one it was stuck behind:
  *
- * Pointing a number's Twilio voice webhook at the app does nothing for this
- * path: that governs INBOUND and the human dialer, not ElevenLabs origination.
+ *   1. It's in the effective pool. When TWILIO_CALLER_IDS is set the pool is
+ *      platform-LOCKED and the org's own Admin → Dialing list is ignored
+ *      entirely — numbers added there silently do nothing.
+ *   2. It survives per-rep assignment. A rep with caller_ids pinned only ever
+ *      sees those; owners/admins/managers see the whole pool.
+ *   3. The rep hasn't toggled it off in the dialer's caller-ID picker.
+ *   4. For AI calls in direct mode, it's IMPORTED into ElevenLabs. Pointing its
+ *      Twilio voice webhook at the app does nothing for this — that governs
+ *      inbound and the human dialer, not ElevenLabs origination.
  *
- * This compares the two lists and names the numbers that aren't pulling weight.
+ * Pass ?number=+1XXXXXXXXXX to ask about one specific number and get the gate
+ * it's failing by name.
  */
-export async function GET() {
+export async function GET(req: Request) {
   const viewer = await getViewer();
   if (!viewer || !(await viewerCan("admin.access"))) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  const { pool, rotateEvery, isLocked } = getPlatformPool(viewer.org?.settings);
+  const { pool, rotateEvery } = getPlatformPool(viewer.org?.settings);
+  const visibleToYou = restrictToAssignedNumbers(pool, viewer.role, viewer.callerIds);
+  const orgConfigured = viewer.org?.settings.dialing.callerIds ?? [];
   const bridge = isAIBridgeConfigured();
 
-  // Bridge mode dials the homeowner from Twilio with the rotated number, so the
-  // ElevenLabs import list is irrelevant and rotation already works.
-  if (bridge) {
-    return NextResponse.json({
-      mode: "bridge",
-      rotationWorks: true,
-      pool,
-      rotateEvery,
-      isLocked,
-      imported: pool,
-      missing: [],
-      note:
-        "Bridge mode: Twilio places the homeowner leg with the rotated caller ID, " +
-        "so every number in the pool is already in use. No ElevenLabs import needed.",
-    });
+  const source = PLATFORM_POOL_LOCKED
+    ? "env TWILIO_CALLER_IDS (platform-locked — Admin → Dialing is IGNORED)"
+    : orgConfigured.length
+      ? "org settings (Admin → Organization → Dialing)"
+      : "single number (settings.callerId / TWILIO_CALLER_ID)";
+
+  // ElevenLabs only matters for AI calls placed directly. In bridge mode Twilio
+  // dials the homeowner with the rotated number, so the import list is moot.
+  let imported: string[] = pool;
+  let missing: string[] = [];
+  if (!bridge && isElevenLabsConfigured()) {
+    ({ imported, missing } = await auditRotationPool(pool));
   }
 
-  if (!isElevenLabsConfigured()) {
-    return NextResponse.json(
-      { error: "ElevenLabs is not configured" },
-      { status: 503 },
-    );
-  }
+  const inPool = (n: string) =>
+    pool.some((p) => normalizePhone(p) === normalizePhone(n));
 
-  const { imported, missing } = await auditRotationPool(pool);
+  /** The first gate this number fails, in the order a call actually hits them. */
+  const whyMissing = (raw: string): string => {
+    const n = normalizePhone(raw) || raw;
+    if (!inPool(n)) {
+      return PLATFORM_POOL_LOCKED
+        ? `Not in the pool. The pool is locked to the TWILIO_CALLER_IDS env var, so adding ${n} under Admin → Dialing does nothing — add it to TWILIO_CALLER_IDS in Vercel and redeploy.`
+        : `Not in the pool. Add ${n} under Admin → Organization → Dialing → Caller ID rotation pool.`;
+    }
+    if (!visibleToYou.some((p) => normalizePhone(p) === n)) {
+      return `In the org pool, but not assigned to you. Your role sees only the numbers pinned to your membership — an owner or admin can change that under Admin → Members.`;
+    }
+    if (!bridge && missing.some((p) => normalizePhone(p) === n)) {
+      return `In the pool and assigned to you, but NOT imported into ElevenLabs — AI calls that rotate onto it go out on the default number instead. Import it under Conversational AI → Phone Numbers, or POST /api/superadmin/provision-numbers.`;
+    }
+    return "Ready — in the pool, visible to you, and dialable.";
+  };
+
+  const asked = new URL(req.url).searchParams.get("number");
 
   return NextResponse.json({
-    mode: "direct",
-    rotationWorks: missing.length === 0 && imported.length > 1,
-    pool,
+    mode: bridge ? "bridge" : "direct",
+    source,
+    platformLocked: PLATFORM_POOL_LOCKED,
     rotateEvery,
-    isLocked,
-    imported,
-    missing,
+    /** The org-wide pool actually in effect. */
+    pool,
+    /** What THIS viewer's dialer will offer, after per-rep assignment. */
+    visibleToYou,
+    assignedToYou: viewer.callerIds,
+    /** What Admin → Dialing has saved — ignored entirely when platformLocked. */
+    orgConfigured,
+    /** AI/direct mode only. */
+    importedInElevenLabs: bridge ? null : imported,
+    missingFromElevenLabs: bridge ? null : missing,
     defaultNumberId: elevenLabsConfig.agentPhoneNumberId || null,
-    note: missing.length
-      ? `${missing.length} of ${pool.length} pool numbers are not imported into ` +
-        `ElevenLabs. AI calls that rotate onto them go out on the default number ` +
-        `instead. Import them (Conversational AI → Phone Numbers, or POST ` +
-        `/api/superadmin/provision-numbers with these numbers).`
-      : imported.length > 1
-        ? "Every pool number is imported — AI dials rotate across all of them."
-        : "Only one number is available, so there is nothing to rotate across.",
+    ...(asked ? { number: asked, verdict: whyMissing(asked) } : {}),
+    hint: "Add ?number=+18175082598 to ask about one number.",
   });
 }

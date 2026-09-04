@@ -88,6 +88,22 @@ const DEAD_NUMBER_RE =
   /invalid|wrong[\s_-]?number|not[\s_-]?in[\s_-]?service|unallocated|disconnected/i;
 const NO_ANSWER_RE = /no[\s_-]?answer|busy|timeout|timed[\s_-]?out|cancel|unanswered|no[\s_-]?response/i;
 
+/**
+ * What the provider actually said, appended to the generic provider_error line.
+ * Returns "" when there's nothing to add, so the summary never grows a dangling
+ * " Provider said:" with no content after it.
+ */
+export function providerDetail(
+  errorCode?: string | null,
+  errorReason?: string | null,
+): string {
+  const code = String(errorCode ?? "").trim();
+  const reason = String(errorReason ?? "").trim();
+  if (!code && !reason) return "";
+  const parts = [reason, code ? `code ${code}` : ""].filter(Boolean);
+  return ` Provider said: ${parts.join(" · ")}.`;
+}
+
 const FAILURE_SUMMARY: Record<FailureKind, string> = {
   provider_quota_exceeded:
     "OUT OF CREDITS — the homeowner ANSWERED, the agent began speaking, and the voice provider " +
@@ -166,7 +182,14 @@ export function classifyNonConversation(input: {
   const fail = (failureKind: FailureKind): NonConversation => ({
     kind: "failure",
     failureKind,
-    summary: FAILURE_SUMMARY[failureKind],
+    // A generic provider_error is unactionable — "the voice provider returned an
+    // error" tells a rep nothing and tells whoever debugs it less. The provider
+    // usually says WHY in metadata.error; carry its own words through instead of
+    // swallowing them behind a fixed sentence.
+    summary:
+      failureKind === "provider_error"
+        ? `${FAILURE_SUMMARY.provider_error}${providerDetail(input.errorCode, input.errorReason)}`
+        : FAILURE_SUMMARY[failureKind],
   });
   const filed = (outcome: CallOutcome): NonConversation => ({
     kind: "outcome",
