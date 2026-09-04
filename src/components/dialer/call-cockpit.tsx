@@ -6,6 +6,7 @@ import {
   Bot,
   Grid3x3,
   Hash,
+  ListPlus,
   Loader2,
   Mic,
   MicOff,
@@ -195,6 +196,8 @@ export function CallCockpit({
   onLaunchNextAI,
   onStopAICampaign,
   onEndAISession,
+  onRedialAI,
+  onLoadLeads,
   onReconnect,
   wrapupNotes,
   onNotesChange,
@@ -253,6 +256,10 @@ export function CallCockpit({
   onLaunchNextAI: () => void;
   onStopAICampaign: () => void;
   onEndAISession: () => void;
+  /** Dial one lead again with the AI agent (the manual dialer's Redial, for AI). */
+  onRedialAI: (leadId: string) => void;
+  /** Open the session builder — the empty-queue cockpit's way out. */
+  onLoadLeads?: () => void;
   onReconnect: () => void;
 }) {
   const [showKeypad, setShowKeypad] = useState(false);
@@ -560,18 +567,21 @@ export function CallCockpit({
                 </>
               )}
 
-              {/* Dial a specific number — with AI or manually */}
+              {/* Dial a specific number — with AI or manually.
+                  The toggle used to be gated on `hasQueue`, so an empty queue
+                  left the cockpit with no way to dial ANYTHING and no way to
+                  even open the pad — which is what "the screen goes blank"
+                  looks like after a session eats the last lead. The pad works
+                  perfectly well with no queue; it never needed the gate. */}
               <div className="w-full">
-                {hasQueue && (
-                  <button
-                    type="button"
-                    onClick={() => setManualOpen((v) => !v)}
-                    className="mx-auto mb-3 flex items-center gap-1.5 text-sm font-medium text-muted-foreground hover:text-foreground"
-                  >
-                    <Hash className="h-4 w-4" />
-                    {manualOpen ? "Hide number pad" : "Dial a specific number"}
-                  </button>
-                )}
+                <button
+                  type="button"
+                  onClick={() => setManualOpen((v) => !v)}
+                  className="mx-auto mb-3 flex items-center gap-1.5 text-sm font-medium text-muted-foreground hover:text-foreground"
+                >
+                  <Hash className="h-4 w-4" />
+                  {manualOpen ? "Hide number pad" : "Dial a specific number"}
+                </button>
                 <AnimatePresence initial={false}>
                   {manualOpen && (
                     <motion.div
@@ -590,14 +600,50 @@ export function CallCockpit({
                 </AnimatePresence>
               </div>
 
-              {!hasQueue && ai && (
-                <Link
-                  href="/leads"
-                  className={buttonVariants({ variant: "outline", className: "gap-2" })}
-                >
-                  <Sparkles className="h-4 w-4" />
-                  Import leads
-                </Link>
+              {/* Empty queue is a state you can ACT on, not a dead end. Loading
+                  leads is the thing you actually want here — importing is the
+                  rarer case, and it used to be the only offer. */}
+              {!hasQueue && (
+                <div className="flex flex-wrap items-center justify-center gap-2">
+                  {onLoadLeads && (
+                    <Button variant="outline" className="gap-2" onClick={onLoadLeads}>
+                      <ListPlus className="h-4 w-4" />
+                      Load leads
+                    </Button>
+                  )}
+                  <Link
+                    href="/leads"
+                    className={buttonVariants({ variant: "ghost", className: "gap-2" })}
+                  >
+                    <Sparkles className="h-4 w-4" />
+                    Import {vocab.leadNounPlural}
+                  </Link>
+                </div>
+              )}
+
+              {/* What the session that just ended actually did. Ending an AI
+                  session cleared every row, so the cockpit went from a wall of
+                  calls to nothing at all with no trace they happened. */}
+              {state.aiCallsThisSession > 0 && (
+                <div className="w-full rounded-xl border border-border/70 bg-surface/50 px-4 py-3 backdrop-blur">
+                  <p className="flex items-center justify-between text-sm">
+                    <span className="flex items-center gap-1.5 font-medium text-muted-foreground">
+                      <Bot className="h-4 w-4" />
+                      AI dials this session
+                    </span>
+                    <b className="tabular">{state.aiCallsThisSession}</b>
+                  </p>
+                  <p className="mt-1.5 flex items-center justify-between text-xs text-muted-foreground">
+                    <span>AI dials today</span>
+                    <span className="tabular">{state.aiDialsToday}</span>
+                  </p>
+                  <Link
+                    href="/recordings"
+                    className="mt-2 inline-flex items-center gap-1 text-xs font-semibold text-primary hover:underline"
+                  >
+                    Recordings & transcripts
+                  </Link>
+                </div>
               )}
 
               {state.error && (
@@ -619,7 +665,12 @@ export function CallCockpit({
 
           {/* ── AI SESSION ───────────────────────────────────────── */}
           {state.status === "ai" && (
+            // key: every other branch of this AnimatePresence carries one on its
+            // motion element. AiSessionView's key lives INSIDE the component,
+            // where AnimatePresence can't see it — so this branch was the only
+            // one it couldn't track across a status change.
             <AiSessionView
+              key="ai"
               calls={state.aiCalls}
               campaign={state.aiCampaign}
               parallelCount={state.parallelCount}
@@ -627,6 +678,7 @@ export function CallCockpit({
               onLaunchNext={onLaunchNextAI}
               onStop={onStopAICampaign}
               onEnd={onEndAISession}
+              onRedial={onRedialAI}
             />
           )}
 

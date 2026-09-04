@@ -930,6 +930,8 @@ export function DialerClient({
             onLaunchNextAI={dialer.launchNextAI}
             onStopAICampaign={dialer.stopAICampaign}
             onEndAISession={dialer.endAISession}
+            onRedialAI={dialer.redialAI}
+            onLoadLeads={() => setBuilderOpen(true)}
             onReconnect={dialer.reconnect}
           />
         </Card>

@@ -9,6 +9,7 @@ import {
   Loader2,
   Phone,
   PhoneOff,
+  RotateCcw,
   StopCircle,
   Target,
 } from "lucide-react";
@@ -21,6 +22,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { LaneCard } from "@/components/ui/lane-card";
 import { StatusPill, type PillState } from "@/components/ui/status-pill";
+import { canRedial, redialTargets } from "@/lib/dialer/ai-redial";
 import { aiCallPill } from "@/lib/dialer/lane-state";
 import type { CallStatePayload, FloorCallState } from "@/lib/realtime/events";
 import { useOrgChannel } from "@/lib/realtime/use-org-channel";
@@ -75,6 +77,7 @@ export function AiSessionView({
   onLaunchNext,
   onStop,
   onEnd,
+  onRedial,
 }: {
   calls: AiLaunch[];
   campaign: "idle" | "running" | "done";
@@ -83,6 +86,8 @@ export function AiSessionView({
   onLaunchNext: () => void;
   onStop: () => void;
   onEnd: () => void;
+  /** Dial one lead again — the AI twin of the manual dialer's Redial. */
+  onRedial: (leadId: string) => void;
 }) {
   const { dialer, config, campaigns, campaignFilter } = useDialerContext();
   const { state } = dialer;
@@ -208,6 +213,22 @@ export function AiSessionView({
 
   const firstConv = calls.find((c) => c.conversationId)?.conversationId ?? null;
   const liveCount = calls.filter((c) => rowPill(c, c.conversationId ? liveById[c.conversationId] : undefined).live).length;
+  // Session tallies, so the AI side answers the same questions the manual
+  // header answers: how many did we place, how many are up, how many failed.
+  const doneCount = calls.length - liveCount;
+  const failedCount = calls.filter(
+    (c) =>
+      Boolean(c.error) ||
+      (c.conversationId
+        ? ["no_answer", "failed", "busy"].includes(
+            liveById[c.conversationId]?.terminationReason ?? "",
+          )
+        : false),
+  ).length;
+  const isRowLive = (c: AiLaunch) =>
+    rowPill(c, c.conversationId ? liveById[c.conversationId] : undefined).live;
+  const canRedialRow = (c: AiLaunch, isLive: boolean) => canRedial(c, isLive);
+  const redialable = redialTargets(calls, isRowLive);
 
   return (
     <motion.div
@@ -242,6 +263,33 @@ export function AiSessionView({
           </p>
         )}
       </div>
+
+      {/* Session tallies — the AI side of the manual header's dial counters. */}
+      {calls.length > 0 && (
+        <div className="grid grid-cols-3 gap-2">
+          {(
+            [
+              { label: "Placed", value: calls.length, tone: "text-foreground" },
+              { label: "In flight", value: liveCount, tone: "text-primary" },
+              {
+                label: failedCount ? "No answer" : "Finished",
+                value: failedCount || doneCount,
+                tone: failedCount ? "text-warning" : "text-muted-foreground",
+              },
+            ] as const
+          ).map((s) => (
+            <div
+              key={s.label}
+              className="rounded-xl border border-border/70 bg-surface/50 px-3 py-2 text-center backdrop-blur"
+            >
+              <p className={cn("text-lg font-bold tabular", s.tone)}>{s.value}</p>
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                {s.label}
+              </p>
+            </div>
+          ))}
+        </div>
+      )}
 
       {interveneError && (
         <p className="rounded-lg bg-danger/10 px-3 py-2 text-xs font-medium text-danger">
@@ -303,13 +351,24 @@ export function AiSessionView({
                     <Bot className="h-3.5 w-3.5" />
                   </span>
                   <span className="min-w-0 flex-1">
-                    <span className="block truncate text-sm font-medium">{c.leadName}</span>
-                    {c.callerId && (
-                      <span className="flex items-center gap-1 truncate text-[11px] text-muted-foreground">
-                        <Phone className="h-2.5 w-2.5 shrink-0" />
-                        from {formatPhone(c.callerId)}
-                      </span>
-                    )}
+                    <span className="flex items-center gap-1.5">
+                      <span className="truncate text-sm font-medium">{c.leadName}</span>
+                      {(c.attempt ?? 1) > 1 && (
+                        <span
+                          className="shrink-0 rounded-full bg-muted px-1.5 py-px text-[10px] font-bold text-muted-foreground"
+                          title={`Attempt ${c.attempt} at this ${vocab.leadNoun} this session.`}
+                        >
+                          #{c.attempt}
+                        </span>
+                      )}
+                    </span>
+                    {/* Both numbers, the way the manual dialer shows them: who we
+                        rang, and which of our numbers it went out on. */}
+                    <span className="flex items-center gap-1 truncate text-[11px] text-muted-foreground">
+                      <Phone className="h-2.5 w-2.5 shrink-0" />
+                      {c.phone ? formatPhone(c.phone) : "—"}
+                      {c.callerId && <> · from {formatPhone(c.callerId)}</>}
+                    </span>
                   </span>
                   {expandable && (
                     <ChevronDown
@@ -330,8 +389,32 @@ export function AiSessionView({
                 ) : undefined
               }
               body={
-                reason ? (
-                  <p className="text-xs font-medium text-muted-foreground">{reason}</p>
+                reason || canRedialRow(c, isLive) ? (
+                  <div className="flex items-center justify-between gap-2">
+                    {reason ? (
+                      <p className="min-w-0 flex-1 truncate text-xs font-medium text-muted-foreground">
+                        {reason}
+                      </p>
+                    ) : (
+                      <span className="flex-1" />
+                    )}
+                    {/* Dial again — the AI twin of the manual dialer's Redial.
+                        Deliberately on the ROW itself, not tucked inside the
+                        expander: a call that failed outright has no conversation
+                        to expand, and that is exactly the one worth re-ringing. */}
+                    {canRedialRow(c, isLive) && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="h-7 shrink-0 gap-1.5 px-2 text-xs"
+                        onClick={() => onRedial(c.leadId)}
+                        title={`Have ${agentName} call ${c.leadName} again now.`}
+                      >
+                        <RotateCcw className="h-3 w-3" />
+                        Dial again
+                      </Button>
+                    )}
+                  </div>
                 ) : undefined
               }
               footer={
@@ -404,9 +487,20 @@ export function AiSessionView({
                         className="max-h-56"
                       />
                     ) : (
-                      <p className="rounded-xl border border-dashed border-border/70 px-3 py-3 text-center text-xs text-muted-foreground">
-                        Call ended — the recording and transcript land in the call archive.
-                      </p>
+                      <div className="rounded-xl border border-dashed border-border/70 px-3 py-3 text-center">
+                        <p className="text-xs text-muted-foreground">
+                          Call ended — the recording and transcript land in the call archive.
+                        </p>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="mt-2 gap-1.5"
+                          onClick={() => onRedial(c.leadId)}
+                        >
+                          <RotateCcw className="h-3.5 w-3.5" />
+                          Dial again
+                        </Button>
+                      </div>
                     )}
                   </div>
                 ) : undefined
@@ -424,20 +518,38 @@ export function AiSessionView({
         Open Live Monitor
       </Link>
 
-      <div className="flex gap-2">
+      <div className="flex flex-wrap gap-2">
         {campaign === "running" ? (
           <Button variant="outline" className="flex-1 gap-2" onClick={onStop}>
             <StopCircle className="h-4 w-4" />
             Stop auto-dial
           </Button>
         ) : (
-          campaign !== "done" &&
           hasMore && (
+            // Offered even when the campaign reported "done": a finished pass is
+            // not a dead end, and the queue refreshes between laps. Without this
+            // the only button left on a completed session was "End session".
             <Button variant="outline" className="flex-1 gap-2" onClick={onLaunchNext}>
               <Bot className="h-4 w-4" />
-              Call next {parallelCount > 1 ? parallelCount : ""}
+              {campaign === "done"
+                ? "Run another pass"
+                : `Call next ${parallelCount > 1 ? parallelCount : ""}`}
             </Button>
           )
+        )}
+        {/* Re-ring everything that didn't connect, in one press. */}
+        {redialable.length > 0 && campaign !== "running" && (
+          <Button
+            variant="outline"
+            className="flex-1 gap-2"
+            onClick={() => redialable.forEach((c) => onRedial(c.leadId))}
+            title={`Have ${agentName} call the ${redialable.length} ${
+              redialable.length === 1 ? vocab.leadNoun : vocab.leadNounPlural
+            } that didn't connect again.`}
+          >
+            <RotateCcw className="h-4 w-4" />
+            Dial again ({redialable.length})
+          </Button>
         )}
         <Button variant="ghost" className="flex-1 gap-2 text-muted-foreground" onClick={onEnd}>
           <PhoneOff className="h-4 w-4" />

@@ -16,6 +16,7 @@ import {
   strictQueueExhaustedMessage,
   type ClaimReleaseAction,
 } from "./dialer/claims";
+import { aiDialInFlight } from "./dialer/ai-redial";
 import { dedupeLeadsByPhone } from "./dialer/lane-dedupe";
 import { persistDisposition } from "./dialer/disposition-queue";
 import { decideMuteToggle, type MuteCapability } from "./dialer/mute-intent";
@@ -106,6 +107,15 @@ export interface AiLaunch {
   error?: string;
   /** The outbound caller ID this call was actually placed from. */
   callerId?: string | null;
+  /** The lead's number, so a row can say who it dialed, not just who it called. */
+  phone?: string;
+  /** Which attempt at THIS lead this row is (1 = first, 2 = the double-tap or a
+   *  rep-pressed "Dial again"). Lets a row say "attempt 2" instead of looking
+   *  like a duplicate. */
+  attempt?: number;
+  /** ms epoch the dial was placed — the row's own clock, independent of any
+   *  state broadcast that may never arrive. */
+  startedAt?: number;
 }
 
 /** What the user knows about an ad-hoc number when there's no lead record. */
@@ -662,6 +672,13 @@ export function useDialer(
   const attemptsRef = useRef<Map<string, number>>(new Map());
   /** conversationId → the lead it was for, so a no-answer can find its lead to re-ring. */
   const convLeadRef = useRef<Map<string, Lead>>(new Map());
+  /**
+   * leadId → the lead, for every lead this AI session has dialed. convLeadRef is
+   * deleted the moment a call ends (it exists only to route the automatic
+   * double-tap), so it can't back a rep-initiated "Dial again" — by the time the
+   * button is worth pressing, the entry is gone. This one lives for the session.
+   */
+  const aiLeadByIdRef = useRef<Map<string, Lead>>(new Map());
   /** Leads waiting for their second (double-tap) dial, keyed by lead id. Each also
    *  holds a `redial:<id>` slot in inflightRef through the gap, so the pump keeps a
    *  line free for the re-ring instead of racing ahead to the next lead. */
@@ -1637,7 +1654,9 @@ export function useDialer(
       const slotKey = `lead:${l.id}`;
       inflightRef.current.add(slotKey);
       slotAgeRef.current.set(slotKey, Date.now());
-      attemptsRef.current.set(l.id, (attemptsRef.current.get(l.id) ?? 0) + 1);
+      const attempt = (attemptsRef.current.get(l.id) ?? 0) + 1;
+      attemptsRef.current.set(l.id, attempt);
+      aiLeadByIdRef.current.set(l.id, l);
       recordDials(1, "ai");
       const leadName = `${l.firstName} ${l.lastName}`.trim() || formatPhone(l.phone);
       setState((s) =>
@@ -1653,7 +1672,14 @@ export function useDialer(
               aiDialsToday: aiDialsTodayRef.current,
               aiCampaign: autoDialRef.current ? "running" : s.aiCampaign,
               aiCalls: [
-                { conversationId: null, leadId: l.id, leadName },
+                {
+                  conversationId: null,
+                  leadId: l.id,
+                  leadName,
+                  phone: l.phone,
+                  attempt,
+                  startedAt: Date.now(),
+                },
                 ...s.aiCalls,
               ].slice(0, 40),
             },
@@ -1935,6 +1961,7 @@ export function useDialer(
     purgeRedials();
     attemptsRef.current.clear();
     convLeadRef.current.clear();
+    aiLeadByIdRef.current.clear();
     setState((s) => ({
       ...s,
       status: "ai",
@@ -2828,6 +2855,40 @@ export function useDialer(
     void launchAIBatch();
   }, [launchAIBatch, stopAITimer]);
 
+  /**
+   * Dial ONE lead again with the AI agent — the rep-pressed twin of the
+   * automatic double-tap. The manual dialer has always had `redial`; the AI side
+   * had nothing, so a call that rang out or died on connect was simply lost
+   * unless the whole list was run again.
+   *
+   * Deliberately NOT gated on auto-dial or the campaign state: a rep watching a
+   * call fail wants to re-ring it right now, whether the pump is running, idle,
+   * or the campaign already reported "done".
+   */
+  const redialAI = useCallback(
+    (leadId: string) => {
+      const lead = aiLeadByIdRef.current.get(leadId);
+      if (!lead) {
+        patch({ error: "That lead is no longer loaded — reload your queue to dial it again." });
+        return;
+      }
+      // Already on the wire (or holding a line for its double-tap) — a second
+      // press would put two live calls on one homeowner.
+      if (
+        aiDialInFlight(
+          leadId,
+          inflightRef.current,
+          new Set(redialsRef.current.keys()),
+        )
+      ) {
+        return;
+      }
+      patch({ error: null });
+      void launchAICall(lead, sessionGenRef.current);
+    },
+    [launchAICall, patch],
+  );
+
   const stopAICampaign = useCallback(() => {
     // Clearing autoDialRef is what actually stops the pump: a launchAIBatch tick
     // already in flight re-reads it after its awaits, so without this it would
@@ -2844,6 +2905,7 @@ export function useDialer(
     purgeRedials();
     attemptsRef.current.clear();
     convLeadRef.current.clear();
+    aiLeadByIdRef.current.clear();
     patch({ status: "idle", aiCalls: [], aiCampaign: "idle" });
   }, [patch, purgeRedials, stopAITimer]);
 
@@ -2972,6 +3034,7 @@ export function useDialer(
       purgeRedials();
       attemptsRef.current.clear();
       convLeadRef.current.clear();
+      aiLeadByIdRef.current.clear();
 
       // Re-clamp: the ceilings differ per mode. Switching AI(10x) -> human without
       // this would leave one rep with ten lines ringing, and nine of those
@@ -3081,6 +3144,7 @@ export function useDialer(
     launchNextAI,
     stopAICampaign,
     endAISession,
+    redialAI,
     nextLead,
     prevLead,
     selectLead,
