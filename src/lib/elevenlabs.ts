@@ -288,6 +288,15 @@ export interface OutboundCallResult {
   overridesDropped: string[];
   /** Compact label persisted for forensics (e.g. "partial:first_message,language"). */
   overrideMode: string;
+  /** The number the call ACTUALLY went out on, in E.164 when we can name it. */
+  fromNumber: string | null;
+  /**
+   * True when rotation picked a number that isn't imported into ElevenLabs, so
+   * the configured default number placed the call instead. This used to happen
+   * silently — every AI call left on one number while the app reported the
+   * rotated one, which is both a deliverability problem and a lie in the UI.
+   */
+  callerIdFellBack: boolean;
 }
 
 export interface ElevenLabsPhoneNumber {
@@ -335,6 +344,44 @@ export async function importTwilioPhoneNumber(opts: {
 }
 
 const _phoneIdCache = new Map<string, string>();
+/** id → E.164, filled by the same lookup, so we can name the number we dialed on. */
+const _phoneNumberByIdCache = new Map<string, string>();
+
+/**
+ * Comparable key for a phone number. Both sides of the lookup get this, so a
+ * 10-digit "(817) 508-2598" matches an imported "+18175082598". Matching raw
+ * digit strings meant those two missed each other and the call silently went
+ * out on the default number — the same failure this whole path is prone to.
+ * The leading 1 is only dropped for 11-digit NANP; other countries keep theirs.
+ */
+function digitsKey(value: string): string {
+  const d = String(value ?? "").replace(/\D/g, "");
+  return d.length === 11 && d.startsWith("1") ? d.slice(1) : d;
+}
+
+function cachePhoneNumbers(numbers: ElevenLabsPhoneNumber[]): void {
+  for (const p of numbers) {
+    const id = p.phone_number_id ?? p.id;
+    const e164 = p.phone_number ?? "";
+    if (!id || !e164) continue;
+    _phoneIdCache.set(digitsKey(e164), id);
+    _phoneNumberByIdCache.set(id, e164);
+  }
+}
+
+/** Reverse of `resolvePhoneNumberId`: the E.164 behind an ElevenLabs number ID. */
+export async function phoneNumberForId(id: string): Promise<string | null> {
+  const key = (id ?? "").trim();
+  if (!key) return null;
+  const cached = _phoneNumberByIdCache.get(key);
+  if (cached) return cached;
+  try {
+    cachePhoneNumbers(await listPhoneNumbers());
+  } catch {
+    return null;
+  }
+  return _phoneNumberByIdCache.get(key) ?? null;
+}
 
 /**
  * Resolve a phone identifier to an ElevenLabs phone_number_id. Accepts EITHER an
@@ -347,24 +394,41 @@ export async function resolvePhoneNumberId(value: string): Promise<string> {
   if (!v) return "";
   const looksLikeNumber = /^\+?[\d\s().-]{7,}$/.test(v);
   if (!looksLikeNumber) return v; // already an ID (e.g. phnum_…)
-  const want = v.replace(/\D/g, "");
+  const want = digitsKey(v);
   const cached = _phoneIdCache.get(want);
   if (cached) return cached;
   try {
-    const numbers = await listPhoneNumbers();
-    const match = numbers.find(
-      (p) => (p.phone_number ?? "").replace(/\D/g, "") === want,
-    );
-    const id = match?.phone_number_id ?? match?.id;
-    if (id) {
-      _phoneIdCache.set(want, id);
-      return id;
-    }
+    cachePhoneNumbers(await listPhoneNumbers());
+    const id = _phoneIdCache.get(want);
+    if (id) return id;
   } catch {
     /* fall through */
   }
   return "";
 }
+
+/**
+ * Which of these numbers can ElevenLabs actually originate from?
+ *
+ * A number in the org's rotation pool is useless to the AI dialer until it has
+ * been IMPORTED into the ElevenLabs account — pointing its Twilio voice webhook
+ * at us does nothing for this path. Unimported numbers silently fall back to the
+ * default, so every AI call goes out on one number. This names them.
+ */
+export async function auditRotationPool(
+  pool: string[],
+): Promise<{ imported: string[]; missing: string[] }> {
+  const unique = [...new Set(pool.map((n) => (n ?? "").trim()).filter(Boolean))];
+  const imported: string[] = [];
+  const missing: string[] = [];
+  for (const n of unique) {
+    ((await resolvePhoneNumberId(n)) ? imported : missing).push(n);
+  }
+  return { imported, missing };
+}
+
+/** Numbers we've already complained about, so a 500-lead session logs each once. */
+const _warnedUnimported = new Set<string>();
 
 /**
  * Resolve the DEFAULT agent phone-number ID from env. Accepts an ID or a raw
@@ -748,10 +812,25 @@ export async function placeOutboundCall(opts: {
 
   // Rotation: use the per-call number when it resolves to an imported ElevenLabs
   // number, otherwise fall back to the configured default.
-  const agentPhoneNumberId =
-    (opts.agentPhoneNumberId
-      ? await resolvePhoneNumberId(opts.agentPhoneNumberId)
-      : "") || (await resolveAgentPhoneNumberId());
+  const requestedFrom = (opts.agentPhoneNumberId ?? "").trim();
+  const resolvedFrom = requestedFrom ? await resolvePhoneNumberId(requestedFrom) : "";
+  const agentPhoneNumberId = resolvedFrom || (await resolveAgentPhoneNumberId());
+  // Rotation asked for a number ElevenLabs can't originate from. The call still
+  // goes out — on the default number — but say so, or the whole pool quietly
+  // collapses to one caller ID and nothing anywhere reports it.
+  const callerIdFellBack = Boolean(requestedFrom) && !resolvedFrom;
+  if (callerIdFellBack && !_warnedUnimported.has(requestedFrom)) {
+    _warnedUnimported.add(requestedFrom);
+    console.warn(
+      `[elevenlabs] ${requestedFrom} is not imported into ElevenLabs — this AI call ` +
+        `went out on the default number instead. Import it (Conversational AI → ` +
+        `Phone Numbers, or POST /api/superadmin/provision-numbers) or rotation ` +
+        `has no effect on AI dials.`,
+    );
+  }
+  const fromNumber = resolvedFrom
+    ? requestedFrom
+    : await phoneNumberForId(agentPhoneNumberId);
 
   const res = await el("/v1/convai/twilio/outbound-call", {
     method: "POST",
@@ -774,6 +853,8 @@ export async function placeOutboundCall(opts: {
     overridesSent: built.sent,
     overridesDropped: built.dropped,
     overrideMode: built.mode,
+    fromNumber: fromNumber || null,
+    callerIdFellBack,
   };
 }
 

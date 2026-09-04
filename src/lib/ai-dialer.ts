@@ -132,6 +132,12 @@ export interface PlaceAiCallResult {
   /** The outbound caller ID this call was actually placed from (rotation-resolved). */
   callerId?: string | null;
   /**
+   * Direct mode only: rotation picked a number ElevenLabs can't originate from,
+   * so the call went out on the default number. `callerId` reports what was
+   * really used, and this says the pool isn't doing anything.
+   */
+  callerIdFellBack?: boolean;
+  /**
    * Set when the call was REFUSED before dialing (out of credits, breaker open).
    * Callers must stop the campaign rather than move to the next lead — every
    * further call would fail identically and burn a lead for nothing.
@@ -243,7 +249,6 @@ export async function placeAiCallForLead(opts: {
   // report in that one case, so callerId is honestly omitted rather than guessed.
   const usingDedicatedSecondaryNumber =
     !bridge && el.key === "secondary" && Boolean(elevenLabsConfig.agentPhoneNumberId2);
-  const reportedCallerId = usingDedicatedSecondaryNumber ? null : rotatedFrom || null;
 
   try {
     const result = await placeOutboundCall({
@@ -272,6 +277,18 @@ export async function placeAiCallForLead(opts: {
     if (!result.conversationId) {
       return { conversationId: null, callSid: result.callSid, error: "No conversation id returned" };
     }
+
+    // What the call REALLY went out on. In bridge mode Twilio dials the homeowner
+    // with `from: rotatedFrom`, so rotation holds. In direct mode ElevenLabs
+    // places it, and it can only use a number imported into that account — an
+    // unimported one silently becomes the default. Reporting `rotatedFrom` here
+    // regardless is how a pool of eight numbers looked healthy while every call
+    // left on one.
+    const reportedCallerId = bridge
+      ? rotatedFrom || null
+      : usingDedicatedSecondaryNumber
+        ? null
+        : result.fromNumber;
 
     let room: string | undefined;
     let customerCallSid: string | undefined;
@@ -377,6 +394,7 @@ export async function placeAiCallForLead(opts: {
       room,
       customerCallSid,
       callerId: reportedCallerId,
+      callerIdFellBack: !bridge && result.callerIdFellBack,
     };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
